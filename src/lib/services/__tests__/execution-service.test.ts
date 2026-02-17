@@ -125,6 +125,10 @@ vi.mock('@/lib/state-machines', () => ({
   isValidExecutionTransition: vi.fn(() => true),
 }));
 
+vi.mock('@/lib/services/loop-prevention', () => ({
+  checkLoopGuards: vi.fn().mockResolvedValue({ spawnDepth: 0 }),
+}));
+
 import { createExecution, cancelExecution } from '@/lib/services/execution-service';
 
 describe('execution-service', () => {

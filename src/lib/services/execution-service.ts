@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { executions, tasks, agents, agentCapabilities, taskEvents } from '@/lib/db/schema';
 import { isValidExecutionTransition } from '@/lib/state-machines';
 import { NotFoundError, ConflictError } from '@/lib/errors';
+import { checkLoopGuards } from '@/lib/services/loop-prevention';
 import type { Execution, ExecutionStatus, Agent, AgentCapability } from '@/lib/types';
 
 // --- Types ---
@@ -12,6 +13,7 @@ export interface CreateExecutionInput {
   agentId: string;
   capabilityId: string;
   args?: Record<string, unknown>;
+  parentExecutionId?: string;
 }
 
 export interface ListExecutionsInput {
@@ -30,6 +32,12 @@ export interface ExecutionWithDetails extends Execution {
 // --- Implementation ---
 
 export async function createExecution(input: CreateExecutionInput): Promise<Execution> {
+  // Loop prevention: check spawn depth and concurrent limits
+  const { spawnDepth } = await checkLoopGuards({
+    parentExecutionId: input.parentExecutionId,
+    agentId: input.agentId,
+  });
+
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
   if (!agent) throw new NotFoundError('Agent', input.agentId);
 
@@ -72,6 +80,8 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
       args: input.args ?? {},
       mode: capability.interactionMode,
       status: 'queued',
+      parentExecutionId: input.parentExecutionId,
+      spawnDepth,
     })
     .returning();
 

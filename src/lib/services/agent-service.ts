@@ -186,6 +186,11 @@ export async function deleteAgent(id: string): Promise<void> {
   if (!deleted) throw new NotFoundError('Agent', id);
 }
 
+export async function getAgentBySlug(slug: string): Promise<Agent | null> {
+  const [agent] = await db.select().from(agents).where(eq(agents.slug, slug)).limit(1);
+  return agent ?? null;
+}
+
 export async function getExistingSlugs(): Promise<Set<string>> {
   const rows = await db.select({ slug: agents.slug }).from(agents);
   return new Set(rows.map((r) => r.slug));
