@@ -253,6 +253,7 @@ export const executions = pgTable(
     // On failure: if retry_count < max_retries, worker requeues and increments.
     retryCount: integer('retry_count').notNull().default(0),
     maxRetries: integer('max_retries').notNull().default(0),
+    spawnDepth: integer('spawn_depth').notNull().default(0),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

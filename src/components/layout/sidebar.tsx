@@ -1,23 +1,45 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, ListTodo, Bot, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
+interface SidebarStats {
+  runningExecutions: number;
+  todoTasks: number;
+}
+
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/tasks', label: 'Tasks', icon: ListTodo },
-  { href: '/agents', label: 'Agents', icon: Bot },
-  { href: '/executions', label: 'Executions', icon: Play },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard, badgeKey: null },
+  { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
+  { href: '/agents', label: 'Agents', icon: Bot, badgeKey: null },
+  { href: '/executions', label: 'Executions', icon: Play, badgeKey: 'runningExecutions' as const },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [stats, setStats] = useState<SidebarStats | null>(null);
+
+  useEffect(() => {
+    async function fetchStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const json = await res.json();
+        setStats(json.data);
+      } catch {
+        /* ignore */
+      }
+    }
+    fetchStats();
+    const interval = setInterval(fetchStats, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <aside
@@ -42,6 +64,7 @@ export function Sidebar() {
         {navItems.map((item) => {
           const isActive =
             pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+          const badgeCount = item.badgeKey && stats ? stats[item.badgeKey] : 0;
 
           const linkContent = (
             <Link
@@ -55,7 +78,19 @@ export function Sidebar() {
               )}
             >
               <item.icon className="h-4 w-4 shrink-0" />
-              {!isCollapsed && <span>{item.label}</span>}
+              {!isCollapsed && (
+                <>
+                  <span className="flex-1">{item.label}</span>
+                  {badgeCount > 0 && (
+                    <Badge
+                      variant="secondary"
+                      className="ml-auto h-5 min-w-5 justify-center px-1 text-xs"
+                    >
+                      {badgeCount}
+                    </Badge>
+                  )}
+                </>
+              )}
             </Link>
           );
 
@@ -63,7 +98,10 @@ export function Sidebar() {
             return (
               <Tooltip key={item.href} delayDuration={0}>
                 <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
-                <TooltipContent side="right">{item.label}</TooltipContent>
+                <TooltipContent side="right">
+                  {item.label}
+                  {badgeCount > 0 && ` (${badgeCount})`}
+                </TooltipContent>
               </Tooltip>
             );
           }

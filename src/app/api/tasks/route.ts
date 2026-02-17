@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { createTask, listTasksByStatus } from '@/lib/services/task-service';
+import { checkTaskCreationRateLimit } from '@/lib/services/loop-prevention';
 import { taskStatusEnum } from '@/lib/db/schema';
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -38,6 +39,11 @@ const createSchema = z.object({
 });
 
 export const POST = withErrorBoundary(async (req: NextRequest) => {
+  const agentId = req.headers.get('x-agent-id');
+  if (agentId?.startsWith('mcp-')) {
+    await checkTaskCreationRateLimit(agentId);
+  }
+
   const body = await req.json();
   const validated = createSchema.parse(body);
   const task = await createTask(validated);

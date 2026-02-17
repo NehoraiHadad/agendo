@@ -7,6 +7,8 @@ export async function seedWorkerConfig(): Promise<void> {
     .values([
       { key: 'log_retention_days', value: 30 },
       { key: 'max_concurrent_ai_agents', value: 3 },
+      { key: 'max_spawn_depth', value: 3 },
+      { key: 'max_tasks_per_agent_per_minute', value: 10 },
     ])
     .onConflictDoNothing();
 

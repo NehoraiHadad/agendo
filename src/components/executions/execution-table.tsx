@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { ExecutionRow } from './execution-row';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -35,6 +36,14 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
   const [meta, setMeta] = useState(initialMeta ?? { total: 0, page: 1, pageSize: 20 });
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: data.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 56,
+    overscan: 20,
+  });
 
   const fetchExecutions = useCallback(
     async (page: number, status: string) => {
@@ -78,6 +87,7 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
   };
 
   const totalPages = Math.ceil(meta.total / meta.pageSize);
+  const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,7 +109,11 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
         {isLoading && <span className="text-sm text-muted-foreground">Loading...</span>}
       </div>
 
-      <div className="rounded-md border">
+      <div
+        ref={scrollContainerRef}
+        className="rounded-md border overflow-auto"
+        style={{ maxHeight: '70vh' }}
+      >
         <Table>
           <TableHeader>
             <TableRow>
@@ -118,13 +132,30 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
                 </TableHead>
               </TableRow>
             ) : (
-              data.map((execution) => (
-                <ExecutionRow
-                  key={execution.id}
-                  execution={execution}
-                  onCancelled={() => fetchExecutions(meta.page, statusFilter)}
-                />
-              ))
+              <>
+                {virtualItems[0]?.start > 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ height: virtualItems[0].start }} />
+                  </tr>
+                )}
+                {virtualItems.map((virtualRow) => (
+                  <ExecutionRow
+                    key={data[virtualRow.index].id}
+                    execution={data[virtualRow.index]}
+                    onCancelled={() => fetchExecutions(meta.page, statusFilter)}
+                  />
+                ))}
+                {virtualItems.length > 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      style={{
+                        height: virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0),
+                      }}
+                    />
+                  </tr>
+                )}
+              </>
             )}
           </TableBody>
         </Table>
