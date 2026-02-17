@@ -38,11 +38,7 @@ export function AgentRow({ agent }: AgentRowProps) {
             onClick={() => setExpanded(!expanded)}
             aria-label={expanded ? 'Collapse capabilities' : 'Expand capabilities'}
           >
-            {expanded ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
         </TableCell>
         <TableCell className="font-medium">

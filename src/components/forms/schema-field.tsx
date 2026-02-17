@@ -34,7 +34,6 @@ export function SchemaField<T extends FieldValues>({
         />
       );
     case 'string':
-    default:
       return (
         <SchemaFieldString
           name={name}
@@ -43,6 +42,12 @@ export function SchemaField<T extends FieldValues>({
           required={required}
           register={register}
         />
+      );
+    default:
+      return (
+        <p className="text-sm text-muted-foreground">
+          Unsupported field type: {schema.type ?? 'unknown'}
+        </p>
       );
   }
 }

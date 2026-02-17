@@ -8,18 +8,18 @@
 
 ## Prerequisites (Must Exist from Phase 1-3)
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `src/lib/db/schema.ts` | `executions` table with `status`, `pid`, `sessionRef`, `tmuxSessionName`, `parentExecutionId`, log fields | 1 |
-| `src/lib/db/index.ts` | Drizzle singleton | 1 |
-| `src/lib/state-machines.ts` | Execution status transitions: `queued -> running -> succeeded/failed/timed_out`, `running -> cancelling -> cancelled` | 1 |
-| `src/lib/errors.ts` | `AppError` hierarchy | 1 |
-| `src/lib/api-handler.ts` | `withErrorBoundary` for API routes | 1 |
-| `src/lib/types.ts` | `Execution`, `ExecutionStatus`, `Agent`, `AgentCapability` inferred types | 1 |
-| `src/lib/config.ts` | Zod-validated env config (`ALLOWED_WORKING_DIRS`, `LOG_DIR`, `WORKER_ID`, etc.) | 1 |
-| `src/lib/services/agent-service.ts` | `getAgentById` (for env_allowlist lookup) | 2 |
-| `src/lib/services/capability-service.ts` | `getCapabilityById` (for command_tokens, prompt_template, args_schema) | 2 |
-| `src/worker/index.ts` | Worker entry point with pg-boss | 1 |
+| File                                     | Purpose                                                                                                               | Phase |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----- |
+| `src/lib/db/schema.ts`                   | `executions` table with `status`, `pid`, `sessionRef`, `tmuxSessionName`, `parentExecutionId`, log fields             | 1     |
+| `src/lib/db/index.ts`                    | Drizzle singleton                                                                                                     | 1     |
+| `src/lib/state-machines.ts`              | Execution status transitions: `queued -> running -> succeeded/failed/timed_out`, `running -> cancelling -> cancelled` | 1     |
+| `src/lib/errors.ts`                      | `AppError` hierarchy                                                                                                  | 1     |
+| `src/lib/api-handler.ts`                 | `withErrorBoundary` for API routes                                                                                    | 1     |
+| `src/lib/types.ts`                       | `Execution`, `ExecutionStatus`, `Agent`, `AgentCapability` inferred types                                             | 1     |
+| `src/lib/config.ts`                      | Zod-validated env config (`ALLOWED_WORKING_DIRS`, `LOG_DIR`, `WORKER_ID`, etc.)                                       | 1     |
+| `src/lib/services/agent-service.ts`      | `getAgentById` (for env_allowlist lookup)                                                                             | 2     |
+| `src/lib/services/capability-service.ts` | `getCapabilityById` (for command_tokens, prompt_template, args_schema)                                                | 2     |
+| `src/worker/index.ts`                    | Worker entry point with pg-boss                                                                                       | 1     |
 
 ---
 
@@ -68,9 +68,7 @@ export interface ValidateArgsOptions {
 
 // --- Constants ---
 
-const BASE_ENV_ALLOWLIST = [
-  'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TMPDIR', 'TZ',
-] as const;
+const BASE_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TMPDIR', 'TZ'] as const;
 
 /** Reject arg values that could break token substitution */
 const SAFE_ARG_PATTERN = /^[a-zA-Z0-9\s/_.,@#:=+\-]+$/;
@@ -95,12 +93,12 @@ export function validateWorkingDir(workingDir: string): string {
   const resolved = realpathSync(workingDir);
 
   const isAllowed = allowedWorkingDirs.some(
-    (allowed) => resolved === allowed || resolved.startsWith(allowed + '/')
+    (allowed) => resolved === allowed || resolved.startsWith(allowed + '/'),
   );
 
   if (!isAllowed) {
     throw new ValidationError(
-      `Working directory not in allowlist: ${resolved}. Allowed: ${allowedWorkingDirs.join(', ')}`
+      `Working directory not in allowlist: ${resolved}. Allowed: ${allowedWorkingDirs.join(', ')}`,
     );
   }
 
@@ -112,10 +110,7 @@ export function validateWorkingDir(workingDir: string): string {
  * NEVER spreads process.env. Only includes explicitly allowlisted vars.
  */
 export function buildChildEnv(opts: SafeEnvOptions = {}): Record<string, string> {
-  const allowlist = [
-    ...BASE_ENV_ALLOWLIST,
-    ...(opts.agentAllowlist ?? []),
-  ];
+  const allowlist = [...BASE_ENV_ALLOWLIST, ...(opts.agentAllowlist ?? [])];
 
   const env: Record<string, string> = {};
 
@@ -137,10 +132,7 @@ export function buildChildEnv(opts: SafeEnvOptions = {}): Record<string, string>
  * Substitutes {{placeholder}} tokens in command_tokens with validated arg values.
  * Rejects object/array values in token positions. Validates against pattern constraints.
  */
-export function buildCommandArgs(
-  commandTokens: string[],
-  args: Record<string, unknown>,
-): string[] {
+export function buildCommandArgs(commandTokens: string[], args: Record<string, unknown>): string[] {
   return commandTokens.map((token) => {
     const match = token.match(/^\{\{(\w+)\}\}$/);
     if (!match) return token; // literal token, no substitution
@@ -153,17 +145,13 @@ export function buildCommandArgs(
     }
 
     if (typeof value === 'object' || Array.isArray(value)) {
-      throw new ValidationError(
-        `Object/array values not allowed in command tokens: ${key}`
-      );
+      throw new ValidationError(`Object/array values not allowed in command tokens: ${key}`);
     }
 
     const strValue = String(value);
 
     if (!SAFE_ARG_PATTERN.test(strValue)) {
-      throw new ValidationError(
-        `Argument "${key}" contains disallowed characters: ${strValue}`
-      );
+      throw new ValidationError(`Argument "${key}" contains disallowed characters: ${strValue}`);
     }
 
     return strValue;
@@ -184,9 +172,7 @@ export function validateArgs(
   // Reject any arg value that is an object (prevents nested injection)
   for (const [key, value] of Object.entries(args)) {
     if (typeof value === 'object' && value !== null) {
-      throw new ValidationError(
-        `Argument "${key}" must be a scalar value, got ${typeof value}`
-      );
+      throw new ValidationError(`Argument "${key}" must be a scalar value, got ${typeof value}`);
     }
   }
 
@@ -205,7 +191,7 @@ export function validateArgs(
       const regex = new RegExp(propSchema.pattern);
       if (!regex.test(String(args[key]))) {
         throw new ValidationError(
-          `Argument "${key}" does not match pattern: ${propSchema.pattern}`
+          `Argument "${key}" does not match pattern: ${propSchema.pattern}`,
         );
       }
     }
@@ -225,6 +211,7 @@ export function validateBinary(binaryPath: string): void {
 ```
 
 **Key design decisions**:
+
 - `realpathSync` runs BEFORE allowlist check to prevent symlink traversal attacks
 - `buildChildEnv` never spreads `process.env` -- constructs from scratch with allowlist only
 - `buildCommandArgs` rejects object/array values and checks against `SAFE_ARG_PATTERN`
@@ -383,6 +370,7 @@ export function resolveLogPath(executionId: string): string {
 ```
 
 **Key design decisions**:
+
 - Appends `[stdout]` / `[stderr]` / `[system]` prefixes per line for SSE parser differentiation
 - DB flush every 5 seconds (not per-write) to avoid database pressure on high-output executions
 - `close()` returns final stats for the execution record's finalization step
@@ -518,7 +506,10 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   if (execution.mode === 'prompt') {
     resolvedPrompt = interpolatePrompt(capability.promptTemplate!, execution.args);
     // Store resolved prompt on execution record
-    await db.update(executions).set({ prompt: resolvedPrompt }).where(eq(executions.id, executionId));
+    await db
+      .update(executions)
+      .set({ prompt: resolvedPrompt })
+      .where(eq(executions.id, executionId));
   } else {
     resolvedArgs = buildCommandArgs(capability.commandTokens!, execution.args);
   }
@@ -607,7 +598,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   // --- 7. Set timeout ---
   const timeoutMs = (capability.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
   timeoutTimer = setTimeout(() => {
-    logWriter.writeSystem(`Timeout after ${capability.timeoutSec ?? DEFAULT_TIMEOUT_SEC}s. Sending SIGTERM.`);
+    logWriter.writeSystem(
+      `Timeout after ${capability.timeoutSec ?? DEFAULT_TIMEOUT_SEC}s. Sending SIGTERM.`,
+    );
     managedProcess.kill('SIGTERM');
     setTimeout(() => {
       logWriter.writeSystem('Grace period expired. Sending SIGKILL.');
@@ -639,10 +632,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
       logByteSize: logStats.byteSize,
       logLineCount: logStats.lineCount,
     })
-    .where(and(
-      eq(executions.id, executionId),
-      eq(executions.status, 'running'),
-    ));
+    .where(and(eq(executions.id, executionId), eq(executions.status, 'running')));
 
   // If 0 rows updated, status was changed (likely to 'cancelling')
   if (result.rowCount === 0) {
@@ -675,10 +665,7 @@ function determineFinalStatus(
   return 'failed';
 }
 
-function interpolatePrompt(
-  template: string,
-  args: Record<string, unknown>,
-): string {
+function interpolatePrompt(template: string, args: Record<string, unknown>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
     const value = args[key];
     if (value === undefined) return `{{${key}}}`; // leave unresolved placeholders
@@ -687,11 +674,7 @@ function interpolatePrompt(
 }
 
 async function loadExecution(id: string): Promise<Execution> {
-  const [row] = await db
-    .select()
-    .from(executions)
-    .where(eq(executions.id, id))
-    .limit(1);
+  const [row] = await db.select().from(executions).where(eq(executions.id, id)).limit(1);
 
   if (!row) throw new Error(`Execution not found: ${id}`);
   return row;
@@ -699,6 +682,7 @@ async function loadExecution(id: string): Promise<Execution> {
 ```
 
 **Key design decisions**:
+
 - `WHERE status = 'running'` guard on finalization prevents overwriting a concurrent `cancelling` state set by the cancel API
 - If the guard returns 0 rows, the runner checks current status and transitions `cancelling -> cancelled`
 - Session resume uses `adapter.resume()` when `parentExecutionId` and `sessionRef` are both present
@@ -735,10 +719,7 @@ const PROMPT_ADAPTER_MAP: Record<string, new () => AgentAdapter> = {
  * Template mode always uses TemplateAdapter.
  * Prompt mode selects by agent binary basename.
  */
-export function selectAdapter(
-  agent: Agent,
-  capability: AgentCapability,
-): AgentAdapter {
+export function selectAdapter(agent: Agent, capability: AgentCapability): AgentAdapter {
   if (capability.interactionMode === 'template') {
     return new TemplateAdapter();
   }
@@ -750,7 +731,7 @@ export function selectAdapter(
   if (!AdapterClass) {
     throw new Error(
       `No adapter found for agent binary "${binaryName}". ` +
-      `Supported: ${Object.keys(PROMPT_ADAPTER_MAP).join(', ')}`
+        `Supported: ${Object.keys(PROMPT_ADAPTER_MAP).join(', ')}`,
     );
   }
 
@@ -874,11 +855,16 @@ export function createSession(
   const rows = opts.rows ?? DEFAULT_ROWS;
 
   const args = [
-    'new-session', '-d',
-    '-s', name,
-    '-x', String(cols),
-    '-y', String(rows),
-    '-c', opts.cwd,
+    'new-session',
+    '-d',
+    '-s',
+    name,
+    '-x',
+    String(cols),
+    '-y',
+    String(rows),
+    '-c',
+    opts.cwd,
   ];
 
   if (opts.command) {
@@ -913,20 +899,16 @@ export function pressEnter(name: string): void {
  * @returns The captured text content
  */
 export function capturePane(name: string, historyLines = 1000): string {
-  return execFileSync(
-    'tmux',
-    ['capture-pane', '-t', name, '-p', '-S', `-${historyLines}`],
-    { encoding: 'utf-8' },
-  );
+  return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-S', `-${historyLines}`], {
+    encoding: 'utf-8',
+  });
 }
 
 /** Sets up pipe-pane to redirect all output to a log file. */
 export function pipePaneToFile(name: string, logFilePath: string): void {
-  execFileSync(
-    'tmux',
-    ['pipe-pane', '-t', name, '-o', `cat >> ${logFilePath}`],
-    { stdio: 'ignore' },
-  );
+  execFileSync('tmux', ['pipe-pane', '-t', name, '-o', `cat >> ${logFilePath}`], {
+    stdio: 'ignore',
+  });
 }
 
 /** Checks whether a tmux session with the given name exists. */
@@ -950,21 +932,17 @@ export function killSession(name: string): void {
 
 /** Resizes the tmux window for a session. */
 export function resizeSession(name: string, cols: number, rows: number): void {
-  execFileSync(
-    'tmux',
-    ['resize-window', '-t', name, '-x', String(cols), '-y', String(rows)],
-    { stdio: 'ignore' },
-  );
+  execFileSync('tmux', ['resize-window', '-t', name, '-x', String(cols), '-y', String(rows)], {
+    stdio: 'ignore',
+  });
 }
 
 /** Lists all active tmux session names. */
 export function listSessions(): string[] {
   try {
-    const output = execFileSync(
-      'tmux',
-      ['list-sessions', '-F', '#{session_name}'],
-      { encoding: 'utf-8' },
-    );
+    const output = execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], {
+      encoding: 'utf-8',
+    });
     return output.trim().split('\n').filter(Boolean);
   } catch {
     return []; // tmux server not running
@@ -1057,11 +1035,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   // --- Private ---
 
-  private launch(
-    prompt: string,
-    opts: SpawnOpts,
-    extraFlags: string[],
-  ): ManagedProcess {
+  private launch(prompt: string, opts: SpawnOpts, extraFlags: string[]): ManagedProcess {
     this.tmuxSessionName = `claude-${opts.executionId}`;
 
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -1070,10 +1044,13 @@ export class ClaudeAdapter implements AgentAdapter {
     // Build Claude CLI arguments
     const claudeArgs = [
       '-p',
-      '--input-format', 'stream-json',
-      '--output-format', 'stream-json',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
       '--verbose',
-      '--permission-mode', 'bypassPermissions',
+      '--permission-mode',
+      'bypassPermissions',
       ...extraFlags,
     ];
 
@@ -1130,6 +1107,7 @@ export class ClaudeAdapter implements AgentAdapter {
 ```
 
 **Key design decisions**:
+
 - Claude runs via `child_process.spawn` (not inside the tmux command) for reliable NDJSON stdin/stdout -- tmux is created alongside for web terminal access
 - Initial prompt is sent as the first NDJSON message on stdin (not as a CLI argument)
 - `sendMessage()` writes additional NDJSON user messages to stdin for multi-turn conversations
@@ -1234,11 +1212,7 @@ export class CodexAdapter implements AgentAdapter {
 
   // --- Private ---
 
-  private launch(
-    prompt: string,
-    opts: SpawnOpts,
-    isResume: boolean,
-  ): ManagedProcess {
+  private launch(prompt: string, opts: SpawnOpts, isResume: boolean): ManagedProcess {
     this.tmuxSessionName = `codex-${opts.executionId}`;
 
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -1299,11 +1273,7 @@ export class CodexAdapter implements AgentAdapter {
     };
   }
 
-  private initializeAndStart(
-    prompt: string,
-    opts: SpawnOpts,
-    isResume: boolean,
-  ): void {
+  private initializeAndStart(prompt: string, opts: SpawnOpts, isResume: boolean): void {
     // Step 1: Initialize handshake
     this.sendRequest('initialize', {
       protocolVersion: '1.0',
@@ -1436,6 +1406,7 @@ export class CodexAdapter implements AgentAdapter {
 ```
 
 **Key design decisions**:
+
 - Full JSON-RPC 2.0 protocol: request (with `id`), notification (without `id`), response (matching `id`)
 - Initialize handshake sends `initialize` request followed by `initialized` notification
 - `thread/start` creates a new conversation thread; response provides `threadId`
@@ -1510,11 +1481,7 @@ export class GeminiAdapter implements AgentAdapter {
 
   // --- Private ---
 
-  private launch(
-    prompt: string,
-    opts: SpawnOpts,
-    extraFlags: string[],
-  ): ManagedProcess {
+  private launch(prompt: string, opts: SpawnOpts, extraFlags: string[]): ManagedProcess {
     this.tmuxSessionName = `gemini-${opts.executionId}`;
 
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -1594,6 +1561,7 @@ export class GeminiAdapter implements AgentAdapter {
 ```
 
 **Key design decisions**:
+
 - Gemini runs entirely inside tmux -- no direct stdio from Node.js
 - Output captured via 500ms polling of `tmux capture-pane` (incremental: only new content since last capture)
 - `pipe-pane` also writes to a temp file for the SSE log streaming endpoint to tail
@@ -1713,10 +1681,7 @@ import { db } from '@/lib/db';
 import { executions, tasks, agents, agentCapabilities, taskEvents } from '@/lib/db/schema';
 import { isValidExecutionTransition } from '@/lib/state-machines';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/errors';
-import type {
-  Execution, ExecutionStatus, NewExecution,
-  Agent, AgentCapability,
-} from '@/lib/types';
+import type { Execution, ExecutionStatus, NewExecution, Agent, AgentCapability } from '@/lib/types';
 
 // --- Types ---
 
@@ -1757,10 +1722,16 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
     .select()
     .from(agentCapabilities)
     .where(
-      and(eq(agentCapabilities.id, input.capabilityId), eq(agentCapabilities.agentId, input.agentId))
+      and(
+        eq(agentCapabilities.id, input.capabilityId),
+        eq(agentCapabilities.agentId, input.agentId),
+      ),
     )
     .limit(1);
-  if (!capability) throw new NotFoundError(`Capability ${input.capabilityId} not found for agent ${input.agentId}`);
+  if (!capability)
+    throw new NotFoundError(
+      `Capability ${input.capabilityId} not found for agent ${input.agentId}`,
+    );
 
   const [task] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
   if (!task) throw new NotFoundError(`Task ${input.taskId} not found`);
@@ -1772,12 +1743,12 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
     .where(
       and(
         eq(executions.agentId, input.agentId),
-        sql`${executions.status} IN ('queued', 'running')`
-      )
+        sql`${executions.status} IN ('queued', 'running')`,
+      ),
     );
   if (runningCount >= agent.maxConcurrent) {
     throw new ConflictError(
-      `Agent "${agent.name}" is at max concurrency (${agent.maxConcurrent}). Wait for current executions to complete.`
+      `Agent "${agent.name}" is at max concurrency (${agent.maxConcurrent}). Wait for current executions to complete.`,
     );
   }
 
@@ -1796,7 +1767,10 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
 
   // Auto-transition task from 'todo' to 'in_progress'
   if (task.status === 'todo') {
-    await db.update(tasks).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(tasks.id, task.id));
+    await db
+      .update(tasks)
+      .set({ status: 'in_progress', updatedAt: new Date() })
+      .where(eq(tasks.id, task.id));
   }
 
   // Audit trail
@@ -1816,24 +1790,21 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
  * The worker detects this and sends SIGTERM, then SIGKILL after grace period.
  */
 export async function cancelExecution(executionId: string): Promise<Execution> {
-  const [execution] = await db.select().from(executions).where(eq(executions.id, executionId)).limit(1);
+  const [execution] = await db
+    .select()
+    .from(executions)
+    .where(eq(executions.id, executionId))
+    .limit(1);
   if (!execution) throw new NotFoundError(`Execution ${executionId} not found`);
 
   if (!isValidExecutionTransition(execution.status, 'cancelling')) {
-    throw new ConflictError(
-      `Cannot cancel execution in "${execution.status}" status`
-    );
+    throw new ConflictError(`Cannot cancel execution in "${execution.status}" status`);
   }
 
   const [updated] = await db
     .update(executions)
     .set({ status: 'cancelling' })
-    .where(
-      and(
-        eq(executions.id, executionId),
-        sql`${executions.status} IN ('queued', 'running')`
-      )
-    )
+    .where(and(eq(executions.id, executionId), sql`${executions.status} IN ('queued', 'running')`))
     .returning();
 
   if (!updated) throw new ConflictError('Execution status changed concurrently');
@@ -1868,7 +1839,12 @@ export async function getExecutionById(executionId: string): Promise<ExecutionWi
   return {
     ...row.execution,
     agent: { id: row.agentId, name: row.agentName, slug: row.agentSlug },
-    capability: { id: row.capId, label: row.capLabel, key: row.capKey, interactionMode: row.capMode },
+    capability: {
+      id: row.capId,
+      label: row.capLabel,
+      key: row.capKey,
+      interactionMode: row.capMode,
+    },
   };
 }
 
@@ -1900,10 +1876,7 @@ export async function listExecutions(input: ListExecutionsInput = {}): Promise<{
       .orderBy(desc(executions.createdAt))
       .limit(pageSize)
       .offset(offset),
-    db
-      .select({ total: count() })
-      .from(executions)
-      .where(where),
+    db.select({ total: count() }).from(executions).where(where),
   ]);
 
   return { data, total, page, pageSize };
@@ -1911,6 +1884,7 @@ export async function listExecutions(input: ListExecutionsInput = {}): Promise<{
 ```
 
 **Key design decisions**:
+
 - Concurrency check before enqueue: count running/queued executions per agent, reject if at `maxConcurrent`
 - `mode` is copied from `capability.interactionMode` at queue time (denormalized for history)
 - Cancel uses `WHERE status IN ('queued', 'running')` guard to prevent race conditions
@@ -1940,9 +1914,14 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     agentId: url.searchParams.get('agentId') ?? undefined,
     status: (url.searchParams.get('status') as any) ?? undefined,
     page: url.searchParams.has('page') ? Number(url.searchParams.get('page')) : undefined,
-    pageSize: url.searchParams.has('pageSize') ? Number(url.searchParams.get('pageSize')) : undefined,
+    pageSize: url.searchParams.has('pageSize')
+      ? Number(url.searchParams.get('pageSize'))
+      : undefined,
   });
-  return NextResponse.json({ data: result.data, meta: { total: result.total, page: result.page, pageSize: result.pageSize } });
+  return NextResponse.json({
+    data: result.data,
+    meta: { total: result.total, page: result.page, pageSize: result.pageSize },
+  });
 });
 
 /** POST /api/executions — Create a new execution */
@@ -1971,7 +1950,7 @@ export const GET = withErrorBoundary(
     const { id } = await params;
     const execution = await getExecutionById(id);
     return NextResponse.json({ data: execution });
-  }
+  },
 );
 ```
 
@@ -1993,7 +1972,7 @@ export const POST = withErrorBoundary(
     const { id } = await params;
     const execution = await cancelExecution(id);
     return NextResponse.json({ data: execution }, { status: 202 });
-  }
+  },
 );
 ```
 
@@ -2032,17 +2011,13 @@ export const POST = withErrorBoundary(
       throw new ValidationError('message is required and must be a string');
     }
 
-    const [execution] = await db
-      .select()
-      .from(executions)
-      .where(eq(executions.id, id))
-      .limit(1);
+    const [execution] = await db.select().from(executions).where(eq(executions.id, id)).limit(1);
 
     if (!execution) throw new NotFoundError(`Execution ${id} not found`);
 
     if (execution.status !== 'running') {
       throw new ConflictError(
-        `Cannot send message to execution in "${execution.status}" status. Must be "running".`
+        `Cannot send message to execution in "${execution.status}" status. Must be "running".`,
       );
     }
 
@@ -2055,7 +2030,7 @@ export const POST = withErrorBoundary(
     writeFileSync(msgFile, message, 'utf-8');
 
     return NextResponse.json({ data: { sent: true } });
-  }
+  },
 );
 ```
 
@@ -2093,10 +2068,7 @@ const FILE_POLL_INTERVAL_MS = 500;
  * 5. On terminal status, flush final bytes, send 'done', close
  * 6. On client disconnect, clean up watchers/timers
  */
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const encoder = new TextEncoder();
@@ -2119,17 +2091,22 @@ export async function GET(
 
       function cleanup() {
         closed = true;
-        if (watcher) { watcher.close(); watcher = null; }
-        if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-        if (filePollTimer) { clearInterval(filePollTimer); filePollTimer = null; }
+        if (watcher) {
+          watcher.close();
+          watcher = null;
+        }
+        if (statusTimer) {
+          clearInterval(statusTimer);
+          statusTimer = null;
+        }
+        if (filePollTimer) {
+          clearInterval(filePollTimer);
+          filePollTimer = null;
+        }
       }
 
       // Load execution
-      const [execution] = await db
-        .select()
-        .from(executions)
-        .where(eq(executions.id, id))
-        .limit(1);
+      const [execution] = await db.select().from(executions).where(eq(executions.id, id)).limit(1);
 
       if (!execution) {
         send({ type: 'error', message: `Execution ${id} not found` });
@@ -2205,7 +2182,9 @@ export async function GET(
         if (!logPath) return;
         // If log file appeared after SSE started, set up watcher
         if (!watcher && existsSync(logPath)) {
-          try { watcher = watch(logPath, () => readNewBytes()); } catch {}
+          try {
+            watcher = watch(logPath, () => readNewBytes());
+          } catch {}
         }
         readNewBytes();
       }, FILE_POLL_INTERVAL_MS);
@@ -2245,9 +2224,18 @@ export async function GET(
 
     cancel() {
       closed = true;
-      if (watcher) { watcher.close(); watcher = null; }
-      if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-      if (filePollTimer) { clearInterval(filePollTimer); filePollTimer = null; }
+      if (watcher) {
+        watcher.close();
+        watcher = null;
+      }
+      if (statusTimer) {
+        clearInterval(statusTimer);
+        statusTimer = null;
+      }
+      if (filePollTimer) {
+        clearInterval(filePollTimer);
+        filePollTimer = null;
+      }
     },
   });
 
@@ -2255,7 +2243,7 @@ export async function GET(
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     },
   });
@@ -2263,6 +2251,7 @@ export async function GET(
 ```
 
 **Key design decisions**:
+
 - Uses `fs.watch` (Linux inotify) as primary file change notification, with 500ms polling as fallback
 - Reads new bytes from last offset (not re-reading entire file) for efficiency
 - Parses `[stdout]`/`[stderr]`/`[system]` prefixes written by `FileLogWriter` (Step A2)
@@ -2312,7 +2301,7 @@ export const GET = withErrorBoundary(
         'Content-Disposition': `attachment; filename="execution-${id}.log"`,
       },
     });
-  }
+  },
 );
 ```
 
@@ -2391,10 +2380,7 @@ export function createTerminalToken(
  * 2. Signature verification (HMAC-SHA256, timing-safe)
  * 3. Expiration (exp claim)
  */
-export function verifyTerminalToken(
-  token: string,
-  secret: string,
-): TerminalTokenPayload {
+export function verifyTerminalToken(token: string, secret: string): TerminalTokenPayload {
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new Error('Invalid token format');
@@ -2436,6 +2422,7 @@ function sign(data: string, secret: string): string {
 ```
 
 **Key design decisions**:
+
 - Minimal JWT implementation (HS256 only) -- no external library needed for this simple use case
 - Timing-safe signature comparison via `timingSafeEqual` to prevent timing attacks
 - 5-minute token lifetime -- enough for WebSocket upgrade, short enough to limit replay window
@@ -2527,22 +2514,18 @@ io.on('connection', (socket) => {
   if (!entry) {
     // Spawn node-pty process that attaches to the tmux session
     try {
-      const ptyProcess = pty.spawn(
-        'tmux',
-        ['attach-session', '-t', sessionName],
-        {
-          name: 'xterm-256color',
-          cols: 200,
-          rows: 50,
-          cwd: process.env.HOME ?? '/tmp',
-          env: {
-            TERM: 'xterm-256color',
-            COLORTERM: 'truecolor',
-            HOME: process.env.HOME ?? '/tmp',
-            PATH: process.env.PATH ?? '/usr/bin:/bin',
-          },
+      const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', sessionName], {
+        name: 'xterm-256color',
+        cols: 200,
+        rows: 50,
+        cwd: process.env.HOME ?? '/tmp',
+        env: {
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+          HOME: process.env.HOME ?? '/tmp',
+          PATH: process.env.PATH ?? '/usr/bin:/bin',
         },
-      );
+      });
 
       entry = {
         tmuxName: sessionName,
@@ -2580,7 +2563,9 @@ io.on('connection', (socket) => {
 
   // Step 3: Add this socket as a viewer
   entry.viewers.add(socket.id);
-  console.log(`[terminal] Viewer connected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`);
+  console.log(
+    `[terminal] Viewer connected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`,
+  );
 
   // Step 4: Handle input from this viewer
   socket.on('terminal:input', (data: string) => {
@@ -2598,7 +2583,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (entry) {
       entry.viewers.delete(socket.id);
-      console.log(`[terminal] Viewer disconnected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`);
+      console.log(
+        `[terminal] Viewer disconnected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`,
+      );
 
       // If no viewers left, kill the PTY (tmux detaches, agent keeps running)
       if (entry.viewers.size === 0) {
@@ -2643,6 +2630,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 ```
 
 **Key design decisions**:
+
 - **Standalone process** on port 4101 -- not embedded in Next.js (avoids middleware conflicts, separate scaling)
 - **Socket.io** for WebSocket transport with automatic fallback and reconnection
 - **Multi-viewer**: Multiple browser tabs can connect to the same tmux session simultaneously via the `viewers` Set
@@ -2735,9 +2723,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
   // Only allow terminal access for running/cancelling executions
   if (!['running', 'cancelling'].includes(execution.status)) {
-    throw new ValidationError(
-      `Cannot attach terminal to execution in "${execution.status}" state`
-    );
+    throw new ValidationError(`Cannot attach terminal to execution in "${execution.status}" state`);
   }
 
   const token = createTerminalToken(
@@ -2758,14 +2744,14 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
 Add these to `src/lib/config.ts` Zod schema:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ALLOWED_WORKING_DIRS` | Comma-separated list of allowed working directories | `/home/ubuntu/projects` |
-| `LOG_DIR` | Base directory for execution log files | `/home/ubuntu/projects/agent-monitor/logs` |
-| `WORKER_ID` | Unique identifier for this worker instance | `worker-1` |
-| `TERMINAL_JWT_SECRET` | Secret for signing terminal WebSocket JWTs | (required, no default) |
-| `TERMINAL_PORT` | Port for the terminal WebSocket server | `4101` |
-| `NEXT_PUBLIC_URL` | Origin URL for CORS on terminal server | `http://localhost:4100` |
+| Variable               | Description                                         | Default                                    |
+| ---------------------- | --------------------------------------------------- | ------------------------------------------ |
+| `ALLOWED_WORKING_DIRS` | Comma-separated list of allowed working directories | `/home/ubuntu/projects`                    |
+| `LOG_DIR`              | Base directory for execution log files              | `/home/ubuntu/projects/agent-monitor/logs` |
+| `WORKER_ID`            | Unique identifier for this worker instance          | `worker-1`                                 |
+| `TERMINAL_JWT_SECRET`  | Secret for signing terminal WebSocket JWTs          | (required, no default)                     |
+| `TERMINAL_PORT`        | Port for the terminal WebSocket server              | `4101`                                     |
+| `NEXT_PUBLIC_URL`      | Origin URL for CORS on terminal server              | `http://localhost:4100`                    |
 
 > **JWT_SECRET Decision (C-08 resolution)**: `TERMINAL_JWT_SECRET` is a **separate secret** from the main `JWT_SECRET` defined in Phase 1's config.ts. The terminal server runs as a standalone process and needs its own secret for short-lived WebSocket auth tokens. Add `TERMINAL_JWT_SECRET: z.string().min(16).optional()` to the Phase 1 config.ts Zod schema. When `TERMINAL_JWT_SECRET` is not set, the terminal token API route (`POST /api/terminal/token`) should fall back to `config.JWT_SECRET`. The terminal server process reads it directly from `process.env.TERMINAL_JWT_SECRET` (not from the Zod config, since it runs outside Next.js).
 
@@ -2773,31 +2759,31 @@ Add these to `src/lib/config.ts` Zod schema:
 
 ## File Summary
 
-| Step | File Path | Lines (est.) | Purpose |
-|------|-----------|-------------|---------|
-| A1 | `src/lib/worker/safety.ts` | ~130 | Working dir validation, env building, arg validation |
-| A2 | `src/lib/worker/log-writer.ts` | ~120 | File-based log writer with batched DB updates |
-| A3 | `src/lib/worker/heartbeat.ts` | ~40 | 30-second heartbeat timer |
-| A4 | `src/lib/worker/execution-runner.ts` | ~180 | Core orchestrator with race-guarded finalization |
-| A5 | `src/lib/worker/adapters/adapter-factory.ts` | ~35 | Adapter selection by mode + binary name |
-| B1 | `src/lib/worker/adapters/types.ts` | ~55 | AgentAdapter + ManagedProcess interfaces |
-| B2 | `src/lib/worker/tmux-manager.ts` | ~110 | Low-level tmux session operations |
-| B3 | `src/lib/worker/adapters/claude-adapter.ts` | ~140 | Stream-json NDJSON bidirectional |
-| B4 | `src/lib/worker/adapters/codex-adapter.ts` | ~220 | JSON-RPC 2.0 bidirectional |
-| B5 | `src/lib/worker/adapters/gemini-adapter.ts` | ~130 | tmux send-keys / capture-pane polling |
-| B6 | `src/lib/worker/adapters/template-adapter.ts` | ~70 | Simple spawn for CLI tools |
-| B7a | `src/lib/services/execution-service.ts` | ~170 | CRUD + cancel for executions |
-| B7b | `src/app/api/executions/route.ts` | ~30 | GET list, POST create |
-| B7b | `src/app/api/executions/[id]/route.ts` | ~15 | GET detail with agent + capability |
-| B7b | `src/app/api/executions/[id]/cancel/route.ts` | ~20 | POST cancel |
-| B7b | `src/app/api/executions/[id]/message/route.ts` | ~40 | POST send message |
-| B7c | `src/app/api/executions/[id]/logs/stream/route.ts` | ~130 | SSE live log tail via fs.watch |
-| B7d | `src/app/api/executions/[id]/logs/route.ts` | ~30 | Full log download |
-| B7e | `src/app/api/workers/status/route.ts` | ~10 | Worker heartbeat status |
-| C1 | `src/terminal/auth.ts` | ~70 | JWT creation + verification |
-| C2 | `src/terminal/server.ts` | ~170 | WebSocket terminal server (Socket.io + node-pty) |
-| C3 | `ecosystem.config.js` | update | PM2 entry for terminal server |
-| C4 | `src/app/api/terminal/token/route.ts` | ~55 | Terminal token issuance API |
+| Step | File Path                                          | Lines (est.) | Purpose                                              |
+| ---- | -------------------------------------------------- | ------------ | ---------------------------------------------------- |
+| A1   | `src/lib/worker/safety.ts`                         | ~130         | Working dir validation, env building, arg validation |
+| A2   | `src/lib/worker/log-writer.ts`                     | ~120         | File-based log writer with batched DB updates        |
+| A3   | `src/lib/worker/heartbeat.ts`                      | ~40          | 30-second heartbeat timer                            |
+| A4   | `src/lib/worker/execution-runner.ts`               | ~180         | Core orchestrator with race-guarded finalization     |
+| A5   | `src/lib/worker/adapters/adapter-factory.ts`       | ~35          | Adapter selection by mode + binary name              |
+| B1   | `src/lib/worker/adapters/types.ts`                 | ~55          | AgentAdapter + ManagedProcess interfaces             |
+| B2   | `src/lib/worker/tmux-manager.ts`                   | ~110         | Low-level tmux session operations                    |
+| B3   | `src/lib/worker/adapters/claude-adapter.ts`        | ~140         | Stream-json NDJSON bidirectional                     |
+| B4   | `src/lib/worker/adapters/codex-adapter.ts`         | ~220         | JSON-RPC 2.0 bidirectional                           |
+| B5   | `src/lib/worker/adapters/gemini-adapter.ts`        | ~130         | tmux send-keys / capture-pane polling                |
+| B6   | `src/lib/worker/adapters/template-adapter.ts`      | ~70          | Simple spawn for CLI tools                           |
+| B7a  | `src/lib/services/execution-service.ts`            | ~170         | CRUD + cancel for executions                         |
+| B7b  | `src/app/api/executions/route.ts`                  | ~30          | GET list, POST create                                |
+| B7b  | `src/app/api/executions/[id]/route.ts`             | ~15          | GET detail with agent + capability                   |
+| B7b  | `src/app/api/executions/[id]/cancel/route.ts`      | ~20          | POST cancel                                          |
+| B7b  | `src/app/api/executions/[id]/message/route.ts`     | ~40          | POST send message                                    |
+| B7c  | `src/app/api/executions/[id]/logs/stream/route.ts` | ~130         | SSE live log tail via fs.watch                       |
+| B7d  | `src/app/api/executions/[id]/logs/route.ts`        | ~30          | Full log download                                    |
+| B7e  | `src/app/api/workers/status/route.ts`              | ~10          | Worker heartbeat status                              |
+| C1   | `src/terminal/auth.ts`                             | ~70          | JWT creation + verification                          |
+| C2   | `src/terminal/server.ts`                           | ~170         | WebSocket terminal server (Socket.io + node-pty)     |
+| C3   | `ecosystem.config.js`                              | update       | PM2 entry for terminal server                        |
+| C4   | `src/app/api/terminal/token/route.ts`              | ~55          | Terminal token issuance API                          |
 
 **Total estimated new code**: ~2,000 lines across 22 files.
 
@@ -2807,33 +2793,33 @@ Add these to `src/lib/config.ts` Zod schema:
 
 ### Unit Tests
 
-| Test | File | What It Verifies |
-|------|------|------------------|
-| `buildCommandArgs` substitution | `safety.test.ts` | `{{branch}}` replaced with validated arg value |
-| `buildCommandArgs` missing required | `safety.test.ts` | Throws `ValidationError` for missing args |
-| `buildCommandArgs` object values | `safety.test.ts` | Rejects objects/arrays in token positions |
-| `validateWorkingDir` allowlist | `safety.test.ts` | Only dirs in `ALLOWED_WORKING_DIRS` pass |
-| `validateWorkingDir` symlink traversal | `safety.test.ts` | Symlink pointing outside allowlist is rejected |
-| `buildChildEnv` no leak | `safety.test.ts` | Result contains only allowlisted vars, no `process.env` spread |
-| Claude adapter NDJSON parse | `claude-adapter.test.ts` | Extracts `session_id` from `system.init` message |
-| Claude adapter sendMessage | `claude-adapter.test.ts` | Writes correct NDJSON to stdin |
-| Codex adapter handshake | `codex-adapter.test.ts` | Sends `initialize` + `initialized` in correct order |
-| Codex adapter turn lifecycle | `codex-adapter.test.ts` | `turn/start` sends, `turn/completed` notification parsed |
-| Gemini adapter tmux send | `gemini-adapter.test.ts` | `sendMessage` calls `tmux send-keys` with `-l` flag |
-| TmuxManager operations | `tmux-manager.test.ts` | create, kill, capturePane, hasSession |
+| Test                                   | File                     | What It Verifies                                               |
+| -------------------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `buildCommandArgs` substitution        | `safety.test.ts`         | `{{branch}}` replaced with validated arg value                 |
+| `buildCommandArgs` missing required    | `safety.test.ts`         | Throws `ValidationError` for missing args                      |
+| `buildCommandArgs` object values       | `safety.test.ts`         | Rejects objects/arrays in token positions                      |
+| `validateWorkingDir` allowlist         | `safety.test.ts`         | Only dirs in `ALLOWED_WORKING_DIRS` pass                       |
+| `validateWorkingDir` symlink traversal | `safety.test.ts`         | Symlink pointing outside allowlist is rejected                 |
+| `buildChildEnv` no leak                | `safety.test.ts`         | Result contains only allowlisted vars, no `process.env` spread |
+| Claude adapter NDJSON parse            | `claude-adapter.test.ts` | Extracts `session_id` from `system.init` message               |
+| Claude adapter sendMessage             | `claude-adapter.test.ts` | Writes correct NDJSON to stdin                                 |
+| Codex adapter handshake                | `codex-adapter.test.ts`  | Sends `initialize` + `initialized` in correct order            |
+| Codex adapter turn lifecycle           | `codex-adapter.test.ts`  | `turn/start` sends, `turn/completed` notification parsed       |
+| Gemini adapter tmux send               | `gemini-adapter.test.ts` | `sendMessage` calls `tmux send-keys` with `-l` flag            |
+| TmuxManager operations                 | `tmux-manager.test.ts`   | create, kill, capturePane, hasSession                          |
 
 ### Integration Tests
 
-| Test | What It Verifies |
-|------|------------------|
-| Create execution -> worker claims -> completes | Full lifecycle: queued -> running -> succeeded |
-| Cancel mid-execution | Status transitions: running -> cancelling -> cancelled |
-| Output limit exceeded | SIGTERM sent when log exceeds `maxOutputBytes` |
-| Timeout enforcement | SIGTERM at timeout, SIGKILL after 5s grace |
-| Session resume | New execution with `parentExecutionId` triggers adapter.resume() |
-| Send follow-up message | `POST /api/executions/:id/message` delivers to Claude adapter stdin |
-| Terminal WebSocket auth | Valid JWT -> connects; expired JWT -> rejected |
-| Multi-viewer terminal | Two Socket.io clients see same PTY output |
+| Test                                           | What It Verifies                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| Create execution -> worker claims -> completes | Full lifecycle: queued -> running -> succeeded                      |
+| Cancel mid-execution                           | Status transitions: running -> cancelling -> cancelled              |
+| Output limit exceeded                          | SIGTERM sent when log exceeds `maxOutputBytes`                      |
+| Timeout enforcement                            | SIGTERM at timeout, SIGKILL after 5s grace                          |
+| Session resume                                 | New execution with `parentExecutionId` triggers adapter.resume()    |
+| Send follow-up message                         | `POST /api/executions/:id/message` delivers to Claude adapter stdin |
+| Terminal WebSocket auth                        | Valid JWT -> connects; expired JWT -> rejected                      |
+| Multi-viewer terminal                          | Two Socket.io clients see same PTY output                           |
 
 ---
 

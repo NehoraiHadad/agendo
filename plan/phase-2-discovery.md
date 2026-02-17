@@ -43,10 +43,7 @@ export interface ScannedBinary {
  */
 export async function scanPATH(): Promise<Map<string, ScannedBinary>> {
   const envPath = process.env.PATH || '';
-  const pathDirs = envPath
-    .replace(/["]+/g, '')
-    .split(path.delimiter)
-    .filter(Boolean);
+  const pathDirs = envPath.replace(/["]+/g, '').split(path.delimiter).filter(Boolean);
 
   // Deduplicate PATH dirs (common: /usr/bin and /bin are often the same)
   const uniqueDirs = [...new Set(pathDirs)];
@@ -106,6 +103,7 @@ export async function scanPATH(): Promise<Map<string, ScannedBinary>> {
 **Purpose**: Map a binary to its source package, get package metadata, detect file type, extract version.
 
 **Key functions**:
+
 - `identifyBinary(name, binaryPath)` -- returns package name + metadata via `dpkg -S` and `apt-cache show`
 - `getFileType(path)` -- runs `file` command to detect ELF/script/symlink
 - `getVersion(name)` -- runs `--version`, parses first line
@@ -129,10 +127,7 @@ export interface BinaryIdentity {
 /**
  * Identify a binary: what package owns it, what section, etc.
  */
-export async function identifyBinary(
-  name: string,
-  binaryPath: string,
-): Promise<BinaryIdentity> {
+export async function identifyBinary(name: string, binaryPath: string): Promise<BinaryIdentity> {
   const [packageName, fileType, version] = await Promise.all([
     getPackageName(binaryPath),
     getFileType(binaryPath),
@@ -253,23 +248,72 @@ export type ToolType =
 
 /** Known AI agent binary names */
 const AI_AGENT_NAMES = new Set([
-  'claude', 'gemini', 'codex', 'cursor-agent', 'openai',
-  'aichat', 'ollama', 'grok', 'copilot', 'adk', 'tiny-agents',
+  'claude',
+  'gemini',
+  'codex',
+  'cursor-agent',
+  'openai',
+  'aichat',
+  'ollama',
+  'grok',
+  'copilot',
+  'adk',
+  'tiny-agents',
 ]);
 
 /** Known interactive TUI tools */
 const TUI_TOOLS = new Set([
-  'vim', 'nvim', 'nano', 'emacs', 'htop', 'top', 'btop',
-  'tmux', 'screen', 'less', 'more', 'mc',
+  'vim',
+  'nvim',
+  'nano',
+  'emacs',
+  'htop',
+  'top',
+  'btop',
+  'tmux',
+  'screen',
+  'less',
+  'more',
+  'mc',
 ]);
 
 /** Known shell utilities */
 const SHELL_UTILS = new Set([
-  'ls', 'cat', 'grep', 'find', 'sort', 'awk', 'sed', 'tr',
-  'cut', 'wc', 'head', 'tail', 'cp', 'mv', 'rm', 'mkdir',
-  'chmod', 'chown', 'echo', 'printf', 'test', 'true', 'false',
-  'env', 'pwd', 'cd', 'basename', 'dirname', 'readlink',
-  'tee', 'xargs', 'uniq', 'comm', 'diff', 'patch',
+  'ls',
+  'cat',
+  'grep',
+  'find',
+  'sort',
+  'awk',
+  'sed',
+  'tr',
+  'cut',
+  'wc',
+  'head',
+  'tail',
+  'cp',
+  'mv',
+  'rm',
+  'mkdir',
+  'chmod',
+  'chown',
+  'echo',
+  'printf',
+  'test',
+  'true',
+  'false',
+  'env',
+  'pwd',
+  'cd',
+  'basename',
+  'dirname',
+  'readlink',
+  'tee',
+  'xargs',
+  'uniq',
+  'comm',
+  'diff',
+  'patch',
 ]);
 
 export interface ClassificationInput {
@@ -280,9 +324,7 @@ export interface ClassificationInput {
 /**
  * Classify a binary using multiple heuristics.
  */
-export async function classifyBinary(
-  input: ClassificationInput,
-): Promise<ToolType> {
+export async function classifyBinary(input: ClassificationInput): Promise<ToolType> {
   const { name, packageSection } = input;
 
   if (AI_AGENT_NAMES.has(name)) return 'ai-agent';
@@ -648,8 +690,12 @@ export async function runDiscovery(
   // Sort: AI agents first, then by name
   tools.sort((a, b) => {
     const typeOrder: Record<ToolType, number> = {
-      'ai-agent': 0, 'cli-tool': 1, 'admin-tool': 2,
-      'interactive-tui': 3, 'shell-util': 4, 'daemon': 5,
+      'ai-agent': 0,
+      'cli-tool': 1,
+      'admin-tool': 2,
+      'interactive-tui': 3,
+      'shell-util': 4,
+      daemon: 5,
     };
     const orderDiff = (typeOrder[a.toolType] ?? 9) - (typeOrder[b.toolType] ?? 9);
     if (orderDiff !== 0) return orderDiff;
@@ -673,9 +719,7 @@ async function processBinary(
 
   let schema: ParsedSchema | null = null;
   const shouldExtractSchema =
-    preset !== null ||
-    schemaTargets?.has(binary.name) ||
-    toolType === 'ai-agent';
+    preset !== null || schemaTargets?.has(binary.name) || toolType === 'ai-agent';
 
   if (shouldExtractSchema) {
     const helpText = await getHelpText(binary.name);
@@ -713,12 +757,14 @@ async function processBinary(
 **Purpose**: Business logic for agent CRUD. Validates binary paths via `accessSync`, generates unique slugs, handles bulk creation from discovered tools.
 
 Key functions:
+
 - `createAgent(data)` -- validates binary, generates slug, inserts row
 - `createFromDiscovery(tool)` -- creates agent + default capabilities from preset or parsed schema
 - `getAgentById(id)`, `listAgents()`, `updateAgent(id, data)`, `deleteAgent(id)` -- standard CRUD
 - Binary path validated with `accessSync(path, constants.X_OK)` -- NOT shell execution
 
 See full implementation in the architecture section. The service uses:
+
 - `drizzle-orm` queries for all DB operations
 - `ilike` for slug collision detection
 - FK cascade handles capability cleanup on delete
@@ -733,6 +779,7 @@ See full implementation in the architecture section. The service uses:
 **Purpose**: CRUD for agent capabilities. Key validation: template mode requires `commandTokens`, prompt mode allows null.
 
 Key functions:
+
 - `createCapability(data)` -- validates mode/token consistency, inserts row
 - `getCapabilitiesByAgent(agentId)`, `getCapabilityById(id)` -- read operations
 - `updateCapability(id, data)`, `deleteCapability(id)` -- mutation operations
@@ -752,11 +799,13 @@ Key functions:
 All server actions follow the `{ success, data?, error? }` return pattern. Each calls `revalidatePath('/agents')` after mutation.
 
 The `triggerScan` action:
+
 1. Fetches existing agent slugs from DB
 2. Calls `runDiscovery(undefined, existingSlugs)`
 3. Returns the discovered tools list
 
 The `confirmTool` action:
+
 1. Receives a `DiscoveredTool` object
 2. Calls `createFromDiscovery(tool)` from agent-service
 3. Returns the created agent
@@ -776,6 +825,7 @@ The `confirmTool` action:
 All routes use `withErrorBoundary` wrapper. All use `await params` (Next.js 16 async params requirement). POST/PATCH routes validate input with Zod schemas.
 
 Key Zod schemas:
+
 - `createAgentSchema`: `name` (string, 1-100), `binaryPath` (string), `workingDir` (nullable string), `envAllowlist` (string[]), `maxConcurrent` (int, 1-10)
 - `createCapSchema`: `key`, `label`, `interactionMode` (enum), `commandTokens` (nullable string[]), `promptTemplate`, `argsSchema`, `dangerLevel` (0-3), `timeoutSec`
 
@@ -794,6 +844,7 @@ Key Zod schemas:
 **Create** `/home/ubuntu/projects/agent-monitor/src/app/(dashboard)/agents/discovery/page.tsx` -- renders `DiscoveryScanPage`
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/discovery-scan-page.tsx` (`"use client"`):
+
 - "Scan Now" button triggers `triggerScan()` server action via `useTransition`
 - Displays results in a grid of `DiscoveredToolCard` components
 - `DiscoveryFilterBar` filters by toolType (All, AI Agents, CLI Tools, etc.)
@@ -801,6 +852,7 @@ Key Zod schemas:
 - Empty state when no scan has been run
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/discovered-tool-card.tsx` (`"use client"`):
+
 - Shows tool name, type badge (color-coded), description, version
 - "Preset" badge for AI tools with presets
 - "Confirmed" badge for already-registered tools
@@ -808,6 +860,7 @@ Key Zod schemas:
 - Uses `useTransition` for pending state on confirm
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/discovery-filter-bar.tsx` (`"use client"`):
+
 - Row of filter buttons: All, AI Agents, CLI Tools, Admin Tools, TUI Apps, Daemons, Shell Utils
 - Active filter highlighted with `variant="default"`
 
@@ -816,21 +869,25 @@ Key Zod schemas:
 ## Step 13: Frontend -- Agent Registry
 
 **Replace** `/home/ubuntu/projects/agent-monitor/src/app/(dashboard)/agents/page.tsx`:
+
 - RSC page that fetches agents via `agentService.listAgents()`
 - "Discover" button links to `/agents/discovery`
 - Renders `AgentTable`
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/agent-table.tsx`:
+
 - RSC component rendering a `Table` with columns: Name, Binary Path, Type, Status, Version, Actions
 - Empty state message when no agents exist
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/agent-row.tsx` (`"use client"`):
+
 - Expandable row -- click to show/hide capabilities
 - ChevronDown/ChevronRight toggle icon
 - Edit (pencil icon) and Delete (trash icon) action buttons
 - Delete calls `deleteAgentAction` with confirmation dialog
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/agent-status-badge.tsx`:
+
 - Badge showing "Active" (green) or "Inactive" (gray) based on `isActive` field
 
 ---
@@ -838,12 +895,14 @@ Key Zod schemas:
 ## Step 14: Frontend -- Capability List
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/capability-list.tsx` (`"use client"`):
+
 - Rendered inside expanded agent row
 - Fetches capabilities via `apiFetch` on mount
 - Shows count in header
 - Lists `CapabilityRow` components
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/agents/capability-row.tsx` (`"use client"`):
+
 - Shows capability label, interaction mode badge, source badge
 - Danger level icon (ShieldCheck=0, Shield=1, ShieldAlert=2, ShieldBan=3) with color coding
 - "Disabled" badge when `isEnabled` is false
@@ -856,21 +915,25 @@ Key Zod schemas:
 Phase 2 implements string and boolean fields only. Number, enum, array, object fields added in Phase 6.
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/forms/schema-form.tsx` (`"use client"`):
+
 - Uses `react-hook-form` with `useForm()`
 - Iterates over `schema.properties` and renders `SchemaField` for each
 - Checks `schema.required` array for required fields
 - Submit button with `isSubmitting` state
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/forms/schema-field.tsx`:
+
 - Switch on `schema.type`: renders `SchemaFieldString` or `SchemaFieldBoolean`
 - Unsupported types show a "Unsupported field type" message
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/forms/schema-field-string.tsx`:
+
 - `<input type="text">` with label, description, required indicator
 - Registered with react-hook-form via `register(name, { required })`
 - Error message display
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/components/forms/schema-field-boolean.tsx`:
+
 - `<input type="checkbox">` with label and description
 - Registered with react-hook-form
 
@@ -879,11 +942,13 @@ Phase 2 implements string and boolean fields only. Number, enum, array, object f
 ## Step 16: Unit Tests
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/lib/discovery/__tests__/scanner.test.ts`:
+
 - Test: `scanPATH()` returns a Map with size > 0
 - Test: deduplication -- binary names appear only once
 - Test: symlink resolution -- `isSymlink` and `realPath` fields are populated
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/lib/discovery/__tests__/classifier.test.ts`:
+
 - Test: `claude` classified as `ai-agent`
 - Test: `gemini` classified as `ai-agent`
 - Test: `codex` classified as `ai-agent`
@@ -892,6 +957,7 @@ Phase 2 implements string and boolean fields only. Number, enum, array, object f
 - Test: unknown tool defaults to `cli-tool`
 
 **Create** `/home/ubuntu/projects/agent-monitor/src/lib/discovery/__tests__/schema-extractor.test.ts`:
+
 - Test: parses options with short/long flags from help text
 - Test: parses subcommands from help text
 - Test: `source` is `'unknown'` when no structure found
@@ -901,15 +967,15 @@ Phase 2 implements string and boolean fields only. Number, enum, array, object f
 
 ## Testing Checklist
 
-| Test | File | What It Verifies |
-|------|------|------------------|
-| PATH scanning | `discovery/__tests__/scanner.test.ts` | Returns Map, deduplicates, resolves symlinks |
-| Binary classification | `discovery/__tests__/classifier.test.ts` | AI agent detection, TUI, shell-util, default fallback |
-| Regex help parsing | `discovery/__tests__/schema-extractor.test.ts` | Option and subcommand extraction, empty handling |
-| Create from discovery | Manual / integration | Confirm tool -> agent + capabilities created |
-| Template cap requires tokens | API test | mode=template + no commandTokens -> 422 |
-| Prompt cap allows null tokens | API test | mode=prompt + no commandTokens -> 201 |
-| Binary path validation | API test | createAgent with invalid path -> ValidationError |
+| Test                          | File                                           | What It Verifies                                      |
+| ----------------------------- | ---------------------------------------------- | ----------------------------------------------------- |
+| PATH scanning                 | `discovery/__tests__/scanner.test.ts`          | Returns Map, deduplicates, resolves symlinks          |
+| Binary classification         | `discovery/__tests__/classifier.test.ts`       | AI agent detection, TUI, shell-util, default fallback |
+| Regex help parsing            | `discovery/__tests__/schema-extractor.test.ts` | Option and subcommand extraction, empty handling      |
+| Create from discovery         | Manual / integration                           | Confirm tool -> agent + capabilities created          |
+| Template cap requires tokens  | API test                                       | mode=template + no commandTokens -> 422               |
+| Prompt cap allows null tokens | API test                                       | mode=prompt + no commandTokens -> 201                 |
+| Binary path validation        | API test                                       | createAgent with invalid path -> ValidationError      |
 
 Run tests:
 

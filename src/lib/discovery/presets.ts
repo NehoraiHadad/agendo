@@ -53,7 +53,8 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
         label: 'Run Prompt',
         description: 'Send a prompt to Claude Code with stream-json bidirectional output',
         interactionMode: 'prompt',
-        promptTemplate: '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+        promptTemplate:
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },
@@ -88,7 +89,8 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
         label: 'Run Prompt',
         description: 'Send a prompt to Codex CLI via app-server JSON-RPC protocol',
         interactionMode: 'prompt',
-        promptTemplate: '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+        promptTemplate:
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },
@@ -124,7 +126,8 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
         label: 'Run Prompt',
         description: 'Send a prompt to Gemini CLI in interactive mode via tmux',
         interactionMode: 'prompt',
-        promptTemplate: '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+        promptTemplate:
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },

@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+build/
+dist/
+coverage/
+
+# Generated files
+next-env.d.ts
+pnpm-lock.yaml
+
+# Database
+drizzle/

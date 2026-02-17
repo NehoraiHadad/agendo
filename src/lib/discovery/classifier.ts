@@ -13,23 +13,72 @@ export type ToolType =
 
 /** Known AI agent binary names */
 const AI_AGENT_NAMES = new Set([
-  'claude', 'gemini', 'codex', 'cursor-agent', 'openai',
-  'aichat', 'ollama', 'grok', 'copilot', 'adk', 'tiny-agents',
+  'claude',
+  'gemini',
+  'codex',
+  'cursor-agent',
+  'openai',
+  'aichat',
+  'ollama',
+  'grok',
+  'copilot',
+  'adk',
+  'tiny-agents',
 ]);
 
 /** Known interactive TUI tools */
 const TUI_TOOLS = new Set([
-  'vim', 'nvim', 'nano', 'emacs', 'htop', 'top', 'btop',
-  'tmux', 'screen', 'less', 'more', 'mc',
+  'vim',
+  'nvim',
+  'nano',
+  'emacs',
+  'htop',
+  'top',
+  'btop',
+  'tmux',
+  'screen',
+  'less',
+  'more',
+  'mc',
 ]);
 
 /** Known shell utilities */
 const SHELL_UTILS = new Set([
-  'ls', 'cat', 'grep', 'find', 'sort', 'awk', 'sed', 'tr',
-  'cut', 'wc', 'head', 'tail', 'cp', 'mv', 'rm', 'mkdir',
-  'chmod', 'chown', 'echo', 'printf', 'test', 'true', 'false',
-  'env', 'pwd', 'cd', 'basename', 'dirname', 'readlink',
-  'tee', 'xargs', 'uniq', 'comm', 'diff', 'patch',
+  'ls',
+  'cat',
+  'grep',
+  'find',
+  'sort',
+  'awk',
+  'sed',
+  'tr',
+  'cut',
+  'wc',
+  'head',
+  'tail',
+  'cp',
+  'mv',
+  'rm',
+  'mkdir',
+  'chmod',
+  'chown',
+  'echo',
+  'printf',
+  'test',
+  'true',
+  'false',
+  'env',
+  'pwd',
+  'cd',
+  'basename',
+  'dirname',
+  'readlink',
+  'tee',
+  'xargs',
+  'uniq',
+  'comm',
+  'diff',
+  'patch',
 ]);
 
 export interface ClassificationInput {
@@ -40,9 +89,7 @@ export interface ClassificationInput {
 /**
  * Classify a binary using multiple heuristics.
  */
-export async function classifyBinary(
-  input: ClassificationInput,
-): Promise<ToolType> {
+export async function classifyBinary(input: ClassificationInput): Promise<ToolType> {
   const { name, packageSection } = input;
 
   if (AI_AGENT_NAMES.has(name)) return 'ai-agent';
@@ -83,7 +130,8 @@ async function isSystemdService(binaryName: string): Promise<boolean> {
       ['list-unit-files', '--type=service', '--no-pager'],
       { timeout: 5000 },
     );
-    return stdout.toLowerCase().includes(binaryName.toLowerCase());
+    const pattern = new RegExp(`\\b${binaryName.toLowerCase()}\\.service\\b`);
+    return pattern.test(stdout.toLowerCase());
   } catch {
     return false;
   }

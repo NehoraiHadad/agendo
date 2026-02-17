@@ -23,7 +23,7 @@ export function CapabilityList({ agentId }: CapabilityListProps) {
         if (!res.ok) {
           throw new Error(`Failed to fetch capabilities: ${res.status}`);
         }
-        const json = await res.json() as { data: AgentCapability[] };
+        const json = (await res.json()) as { data: AgentCapability[] };
         if (!cancelled) {
           setCapabilities(json.data);
         }
@@ -39,7 +39,9 @@ export function CapabilityList({ agentId }: CapabilityListProps) {
     }
 
     fetchCapabilities();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [agentId]);
 
   if (isLoading) {
@@ -53,15 +55,11 @@ export function CapabilityList({ agentId }: CapabilityListProps) {
   }
 
   if (error) {
-    return (
-      <div className="p-4 text-sm text-destructive">{error}</div>
-    );
+    return <div className="p-4 text-sm text-destructive">{error}</div>;
   }
 
   if (capabilities.length === 0) {
-    return (
-      <div className="p-4 text-sm text-muted-foreground">No capabilities found.</div>
-    );
+    return <div className="p-4 text-sm text-muted-foreground">No capabilities found.</div>;
   }
 
   return (

@@ -3,11 +3,7 @@ import { db, pool } from '../lib/db/index';
 import { executions, workerHeartbeats } from '../lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { config } from '../lib/config';
-import {
-  type ExecuteCapabilityJobData,
-  registerWorker,
-  stopBoss,
-} from '../lib/worker/queue';
+import { type ExecuteCapabilityJobData, registerWorker, stopBoss } from '../lib/worker/queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 
@@ -47,9 +43,7 @@ async function handleJob(job: Job<ExecuteCapabilityJobData>): Promise<void> {
     await db
       .update(executions)
       .set({ status: 'cancelled', endedAt: new Date() })
-      .where(
-        and(eq(executions.id, executionId), eq(executions.status, 'cancelling')),
-      );
+      .where(and(eq(executions.id, executionId), eq(executions.status, 'cancelling')));
     console.log(`[worker] Execution ${executionId} was cancelled during run`);
   } else {
     console.log(`[worker] Execution ${executionId} completed successfully`);
@@ -86,7 +80,9 @@ async function main(): Promise<void> {
 
   // Register the job handler
   await registerWorker(handleJob);
-  console.log(`[worker] Listening for jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`);
+  console.log(
+    `[worker] Listening for jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`,
+  );
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);

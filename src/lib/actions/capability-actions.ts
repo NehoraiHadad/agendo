@@ -42,7 +42,7 @@ export async function createCapabilityAction(data: CreateCapabilityInput): Promi
 }> {
   try {
     const capability = await createCapability(data);
-    revalidatePath('/agents');
+    revalidatePath('/agents', 'layout');
     return { success: true, data: capability };
   } catch (error) {
     return {
@@ -62,7 +62,7 @@ export async function updateCapabilityAction(
 }> {
   try {
     const capability = await updateCapability(id, data);
-    revalidatePath('/agents');
+    revalidatePath('/agents', 'layout');
     return { success: true, data: capability };
   } catch (error) {
     return {
@@ -78,7 +78,7 @@ export async function deleteCapabilityAction(id: string): Promise<{
 }> {
   try {
     await deleteCapability(id);
-    revalidatePath('/agents');
+    revalidatePath('/agents', 'layout');
     return { success: true };
   } catch (error) {
     return {
@@ -95,7 +95,7 @@ export async function toggleApprovalAction(id: string): Promise<{
 }> {
   try {
     const capability = await toggleApproval(id);
-    revalidatePath('/agents');
+    revalidatePath('/agents', 'layout');
     return { success: true, data: capability };
   } catch (error) {
     return {

@@ -14,10 +14,7 @@ export interface BinaryIdentity {
 /**
  * Identify a binary: what package owns it, what section, etc.
  */
-export async function identifyBinary(
-  name: string,
-  binaryPath: string,
-): Promise<BinaryIdentity> {
+export async function identifyBinary(name: string, binaryPath: string): Promise<BinaryIdentity> {
   const [packageName, fileType, version] = await Promise.all([
     getPackageName(binaryPath),
     getFileType(binaryPath),

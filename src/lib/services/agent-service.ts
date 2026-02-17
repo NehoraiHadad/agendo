@@ -1,8 +1,8 @@
 import { accessSync, constants } from 'node:fs';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
-import { eq, ilike, desc } from 'drizzle-orm';
-import { NotFoundError, ValidationError, ConflictError } from '@/lib/errors';
+import { eq, desc } from 'drizzle-orm';
+import { NotFoundError, ValidationError } from '@/lib/errors';
 import type { Agent, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 
@@ -56,12 +56,11 @@ async function ensureUniqueSlug(baseSlug: string): Promise<string> {
   let slug = baseSlug;
   let suffix = 0;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const existing = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(ilike(agents.slug, slug))
+      .where(eq(agents.slug, slug))
       .limit(1);
 
     if (existing.length === 0) return slug;
@@ -157,21 +156,14 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
 }
 
 export async function getAgentById(id: string): Promise<Agent> {
-  const [agent] = await db
-    .select()
-    .from(agents)
-    .where(eq(agents.id, id))
-    .limit(1);
+  const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
 
   if (!agent) throw new NotFoundError('Agent', id);
   return agent;
 }
 
 export async function listAgents(): Promise<Agent[]> {
-  return db
-    .select()
-    .from(agents)
-    .orderBy(desc(agents.createdAt));
+  return db.select().from(agents).orderBy(desc(agents.createdAt));
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {
@@ -189,10 +181,7 @@ export async function updateAgent(id: string, data: UpdateAgentInput): Promise<A
 }
 
 export async function deleteAgent(id: string): Promise<void> {
-  const [deleted] = await db
-    .delete(agents)
-    .where(eq(agents.id, id))
-    .returning({ id: agents.id });
+  const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning({ id: agents.id });
 
   if (!deleted) throw new NotFoundError('Agent', id);
 }

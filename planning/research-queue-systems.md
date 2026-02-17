@@ -35,11 +35,11 @@ The lock is tied to the transaction -- if a worker crashes, the lock releases au
 
 ### Who Uses This Pattern Successfully
 
-| Project | Scale | Notes |
-|---------|-------|-------|
-| **37signals / HEY** (Solid Queue) | 20M jobs/day, 800 workers, 74 VMs | Replaced Redis-based Resque. Main benefit: "simplicity and ease of operation" ([source](https://dev.37signals.com/introducing-solid-queue/)) |
-| **Hatchet** | 20k+ tasks/minute | Built entirely on Postgres. "Postgres solves for 99.9% of queueing use-cases better than most alternatives" ([source](https://github.com/hatchet-dev/hatchet)) |
-| **Inferable** | Hundreds of machines, thousands of concurrent jobs | Uses SKIP LOCKED for distributed work across long-polling workers ([source](https://www.inferable.ai/blog/posts/postgres-skip-locked)) |
+| Project                           | Scale                                              | Notes                                                                                                                                                          |
+| --------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **37signals / HEY** (Solid Queue) | 20M jobs/day, 800 workers, 74 VMs                  | Replaced Redis-based Resque. Main benefit: "simplicity and ease of operation" ([source](https://dev.37signals.com/introducing-solid-queue/))                   |
+| **Hatchet**                       | 20k+ tasks/minute                                  | Built entirely on Postgres. "Postgres solves for 99.9% of queueing use-cases better than most alternatives" ([source](https://github.com/hatchet-dev/hatchet)) |
+| **Inferable**                     | Hundreds of machines, thousands of concurrent jobs | Uses SKIP LOCKED for distributed work across long-polling workers ([source](https://www.inferable.ai/blog/posts/postgres-skip-locked))                         |
 
 ### Performance Numbers
 
@@ -74,7 +74,7 @@ This hit Trigger.dev in production (August 2024): their Graphile Worker table ac
 - Keep the "hot" table small -- isolate job states into separate tables (Solid Queue's approach)
 - Avoid long-running transactions on the same database
 
-**For Agent Monitor:** At your volume (a few jobs/minute), MVCC bloat is a non-issue. You would need sustained hundreds of jobs/sec to trigger these problems. However, your jobs themselves run for 30+ minutes -- make sure the job *lock* is not held as a long-running transaction. pg-boss handles this correctly by marking jobs as "active" and releasing the transaction, then using a separate expiration check.
+**For Agent Monitor:** At your volume (a few jobs/minute), MVCC bloat is a non-issue. You would need sustained hundreds of jobs/sec to trigger these problems. However, your jobs themselves run for 30+ minutes -- make sure the job _lock_ is not held as a long-running transaction. pg-boss handles this correctly by marking jobs as "active" and releasing the transaction, then using a separate expiration check.
 
 ---
 
@@ -82,15 +82,15 @@ This hit Trigger.dev in production (August 2024): their Graphile Worker table ac
 
 ### What Redis Adds That Postgres Cannot
 
-| Feature | BullMQ (Redis) | Postgres Queue |
-|---------|---------------|----------------|
-| Pub/sub notifications | Native, sub-ms | LISTEN/NOTIFY (good but Postgres-specific) |
-| Rate limiting | Built-in, per-queue | Must implement yourself |
-| Priority queues | Built-in | Possible with SQL ORDER BY |
-| Job progress tracking | Built-in | Must implement yourself |
-| Dashboard UI | Bull Board (official) | No standard option |
-| Real-time events | Native Redis pub/sub | Possible but more work |
-| Throughput ceiling | 100k+ jobs/sec | 10k+ jobs/sec (still plenty) |
+| Feature               | BullMQ (Redis)        | Postgres Queue                             |
+| --------------------- | --------------------- | ------------------------------------------ |
+| Pub/sub notifications | Native, sub-ms        | LISTEN/NOTIFY (good but Postgres-specific) |
+| Rate limiting         | Built-in, per-queue   | Must implement yourself                    |
+| Priority queues       | Built-in              | Possible with SQL ORDER BY                 |
+| Job progress tracking | Built-in              | Must implement yourself                    |
+| Dashboard UI          | Bull Board (official) | No standard option                         |
+| Real-time events      | Native Redis pub/sub  | Possible but more work                     |
+| Throughput ceiling    | 100k+ jobs/sec        | 10k+ jobs/sec (still plenty)               |
 
 ### When BullMQ Makes Sense
 
@@ -110,6 +110,7 @@ This hit Trigger.dev in production (August 2024): their Graphile Worker table ac
 ### Memory Overhead
 
 Redis memory scales linearly with job payload size. For reference:
+
 - 4.5M delayed jobs + 45K repeating jobs consumed ~10GB in one production case ([source](https://github.com/taskforcesh/bullmq/issues/2734))
 - For Agent Monitor's scale (dozens of jobs), Redis overhead would be negligible (< 50MB)
 - BullMQ docs recommend a dedicated Redis instance, not shared with caching ([source](https://docs.bullmq.io/guide/going-to-production))
@@ -133,11 +134,15 @@ const boss = new PgBoss(DATABASE_URL);
 await boss.start();
 
 // Send a job with 30-minute timeout
-await boss.send('agent-session', { repoUrl, prompt }, {
-  expireInMinutes: 45,   // Auto-fail if still running after 45 min
-  retryLimit: 2,          // Retry twice on failure
-  retryDelay: 30,         // Wait 30 seconds between retries
-});
+await boss.send(
+  'agent-session',
+  { repoUrl, prompt },
+  {
+    expireInMinutes: 45, // Auto-fail if still running after 45 min
+    retryLimit: 2, // Retry twice on failure
+    retryDelay: 30, // Wait 30 seconds between retries
+  },
+);
 
 // Process with concurrency limit of 3
 await boss.work('agent-session', { teamSize: 3 }, async (job) => {
@@ -171,6 +176,7 @@ await boss.work('agent-session', { teamSize: 3 }, async (job) => {
 More "Postgres-native" -- you define tasks in SQL or JS, and it uses `LISTEN/NOTIFY` for sub-3ms latency.
 
 **Pros over pg-boss:**
+
 - Lower latency (LISTEN/NOTIFY vs polling)
 - Can run in-process (same Node.js process as your app)
 - Built by the PostGraphile team, deeply Postgres-optimized
@@ -178,6 +184,7 @@ More "Postgres-native" -- you define tasks in SQL or JS, and it uses `LISTEN/NOT
 - Auto-deletes completed jobs (prevents table bloat)
 
 **Cons:**
+
 - Fewer downloads and smaller community than pg-boss
 - No built-in debouncing or singleton jobs
 - API is more Postgres-centric (less familiar for JS devs)
@@ -190,18 +197,18 @@ A Postgres extension (Rust-based), not a Node.js library. Best for teams that wa
 
 ### Comparison Table
 
-| Feature | Raw SQL | pg-boss | Graphile Worker |
-|---------|---------|---------|-----------------|
-| Setup effort | High | Low | Low |
-| Retry logic | DIY | Built-in | Built-in |
-| Job expiration | DIY | Built-in | 4hr default |
-| Concurrency control | DIY | `teamSize` | `concurrency` option |
-| Long-running job support | DIY | `expireInMinutes` | AbortSignal |
-| Cron/recurring jobs | DIY | Built-in | Built-in |
-| Dead letter queue | DIY | Built-in | Manual |
-| Node.js ecosystem fit | N/A | Excellent | Good |
-| Schema management | DIY | Automatic | Automatic |
-| Notification mechanism | Polling | Polling | LISTEN/NOTIFY |
+| Feature                  | Raw SQL | pg-boss           | Graphile Worker      |
+| ------------------------ | ------- | ----------------- | -------------------- |
+| Setup effort             | High    | Low               | Low                  |
+| Retry logic              | DIY     | Built-in          | Built-in             |
+| Job expiration           | DIY     | Built-in          | 4hr default          |
+| Concurrency control      | DIY     | `teamSize`        | `concurrency` option |
+| Long-running job support | DIY     | `expireInMinutes` | AbortSignal          |
+| Cron/recurring jobs      | DIY     | Built-in          | Built-in             |
+| Dead letter queue        | DIY     | Built-in          | Manual               |
+| Node.js ecosystem fit    | N/A     | Excellent         | Good                 |
+| Schema management        | DIY     | Automatic         | Automatic            |
+| Notification mechanism   | Polling | Polling           | LISTEN/NOTIFY        |
 
 **Maturity verdict:** Both pg-boss and Graphile Worker are production-ready. pg-boss has been around since 2016 with broader adoption. Graphile Worker is newer but used by Trigger.dev in production.
 
@@ -326,7 +333,7 @@ const boss = new PgBoss({
   connectionString: process.env.DATABASE_URL,
   retryLimit: 2,
   retryDelay: 30,
-  expireInMinutes: 45,  // Safety net for hung processes
+  expireInMinutes: 45, // Safety net for hung processes
 });
 
 await boss.start();
@@ -364,15 +371,15 @@ await boss.send('spawn-agent', {
 
 ## Summary Decision Matrix
 
-| Factor | Raw Postgres | pg-boss | BullMQ | RabbitMQ |
-|--------|-------------|---------|--------|----------|
-| New infrastructure | None | None | Redis server | RabbitMQ server |
-| Setup time | 2-4 hours | 30 min | 1-2 hours | 2-4 hours |
-| Maintenance burden | High (DIY) | Low | Medium (Redis ops) | High (RabbitMQ ops) |
-| Long-running job support | DIY | Built-in | Built-in | Built-in |
-| Right-sized for 3 concurrent jobs | Yes | **Yes** | Overkill | Overkill |
-| Community/docs | N/A | Good | Excellent | Excellent |
-| Risk of outgrowing | Low at your scale | Low | Very low | Very low |
+| Factor                            | Raw Postgres      | pg-boss  | BullMQ             | RabbitMQ            |
+| --------------------------------- | ----------------- | -------- | ------------------ | ------------------- |
+| New infrastructure                | None              | None     | Redis server       | RabbitMQ server     |
+| Setup time                        | 2-4 hours         | 30 min   | 1-2 hours          | 2-4 hours           |
+| Maintenance burden                | High (DIY)        | Low      | Medium (Redis ops) | High (RabbitMQ ops) |
+| Long-running job support          | DIY               | Built-in | Built-in           | Built-in            |
+| Right-sized for 3 concurrent jobs | Yes               | **Yes**  | Overkill           | Overkill            |
+| Community/docs                    | N/A               | Good     | Excellent          | Excellent           |
+| Risk of outgrowing                | Low at your scale | Low      | Very low           | Very low            |
 
 **Final answer: pg-boss. Ship it and move on.**
 

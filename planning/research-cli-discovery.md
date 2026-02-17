@@ -32,6 +32,7 @@ MCP is an open protocol by Anthropic (released Nov 2024) that standardizes how A
 An MCP client discovers tools via the `tools/list` JSON-RPC method:
 
 **Request:**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -42,6 +43,7 @@ An MCP client discovers tools via the `tools/list` JSON-RPC method:
 ```
 
 **Response:**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -74,6 +76,7 @@ An MCP client discovers tools via the `tools/list` JSON-RPC method:
 ### Tool Schema (What Agent Monitor Should Adopt)
 
 Each MCP tool has:
+
 - **`name`**: Unique identifier (e.g., `"get_weather"`)
 - **`title`**: Human-readable display name
 - **`description`**: What the tool does (critical for LLM selection)
@@ -87,6 +90,7 @@ Each MCP tool has:
 
 **Current (stdio-based, local):**
 Clients configure servers in `claude_desktop_config.json`:
+
 ```json
 {
   "mcpServers": {
@@ -109,16 +113,16 @@ MCP supports Streamable HTTP transport for remote servers, not just stdio.
 **YES - this is a high-value approach.** Using `@modelcontextprotocol/sdk`:
 
 ```typescript
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 // Connect to any MCP server
 const transport = new StdioClientTransport({
-  command: "node",
-  args: ["/path/to/mcp-server.js"]
+  command: 'node',
+  args: ['/path/to/mcp-server.js'],
 });
 
-const client = new Client({ name: "agent-monitor", version: "1.0.0" });
+const client = new Client({ name: 'agent-monitor', version: '1.0.0' });
 await client.connect(transport);
 
 // Discover all tools
@@ -127,12 +131,13 @@ const tools = await client.listTools();
 
 // Call a tool
 const result = await client.callTool({
-  name: "get_weather",
-  arguments: { location: "New York" }
+  name: 'get_weather',
+  arguments: { location: 'New York' },
 });
 ```
 
 **Practical value for Agent Monitor:**
+
 - Instantly discover ALL tools from any MCP server (Claude, Cursor, VS Code, etc.)
 - Get structured schemas (inputSchema/outputSchema) with zero parsing effort
 - Dynamic updates via `notifications/tools/list_changed`
@@ -143,21 +148,25 @@ const result = await client.callTool({
 For Agent Monitor to EXPOSE its tools as MCP, here is the pattern:
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 
-const server = new McpServer({ name: "agent-monitor", version: "1.0.0" });
+const server = new McpServer({ name: 'agent-monitor', version: '1.0.0' });
 
-server.registerTool("run_git_status", {
-  description: "Run git status in a repository",
-  inputSchema: {
-    repoPath: z.string().describe("Path to the git repository"),
+server.registerTool(
+  'run_git_status',
+  {
+    description: 'Run git status in a repository',
+    inputSchema: {
+      repoPath: z.string().describe('Path to the git repository'),
+    },
   },
-}, async ({ repoPath }) => {
-  // Execute git status using safe process execution
-  return { content: [{ type: "text", text: result }] };
-});
+  async ({ repoPath }) => {
+    // Execute git status using safe process execution
+    return { content: [{ type: 'text', text: result }] };
+  },
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
@@ -172,6 +181,7 @@ await server.connect(transport);
 **Docopt** (http://docopt.org/) is the closest thing to "parse --help output into structured data." It works by taking a help/usage text string and extracting the CLI interface definition from it.
 
 **How it works:**
+
 - Parses text between `usage:` and the next blank line as usage patterns
 - Extracts options with short/long forms (`-h`, `--help`)
 - Identifies arguments (`<filename>`), optional elements (`[options]`), required elements
@@ -195,6 +205,7 @@ ls -la | jc --ls
 **Supported parsers include:** ls, ps, netstat, ifconfig, df, du, mount, dig, ping, traceroute, arp, route, /etc/passwd, /etc/hosts, CSV, JSON, XML, YAML, TOML, git logs, docker commands, aws utilities, package managers.
 
 **Architecture:**
+
 - Standard parsers load complete input, streaming parsers process line-by-line
 - Each parser (`jc/parsers/foo.py`) follows a template
 - Custom plugins can be added to platform-specific directories
@@ -206,13 +217,13 @@ ls -la | jc --ls
 
 These build CLIs but could inform schema extraction:
 
-| Library | npm | Key Feature |
-|---------|-----|-------------|
-| **commander** | `commander` | Most popular. Auto-generates help. Option definitions include type, description, default |
-| **yargs** | `yargs` | Rich option definition. Commands, grouped options, validation |
-| **oclif** | `oclif` | Salesforce's framework. Plugins, flags, auto-documentation |
-| **command-line-args** | `command-line-args` | Declarative option definitions (name, alias, type, multiple, defaultOption) |
-| **zod** | `zod` | Schema validation that can generate JSON Schema (used by MCP SDK) |
+| Library               | npm                 | Key Feature                                                                              |
+| --------------------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| **commander**         | `commander`         | Most popular. Auto-generates help. Option definitions include type, description, default |
+| **yargs**             | `yargs`             | Rich option definition. Commands, grouped options, validation                            |
+| **oclif**             | `oclif`             | Salesforce's framework. Plugins, flags, auto-documentation                               |
+| **command-line-args** | `command-line-args` | Declarative option definitions (name, alias, type, multiple, defaultOption)              |
+| **zod**               | `zod`               | Schema validation that can generate JSON Schema (used by MCP SDK)                        |
 
 **None of these parse arbitrary --help output.** They are for building CLIs, not reverse-engineering them.
 
@@ -225,18 +236,21 @@ These build CLIs but could inform schema extraction:
 These are community-maintained databases of CLI command examples:
 
 **tldr-pages** (https://github.com/tldr-pages/tldr):
+
 - Markdown files with simplified command examples
 - Community-maintained for thousands of commands
 - Format: `# command-name` + description + example blocks
 - Could be used as a seed database for Agent Monitor's tool descriptions
 
 **navi** (https://github.com/denisidoro/navi):
+
 - Interactive cheatsheet tool using `.cheat` files
 - Lines starting with `%` = tags, `#` = descriptions, `$` = argument value generators
 - Uses fzf for interactive selection
 - The `.cheat` format is a structured way to describe commands and their arguments
 
 **cheat.sh** (https://cheat.sh):
+
 - Aggregates multiple sources (including tldr-pages) into unified API
 - Accessible via `curl cheat.sh/git-commit`
 - Has a REST API that could be queried programmatically
@@ -269,6 +283,7 @@ n8n's node discovery architecture:
 6. **Hot-reloading:** Separation of discovery from execution enables reload
 
 **Metadata extracted per node:**
+
 - Fully qualified name
 - Description object (display info, properties, operations)
 - Icon paths (resolved to absolute paths)
@@ -319,6 +334,7 @@ Raycast extensions are npm packages with extended `package.json`:
 ```
 
 **Key patterns:**
+
 - `name` maps directly to entry point file (`src/index.ts`)
 - `mode`: "view" (shows UI), "no-view" (API/URL), "menu-bar"
 - `arguments`: Typed, with placeholders and required flags
@@ -332,6 +348,7 @@ Raycast extensions are npm packages with extended `package.json`:
 **Source:** https://docs.zapier.com/platform/
 
 Zapier integrations:
+
 1. **API-first:** Apps must have REST or XML-RPC APIs
 2. **Two development paths:** Platform UI (visual builder) or Platform CLI (code)
 3. **App discovery:** Zap Templates are pre-built integration patterns
@@ -345,6 +362,7 @@ Zapier integrations:
 **Source:** https://docs.temporal.io/
 
 Temporal's pattern:
+
 1. **Workers register activities at startup** by creating in-memory mappings between function names and implementations
 2. **Task queues** route work to workers via long-polling
 3. **Centralized state** in Temporal Service tracks workflow and activity progress
@@ -357,6 +375,7 @@ Temporal's pattern:
 **Source:** https://www.warp.dev/warp-ai
 
 How Warp understands CLIs:
+
 - Uses foundation models from Anthropic, OpenAI, and Google
 - Routes different tasks to different models (coding, diff application, predictions)
 - AI command suggestions generated as you type, returning multiple results
@@ -378,6 +397,7 @@ The most practical approach for Agent Monitor:
 3. **Cache the result** (help text rarely changes between tool versions)
 
 **Prompt pattern for LLM enrichment:**
+
 ```
 Given this CLI help text, generate a JSON tool definition with:
 - name, description, subcommands array
@@ -410,6 +430,7 @@ def search_files(query: str, path: str = ".") -> str:
 ```
 
 **Key utilities:**
+
 - `generate_func_documentation()` - extracts metadata from docstrings
 - `function_schema()` - generates JSON Schema from function signature
 
@@ -451,16 +472,19 @@ Browser (xterm.js) <--WebSocket--> Server (node-pty) <--PTY--> Shell/Process
 ```
 
 **node-pty** (https://github.com/microsoft/node-pty):
+
 - Forks pseudoterminals in Node.js
 - Returns terminal object with read/write
 - Cross-platform (Linux, macOS, Windows via conpty)
 
 **xterm.js** (https://www.npmjs.com/package/xterm):
+
 - JavaScript terminal emulator for browsers
 - Full terminal capabilities (colors, cursor, scrollback)
 - Addons: WebGL renderer, search, fit, web links
 
 **Basic web terminal architecture:**
+
 ```
 Server side:
   1. Create WebSocket server
@@ -477,6 +501,7 @@ Client side:
 ### VS Code Shell Integration
 
 VS Code injects custom escape sequences into shell sessions to enable:
+
 - **Working directory detection** (knows which directory you are in)
 - **Command detection** (knows when a command starts/ends and its exit code)
 - **Command decorations** (success/failure indicators in the gutter)
@@ -490,11 +515,11 @@ Extension API: `Terminal.shellIntegration` gives programmatic access.
 
 ### Web Terminal Projects
 
-| Project | Language | Transport | Frontend |
-|---------|----------|-----------|----------|
-| **ttyd** | C (libwebsockets) | WebSocket | xterm.js |
-| **GoTTY** | Go | WebSocket | xterm.js/hterm |
-| **Wetty** | Node.js | WebSocket/Socket.IO | xterm.js |
+| Project   | Language          | Transport           | Frontend       |
+| --------- | ----------------- | ------------------- | -------------- |
+| **ttyd**  | C (libwebsockets) | WebSocket           | xterm.js       |
+| **GoTTY** | Go                | WebSocket           | xterm.js/hterm |
+| **Wetty** | Node.js           | WebSocket/Socket.IO | xterm.js       |
 
 All follow the same pattern: websocket relay between browser terminal emulator and server-side PTY.
 
@@ -523,6 +548,7 @@ Use `node-pty` to spawn a pseudo-terminal. This handles prompts, password inputs
 Two patterns for tool registration:
 
 **Pattern 1: BaseTool class**
+
 ```python
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -541,6 +567,7 @@ class GitStatusTool(BaseTool):
 ```
 
 **Pattern 2: @tool decorator**
+
 ```python
 from crewai.tools import tool
 
@@ -557,20 +584,20 @@ def git_status(repo_path: str) -> str:
 Tools are wrapped as graph nodes and bound to models:
 
 ```typescript
-import { tool } from "@langchain/core/tools";
-import { z } from "zod";
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
 
 const gitStatusTool = tool(
   async ({ repoPath }) => {
     // execute git status safely
   },
   {
-    name: "git_status",
-    description: "Get git status for a repository",
+    name: 'git_status',
+    description: 'Get git status for a repository',
     schema: z.object({
-      repoPath: z.string().describe("Path to git repository"),
+      repoPath: z.string().describe('Path to git repository'),
     }),
-  }
+  },
 );
 
 // Bind tools to model
@@ -591,6 +618,7 @@ Registers tools per agent. Each agent has its own tool set rather than a shared 
 **Source:** https://github.com/rundeck/rundeck
 
 Rundeck is the closest existing open-source project to what Agent Monitor is doing for CLI tools:
+
 - Web console + CLI + WebAPI
 - Runs tasks on any number of nodes from web interface
 - Self-service operations: give specific users access to existing tools/scripts
@@ -600,12 +628,12 @@ Rundeck is the closest existing open-source project to what Agent Monitor is doi
 
 ### Other Notable Projects
 
-| Project | What it does | Relevance |
-|---------|-------------|-----------|
-| **Spacelift** | IaC automation with web UI | Wraps terraform/pulumi/ansible with policy, approval, audit |
-| **Rundeck** | Runbook automation | CLI wrapper with web UI, closest to Agent Monitor concept |
-| **n8n** | Workflow automation | 350+ node integrations, package.json discovery pattern |
-| **OpenCode** | AI coding agent for terminal | Tool registration with Zod schemas, agent config in YAML |
+| Project       | What it does                 | Relevance                                                   |
+| ------------- | ---------------------------- | ----------------------------------------------------------- |
+| **Spacelift** | IaC automation with web UI   | Wraps terraform/pulumi/ansible with policy, approval, audit |
+| **Rundeck**   | Runbook automation           | CLI wrapper with web UI, closest to Agent Monitor concept   |
+| **n8n**       | Workflow automation          | 350+ node integrations, package.json discovery pattern      |
+| **OpenCode**  | AI coding agent for terminal | Tool registration with Zod schemas, agent config in YAML    |
 
 ---
 
@@ -621,9 +649,9 @@ import { z } from 'zod';
 // Core tool definition schema (MCP-compatible)
 const ToolDefinition = z.object({
   // Identity
-  name: z.string(),              // "git" or "git.commit"
-  title: z.string(),             // "Git Version Control"
-  description: z.string(),       // For LLM understanding
+  name: z.string(), // "git" or "git.commit"
+  title: z.string(), // "Git Version Control"
+  description: z.string(), // For LLM understanding
   version: z.string().optional(),
 
   // Classification
@@ -631,21 +659,25 @@ const ToolDefinition = z.object({
   tags: z.array(z.string()),
 
   // Capabilities
-  subcommands: z.array(z.object({
-    name: z.string(),            // "commit"
-    description: z.string(),
-    inputSchema: z.record(z.any()), // JSON Schema for arguments
-    outputSchema: z.record(z.any()).optional(),
-    annotations: z.object({
-      readOnly: z.boolean().default(false),
-      destructive: z.boolean().default(false),
-      idempotent: z.boolean().default(false),
-      requiresConfirmation: z.boolean().default(false),
-    }).optional(),
-  })),
+  subcommands: z.array(
+    z.object({
+      name: z.string(), // "commit"
+      description: z.string(),
+      inputSchema: z.record(z.any()), // JSON Schema for arguments
+      outputSchema: z.record(z.any()).optional(),
+      annotations: z
+        .object({
+          readOnly: z.boolean().default(false),
+          destructive: z.boolean().default(false),
+          idempotent: z.boolean().default(false),
+          requiresConfirmation: z.boolean().default(false),
+        })
+        .optional(),
+    }),
+  ),
 
   // Execution
-  binary: z.string(),            // "git", "/usr/bin/docker"
+  binary: z.string(), // "git", "/usr/bin/docker"
   requiresAuth: z.boolean().default(false),
 
   // Discovery metadata
@@ -658,6 +690,7 @@ const ToolDefinition = z.object({
 ### Discovery Pipeline (Phased)
 
 #### Phase 1: MVP - Manual Registration + Seed Database
+
 ```
 1. Hand-write definitions for core tools (git, docker, npm, claude, gemini)
 2. Use tldr-pages as seed data for descriptions
@@ -665,6 +698,7 @@ const ToolDefinition = z.object({
 ```
 
 #### Phase 2: --help Parsing + LLM Enrichment
+
 ```
 1. Run `<tool> --help` and capture output (using execFile, not exec)
 2. Send help text to Claude/Gemini with structured output schema
@@ -674,6 +708,7 @@ const ToolDefinition = z.object({
 ```
 
 #### Phase 3: MCP Integration
+
 ```
 1. Act as MCP client to discover tools from MCP servers
 2. Import tools from MCP Registry API
@@ -682,6 +717,7 @@ const ToolDefinition = z.object({
 ```
 
 #### Phase 4: Auto-Discovery
+
 ```
 1. Scan PATH for known binaries
 2. Scan package.json for agent-monitor-tool-* packages (n8n pattern)
@@ -691,15 +727,15 @@ const ToolDefinition = z.object({
 
 ### Practical Libraries to Use
 
-| Purpose | Library | npm/Link |
-|---------|---------|----------|
-| Tool schema validation | `zod` | Standard in MCP + LangGraph ecosystem |
-| MCP client/server | `@modelcontextprotocol/sdk` | Official SDK |
-| Process execution | `execa` | Modern child_process wrapper (uses execFile internally) |
-| CLI output parsing | `jc` (Python) or custom | For parsing tool outputs |
-| Terminal emulation | `node-pty` + `xterm.js` | For interactive commands only |
-| WebSocket | `ws` | For terminal relay |
-| Command database | tldr-pages | Seed descriptions |
+| Purpose                | Library                     | npm/Link                                                |
+| ---------------------- | --------------------------- | ------------------------------------------------------- |
+| Tool schema validation | `zod`                       | Standard in MCP + LangGraph ecosystem                   |
+| MCP client/server      | `@modelcontextprotocol/sdk` | Official SDK                                            |
+| Process execution      | `execa`                     | Modern child_process wrapper (uses execFile internally) |
+| CLI output parsing     | `jc` (Python) or custom     | For parsing tool outputs                                |
+| Terminal emulation     | `node-pty` + `xterm.js`     | For interactive commands only                           |
+| WebSocket              | `ws`                        | For terminal relay                                      |
+| Command database       | tldr-pages                  | Seed descriptions                                       |
 
 ### Code Pattern: Tool Adapter
 
@@ -756,8 +792,8 @@ class GitAdapter implements ToolAdapter {
 ```typescript
 // mcp-bridge.ts - Bridge between Agent Monitor and MCP ecosystem
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 class MCPBridge {
   private clients: Map<string, Client> = new Map();
@@ -765,7 +801,7 @@ class MCPBridge {
   // Connect to an MCP server and discover its tools
   async connectServer(name: string, command: string, args: string[]) {
     const transport = new StdioClientTransport({ command, args });
-    const client = new Client({ name: "agent-monitor", version: "1.0.0" });
+    const client = new Client({ name: 'agent-monitor', version: '1.0.0' });
     await client.connect(transport);
 
     // Discover all tools
@@ -819,6 +855,7 @@ class MCPBridge {
 ## Sources
 
 ### MCP
+
 - [MCP Specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25)
 - [MCP Tools Specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
@@ -828,6 +865,7 @@ class MCPBridge {
 - [MCP Roadmap](https://modelcontextprotocol.io/development/roadmap)
 
 ### CLI Parsing
+
 - [docopt](http://docopt.org/)
 - [jc - CLI to JSON](https://kellyjonbrazil.github.io/jc/)
 - [tldr-pages](https://github.com/tldr-pages/tldr)
@@ -837,6 +875,7 @@ class MCPBridge {
 - [yargs](https://yargs.js.org/)
 
 ### Orchestration Tools
+
 - [n8n Node System](https://deepwiki.com/n8n-io/n8n/4-user-interface)
 - [n8n LoadNodesAndCredentials](https://github.com/n8n-io/n8n/blob/main/packages/cli/src/LoadNodesAndCredentials.ts)
 - [n8n Creating Nodes](https://docs.n8n.io/integrations/creating-nodes/overview/)
@@ -847,6 +886,7 @@ class MCPBridge {
 - [Zapier MCP](https://zapier.com/mcp)
 
 ### AI Agent Frameworks
+
 - [CrewAI Custom Tools](https://docs.crewai.com/en/learn/create-custom-tools)
 - [LangGraph Tool Calling](https://langchain-ai.github.io/langgraph/how-tos/many-tools/)
 - [AI Agent Framework Comparison](https://www.datacamp.com/tutorial/crewai-vs-langgraph-vs-autogen)
@@ -855,6 +895,7 @@ class MCPBridge {
 - [OASF](https://github.com/agntcy/oasf)
 
 ### Terminal Integration
+
 - [node-pty](https://github.com/microsoft/node-pty)
 - [xterm.js](https://www.npmjs.com/package/xterm)
 - [VS Code Shell Integration](https://code.visualstudio.com/docs/terminal/shell-integration)
@@ -863,5 +904,6 @@ class MCPBridge {
 - [Warp Terminal](https://www.warp.dev/)
 
 ### DevOps / CLI Wrappers
+
 - [Rundeck](https://github.com/rundeck/rundeck)
 - [OpenCode](https://github.com/opencode-ai/opencode)

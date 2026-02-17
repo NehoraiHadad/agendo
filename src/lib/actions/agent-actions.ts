@@ -1,11 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import {
-  createAgent,
-  updateAgent,
-  deleteAgent,
-} from '@/lib/services/agent-service';
+import { createAgent, updateAgent, deleteAgent } from '@/lib/services/agent-service';
 import type { Agent } from '@/lib/types';
 
 interface CreateAgentInput {
@@ -22,6 +18,7 @@ interface UpdateAgentInput {
   envAllowlist?: string[];
   maxConcurrent?: number;
   isActive?: boolean;
+  mcpEnabled?: boolean;
 }
 
 export async function createAgentAction(data: CreateAgentInput): Promise<{

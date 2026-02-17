@@ -2,17 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the db module before importing the service
 vi.mock('@/lib/db', () => {
-  const mockReturning = vi.fn().mockResolvedValue([{
-    id: '00000000-0000-0000-0000-000000000099',
-    name: 'Test Agent',
-    slug: 'test-agent',
-    binaryPath: '/usr/bin/test-tool',
-    kind: 'custom',
-    isActive: true,
-    maxConcurrent: 1,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }]);
+  const mockReturning = vi.fn().mockResolvedValue([
+    {
+      id: '00000000-0000-0000-0000-000000000099',
+      name: 'Test Agent',
+      slug: 'test-agent',
+      binaryPath: '/usr/bin/test-tool',
+      kind: 'custom',
+      isActive: true,
+      maxConcurrent: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ]);
 
   const mockValues = vi.fn().mockReturnValue({ returning: mockReturning });
 
@@ -26,10 +28,7 @@ vi.mock('@/lib/db', () => {
   const mockWhere = vi.fn().mockResolvedValue([mockAgentRow]);
 
   // from() returns a thenable that also has .where()
-  const mockFromResult = Object.assign(
-    Promise.resolve([mockAgentRow]),
-    { where: mockWhere },
-  );
+  const mockFromResult = Object.assign(Promise.resolve([mockAgentRow]), { where: mockWhere });
   const mockFrom = vi.fn().mockReturnValue(mockFromResult);
 
   const mockSet = vi.fn().mockReturnValue({
@@ -68,11 +67,17 @@ describe('agent-service', () => {
     it('generates correct slug from agent name', () => {
       // Slug generation logic: lowercase, replace non-alphanumeric with dashes, trim dashes
       const name = 'Claude Code';
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
       expect(slug).toBe('claude-code');
 
       const name2 = 'My Custom Agent!';
-      const slug2 = name2.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const slug2 = name2
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
       expect(slug2).toBe('my-custom-agent');
     });
 

@@ -6,8 +6,6 @@ interface AgentStatusBadgeProps {
 
 export function AgentStatusBadge({ isActive }: AgentStatusBadgeProps) {
   return (
-    <Badge variant={isActive ? 'default' : 'secondary'}>
-      {isActive ? 'Active' : 'Inactive'}
-    </Badge>
+    <Badge variant={isActive ? 'default' : 'secondary'}>{isActive ? 'Active' : 'Inactive'}</Badge>
   );
 }

@@ -31,14 +31,14 @@
 xterm.js has been rebranded from `xterm` to scoped `@xterm/*` packages. The old unscoped
 packages are **deprecated** and will no longer be maintained.
 
-| Package | Latest Version | Purpose |
-|---------|---------------|---------|
-| `@xterm/xterm` | 6.0.0 | Core terminal emulator |
-| `@xterm/addon-fit` | 0.10.0 | Auto-fit terminal to container |
-| `@xterm/addon-web-links` | 0.12.0 | Clickable URLs in terminal output |
-| `@xterm/addon-search` | 0.15.0 | Search terminal buffer |
-| `@xterm/addon-webgl` | 0.19.0 | WebGL2 GPU-accelerated renderer |
-| `@xterm/addon-serialize` | 0.14.0 | Serialize terminal state |
+| Package                  | Latest Version | Purpose                           |
+| ------------------------ | -------------- | --------------------------------- |
+| `@xterm/xterm`           | 6.0.0          | Core terminal emulator            |
+| `@xterm/addon-fit`       | 0.10.0         | Auto-fit terminal to container    |
+| `@xterm/addon-web-links` | 0.12.0         | Clickable URLs in terminal output |
+| `@xterm/addon-search`    | 0.15.0         | Search terminal buffer            |
+| `@xterm/addon-webgl`     | 0.19.0         | WebGL2 GPU-accelerated renderer   |
+| `@xterm/addon-serialize` | 0.14.0         | Serialize terminal state          |
 
 ### Version 6 Breaking Changes
 
@@ -181,9 +181,9 @@ export default function TerminalPage({ params }: { params: { sessionId: string }
 import type { ITheme } from '@xterm/xterm';
 
 const DARK_THEME: ITheme = {
-  background: '#1a1b26',        // Tokyo Night background
-  foreground: '#a9b1d6',        // Light gray text
-  cursor: '#c0caf5',            // Bright cursor
+  background: '#1a1b26', // Tokyo Night background
+  foreground: '#a9b1d6', // Light gray text
+  cursor: '#c0caf5', // Bright cursor
   cursorAccent: '#1a1b26',
   selectionBackground: '#33467C',
   selectionForeground: '#c0caf5',
@@ -222,11 +222,11 @@ const DARK_THEME: ITheme = {
 
 Several wrapper libraries exist but **none are well-maintained** for xterm v6:
 
-| Library | Stars | Last Update | Verdict |
-|---------|-------|-------------|---------|
-| `xterm-for-react` | ~200 | 2021 | Dead, uses old xterm |
-| `react-xtermjs` (Qovery) | ~100 | 2024 | Hook-based, decent but not v6 |
-| `xterm-react` (PabloLION) | ~50 | 2024 | Functional but limited |
+| Library                   | Stars | Last Update | Verdict                       |
+| ------------------------- | ----- | ----------- | ----------------------------- |
+| `xterm-for-react`         | ~200  | 2021        | Dead, uses old xterm          |
+| `react-xtermjs` (Qovery)  | ~100  | 2024        | Hook-based, decent but not v6 |
+| `xterm-react` (PabloLION) | ~50   | 2024        | Functional but limited        |
 
 **Recommendation**: Write your own thin React wrapper (as shown above). It is only ~60 lines
 and gives full control over initialization, addon loading, and cleanup. All the wrapper
@@ -292,17 +292,17 @@ ptyProcess.kill('SIGTERM');
 
 ```typescript
 interface IPtyForkOptions {
-  name?: string;       // Terminal type, sets $TERM (default: 'xterm')
-  cols?: number;       // Initial columns (default: 80)
-  rows?: number;       // Initial rows (default: 24)
-  cwd?: string;        // Working directory
+  name?: string; // Terminal type, sets $TERM (default: 'xterm')
+  cols?: number; // Initial columns (default: 80)
+  rows?: number; // Initial rows (default: 24)
+  cwd?: string; // Working directory
   env?: Record<string, string>; // Environment variables
-  encoding?: string | null;     // Data encoding (default: 'utf8', null = Buffer)
-  uid?: number;        // Unix user ID
-  gid?: number;        // Unix group ID
-  handleFlowControl?: boolean;  // Enable XON/XOFF flow control (experimental)
-  flowControlPause?: string;    // Pause character (default: '\x13' = Ctrl+S)
-  flowControlResume?: string;   // Resume character (default: '\x11' = Ctrl+Q)
+  encoding?: string | null; // Data encoding (default: 'utf8', null = Buffer)
+  uid?: number; // Unix user ID
+  gid?: number; // Unix group ID
+  handleFlowControl?: boolean; // Enable XON/XOFF flow control (experimental)
+  flowControlPause?: string; // Pause character (default: '\x13' = Ctrl+S)
+  flowControlResume?: string; // Resume character (default: '\x11' = Ctrl+Q)
 }
 ```
 
@@ -314,6 +314,7 @@ process or an existing PTY file descriptor.
 **To attach to existing agent sessions, you MUST use tmux (or screen) as an intermediary.**
 
 The pattern is:
+
 1. Agent runs inside a tmux session
 2. node-pty spawns `tmux attach-session -t <session-name>`
 3. This creates a new PTY that is connected to the existing tmux session
@@ -323,9 +324,7 @@ The pattern is:
 
 ```typescript
 function attachToAgentSession(sessionName: string, cols: number, rows: number) {
-  const ptyProcess = pty.spawn('/usr/bin/tmux', [
-    'attach-session', '-t', sessionName,
-  ], {
+  const ptyProcess = pty.spawn('/usr/bin/tmux', ['attach-session', '-t', sessionName], {
     name: 'xterm-256color',
     cols,
     rows,
@@ -343,6 +342,7 @@ function attachToAgentSession(sessionName: string, cols: number, rows: number) {
 ### Signal Forwarding
 
 node-pty properly forwards signals through the PTY:
+
 - **Ctrl+C** sends SIGINT to the foreground process group
 - **Ctrl+Z** sends SIGTSTP
 - **Ctrl+\\** sends SIGQUIT
@@ -423,11 +423,7 @@ import type { WebSocket } from 'ws';
 import type { WebSocketServer } from 'ws';
 import type { NextRequest } from 'next/server';
 
-export function UPGRADE(
-  client: WebSocket,
-  server: WebSocketServer,
-  request: NextRequest,
-) {
+export function UPGRADE(client: WebSocket, server: WebSocketServer, request: NextRequest) {
   // Authenticate
   const token = new URL(request.url).searchParams.get('token');
   if (!validateToken(token)) {
@@ -442,7 +438,7 @@ export function UPGRADE(
 
 **Pros**: Clean integration with app directory, no custom server
 **Cons**: Requires patching Next.js (fragile across upgrades), only works with `next start`
-  (not serverless)
+(not serverless)
 
 #### Option B: Custom Server (Most Flexible)
 
@@ -466,10 +462,7 @@ app.prepare().then(() => {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
-    const { pathname, searchParams } = new URL(
-      request.url!,
-      `http://${request.headers.host}`
-    );
+    const { pathname, searchParams } = new URL(request.url!, `http://${request.headers.host}`);
 
     if (pathname === '/api/terminal') {
       // Authenticate before upgrade
@@ -592,10 +585,7 @@ class TerminalWebSocket {
       }
 
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        const delay = Math.min(
-          this.baseDelay * Math.pow(2, this.reconnectAttempts),
-          this.maxDelay
-        );
+        const delay = Math.min(this.baseDelay * Math.pow(2, this.reconnectAttempts), this.maxDelay);
         this.reconnectAttempts++;
         setTimeout(() => this.connect(), delay);
       }
@@ -696,20 +686,21 @@ import type { WebSocket } from 'ws';
 
 class TerminalManager {
   // sessionId -> { pty, clients[] }
-  private sessions = new Map<string, {
-    pty: IPty;
-    clients: Set<WebSocket>;
-    lastActivity: number;
-  }>();
+  private sessions = new Map<
+    string,
+    {
+      pty: IPty;
+      clients: Set<WebSocket>;
+      lastActivity: number;
+    }
+  >();
 
   attachClient(ws: WebSocket, sessionId: string) {
     let session = this.sessions.get(sessionId);
 
     if (!session) {
       // Spawn new PTY attached to tmux session
-      const ptyProcess = pty.spawn('/usr/bin/tmux', [
-        'attach-session', '-t', sessionId,
-      ], {
+      const ptyProcess = pty.spawn('/usr/bin/tmux', ['attach-session', '-t', sessionId], {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
@@ -797,13 +788,13 @@ class TerminalManager {
 
 tmux solves the fundamental "attach/detach" problem:
 
-| Requirement | Without tmux | With tmux |
-|-------------|-------------|-----------|
-| Agent survives browser close | No | Yes |
-| Multiple viewers same session | Complex | Built-in |
-| Detach and reattach | Impossible | Native |
-| Session persists across server restart | No | Yes (with resurrect) |
-| Process isolation | Shared PTY | Separate process groups |
+| Requirement                            | Without tmux | With tmux               |
+| -------------------------------------- | ------------ | ----------------------- |
+| Agent survives browser close           | No           | Yes                     |
+| Multiple viewers same session          | Complex      | Built-in                |
+| Detach and reattach                    | Impossible   | Native                  |
+| Session persists across server restart | No           | Yes (with resurrect)    |
+| Process isolation                      | Shared PTY   | Separate process groups |
 
 ### Session Lifecycle
 
@@ -834,10 +825,10 @@ Phase 4: DETACH -- User closes terminal tab
 import { execFileSync } from 'child_process';
 
 interface AgentSessionConfig {
-  id: string;           // Unique session identifier
+  id: string; // Unique session identifier
   agentType: 'claude' | 'codex' | 'gemini';
-  command: string;      // Full command to run
-  cwd: string;          // Working directory
+  command: string; // Full command to run
+  cwd: string; // Working directory
   cols?: number;
   rows?: number;
 }
@@ -848,9 +839,16 @@ function createAgentSession(config: AgentSessionConfig): void {
 
   // Create detached tmux session with specific size
   execFileSync('tmux', [
-    'new-session', '-d', '-s', sessionName,
-    '-x', String(cols), '-y', String(rows),
-    '-c', cwd,
+    'new-session',
+    '-d',
+    '-s',
+    sessionName,
+    '-x',
+    String(cols),
+    '-y',
+    String(rows),
+    '-c',
+    cwd,
   ]);
 
   // Set environment variables in the session
@@ -879,9 +877,7 @@ function streamAgentOutput(sessionId: string, onData: (chunk: string) => void): 
   const logPath = `/tmp/agent-${sessionId}.log`;
 
   // Enable pipe-pane if not already
-  execFileSync('tmux', [
-    'pipe-pane', '-t', `agent-${sessionId}`, '-o', `cat >> ${logPath}`,
-  ]);
+  execFileSync('tmux', ['pipe-pane', '-t', `agent-${sessionId}`, '-o', `cat >> ${logPath}`]);
 
   // Tail the log file
   const tail = spawn('tail', ['-f', '-n', '100', logPath]);
@@ -903,15 +899,17 @@ import { execFileSync } from 'child_process';
 function pollAgentOutput(
   sessionId: string,
   onData: (content: string) => void,
-  intervalMs = 500
+  intervalMs = 500,
 ): () => void {
   let lastContent = '';
 
   const timer = setInterval(() => {
     try {
-      const content = execFileSync('tmux', [
-        'capture-pane', '-t', `agent-${sessionId}`, '-p', '-S', '-100',
-      ], { encoding: 'utf-8' });
+      const content = execFileSync(
+        'tmux',
+        ['capture-pane', '-t', `agent-${sessionId}`, '-p', '-S', '-100'],
+        { encoding: 'utf-8' },
+      );
 
       if (content !== lastContent) {
         onData(content);
@@ -968,14 +966,16 @@ class AgentSessionProxy {
     this.mode = 'interactive';
 
     // Attach to tmux session via node-pty
-    this.ptyProcess = pty.spawn('/usr/bin/tmux', [
-      'attach-session', '-t', `agent-${this.sessionId}`,
-    ], {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    });
+    this.ptyProcess = pty.spawn(
+      '/usr/bin/tmux',
+      ['attach-session', '-t', `agent-${this.sessionId}`],
+      {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      },
+    );
 
     this.ptyProcess.onData((data) => {
       if (this.ws.readyState === this.ws.OPEN) {
@@ -1006,13 +1006,15 @@ rendering to a terminal, tmux sends structured notifications prefixed with `%`.
 ```typescript
 // Using tmux control mode for metadata extraction
 function getTmuxControlClient(sessionId: string) {
-  const controlProcess = pty.spawn('/usr/bin/tmux', [
-    '-CC', 'attach-session', '-t', `agent-${sessionId}`,
-  ], {
-    name: 'xterm-256color',
-    cols: 80,
-    rows: 24,
-  });
+  const controlProcess = pty.spawn(
+    '/usr/bin/tmux',
+    ['-CC', 'attach-session', '-t', `agent-${sessionId}`],
+    {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+    },
+  );
 
   controlProcess.onData((data) => {
     // Data comes as control mode notifications:
@@ -1044,13 +1046,16 @@ the simpler approach (spawn `tmux attach` via node-pty for interactive, `capture
 import { execFileSync } from 'child_process';
 
 function listAgentSessions(): { name: string; created: string; attached: boolean }[] {
-  const output = execFileSync('tmux', [
-    'list-sessions', '-F', '#{session_name}|#{session_created}|#{session_attached}',
-  ], { encoding: 'utf-8' }).trim();
+  const output = execFileSync(
+    'tmux',
+    ['list-sessions', '-F', '#{session_name}|#{session_created}|#{session_attached}'],
+    { encoding: 'utf-8' },
+  ).trim();
 
-  return output.split('\n')
-    .filter(line => line.startsWith('agent-'))
-    .map(line => {
+  return output
+    .split('\n')
+    .filter((line) => line.startsWith('agent-'))
+    .map((line) => {
       const [name, created, attached] = line.split('|');
       return {
         name,
@@ -1078,6 +1083,7 @@ terminal WebSocket connection can:
 ### Authentication for WebSocket
 
 WebSockets do **not** share typical browser security features:
+
 - No CORS restrictions on WebSocket connections
 - No automatic cookie/CSRF protections
 - Origin header can be spoofed by non-browser clients
@@ -1154,8 +1160,8 @@ tmux set-option -t "agent-ID" prefix2 None
 ```typescript
 // Input filtering on the server (defense in depth)
 const BLOCKED_SEQUENCES = [
-  '\x02',       // Ctrl+B (tmux prefix)
-  '\x01',       // Ctrl+A (screen prefix)
+  '\x02', // Ctrl+B (tmux prefix)
+  '\x01', // Ctrl+A (screen prefix)
 ];
 
 function filterInput(data: string): string {
@@ -1191,7 +1197,7 @@ interface AuditEntry {
   userId: string;
   sessionId: string;
   action: 'connect' | 'disconnect' | 'input' | 'resize' | 'mode_change';
-  data?: string;  // For input events: the keys sent (be careful with secrets!)
+  data?: string; // For input events: the keys sent (be careful with secrets!)
 }
 
 class AuditLogger {
@@ -1211,7 +1217,7 @@ class AuditLogger {
       // Log that input occurred, but not the content
       console.log(
         `[AUDIT] ${fullEntry.timestamp} user=${entry.userId} ` +
-        `session=${entry.sessionId} action=input length=${entry.data?.length}`
+          `session=${entry.sessionId} action=input length=${entry.data?.length}`,
       );
     } else {
       console.log(`[AUDIT] ${JSON.stringify(fullEntry)}`);
@@ -1254,12 +1260,12 @@ class InputRateLimiter {
 
 ### Web Terminal Projects
 
-| Project | Language | Frontend | Backend | Stars | Status |
-|---------|----------|----------|---------|-------|--------|
-| **ttyd** | C | xterm.js | libwebsockets | 8k+ | Active, very fast |
-| **Wetty** | Node.js | xterm.js | node-pty + SSH | 4k+ | Active |
-| **GoTTY** | Go | hterm | gorilla/ws | 18k+ | Unmaintained |
-| **gotty (fork)** | Go | hterm | gorilla/ws | 2k+ | Maintained fork |
+| Project          | Language | Frontend | Backend        | Stars | Status            |
+| ---------------- | -------- | -------- | -------------- | ----- | ----------------- |
+| **ttyd**         | C        | xterm.js | libwebsockets  | 8k+   | Active, very fast |
+| **Wetty**        | Node.js  | xterm.js | node-pty + SSH | 4k+   | Active            |
+| **GoTTY**        | Go       | hterm    | gorilla/ws     | 18k+  | Unmaintained      |
+| **gotty (fork)** | Go       | hterm    | gorilla/ws     | 2k+   | Maintained fork   |
 
 **ttyd** is the most relevant reference implementation. It is a single-binary C program
 that exposes any CLI command over the web using xterm.js + WebSocket. It uses
@@ -1271,10 +1277,10 @@ not tmux sessions.
 
 ### AI Agent Terminal Managers
 
-| Project | Language | Architecture | Stars |
-|---------|----------|-------------|-------|
-| **Agent of Empires** | Rust | TUI + tmux sessions | 200+ |
-| **Agent Deck** | Go (Bubble Tea) | TUI + tmux + MCP | 800+ |
+| Project              | Language        | Architecture        | Stars |
+| -------------------- | --------------- | ------------------- | ----- |
+| **Agent of Empires** | Rust            | TUI + tmux sessions | 200+  |
+| **Agent Deck**       | Go (Bubble Tea) | TUI + tmux + MCP    | 800+  |
 
 Both are **TUI applications** (terminal-based), not web-based. Key learnings:
 
@@ -1286,11 +1292,13 @@ Both are **TUI applications** (terminal-based), not web-based. Key learnings:
 ### VS Code Terminal Architecture
 
 VS Code's integrated terminal uses exactly the stack we are considering:
+
 - **Frontend**: xterm.js (maintained by the same Microsoft team)
 - **Backend**: node-pty (also maintained by Microsoft)
 - **Communication**: IPC (not WebSocket, since it is within the same app)
 
 Key architectural decisions from VS Code:
+
 - WebGL renderer as default with canvas fallback
 - Separate renderer and pty processes for crash isolation
 - Terminal reconnection on window reload via serialization
@@ -1299,6 +1307,7 @@ Key architectural decisions from VS Code:
 ### Jupyter Terminal
 
 Jupyter Notebook/Lab includes a web terminal that uses:
+
 - xterm.js frontend
 - Python `terminado` library (similar to node-pty but Python)
 - WebSocket via Tornado
@@ -1307,6 +1316,7 @@ Jupyter Notebook/Lab includes a web terminal that uses:
 
 These AI-powered editors show agent activity inline in their UI. They do NOT expose a
 raw terminal -- instead they show:
+
 - Streamed log output (like our SSE approach)
 - Diff views for file changes
 - Action approval buttons (not terminal input)
@@ -1324,14 +1334,14 @@ access for power users who need to interact with the raw agent CLI.
 Browser -> xterm.js -> WebSocket -> node-pty -> AI CLI process
 ```
 
-| Aspect | Assessment |
-|--------|-----------|
-| Complexity | Low |
-| Latency | Lowest (~1ms) |
-| Detach/reattach | Not possible -- process dies with connection |
-| Process survival | No -- agent dies if server restarts |
-| Multiple viewers | Possible but requires manual fan-out |
-| Use case | Quick prototype, ephemeral sessions |
+| Aspect           | Assessment                                   |
+| ---------------- | -------------------------------------------- |
+| Complexity       | Low                                          |
+| Latency          | Lowest (~1ms)                                |
+| Detach/reattach  | Not possible -- process dies with connection |
+| Process survival | No -- agent dies if server restarts          |
+| Multiple viewers | Possible but requires manual fan-out         |
+| Use case         | Quick prototype, ephemeral sessions          |
 
 **Verdict**: Not suitable for Agent Monitor. Agents MUST survive disconnections.
 
@@ -1341,14 +1351,14 @@ Browser -> xterm.js -> WebSocket -> node-pty -> AI CLI process
 Browser -> xterm.js -> WebSocket -> node-pty -> tmux attach -> AI CLI in tmux
 ```
 
-| Aspect | Assessment |
-|--------|-----------|
-| Complexity | Medium |
-| Latency | Low (~2-5ms additional from tmux) |
-| Detach/reattach | Native tmux feature |
-| Process survival | Yes -- tmux keeps agent running |
+| Aspect           | Assessment                              |
+| ---------------- | --------------------------------------- |
+| Complexity       | Medium                                  |
+| Latency          | Low (~2-5ms additional from tmux)       |
+| Detach/reattach  | Native tmux feature                     |
+| Process survival | Yes -- tmux keeps agent running         |
 | Multiple viewers | tmux supports multiple clients natively |
-| Use case | Production agent management |
+| Use case         | Production agent management             |
 
 **Verdict**: Best fit for Agent Monitor. Standard approach used by Agent Deck and
 Agent of Empires.
@@ -1360,13 +1370,13 @@ Default:   Browser -> SSE -> tail log file <- tmux pipe-pane <- AI CLI in tmux
 On-demand: Browser -> xterm.js -> WebSocket -> node-pty -> tmux attach -> AI CLI in tmux
 ```
 
-| Aspect | Assessment |
-|--------|-----------|
-| Complexity | Medium-High |
-| Default resource usage | Very low (SSE is just HTTP) |
-| Interactive resource usage | Same as Option B |
-| User experience | Smooth transition from viewing to interacting |
-| Scalability | Best -- most connections are lightweight SSE |
+| Aspect                     | Assessment                                    |
+| -------------------------- | --------------------------------------------- |
+| Complexity                 | Medium-High                                   |
+| Default resource usage     | Very low (SSE is just HTTP)                   |
+| Interactive resource usage | Same as Option B                              |
+| User experience            | Smooth transition from viewing to interacting |
+| Scalability                | Best -- most connections are lightweight SSE  |
 
 **Verdict**: Recommended. Most users will just watch (SSE). Only power users will
 attach interactively (WebSocket + PTY). This matches how Agent Deck works -- most of
@@ -1541,13 +1551,13 @@ include build-essential in the image.
 
 ### Resource Budget per Agent Session
 
-| Component | Memory | CPU | File Descriptors |
-|-----------|--------|-----|-----------------|
-| tmux session | 5-10 MB | Negligible | 3-5 |
-| node-pty instance | 1-2 MB | Negligible | 2 (PTY pair) |
-| Agent CLI (claude) | 100-300 MB | Variable | 10-20 |
-| WebSocket connection | <1 MB | Negligible | 1 |
-| SSE connection | <1 MB | Negligible | 1 |
+| Component            | Memory     | CPU        | File Descriptors |
+| -------------------- | ---------- | ---------- | ---------------- |
+| tmux session         | 5-10 MB    | Negligible | 3-5              |
+| node-pty instance    | 1-2 MB     | Negligible | 2 (PTY pair)     |
+| Agent CLI (claude)   | 100-300 MB | Variable   | 10-20            |
+| WebSocket connection | <1 MB      | Negligible | 1                |
+| SSE connection       | <1 MB      | Negligible | 1                |
 
 **On instance-neo (16GB RAM)**: Can comfortably run 10-15 agent sessions
 simultaneously, depending on agent CLI memory usage.
@@ -1562,23 +1572,23 @@ simultaneously, depending on agent CLI memory usage.
 
 ### Flow Control Thresholds
 
-| Parameter | Recommended Value | Rationale |
-|-----------|------------------|-----------|
-| Write buffer high watermark | 500 KB | Keeps keystroke latency <100ms |
-| Write buffer low watermark | 100 KB | Resume before buffer empties |
-| ACK callback interval | 100 KB | Reduce callback overhead |
-| WebSocket message size limit | 64 KB | Prevent memory spikes |
-| Scrollback lines | 5,000 | Balance between history and memory |
-| Heartbeat interval | 25 seconds | Detect dead connections |
-| Reconnect max attempts | 10 | With exponential backoff up to 30s |
+| Parameter                    | Recommended Value | Rationale                          |
+| ---------------------------- | ----------------- | ---------------------------------- |
+| Write buffer high watermark  | 500 KB            | Keeps keystroke latency <100ms     |
+| Write buffer low watermark   | 100 KB            | Resume before buffer empties       |
+| ACK callback interval        | 100 KB            | Reduce callback overhead           |
+| WebSocket message size limit | 64 KB             | Prevent memory spikes              |
+| Scrollback lines             | 5,000             | Balance between history and memory |
+| Heartbeat interval           | 25 seconds        | Detect dead connections            |
+| Reconnect max attempts       | 10                | With exponential backoff up to 30s |
 
 ### xterm.js Renderer Selection
 
-| Renderer | Speed | GPU Required | Fallback |
-|----------|-------|-------------|----------|
-| WebGL | Fastest (up to 900% faster) | Yes (WebGL2) | Canvas/DOM |
-| Canvas | Medium | No | DOM |
-| DOM | Slowest but most compatible | No | N/A |
+| Renderer | Speed                       | GPU Required | Fallback   |
+| -------- | --------------------------- | ------------ | ---------- |
+| WebGL    | Fastest (up to 900% faster) | Yes (WebGL2) | Canvas/DOM |
+| Canvas   | Medium                      | No           | DOM        |
+| DOM      | Slowest but most compatible | No           | N/A        |
 
 **Strategy**: Try WebGL first, catch errors, fall back to DOM. Canvas is deprecated in v6.
 
@@ -1622,17 +1632,17 @@ simultaneously, depending on agent CLI memory usage.
 
 ### Core Packages
 
-| Package | Version | Purpose | Link |
-|---------|---------|---------|------|
-| `@xterm/xterm` | 6.0.0 | Terminal emulator | https://www.npmjs.com/package/@xterm/xterm |
-| `@xterm/addon-fit` | 0.10.0 | Auto-resize terminal | https://www.npmjs.com/package/@xterm/addon-fit |
-| `@xterm/addon-web-links` | 0.12.0 | Clickable URLs | https://www.npmjs.com/package/@xterm/addon-web-links |
-| `@xterm/addon-search` | 0.15.0 | Search buffer | https://www.npmjs.com/package/@xterm/addon-search |
-| `@xterm/addon-webgl` | 0.19.0 | GPU renderer | https://www.npmjs.com/package/@xterm/addon-webgl |
-| `@xterm/addon-serialize` | 0.14.0 | State serialization | https://www.npmjs.com/package/@xterm/addon-serialize |
-| `node-pty` | 1.1.0 | Pseudo-terminal | https://www.npmjs.com/package/node-pty |
-| `ws` | 8.x | WebSocket server | https://www.npmjs.com/package/ws |
-| `next-ws` | 2.1.16 | Next.js WS routes | https://www.npmjs.com/package/next-ws |
+| Package                  | Version | Purpose              | Link                                                 |
+| ------------------------ | ------- | -------------------- | ---------------------------------------------------- |
+| `@xterm/xterm`           | 6.0.0   | Terminal emulator    | https://www.npmjs.com/package/@xterm/xterm           |
+| `@xterm/addon-fit`       | 0.10.0  | Auto-resize terminal | https://www.npmjs.com/package/@xterm/addon-fit       |
+| `@xterm/addon-web-links` | 0.12.0  | Clickable URLs       | https://www.npmjs.com/package/@xterm/addon-web-links |
+| `@xterm/addon-search`    | 0.15.0  | Search buffer        | https://www.npmjs.com/package/@xterm/addon-search    |
+| `@xterm/addon-webgl`     | 0.19.0  | GPU renderer         | https://www.npmjs.com/package/@xterm/addon-webgl     |
+| `@xterm/addon-serialize` | 0.14.0  | State serialization  | https://www.npmjs.com/package/@xterm/addon-serialize |
+| `node-pty`               | 1.1.0   | Pseudo-terminal      | https://www.npmjs.com/package/node-pty               |
+| `ws`                     | 8.x     | WebSocket server     | https://www.npmjs.com/package/ws                     |
+| `next-ws`                | 2.1.16  | Next.js WS routes    | https://www.npmjs.com/package/next-ws                |
 
 ### CSS Import
 
@@ -1650,6 +1660,7 @@ tmux 3.0+ recommended for control mode features. Check with `tmux -V`.
 ## 13. Sources
 
 ### Official Documentation
+
 - xterm.js official site: https://xtermjs.org/
 - xterm.js API -- ITerminalOptions: https://xtermjs.org/docs/api/terminal/interfaces/iterminaloptions/
 - xterm.js API -- ITheme: https://xtermjs.org/docs/api/terminal/interfaces/itheme/
@@ -1664,22 +1675,26 @@ tmux 3.0+ recommended for control mode features. Check with `tmux -V`.
 - tmux Man Page: https://man7.org/linux/man-pages/man1/tmux.1.html
 
 ### Next.js WebSocket Integration
+
 - next-ws GitHub: https://github.com/apteryxxyz/next-ws
 - Next.js WebSocket Discussion: https://github.com/vercel/next.js/discussions/58698
 - Next.js + xterm.js Discussion: https://github.com/vercel/next.js/discussions/22409
 - WebSockets with Next.js on Fly.io: https://fly.io/javascript-journal/websockets-with-nextjs/
 
 ### Web Terminal Projects
+
 - ttyd: https://github.com/tsl0922/ttyd
 - Wetty: https://github.com/butlerx/wetty
 - GoTTY: https://github.com/yudai/gotty
 - GoTTY (maintained fork): https://github.com/sorenisanerd/gotty
 
 ### AI Agent Terminal Managers
+
 - Agent of Empires: https://github.com/njbrake/agent-of-empires
 - Agent Deck: https://github.com/asheshgoplani/agent-deck
 
 ### Tutorials and Articles
+
 - Web Terminal with xterm.js, node-pty and WebSockets: https://ashishpoudel.substack.com/p/web-terminal-with-xtermjs-node-pty
 - Scalable node-pty with Socket.io: https://medium.com/@deysouvik700/efficient-and-scalable-usage-of-node-js-pty-with-socket-io-for-multiple-users-402851075c4a
 - RWX Remote Debugger with Node and tmux: https://www.rwx.com/blog/implementing-a-remote-debugger-with-node-and-tmux
@@ -1690,6 +1705,7 @@ tmux 3.0+ recommended for control mode features. Check with `tmux -V`.
 - tmux Session Logging (Baeldung): https://www.baeldung.com/linux/tmux-logging
 
 ### Security References
+
 - WebSocket Authentication 2025: https://www.videosdk.live/developer-hub/websocket/websocket-authentication
 - WebSocket Security Hardening: https://websocket.org/guides/security/
 - JWT Security Best Practices: https://curity.io/resources/learn/jwt-best-practices/
@@ -1719,9 +1735,7 @@ wss.on('connection', (ws, req) => {
 
   // Spawn tmux attach (or new session if it does not exist)
   // The -A flag means: attach if exists, otherwise create new
-  const ptyProcess = pty.spawn('/usr/bin/tmux', [
-    'new-session', '-A', '-s', session,
-  ], {
+  const ptyProcess = pty.spawn('/usr/bin/tmux', ['new-session', '-A', '-s', session], {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
@@ -1813,15 +1827,15 @@ export function QuickTerminal({ session }: { session: string }) {
 
 ## Appendix B: Key Decisions Summary
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Session backend | tmux | Only way to detach/reattach. Proven by Agent Deck, Agent of Empires |
-| Terminal emulator | @xterm/xterm v6 | Industry standard. Used by VS Code, Jupyter, ttyd |
-| PTY library | node-pty v1.1.0 | By Microsoft (VS Code team). Only maintained option for Node.js |
-| WebSocket approach | Separate WS server (port 3001) | Crash isolation from Next.js. Can scale independently |
-| Renderer | WebGL with DOM fallback | 900% faster than canvas. Canvas deprecated in v6 |
-| Default mode | SSE (view-only) | Lightweight for most users. Interactive on-demand |
-| Authentication | Short-lived JWT per session | 15-minute tokens. Generated via authenticated API |
-| React wrapper | Custom (no library) | All wrapper libs lag behind xterm releases |
-| Flow control | Watermark approach with custom ACKs | Per official xterm.js docs. Prevents buffer overflow |
-| Input safety | Rate limiting + sequence filtering | Defense in depth for terminal access |
+| Decision           | Choice                              | Rationale                                                           |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------- |
+| Session backend    | tmux                                | Only way to detach/reattach. Proven by Agent Deck, Agent of Empires |
+| Terminal emulator  | @xterm/xterm v6                     | Industry standard. Used by VS Code, Jupyter, ttyd                   |
+| PTY library        | node-pty v1.1.0                     | By Microsoft (VS Code team). Only maintained option for Node.js     |
+| WebSocket approach | Separate WS server (port 3001)      | Crash isolation from Next.js. Can scale independently               |
+| Renderer           | WebGL with DOM fallback             | 900% faster than canvas. Canvas deprecated in v6                    |
+| Default mode       | SSE (view-only)                     | Lightweight for most users. Interactive on-demand                   |
+| Authentication     | Short-lived JWT per session         | 15-minute tokens. Generated via authenticated API                   |
+| React wrapper      | Custom (no library)                 | All wrapper libs lag behind xterm releases                          |
+| Flow control       | Watermark approach with custom ACKs | Per official xterm.js docs. Prevents buffer overflow                |
+| Input safety       | Rate limiting + sequence filtering  | Defense in depth for terminal access                                |

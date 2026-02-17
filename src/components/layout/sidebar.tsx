@@ -3,14 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  ListTodo,
-  Bot,
-  Play,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react';
+import { LayoutDashboard, ListTodo, Bot, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -34,9 +27,7 @@ export function Sidebar() {
       )}
     >
       <div className="flex h-14 items-center border-b px-4">
-        {!isCollapsed && (
-          <span className="text-sm font-semibold">Agent Monitor</span>
-        )}
+        {!isCollapsed && <span className="text-sm font-semibold">Agent Monitor</span>}
         <Button
           variant="ghost"
           size="icon"
@@ -49,8 +40,8 @@ export function Sidebar() {
 
       <nav className="flex-1 space-y-1 p-2">
         {navItems.map((item) => {
-          const isActive = pathname === item.href ||
-            (item.href !== '/' && pathname.startsWith(item.href));
+          const isActive =
+            pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
 
           const linkContent = (
             <Link

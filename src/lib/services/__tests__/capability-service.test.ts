@@ -22,10 +22,7 @@ vi.mock('@/lib/db', () => {
   const mockWhere = vi.fn().mockResolvedValue([mockCapability]);
 
   // from() returns a thenable that also has .where()
-  const mockFromResult = Object.assign(
-    Promise.resolve([mockCapability]),
-    { where: mockWhere },
-  );
+  const mockFromResult = Object.assign(Promise.resolve([mockCapability]), { where: mockWhere });
   const mockFrom = vi.fn().mockReturnValue(mockFromResult);
 
   const mockSet = vi.fn().mockReturnValue({
@@ -55,45 +52,24 @@ describe('capability-service', () => {
     vi.clearAllMocks();
   });
 
-  describe('createCapability', () => {
-    it('validates template mode requires commandTokens', () => {
-      // DB check constraint: (interaction_mode = 'template' AND command_tokens IS NOT NULL) OR (interaction_mode = 'prompt')
-      const templateCapWithoutTokens = {
-        interactionMode: 'template' as const,
-        commandTokens: null,
-      };
+  describe('mode consistency validation', () => {
+    function checkModeConsistency(
+      mode: 'template' | 'prompt',
+      commandTokens: string[] | null,
+    ): boolean {
+      return mode !== 'template' || commandTokens !== null;
+    }
 
-      const isValid =
-        templateCapWithoutTokens.interactionMode !== 'template' ||
-        templateCapWithoutTokens.commandTokens !== null;
-
-      expect(isValid).toBe(false);
+    it('rejects template mode without commandTokens', () => {
+      expect(checkModeConsistency('template', null)).toBe(false);
     });
 
     it('allows prompt mode without commandTokens', () => {
-      const promptCapWithoutTokens = {
-        interactionMode: 'prompt' as const,
-        commandTokens: null,
-      };
-
-      const isValid =
-        promptCapWithoutTokens.interactionMode !== 'template' ||
-        promptCapWithoutTokens.commandTokens !== null;
-
-      expect(isValid).toBe(true);
+      expect(checkModeConsistency('prompt', null)).toBe(true);
     });
 
     it('allows template mode with commandTokens', () => {
-      const templateCapWithTokens = {
-        interactionMode: 'template' as const,
-        commandTokens: ['git', 'status'],
-      };
-
-      const isValid =
-        templateCapWithTokens.interactionMode !== 'template' ||
-        templateCapWithTokens.commandTokens !== null;
-
-      expect(isValid).toBe(true);
+      expect(checkModeConsistency('template', ['git', 'status'])).toBe(true);
     });
   });
 

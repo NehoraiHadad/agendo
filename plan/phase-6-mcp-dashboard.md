@@ -94,12 +94,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const [failedRow] = await db
     .select({ count: count() })
     .from(executions)
-    .where(
-      and(
-        eq(executions.status, 'failed'),
-        gt(executions.endedAt, twentyFourHoursAgo),
-      )
-    );
+    .where(and(eq(executions.status, 'failed'), gt(executions.endedAt, twentyFourHoursAgo)));
   const failedLast24h = failedRow?.count ?? 0;
 
   // 4. Recent task events (last 20)
@@ -137,13 +132,13 @@ export async function getDashboardStats(): Promise<DashboardStats> {
           and(
             eq(executions.agentId, agent.id),
             inArray(executions.status, ['running', 'cancelling']),
-          )
+          ),
         );
       return {
         ...agent,
         runningCount: runningRow?.count ?? 0,
       };
-    })
+    }),
   );
 
   // 6. Worker status
@@ -155,8 +150,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   const workerStatus = workerRow
     ? {
-        isOnline:
-          Date.now() - workerRow.lastSeenAt.getTime() < 120_000, // 2 min threshold
+        isOnline: Date.now() - workerRow.lastSeenAt.getTime() < 120_000, // 2 min threshold
         currentExecutions: workerRow.currentExecutions,
         lastSeenAt: workerRow.lastSeenAt,
       }
@@ -503,16 +497,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const AGENT_MONITOR_API =
-  process.env.AGENT_MONITOR_URL || 'http://localhost:4100';
+const AGENT_MONITOR_API = process.env.AGENT_MONITOR_URL || 'http://localhost:4100';
 
 /**
  * Helper: call Agent Monitor REST API with error handling.
  */
-async function apiCall(
-  path: string,
-  options: RequestInit = {},
-): Promise<any> {
+async function apiCall(path: string, options: RequestInit = {}): Promise<any> {
   const url = `${AGENT_MONITOR_API}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -627,19 +617,9 @@ function createAgentMonitorServer(): McpServer {
           .enum(['todo', 'in_progress', 'blocked', 'done', 'cancelled'])
           .optional()
           .describe('New task status'),
-        assignee: z
-          .string()
-          .optional()
-          .describe('Agent slug to assign'),
-        description: z
-          .string()
-          .max(5000)
-          .optional()
-          .describe('Updated task description'),
-        priority: z
-          .enum(['1', '2', '3', '4'])
-          .optional()
-          .describe('Updated priority'),
+        assignee: z.string().optional().describe('Agent slug to assign'),
+        description: z.string().max(5000).optional().describe('Updated task description'),
+        priority: z.enum(['1', '2', '3', '4']).optional().describe('Updated priority'),
       },
       annotations: {
         readOnlyHint: false,
@@ -692,15 +672,8 @@ function createAgentMonitorServer(): McpServer {
           .enum(['todo', 'in_progress', 'blocked', 'done', 'cancelled', 'all'])
           .default('all')
           .describe('Filter by status, or "all" for all tasks'),
-        assignee: z
-          .string()
-          .optional()
-          .describe('Filter by agent slug'),
-        parentTaskId: z
-          .string()
-          .uuid()
-          .optional()
-          .describe('Filter subtasks of a parent task'),
+        assignee: z.string().optional().describe('Filter by agent slug'),
+        parentTaskId: z.string().uuid().optional().describe('Filter subtasks of a parent task'),
       },
       annotations: {
         readOnlyHint: true,
@@ -752,20 +725,10 @@ function createAgentMonitorServer(): McpServer {
         'Create a subtask under an existing parent task. ' +
         'Useful for breaking work into smaller pieces.',
       inputSchema: {
-        parentTaskId: z
-          .string()
-          .uuid()
-          .describe('Parent task ID'),
+        parentTaskId: z.string().uuid().describe('Parent task ID'),
         title: z.string().min(1).max(500).describe('Subtask title'),
-        description: z
-          .string()
-          .max(5000)
-          .optional()
-          .describe('Subtask description'),
-        assignee: z
-          .string()
-          .optional()
-          .describe('Agent slug to assign'),
+        description: z.string().max(5000).optional().describe('Subtask description'),
+        assignee: z.string().optional().describe('Agent slug to assign'),
         priority: z
           .enum(['1', '2', '3', '4'])
           .default('3')
@@ -817,13 +780,10 @@ function createAgentMonitorServer(): McpServer {
     'assign_task',
     {
       title: 'Assign Task',
-      description:
-        'Assign or reassign a task to a specific agent by slug.',
+      description: 'Assign or reassign a task to a specific agent by slug.',
       inputSchema: {
         taskId: z.string().uuid().describe('Task ID to assign'),
-        agentSlug: z
-          .string()
-          .describe('Agent slug (e.g., "claude", "codex", "gemini")'),
+        agentSlug: z.string().describe('Agent slug (e.g., "claude", "codex", "gemini")'),
       },
       annotations: {
         readOnlyHint: false,
@@ -971,11 +931,9 @@ Generates MCP config files for each agent type when spawning.
 import path from 'path';
 
 const MCP_SERVER_PATH =
-  process.env.MCP_SERVER_PATH ||
-  path.resolve(__dirname, '../../../dist/mcp-server.js');
+  process.env.MCP_SERVER_PATH || path.resolve(__dirname, '../../../dist/mcp-server.js');
 
-const AGENT_MONITOR_URL =
-  process.env.AGENT_MONITOR_URL || 'http://localhost:4100';
+const AGENT_MONITOR_URL = process.env.AGENT_MONITOR_URL || 'http://localhost:4100';
 
 /**
  * Generate .mcp.json content for Claude Code.
@@ -1134,11 +1092,7 @@ export function injectMcpConfig(
       const configPath = path.join(tmpDir, 'config.toml');
 
       // Read existing user config if present
-      const userConfigPath = path.join(
-        process.env.HOME || '/home/ubuntu',
-        '.codex',
-        'config.toml',
-      );
+      const userConfigPath = path.join(process.env.HOME || '/home/ubuntu', '.codex', 'config.toml');
       let existingConfig = '';
       if (existsSync(userConfigPath)) {
         existingConfig = readFileSync(userConfigPath, 'utf-8');
@@ -1154,7 +1108,9 @@ export function injectMcpConfig(
       cleanups.push(() => {
         try {
           require('fs').rmSync(tmpDir, { recursive: true, force: true });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       });
       break;
     }
@@ -1179,6 +1135,7 @@ export function injectMcpConfig(
 In each adapter's `spawn()` method (from Phase 4), add MCP config injection:
 
 **Claude adapter** (`src/lib/worker/adapters/claude-adapter.ts`):
+
 ```typescript
 // In the spawn() method, before creating the tmux session:
 if (agent.mcpEnabled) {
@@ -1189,6 +1146,7 @@ if (agent.mcpEnabled) {
 ```
 
 **Codex adapter** (`src/lib/worker/adapters/codex-adapter.ts`):
+
 ```typescript
 // In the spawn() method, before creating the tmux session:
 if (agent.mcpEnabled) {
@@ -1199,6 +1157,7 @@ if (agent.mcpEnabled) {
 ```
 
 **Gemini adapter** (`src/lib/worker/adapters/gemini-adapter.ts`):
+
 ```typescript
 // In the spawn() method, prepend REST fallback instructions to the prompt:
 if (agent.mcpEnabled) {
@@ -1223,6 +1182,7 @@ spawnDepth: integer('spawn_depth').notNull().default(0),
 ```
 
 Then run:
+
 ```bash
 npx drizzle-kit generate
 npx drizzle-kit migrate
@@ -1268,7 +1228,8 @@ export async function checkLoopGuards(params: {
   if (depth >= config.maxSpawnDepth) {
     return {
       allowed: false,
-      reason: `Spawn depth limit reached (${config.maxSpawnDepth}). Current depth: ${depth}. ` +
+      reason:
+        `Spawn depth limit reached (${config.maxSpawnDepth}). Current depth: ${depth}. ` +
         'This prevents infinite agent-spawning loops.',
     };
   }
@@ -1282,7 +1243,8 @@ export async function checkLoopGuards(params: {
   if ((activeRow?.count ?? 0) >= config.maxConcurrentAiAgents) {
     return {
       allowed: false,
-      reason: `Concurrent agent limit reached (${config.maxConcurrentAiAgents} active). ` +
+      reason:
+        `Concurrent agent limit reached (${config.maxConcurrentAiAgents} active). ` +
         'Wait for existing executions to complete.',
     };
   }
@@ -1314,7 +1276,8 @@ export function checkTaskCreationRateLimit(
     taskCreationLog.set(agentId, timestamps);
     return {
       allowed: false,
-      reason: `Rate limit: max ${maxPerMinute} tasks per agent per minute. ` +
+      reason:
+        `Rate limit: max ${maxPerMinute} tasks per agent per minute. ` +
         `Agent ${agentId} has created ${timestamps.length} tasks in the last minute.`,
     };
   }
@@ -1328,9 +1291,7 @@ export function checkTaskCreationRateLimit(
 /**
  * Calculate spawn depth by walking the parent execution chain.
  */
-async function getSpawnDepth(
-  parentExecutionId?: string,
-): Promise<number> {
+async function getSpawnDepth(parentExecutionId?: string): Promise<number> {
   if (!parentExecutionId) return 0;
 
   let depth = 0;
@@ -1370,12 +1331,13 @@ async function getLoopConfig() {
   const configMap = new Map(rows.map((r) => [r.key, r.value]));
 
   return {
-    maxSpawnDepth:
-      Number(configMap.get('max_spawn_depth') ?? DEFAULTS.MAX_SPAWN_DEPTH),
-    maxConcurrentAiAgents:
-      Number(configMap.get('max_concurrent_ai_agents') ?? DEFAULTS.MAX_CONCURRENT_AI_AGENTS),
-    maxTasksPerAgentPerMinute:
-      Number(configMap.get('max_tasks_per_agent_per_minute') ?? DEFAULTS.MAX_TASKS_PER_AGENT_PER_MINUTE),
+    maxSpawnDepth: Number(configMap.get('max_spawn_depth') ?? DEFAULTS.MAX_SPAWN_DEPTH),
+    maxConcurrentAiAgents: Number(
+      configMap.get('max_concurrent_ai_agents') ?? DEFAULTS.MAX_CONCURRENT_AI_AGENTS,
+    ),
+    maxTasksPerAgentPerMinute: Number(
+      configMap.get('max_tasks_per_agent_per_minute') ?? DEFAULTS.MAX_TASKS_PER_AGENT_PER_MINUTE,
+    ),
   };
 }
 ```
@@ -1813,9 +1775,7 @@ import { z, type ZodType } from 'zod';
  * @param jsonSchema - The JSON Schema from agent_capabilities.args_schema
  * @returns A Zod schema that validates according to the JSON Schema
  */
-export function convertJsonSchemaToZod(
-  jsonSchema: Record<string, unknown>,
-): ZodType {
+export function convertJsonSchemaToZod(jsonSchema: Record<string, unknown>): ZodType {
   if (!jsonSchema || Object.keys(jsonSchema).length === 0) {
     return z.object({}).passthrough();
   }
@@ -1823,10 +1783,7 @@ export function convertJsonSchemaToZod(
   return convertNode(jsonSchema, jsonSchema.required as string[] | undefined);
 }
 
-function convertNode(
-  schema: Record<string, unknown>,
-  parentRequired?: string[],
-): ZodType {
+function convertNode(schema: Record<string, unknown>, parentRequired?: string[]): ZodType {
   // Enum
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     const values = schema.enum as [string, ...string[]];
@@ -1864,10 +1821,7 @@ function convertNode(
     }
 
     case 'object': {
-      const properties = (schema.properties ?? {}) as Record<
-        string,
-        Record<string, unknown>
-      >;
+      const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
       const required = (schema.required ?? []) as string[];
 
       const shape: Record<string, ZodType> = {};
@@ -2083,9 +2037,7 @@ export async function rotateOldLogs(
     console.error('[log-rotation] Failed to read log directory:', err);
   }
 
-  console.log(
-    `[log-rotation] Completed: ${deleted} deleted, ${errors} errors`,
-  );
+  console.log(`[log-rotation] Completed: ${deleted} deleted, ${errors} errors`);
   return { deleted, errors };
 }
 ```
@@ -2100,10 +2052,15 @@ Add after pg-boss `boss.start()`:
 import { rotateOldLogs } from '@/lib/services/log-rotation';
 
 // Schedule daily log rotation via pg-boss cron
-await boss.schedule('log-rotation', '0 3 * * *', {}, {
-  // Run at 3 AM daily
-  tz: 'UTC',
-});
+await boss.schedule(
+  'log-rotation',
+  '0 3 * * *',
+  {},
+  {
+    // Run at 3 AM daily
+    tz: 'UTC',
+  },
+);
 
 await boss.work('log-rotation', async () => {
   await rotateOldLogs();
@@ -2428,7 +2385,9 @@ function useLiveCounts() {
             queuedTasks: data.taskCountsByStatus?.todo ?? 0,
           });
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
 
     fetchCounts();

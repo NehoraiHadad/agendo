@@ -1,8 +1,8 @@
 ---
 paths:
-  - "src/**/*.ts"
-  - "src/**/*.tsx"
-  - "src/lib/__tests__/**/*"
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+  - 'src/lib/__tests__/**/*'
 ---
 
 # Test-Driven Development (TDD) Rules

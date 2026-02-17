@@ -35,14 +35,14 @@
 
 ### Version Requirements
 
-| Requirement    | Version              |
-|----------------|----------------------|
-| Node.js        | >= 20.9.0 (LTS)     |
-| TypeScript     | >= 5.1.0             |
-| React          | 19.2+ (via canary)   |
-| Chrome/Edge    | 111+                 |
-| Firefox        | 111+                 |
-| Safari         | 16.4+                |
+| Requirement | Version            |
+| ----------- | ------------------ |
+| Node.js     | >= 20.9.0 (LTS)    |
+| TypeScript  | >= 5.1.0           |
+| React       | 19.2+ (via canary) |
+| Chrome/Edge | 111+               |
+| Firefox     | 111+               |
+| Safari      | 16.4+              |
 
 ### React Version Details
 
@@ -91,20 +91,21 @@ Next.js 15 introduced async request APIs with temporary sync compatibility. **Ne
 
 ```typescript
 // BEFORE (Next.js 15 - sync access still worked)
-const cookieStore = cookies()
-const headerList = headers()
+const cookieStore = cookies();
+const headerList = headers();
 
 // AFTER (Next.js 16 - MUST await)
-const cookieStore = await cookies()
-const headerList = await headers()
-const { slug } = await params
-const query = await searchParams
-const mode = await draftMode()
+const cookieStore = await cookies();
+const headerList = await headers();
+const { slug } = await params;
+const query = await searchParams;
+const mode = await draftMode();
 ```
 
 Use the codemod: `npx @next/codemod@canary upgrade latest`
 
 Type helpers available via `npx next typegen`:
+
 ```typescript
 // app/blog/[slug]/page.tsx
 export default async function Page(props: PageProps<'/blog/[slug]'>) {
@@ -119,6 +120,7 @@ export default async function Page(props: PageProps<'/blog/[slug]'>) {
 Turbopack is now the default. If you have a custom `webpack` config in `next.config.ts`, the build will **fail** to prevent misconfiguration.
 
 Options:
+
 - Remove webpack config and use Turbopack (recommended)
 - Use `next build --webpack` to explicitly opt out
 - Turbopack config moved from `experimental.turbopack` to top-level `turbopack`
@@ -129,7 +131,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     // options here (no longer under experimental)
   },
-}
+};
 ```
 
 #### 3.3 middleware.ts -> proxy.ts
@@ -141,11 +143,12 @@ mv middleware.ts proxy.ts
 ```typescript
 // proxy.ts
 export function proxy(request: NextRequest) {
-  return NextResponse.redirect(new URL('/home', request.url))
+  return NextResponse.redirect(new URL('/home', request.url));
 }
 ```
 
 Key differences:
+
 - `proxy.ts` runs on **Node.js runtime only** (not Edge)
 - Runtime is NOT configurable
 - Config flag renamed: `skipMiddlewareUrlNormalize` -> `skipProxyUrlNormalize`
@@ -157,54 +160,56 @@ All parallel route slots now require explicit `default.js` files. Builds fail wi
 
 ```typescript
 // app/@modal/default.tsx
-import { notFound } from 'next/navigation'
+import { notFound } from 'next/navigation';
 export default function Default() {
-  notFound()
+  notFound();
 }
 ```
 
 ### Removals
 
-| Removed | Replacement |
-|---------|-------------|
-| AMP support (all APIs) | None (use modern web standards) |
-| `next lint` command | Run ESLint/Biome directly |
-| `serverRuntimeConfig` / `publicRuntimeConfig` | Environment variables |
-| `experimental.dynamicIO` | `cacheComponents: true` |
-| `experimental.ppr` flag | `cacheComponents: true` |
-| `export const experimental_ppr` | Removed (use Cache Components) |
-| Sync `params`, `searchParams` | Must use `await` |
-| Sync `cookies()`, `headers()`, `draftMode()` | Must use `await` |
-| `devIndicators` (appIsrStatus, buildActivity) | Removed |
-| `unstable_rootParams()` | Alternative API coming in future minor |
-| Auto `scroll-behavior: smooth` override | Add `data-scroll-behavior="smooth"` to `<html>` |
+| Removed                                       | Replacement                                     |
+| --------------------------------------------- | ----------------------------------------------- |
+| AMP support (all APIs)                        | None (use modern web standards)                 |
+| `next lint` command                           | Run ESLint/Biome directly                       |
+| `serverRuntimeConfig` / `publicRuntimeConfig` | Environment variables                           |
+| `experimental.dynamicIO`                      | `cacheComponents: true`                         |
+| `experimental.ppr` flag                       | `cacheComponents: true`                         |
+| `export const experimental_ppr`               | Removed (use Cache Components)                  |
+| Sync `params`, `searchParams`                 | Must use `await`                                |
+| Sync `cookies()`, `headers()`, `draftMode()`  | Must use `await`                                |
+| `devIndicators` (appIsrStatus, buildActivity) | Removed                                         |
+| `unstable_rootParams()`                       | Alternative API coming in future minor          |
+| Auto `scroll-behavior: smooth` override       | Add `data-scroll-behavior="smooth"` to `<html>` |
 
 ### Behavior Changes
 
-| Change | Details |
-|--------|---------|
-| `images.minimumCacheTTL` | 60s -> 4 hours (14400s) |
-| `images.imageSizes` | Removed `16` from defaults |
-| `images.qualities` | `[1..100]` -> `[75]` |
-| `images.dangerouslyAllowLocalIP` | Blocks local IP by default |
-| `images.maximumRedirects` | Unlimited -> 3 max |
-| `revalidateTag()` | Requires cacheLife profile as 2nd arg |
-| `next dev` / `next build` | Use separate output dirs (`.next/dev` vs `.next`) |
-| Lockfile mechanism | Prevents multiple dev/build instances |
-| ESLint plugin | Defaults to Flat Config format |
-| Sass | Bumped to sass-loader v16 |
-| Dev/build output | `size` and `First Load JS` metrics removed |
+| Change                           | Details                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `images.minimumCacheTTL`         | 60s -> 4 hours (14400s)                           |
+| `images.imageSizes`              | Removed `16` from defaults                        |
+| `images.qualities`               | `[1..100]` -> `[75]`                              |
+| `images.dangerouslyAllowLocalIP` | Blocks local IP by default                        |
+| `images.maximumRedirects`        | Unlimited -> 3 max                                |
+| `revalidateTag()`                | Requires cacheLife profile as 2nd arg             |
+| `next dev` / `next build`        | Use separate output dirs (`.next/dev` vs `.next`) |
+| Lockfile mechanism               | Prevents multiple dev/build instances             |
+| ESLint plugin                    | Defaults to Flat Config format                    |
+| Sass                             | Bumped to sass-loader v16                         |
+| Dev/build output                 | `size` and `First Load JS` metrics removed        |
 
 ---
 
 ## 4. Turbopack Status in 16
 
 ### Development
+
 - **Stable, default** since 16.0
 - File system caching **stable and on by default** since 16.1
 - No configuration needed
 
 ### Production Builds
+
 - **Stable, default** since 16.0
 - File system caching for `next build` still being stabilized (post-16.1)
 - Opt out with `next build --webpack`
@@ -213,7 +218,7 @@ export default function Default() {
 
 ```typescript
 // next.config.ts
-import type { NextConfig } from 'next'
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   // Turbopack config is now top-level (not experimental)
@@ -223,13 +228,14 @@ const nextConfig: NextConfig = {
       fs: { browser: './empty.ts' },
     },
   },
-}
-export default nextConfig
+};
+export default nextConfig;
 ```
 
 ### Turbopack + Custom Webpack
 
 If you have any webpack config (even from a plugin), Turbopack build will fail. You must either:
+
 1. Migrate to Turbopack equivalents
 2. Use `next build --webpack` explicitly
 
@@ -262,40 +268,44 @@ app/
 Server Actions remain the primary mutation pattern. **Key changes:**
 
 1. **New `updateTag()` API** (Server Actions only) - Read-your-writes semantics:
+
 ```typescript
-'use server'
-import { updateTag } from 'next/cache'
+'use server';
+import { updateTag } from 'next/cache';
 
 export async function updateTask(taskId: string, data: TaskData) {
-  await db.tasks.update(taskId, data)
-  updateTag(`task-${taskId}`)  // User sees changes immediately
+  await db.tasks.update(taskId, data);
+  updateTag(`task-${taskId}`); // User sees changes immediately
 }
 ```
 
 2. **New `refresh()` API** (Server Actions only) - Refresh uncached data:
+
 ```typescript
-'use server'
-import { refresh } from 'next/cache'
+'use server';
+import { refresh } from 'next/cache';
 
 export async function markTaskComplete(taskId: string) {
-  await db.tasks.markComplete(taskId)
-  refresh()  // Refreshes dynamic data on the page
+  await db.tasks.markComplete(taskId);
+  refresh(); // Refreshes dynamic data on the page
 }
 ```
 
 3. **`revalidateTag()` updated** - Now requires cache profile:
+
 ```typescript
-'use server'
-import { revalidateTag } from 'next/cache'
+'use server';
+import { revalidateTag } from 'next/cache';
 
 export async function publishContent(id: string) {
-  revalidateTag(`content-${id}`, 'max')  // SWR behavior
+  revalidateTag(`content-${id}`, 'max'); // SWR behavior
 }
 ```
 
 4. `cacheLife` and `cacheTag` are now stable (no more `unstable_` prefix):
+
 ```typescript
-import { cacheLife, cacheTag } from 'next/cache'
+import { cacheLife, cacheTag } from 'next/cache';
 // Instead of:
 // import { unstable_cacheLife as cacheLife } from 'next/cache'
 ```
@@ -308,41 +318,42 @@ SSE via route handlers with ReadableStream **continues to work in Next.js 16**. 
 
 ```typescript
 // app/api/events/route.ts
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
-  const encoder = new TextEncoder()
+  const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
       // IMPORTANT: Do NOT await async work here.
       // Start background work and let the Response return immediately.
       const interval = setInterval(() => {
-        const data = JSON.stringify({ timestamp: Date.now() })
-        controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-      }, 1000)
+        const data = JSON.stringify({ timestamp: Date.now() });
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+      }, 1000);
 
       // Clean up on close
       request.signal.addEventListener('abort', () => {
-        clearInterval(interval)
-        controller.close()
-      })
+        clearInterval(interval);
+        controller.close();
+      });
     },
-  })
+  });
 
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',  // Prevent NGINX buffering
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // Prevent NGINX buffering
     },
-  })
+  });
 }
 ```
 
 **Key notes for SSE in Next.js 16:**
+
 - Route handlers are the correct approach (not Server Actions) for streaming
 - Must use `runtime = 'nodejs'` and `dynamic = 'force-dynamic'`
 - The `X-Accel-Buffering: no` header is important if behind NGINX
@@ -361,22 +372,22 @@ Covered in detail in Section 3.3 above. Summary for Agent Monitor:
 
 ```typescript
 // proxy.ts
-import { NextResponse, NextRequest } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server';
 
 export function proxy(request: NextRequest) {
   // Auth check for dashboard routes
   if (request.nextUrl.pathname.startsWith('/dashboard')) {
-    const token = request.cookies.get('session')
+    const token = request.cookies.get('session');
     if (!token) {
-      return NextResponse.redirect(new URL('/login', request.url))
+      return NextResponse.redirect(new URL('/login', request.url));
     }
   }
-  return NextResponse.next()
+  return NextResponse.next();
 }
 
 export const config = {
   matcher: ['/dashboard/:path*', '/api/:path*'],
-}
+};
 ```
 
 ---
@@ -403,6 +414,7 @@ export const config = {
 **Impact: Low (positive changes)**
 
 Server Actions work the same as Next.js 15 but with new APIs:
+
 - Use `updateTag()` for task mutations where users need to see changes instantly
 - Use `refresh()` for refreshing agent status displays after actions
 - `revalidateTag()` now needs a second argument (cache profile)
@@ -440,7 +452,7 @@ ReadableStream-based SSE in route handlers works identically. No API changes. Tu
 // next.config.ts (only if needed)
 const nextConfig: NextConfig = {
   serverExternalPackages: ['your-native-package'],
-}
+};
 ```
 
 ### 7.5 Worker Process Importing from src/lib/ - NEEDS ATTENTION
@@ -460,7 +472,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/worker': ['./src/lib/**/*'],
   },
-}
+};
 ```
 
 3. **Turbopack consideration:** If the worker uses `worker_threads` and imports modules that Turbopack doesn't trace, you may need manual configuration. Consider structuring shared code as a separate package or ensuring the worker is started independently (not bundled by Next.js).
@@ -472,7 +484,7 @@ const nextConfig: NextConfig = {
 ## 8. Recommended next.config.ts for Agent Monitor
 
 ```typescript
-import type { NextConfig } from 'next'
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   // Turbopack is default - no flag needed
@@ -491,9 +503,9 @@ const nextConfig: NextConfig = {
       // Add your image domains here
     ],
   },
-}
+};
 
-export default nextConfig
+export default nextConfig;
 ```
 
 ### package.json scripts

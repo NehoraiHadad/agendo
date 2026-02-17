@@ -382,14 +382,14 @@ export type InteractionMode = (typeof schema.interactionModeEnum.enumValues)[num
 
 ## Index Summary
 
-| Index | Table | Columns | Purpose |
-|-------|-------|---------|---------|
-| `idx_agents_workspace` | agents | (workspace_id, is_active) | Workspace-scoped agent list |
-| `idx_capabilities_agent` | agent_capabilities | (agent_id, is_enabled) | Agent's enabled capabilities |
-| `idx_tasks_board` | tasks | (workspace_id, status, sort_order) | Kanban board query per column |
-| `idx_tasks_parent` | tasks | (parent_task_id) | Subtask lookup |
-| `idx_executions_queue` | executions | (status, created_at) | Job claim: `FOR UPDATE SKIP LOCKED` |
-| `idx_executions_task` | executions | (task_id, created_at) | Task execution history |
-| `idx_executions_stale` | executions | (heartbeat_at) | Stale job detection |
-| `idx_executions_agent_active` | executions | (agent_id, status) | Per-agent concurrency check |
-| `idx_task_events_task` | task_events | (task_id, created_at) | Audit trail per task |
+| Index                         | Table              | Columns                            | Purpose                             |
+| ----------------------------- | ------------------ | ---------------------------------- | ----------------------------------- |
+| `idx_agents_workspace`        | agents             | (workspace_id, is_active)          | Workspace-scoped agent list         |
+| `idx_capabilities_agent`      | agent_capabilities | (agent_id, is_enabled)             | Agent's enabled capabilities        |
+| `idx_tasks_board`             | tasks              | (workspace_id, status, sort_order) | Kanban board query per column       |
+| `idx_tasks_parent`            | tasks              | (parent_task_id)                   | Subtask lookup                      |
+| `idx_executions_queue`        | executions         | (status, created_at)               | Job claim: `FOR UPDATE SKIP LOCKED` |
+| `idx_executions_task`         | executions         | (task_id, created_at)              | Task execution history              |
+| `idx_executions_stale`        | executions         | (heartbeat_at)                     | Stale job detection                 |
+| `idx_executions_agent_active` | executions         | (agent_id, status)                 | Per-agent concurrency check         |
+| `idx_task_events_task`        | task_events        | (task_id, created_at)              | Audit trail per task                |

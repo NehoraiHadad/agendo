@@ -20,7 +20,7 @@ Agent Monitor is a Next.js 16 application for managing AI coding agents (Claude,
 - **UI**: shadcn/ui + Tailwind CSS
 - **State**: Zustand (client), Server Components (server)
 - **Real-time**: SSE (board updates, log streaming), socket.io (terminal)
-- **Terminal**: xterm.js v6 (@xterm/* scoped packages) + node-pty
+- **Terminal**: xterm.js v6 (@xterm/\* scoped packages) + node-pty
 - **MCP**: @modelcontextprotocol/sdk (stdio transport)
 
 ## Critical Rules
@@ -39,6 +39,7 @@ Agent Monitor is a Next.js 16 application for managing AI coding agents (Claude,
 ## Service Patterns
 
 All services follow the same structure:
+
 ```typescript
 import { db } from '@/lib/db';
 import { tableName } from '@/lib/db/schema';
@@ -60,7 +61,7 @@ export const GET = withErrorBoundary(
     const { id } = await params;
     // ... service call
     return Response.json({ data: result });
-  }
+  },
 );
 ```
 
@@ -75,14 +76,15 @@ All new features MUST follow strict Test-Driven Development:
 5. **Refactor**: Clean up if needed, tests must stay green
 
 When using agent teams:
+
 - **tests agent runs first** — writes all failing tests, confirms red
 - **implementation agents run second** — write code to make tests pass
 - Never write tests and implementation in parallel
 
 ## PM2 Services
 
-| Service | Port | PM2 Name |
-|---------|------|----------|
-| Next.js app | 4100 | agent-monitor |
-| Worker | — | agent-monitor-worker |
+| Service         | Port | PM2 Name               |
+| --------------- | ---- | ---------------------- |
+| Next.js app     | 4100 | agent-monitor          |
+| Worker          | —    | agent-monitor-worker   |
 | Terminal server | 4101 | agent-monitor-terminal |

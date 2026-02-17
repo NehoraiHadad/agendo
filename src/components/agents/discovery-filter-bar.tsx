@@ -28,9 +28,10 @@ export function DiscoveryFilterBar({
   return (
     <div className="flex flex-wrap gap-2">
       {FILTER_OPTIONS.map((option) => {
-        const count = option.value === 'all'
-          ? Object.values(counts).reduce((sum, c) => sum + c, 0)
-          : (counts[option.value] ?? 0);
+        const count =
+          option.value === 'all'
+            ? Object.values(counts).reduce((sum, c) => sum + c, 0)
+            : (counts[option.value] ?? 0);
 
         return (
           <Button
