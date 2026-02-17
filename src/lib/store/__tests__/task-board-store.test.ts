@@ -50,6 +50,7 @@ describe('task-board-store', () => {
         cancelled: false,
       },
       selectedTaskId: null,
+      pendingOptimistic: new Set(),
     });
   });
 
@@ -197,6 +198,183 @@ describe('task-board-store', () => {
       const state = useTaskBoardStore.getState();
       expect(state.columns.todo).toEqual(['task-1']);
       expect(state.tasksById['task-1'].title).toBe('New Title');
+    });
+  });
+
+  describe('optimisticReorder', () => {
+    it('moves a task within the same column to the specified index', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      const t2 = createMockTask({ id: 'task-2', status: 'todo' });
+      const t3 = createMockTask({ id: 'task-3', status: 'todo' });
+      useTaskBoardStore.getState().addTask(t1);
+      useTaskBoardStore.getState().addTask(t2);
+      useTaskBoardStore.getState().addTask(t3);
+
+      // Move task-1 to index 2 (end of column)
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'todo', 2);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.columns.todo).toEqual(['task-2', 'task-3', 'task-1']);
+    });
+
+    it('moves a task between columns', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      const t2 = createMockTask({ id: 'task-2', status: 'in_progress' });
+      useTaskBoardStore.getState().addTask(t1);
+      useTaskBoardStore.getState().addTask(t2);
+
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'in_progress', 0);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.columns.todo).toEqual([]);
+      expect(state.columns.in_progress).toContain('task-1');
+      expect(state.tasksById['task-1'].status).toBe('in_progress');
+    });
+
+    it('inserts at the correct index when moving to another column', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      const t2 = createMockTask({ id: 'task-2', status: 'in_progress' });
+      const t3 = createMockTask({ id: 'task-3', status: 'in_progress' });
+      useTaskBoardStore.getState().addTask(t1);
+      useTaskBoardStore.getState().addTask(t2);
+      useTaskBoardStore.getState().addTask(t3);
+
+      // Move task-1 to in_progress at index 1 (between task-2 and task-3)
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'in_progress', 1);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.columns.in_progress).toEqual(['task-2', 'task-1', 'task-3']);
+    });
+
+    it('adds taskId to pendingOptimistic', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      useTaskBoardStore.getState().addTask(t1);
+
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'todo', 0);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.pendingOptimistic.has('task-1')).toBe(true);
+    });
+
+    it('does nothing when taskId does not exist', () => {
+      const stateBefore = useTaskBoardStore.getState();
+
+      useTaskBoardStore.getState().optimisticReorder('non-existent', 'todo', 0);
+
+      const stateAfter = useTaskBoardStore.getState();
+      expect(stateAfter.columns.todo).toEqual(stateBefore.columns.todo);
+    });
+  });
+
+  describe('applyServerUpdate', () => {
+    it('skips tasks that have a pending optimistic update', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo', title: 'Original' });
+      useTaskBoardStore.getState().addTask(t1);
+      // Mark as pending
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'todo', 0);
+
+      const serverVersion = { ...t1, title: 'Server Title', status: 'in_progress' as const };
+      useTaskBoardStore.getState().applyServerUpdate(serverVersion);
+
+      // Task should NOT have been updated because it's pending
+      const state = useTaskBoardStore.getState();
+      expect(state.tasksById['task-1'].title).toBe('Original');
+      expect(state.tasksById['task-1'].status).toBe('todo');
+    });
+
+    it('updates task data when task is not pending', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo', title: 'Original' });
+      useTaskBoardStore.getState().addTask(t1);
+
+      const serverVersion = { ...t1, title: 'Server Title' };
+      useTaskBoardStore.getState().applyServerUpdate(serverVersion);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.tasksById['task-1'].title).toBe('Server Title');
+    });
+
+    it('handles cross-column move from server update', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      useTaskBoardStore.getState().addTask(t1);
+
+      const serverVersion = { ...t1, status: 'in_progress' as const };
+      useTaskBoardStore.getState().applyServerUpdate(serverVersion);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.columns.todo).toEqual([]);
+      expect(state.columns.in_progress).toContain('task-1');
+      expect(state.tasksById['task-1'].status).toBe('in_progress');
+    });
+
+    it('adds task as new when task id is not in the store', () => {
+      const newTask = createMockTask({ id: 'task-new', status: 'blocked' });
+
+      useTaskBoardStore.getState().applyServerUpdate(newTask);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.tasksById['task-new']).toEqual(newTask);
+      expect(state.columns.blocked).toContain('task-new');
+    });
+  });
+
+  describe('applyServerCreate', () => {
+    it('adds a new task that does not exist in the store', () => {
+      const newTask = createMockTask({ id: 'task-created', status: 'todo' });
+
+      useTaskBoardStore.getState().applyServerCreate(newTask);
+
+      const state = useTaskBoardStore.getState();
+      expect(state.tasksById['task-created']).toEqual(newTask);
+      expect(state.columns.todo).toContain('task-created');
+    });
+
+    it('ignores creation when task id already exists (duplicate)', () => {
+      const existing = createMockTask({ id: 'task-dup', status: 'todo', title: 'Existing' });
+      useTaskBoardStore.getState().addTask(existing);
+
+      const duplicate = { ...existing, title: 'Duplicate' };
+      useTaskBoardStore.getState().applyServerCreate(duplicate);
+
+      const state = useTaskBoardStore.getState();
+      // Title must remain unchanged
+      expect(state.tasksById['task-dup'].title).toBe('Existing');
+      // Column must not contain the id twice
+      expect(state.columns.todo.filter((id) => id === 'task-dup')).toHaveLength(1);
+    });
+  });
+
+  describe('settleOptimistic', () => {
+    it('removes taskId from pendingOptimistic', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      useTaskBoardStore.getState().addTask(t1);
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'todo', 0);
+      expect(useTaskBoardStore.getState().pendingOptimistic.has('task-1')).toBe(true);
+
+      useTaskBoardStore.getState().settleOptimistic('task-1');
+
+      expect(useTaskBoardStore.getState().pendingOptimistic.has('task-1')).toBe(false);
+    });
+
+    it('is a no-op for a taskId that is not pending', () => {
+      useTaskBoardStore.getState().settleOptimistic('never-pending');
+
+      const state = useTaskBoardStore.getState();
+      expect(state.pendingOptimistic.size).toBe(0);
+    });
+
+    it('only removes the specified taskId, leaving others pending', () => {
+      const t1 = createMockTask({ id: 'task-1', status: 'todo' });
+      const t2 = createMockTask({ id: 'task-2', status: 'todo' });
+      useTaskBoardStore.getState().addTask(t1);
+      useTaskBoardStore.getState().addTask(t2);
+      useTaskBoardStore.getState().optimisticReorder('task-1', 'todo', 0);
+      useTaskBoardStore.getState().optimisticReorder('task-2', 'todo', 1);
+
+      useTaskBoardStore.getState().settleOptimistic('task-1');
+
+      const state = useTaskBoardStore.getState();
+      expect(state.pendingOptimistic.has('task-1')).toBe(false);
+      expect(state.pendingOptimistic.has('task-2')).toBe(true);
     });
   });
 });
