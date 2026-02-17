@@ -1,0 +1,85 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { assignAgentAction } from '@/lib/actions/task-actions';
+import { useTaskBoardStore } from '@/lib/store/task-board-store';
+import type { Task } from '@/lib/types';
+
+interface TaskMetaPanelProps {
+  task: {
+    id: string;
+    assigneeAgentId: string | null;
+    parentTask: { id: string; title: string } | null;
+    dueAt: string | null;
+  };
+}
+
+interface AgentOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
+  const updateTask = useTaskBoardStore((s) => s.updateTask);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+
+  useEffect(() => {
+    fetch('/api/agents')
+      .then((res) => res.json())
+      .then((json) => setAgents(json.data ?? []))
+      .catch(() => {});
+  }, []);
+
+  const handleAssign = async (agentId: string) => {
+    const id = agentId === 'unassigned' ? null : agentId;
+    const result = await assignAgentAction(task.id, id);
+    if (result.success) {
+      updateTask(result.data as Task);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-sm font-medium">Details</h3>
+
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Assignee</span>
+        <Select value={task.assigneeAgentId ?? 'unassigned'} onValueChange={handleAssign}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Unassigned" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="unassigned">Unassigned</SelectItem>
+            {agents.map((agent) => (
+              <SelectItem key={agent.id} value={agent.id}>
+                {agent.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {task.parentTask && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Parent</span>
+          <span className="text-sm">{task.parentTask.title}</span>
+        </div>
+      )}
+
+      {task.dueAt && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Due</span>
+          <span className="text-sm">{new Date(task.dueAt).toLocaleDateString()}</span>
+        </div>
+      )}
+    </div>
+  );
+}
