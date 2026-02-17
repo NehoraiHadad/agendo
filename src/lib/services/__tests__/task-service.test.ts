@@ -77,7 +77,8 @@ vi.mock('@/lib/db', () => {
   };
 });
 
-import { calculateMidpoint, createTask, updateTask, listTasksByStatus } from '../task-service';
+import { createTask, updateTask, listTasksByStatus } from '../task-service';
+import { computeSortOrder } from '@/lib/sort-order';
 
 describe('task-service', () => {
   beforeEach(() => {
@@ -86,13 +87,16 @@ describe('task-service', () => {
     mockState.insertResult = [mockTaskBase];
   });
 
-  describe('calculateMidpoint', () => {
+  describe('computeSortOrder (extracted to sort-order.ts)', () => {
     it('returns correct midpoint between 1000 and 2000', () => {
-      expect(calculateMidpoint(1000, 2000)).toBe(1500);
+      const result = computeSortOrder(1000, 2000);
+      expect(result.value).toBe(1500);
+      expect(result.needsReindex).toBe(false);
     });
 
-    it('returns null on tiny gap (1000, 1001)', () => {
-      expect(calculateMidpoint(1000, 1001)).toBeNull();
+    it('signals needsReindex on tiny gap (1000, 1001)', () => {
+      const result = computeSortOrder(1000, 1001);
+      expect(result.needsReindex).toBe(true);
     });
   });
 
