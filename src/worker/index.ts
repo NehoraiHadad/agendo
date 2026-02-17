@@ -1,11 +1,11 @@
 import { type Job } from 'pg-boss';
 import { db, pool } from '../lib/db/index';
-import { executions, workerHeartbeats } from '../lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { workerHeartbeats } from '../lib/db/schema';
 import { config } from '../lib/config';
 import { type ExecuteCapabilityJobData, registerWorker, stopBoss } from '../lib/worker/queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
+import { runExecution } from '../lib/worker/execution-runner';
 
 const WORKER_ID = config.WORKER_ID;
 
@@ -13,40 +13,12 @@ async function handleJob(job: Job<ExecuteCapabilityJobData>): Promise<void> {
   const { executionId } = job.data;
   console.log(`[worker] Claimed job for execution ${executionId}`);
 
-  // Phase 1: stub -- mark as running, wait 1s, mark as succeeded
-  await db
-    .update(executions)
-    .set({
-      status: 'running',
-      workerId: WORKER_ID,
-      startedAt: new Date(),
-      heartbeatAt: new Date(),
-    })
-    .where(eq(executions.id, executionId));
-
-  // Simulate work (replaced with real execution runner in Phase 4)
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  // Cancellation race guard: only complete if still running
-  const result = await db
-    .update(executions)
-    .set({
-      status: 'succeeded',
-      endedAt: new Date(),
-      exitCode: 0,
-    })
-    .where(and(eq(executions.id, executionId), eq(executions.status, 'running')))
-    .returning({ id: executions.id });
-
-  if (result.length === 0) {
-    // Status changed to 'cancelling' mid-execution -- respect cancellation
-    await db
-      .update(executions)
-      .set({ status: 'cancelled', endedAt: new Date() })
-      .where(and(eq(executions.id, executionId), eq(executions.status, 'cancelling')));
-    console.log(`[worker] Execution ${executionId} was cancelled during run`);
-  } else {
-    console.log(`[worker] Execution ${executionId} completed successfully`);
+  try {
+    await runExecution({ executionId, workerId: WORKER_ID });
+    console.log(`[worker] Execution ${executionId} completed`);
+  } catch (err) {
+    console.error(`[worker] Execution ${executionId} failed:`, err);
+    throw err;
   }
 }
 

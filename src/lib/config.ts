@@ -14,6 +14,7 @@ const envSchema = z.object({
   TERMINAL_WS_PORT: z.coerce.number().default(4101),
   JWT_SECRET: z.string().min(16),
   MCP_SERVER_PATH: z.string().optional(),
+  TERMINAL_JWT_SECRET: z.string().min(16).optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -32,3 +33,6 @@ export const config = loadConfig();
 
 /** Parsed ALLOWED_WORKING_DIRS as array of absolute paths */
 export const allowedWorkingDirs = config.ALLOWED_WORKING_DIRS.split(':').filter(Boolean);
+
+/** Terminal JWT secret: falls back to JWT_SECRET if TERMINAL_JWT_SECRET not set */
+export const terminalJwtSecret = config.TERMINAL_JWT_SECRET ?? config.JWT_SECRET;
