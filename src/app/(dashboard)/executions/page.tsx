@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { listExecutions } from '@/lib/services/execution-service';
 import { ExecutionListClient } from './execution-list-client';
 import type { ExecutionStatus } from '@/lib/types';

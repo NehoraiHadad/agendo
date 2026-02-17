@@ -35,7 +35,7 @@ const httpServer = createServer((_req, res) => {
 
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: NEXT_ORIGIN,
+    origin: true, // JWT auth is the security layer; allow any origin
     methods: ['GET', 'POST'],
   },
   maxHttpBufferSize: 1e6,
@@ -146,8 +146,8 @@ io.on('connection', (socket) => {
 
 // --- Startup ---
 
-httpServer.listen(PORT, '127.0.0.1', () => {
-  console.log(`[terminal-server] Listening on 127.0.0.1:${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[terminal-server] Listening on 0.0.0.0:${PORT}`);
 });
 
 // --- Graceful Shutdown ---

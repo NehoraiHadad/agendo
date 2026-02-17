@@ -5,14 +5,16 @@ import Link from 'next/link';
 import { formatDistanceStrict } from 'date-fns';
 import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { ExecutionStatusBadge } from '@/components/executions/execution-status-badge';
+import { ExecutionTriggerDialog } from '@/components/executions/execution-trigger-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Execution } from '@/lib/types';
 
 interface TaskExecutionHistoryProps {
   taskId: string;
+  agentId?: string | null;
 }
 
-export function TaskExecutionHistory({ taskId }: TaskExecutionHistoryProps) {
+export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryProps) {
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -35,9 +37,20 @@ export function TaskExecutionHistory({ taskId }: TaskExecutionHistoryProps) {
     };
   }, [taskId]);
 
+  function handleExecutionCreated(exec: Execution) {
+    setExecutions((prev) => [exec, ...prev]);
+  }
+
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Execution History</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">Execution History</h3>
+        <ExecutionTriggerDialog
+          taskId={taskId}
+          agentId={agentId ?? undefined}
+          onExecutionCreated={handleExecutionCreated}
+        />
+      </div>
 
       {isLoading && (
         <div className="flex flex-col gap-2">

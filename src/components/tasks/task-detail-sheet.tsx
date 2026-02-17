@@ -90,7 +90,7 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
 
               <Separator />
 
-              <TaskExecutionHistory taskId={details.id} />
+              <TaskExecutionHistory taskId={details.id} agentId={details.assigneeAgentId} />
             </div>
           </ScrollArea>
         )}

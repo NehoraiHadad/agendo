@@ -5,7 +5,7 @@ import { classifyBinary } from './classifier';
 import type { ToolType } from './classifier';
 import { getHelpText, quickParseHelp } from './schema-extractor';
 import type { ParsedSchema } from './schema-extractor';
-import { getPresetForBinary } from './presets';
+import { getPresetForBinary, AI_TOOL_PRESETS } from './presets';
 import type { AIToolPreset } from './presets';
 
 export interface DiscoveredTool {
@@ -38,16 +38,22 @@ export async function runDiscovery(
   console.log(`[discovery] Found ${binaries.size} executables.`);
 
   const tools: DiscoveredTool[] = [];
-  const entries = Array.from(binaries.values());
-  const BATCH_SIZE = 50;
 
-  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const batch = entries.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
-      batch.map((binary) => processBinary(binary, schemaTargets, existingSlugs)),
-    );
-    tools.push(...batchResults);
-  }
+  // Only process binaries that match a known preset or are explicitly requested.
+  // Processing all 1800+ PATH binaries is extremely slow (dpkg -S + apt-cache per binary).
+  const presetNames = new Set(Object.keys(AI_TOOL_PRESETS));
+  const entries = Array.from(binaries.values()).filter(
+    (b) => presetNames.has(b.name) || schemaTargets?.has(b.name),
+  );
+
+  console.log(`[discovery] Stage 2: Processing ${entries.length} candidate binaries...`);
+
+  await Promise.all(
+    entries.map(async (binary) => {
+      const result = await processBinary(binary, schemaTargets, existingSlugs);
+      tools.push(result);
+    }),
+  );
 
   // Sort: AI agents first, then by name
   tools.sort((a, b) => {
