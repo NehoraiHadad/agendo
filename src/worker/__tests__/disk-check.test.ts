@@ -82,8 +82,6 @@ describe('checkDiskSpace', () => {
 
     await checkDiskSpace('/data/logs');
 
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('10.00 GB'),
-    );
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('10.00 GB'));
   });
 });

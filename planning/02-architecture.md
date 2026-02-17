@@ -2,7 +2,7 @@
 
 > Last updated: 2026-02-17
 > Stack: Next.js 16 (React 19.2) + Drizzle ORM + Postgres + pg-boss
-> Schema: 03-data-model.md | Phases: 04-phases.md | Research: research-*.md
+> Schema: 03-data-model.md | Phases: 04-phases.md | Research: research-\*.md
 
 ---
 
@@ -55,15 +55,15 @@
 
 ### Key Decisions
 
-| # | Decision | Rationale |
-|---|----------|-----------|
-| 1 | **No Supabase** -- Direct Postgres + Drizzle ORM | Supabase local needs ~8 Docker containers, 1GB+ RAM. Single Postgres + Drizzle is lighter. SSE replaces Supabase Realtime. |
-| 2 | **No monorepo** -- Single `package.json`, folder separation | Worker imports shared code from `src/lib/` directly. No workspace tooling needed. |
-| 3 | **Three OS processes** -- Next.js + worker + terminal server | No shared in-process state. Communication via database + filesystem. WebSocket terminal server isolated for crash safety. |
-| 4 | **SSE via fs.watch** -- Log streaming tails files with inotify | Worker and Next.js are separate processes. EventEmitter is invisible across process boundaries. 500ms polling fallback. |
-| 5 | **CLI-only, no SDKs or API keys** -- All AI agents run as CLI subprocesses | Uses user's existing OAuth/login (Claude Pro/Max, Google account, OpenAI login). Zero additional API costs. Uniform adapter pattern across all agents. |
-| 6 | **tmux as process layer** -- All AI agents run inside tmux sessions | Enables attach/detach (user closes browser, agent continues), multiple viewers, session persistence across restarts. Required for web terminal feature. |
-| 7 | **MCP Server for agent communication** -- Agents call back into Agent Monitor | Bidirectional: Agent Monitor spawns agents AND agents report status/create tasks via MCP tools. Closes the feedback loop. |
+| #   | Decision                                                                      | Rationale                                                                                                                                               |
+| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **No Supabase** -- Direct Postgres + Drizzle ORM                              | Supabase local needs ~8 Docker containers, 1GB+ RAM. Single Postgres + Drizzle is lighter. SSE replaces Supabase Realtime.                              |
+| 2   | **No monorepo** -- Single `package.json`, folder separation                   | Worker imports shared code from `src/lib/` directly. No workspace tooling needed.                                                                       |
+| 3   | **Three OS processes** -- Next.js + worker + terminal server                  | No shared in-process state. Communication via database + filesystem. WebSocket terminal server isolated for crash safety.                               |
+| 4   | **SSE via fs.watch** -- Log streaming tails files with inotify                | Worker and Next.js are separate processes. EventEmitter is invisible across process boundaries. 500ms polling fallback.                                 |
+| 5   | **CLI-only, no SDKs or API keys** -- All AI agents run as CLI subprocesses    | Uses user's existing OAuth/login (Claude Pro/Max, Google account, OpenAI login). Zero additional API costs. Uniform adapter pattern across all agents.  |
+| 6   | **tmux as process layer** -- All AI agents run inside tmux sessions           | Enables attach/detach (user closes browser, agent continues), multiple viewers, session persistence across restarts. Required for web terminal feature. |
+| 7   | **MCP Server for agent communication** -- Agents call back into Agent Monitor | Bidirectional: Agent Monitor spawns agents AND agents report status/create tasks via MCP tools. Closes the feedback loop.                               |
 
 ---
 
@@ -71,11 +71,11 @@
 
 Three independent OS processes. The process manager is a **deployment detail** — any of PM2, Docker Compose, systemd, or bare `node` works.
 
-| Process | Role | Port | Recommended Memory |
-|---------|------|------|--------------------|
-| `agent-monitor` | Next.js web server | 4100 | 1G |
-| `agent-monitor-worker` | Job executor (spawns agents in tmux) | — | 512M |
-| `agent-monitor-terminal` | WebSocket terminal server (node-pty + tmux attach) | 4101 | 256M |
+| Process                  | Role                                               | Port | Recommended Memory |
+| ------------------------ | -------------------------------------------------- | ---- | ------------------ |
+| `agent-monitor`          | Next.js web server                                 | 4100 | 1G                 |
+| `agent-monitor-worker`   | Job executor (spawns agents in tmux)               | —    | 512M               |
+| `agent-monitor-terminal` | WebSocket terminal server (node-pty + tmux attach) | 4101 | 256M               |
 
 **Why a separate terminal server?** The WebSocket terminal server handles long-lived connections with node-pty (native addon). Crash isolation: if node-pty segfaults or a PTY leaks, only the terminal server restarts — the Next.js app and worker continue unaffected. This also avoids patching Next.js for WebSocket support.
 
@@ -92,7 +92,7 @@ services:
   web:
     build: .
     command: pnpm start
-    ports: ["4100:4100"]
+    ports: ['4100:4100']
     depends_on: [postgres]
   worker:
     build: .
@@ -101,7 +101,7 @@ services:
   terminal:
     build: .
     command: node dist/terminal/server.js
-    ports: ["4101:4101"]
+    ports: ['4101:4101']
   postgres:
     image: postgres:16
     volumes: [pgdata:/var/lib/postgresql/data]
@@ -132,12 +132,12 @@ Two execution strategies determined by `agent_capabilities.interaction_mode`.
 
 #### Per-Agent Communication Protocols
 
-| Agent | Protocol | Communication | How It Works |
-|-------|----------|---------------|--------------|
-| **Claude Code** | `stream-json` | Bidirectional NDJSON over stdin/stdout | `claude -p --input-format stream-json --output-format stream-json --verbose`. Send `{"type":"user","message":...}` on stdin, read structured events from stdout. Multi-turn: send additional messages at any time. |
-| **Codex CLI** | `app-server` | Bidirectional JSON-RPC over stdin/stdout | `codex app-server`. Initialize handshake, then `thread/start`, `turn/start`, `turn/steer` (mid-turn injection), `turn/interrupt`. Full request/response/notification protocol. |
-| **Gemini CLI** | tmux send-keys | Pseudo-bidirectional via terminal emulation | No native bidirectional protocol. Run in interactive mode inside tmux. Send messages via `tmux send-keys`, read output via `tmux capture-pane` or `pipe-pane` to log file. |
-| **Template tools** | Simple spawn | One-directional (fire-and-forget) | `spawn(binary, args, { shell: false })`. stdin ignored. Short-lived. |
+| Agent              | Protocol       | Communication                               | How It Works                                                                                                                                                                                                       |
+| ------------------ | -------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Claude Code**    | `stream-json`  | Bidirectional NDJSON over stdin/stdout      | `claude -p --input-format stream-json --output-format stream-json --verbose`. Send `{"type":"user","message":...}` on stdin, read structured events from stdout. Multi-turn: send additional messages at any time. |
+| **Codex CLI**      | `app-server`   | Bidirectional JSON-RPC over stdin/stdout    | `codex app-server`. Initialize handshake, then `thread/start`, `turn/start`, `turn/steer` (mid-turn injection), `turn/interrupt`. Full request/response/notification protocol.                                     |
+| **Gemini CLI**     | tmux send-keys | Pseudo-bidirectional via terminal emulation | No native bidirectional protocol. Run in interactive mode inside tmux. Send messages via `tmux send-keys`, read output via `tmux capture-pane` or `pipe-pane` to log file.                                         |
+| **Template tools** | Simple spawn   | One-directional (fire-and-forget)           | `spawn(binary, args, { shell: false })`. stdin ignored. Short-lived.                                                                                                                                               |
 
 #### Why CLI-Only, Not SDKs or APIs
 
@@ -202,45 +202,56 @@ await boss.start();
 
 ```typescript
 // Enqueue (API route or server action)
-await boss.send('execute-capability', {
-  executionId, capabilityId, agentId, args
-}, {
-  expireInMinutes: 45,   // safety net for hung processes
-  retryLimit: 2,         // retry on transient failure
-  retryDelay: 30,        // 30s between retries
-  singletonKey: agentId, // optional: prevent duplicate per-agent
-});
+await boss.send(
+  'execute-capability',
+  {
+    executionId,
+    capabilityId,
+    agentId,
+    args,
+  },
+  {
+    expireInMinutes: 45, // safety net for hung processes
+    retryLimit: 2, // retry on transient failure
+    retryDelay: 30, // 30s between retries
+    singletonKey: agentId, // optional: prevent duplicate per-agent
+  },
+);
 
 // Worker claims and processes (pg-boss handles SKIP LOCKED internally)
-await boss.work('execute-capability', {
-  teamSize: 3,           // max 3 concurrent jobs per worker instance
-  teamConcurrency: 1,    // claim 1 at a time
-}, async (job) => {
-  const { executionId, capabilityId, args } = job.data;
-  // ... spawn process, write logs, update execution ...
-});
+await boss.work(
+  'execute-capability',
+  {
+    teamSize: 3, // max 3 concurrent jobs per worker instance
+    teamConcurrency: 1, // claim 1 at a time
+  },
+  async (job) => {
+    const { executionId, capabilityId, args } = job.data;
+    // ... spawn process, write logs, update execution ...
+  },
+);
 ```
 
 ### What pg-boss Handles (that we don't write)
 
-| Feature | pg-boss | Our custom code needed? |
-|---------|---------|------------------------|
-| Atomic claim (SKIP LOCKED) | Built-in | No |
-| Job expiration (hung process safety) | `expireInMinutes` | No |
-| Retry with backoff | `retryLimit` + `retryDelay` | No |
-| Dead letter queue | Automatic | No |
-| Completed job cleanup | `deleteAfterDays` (default 7) | No |
-| Cron scheduling | `boss.schedule()` | No (but available for log rotation) |
-| Schema management | Auto-creates `pgboss` schema | No |
+| Feature                              | pg-boss                       | Our custom code needed?             |
+| ------------------------------------ | ----------------------------- | ----------------------------------- |
+| Atomic claim (SKIP LOCKED)           | Built-in                      | No                                  |
+| Job expiration (hung process safety) | `expireInMinutes`             | No                                  |
+| Retry with backoff                   | `retryLimit` + `retryDelay`   | No                                  |
+| Dead letter queue                    | Automatic                     | No                                  |
+| Completed job cleanup                | `deleteAfterDays` (default 7) | No                                  |
+| Cron scheduling                      | `boss.schedule()`             | No (but available for log rotation) |
+| Schema management                    | Auto-creates `pgboss` schema  | No                                  |
 
 ### What We Still Write
 
-| Module | Purpose |
-|--------|---------|
-| `execution-runner.ts` | Process spawning, log writing, safety checks |
-| `safety.ts` | Working dir validation, env stripping, arg validation |
-| `log-writer.ts` | File-based log streaming |
-| `heartbeat.ts` | Per-execution 30s heartbeat (pg-boss handles queue-level, we handle execution-level) |
+| Module                | Purpose                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `execution-runner.ts` | Process spawning, log writing, safety checks                                         |
+| `safety.ts`           | Working dir validation, env stripping, arg validation                                |
+| `log-writer.ts`       | File-based log streaming                                                             |
+| `heartbeat.ts`        | Per-execution 30s heartbeat (pg-boss handles queue-level, we handle execution-level) |
 
 ### Per-Agent Concurrency
 
@@ -264,11 +275,11 @@ Real-time log tailing for a single execution via `fs.watch` (Linux inotify) with
 
 ```typescript
 type SseLogEvent =
-  | { type: 'status';  status: ExecutionStatus }
+  | { type: 'status'; status: ExecutionStatus }
   | { type: 'catchup'; content: string }
-  | { type: 'log';     content: string; stream: 'stdout' | 'stderr' | 'system' }
-  | { type: 'done';    status: ExecutionStatus; exitCode: number | null }
-  | { type: 'error';   message: string };
+  | { type: 'log'; content: string; stream: 'stdout' | 'stderr' | 'system' }
+  | { type: 'done'; status: ExecutionStatus; exitCode: number | null }
+  | { type: 'error'; message: string };
 ```
 
 **Lifecycle**: connect -> catch-up existing content -> if terminal, send `done` and close -> otherwise watch file + poll status every 1s -> on terminal, flush final bytes, send `done`, close -> on disconnect, clean up watchers/timers.
@@ -298,6 +309,7 @@ Every child process spawned with `shell: false`. Arguments passed as separate `a
 ### 7.3 Working Directory Validation
 
 Resolved `working_dir` must be:
+
 1. Absolute path
 2. Within allowlist (`ALLOWED_WORKING_DIRS` env var)
 3. Existing on disk
@@ -322,12 +334,12 @@ Worker constructs minimal environment from scratch via allowlist. Does NOT sprea
 
 ### 7.7 Danger Levels & MCP Annotations
 
-| Level | Meaning | UI behavior |
-|-------|---------|-------------|
-| 0 | Safe | No confirmation |
-| 1 | Caution | Yellow indicator |
-| 2 | Dangerous | Confirmation dialog |
-| 3 | Destructive | Confirmation + warning banner |
+| Level | Meaning     | UI behavior                   |
+| ----- | ----------- | ----------------------------- |
+| 0     | Safe        | No confirmation               |
+| 1     | Caution     | Yellow indicator              |
+| 2     | Dangerous   | Confirmation dialog           |
+| 3     | Destructive | Confirmation + warning banner |
 
 MCP compatibility: `danger_level` maps to MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`). Level 0 = readOnly, level 2-3 = destructive. Later: store full MCP annotations on capabilities for interop with MCP clients. See `research-cli-discovery.md` §1.
 
@@ -338,6 +350,7 @@ At registration: `accessSync(path, constants.X_OK)`. `kind = 'builtin'` binaries
 ### 7.9 Network Access
 
 Ports 4100 (web) and 4101 (terminal WebSocket) must NOT be publicly accessible without authentication. Options (preference order):
+
 1. Bind `127.0.0.1` only; access via SSH tunnel
 2. HTTP Basic Auth in nginx (covers both ports)
 3. Single-user session token in Next.js proxy (`proxy.ts` -- replaces `middleware.ts` in Next.js 16)
@@ -359,16 +372,16 @@ Not blocking for development; required before internet exposure.
 
 ## 9. API Routes
 
-| Resource | Routes |
-|----------|--------|
-| **Agents** | `GET/POST /api/agents`, `GET/PATCH/DELETE /api/agents/[id]` |
-| **Capabilities** | `GET/POST /api/agents/[id]/capabilities`, `PATCH/DELETE .../[capId]` |
-| **Tasks** | `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/[id]` |
-| **Task ops** | `POST /api/tasks/[id]/reorder`, `POST/DELETE /api/tasks/[id]/dependencies` |
-| **Executions** | `GET/POST /api/executions`, `GET /api/executions/[id]` |
-| **Execution ops** | `POST .../[id]/cancel` (202), `GET .../[id]/logs`, `GET .../[id]/logs/stream` (SSE) |
-| **Terminal** | `POST /api/terminal/token` (issue JWT for WebSocket auth) |
-| **Infrastructure** | `GET /api/workers/status`, `GET /api/sse/board` (SSE) |
+| Resource           | Routes                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| **Agents**         | `GET/POST /api/agents`, `GET/PATCH/DELETE /api/agents/[id]`                         |
+| **Capabilities**   | `GET/POST /api/agents/[id]/capabilities`, `PATCH/DELETE .../[capId]`                |
+| **Tasks**          | `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/[id]`                           |
+| **Task ops**       | `POST /api/tasks/[id]/reorder`, `POST/DELETE /api/tasks/[id]/dependencies`          |
+| **Executions**     | `GET/POST /api/executions`, `GET /api/executions/[id]`                              |
+| **Execution ops**  | `POST .../[id]/cancel` (202), `GET .../[id]/logs`, `GET .../[id]/logs/stream` (SSE) |
+| **Terminal**       | `POST /api/terminal/token` (issue JWT for WebSocket auth)                           |
+| **Infrastructure** | `GET /api/workers/status`, `GET /api/sse/board` (SSE)                               |
 
 ### Response Contract
 
@@ -428,13 +441,13 @@ interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
   extractSessionId(output: string): string | null;
-  sendMessage?(message: string): void;         // Multi-turn (Claude, Codex only)
-  interrupt?(): void;                           // Cancel current turn
+  sendMessage?(message: string): void; // Multi-turn (Claude, Codex only)
+  interrupt?(): void; // Cancel current turn
 }
 
 interface ManagedProcess {
   pid: number;
-  tmuxSession: string;                          // All agents run in tmux
+  tmuxSession: string; // All agents run in tmux
   kill: (signal: NodeJS.Signals) => void;
   onData: (cb: (chunk: string) => void) => void;
   onExit: (cb: (code: number | null) => void) => void;
@@ -445,10 +458,10 @@ The `execution-runner.ts` selects the adapter based on `agent_capabilities.inter
 
 ### Build Strategy
 
-| Mode | Tool | Output |
-|------|------|--------|
-| Development | `tsx watch src/worker/index.ts` | Direct TS execution |
-| Production | `tsc -p tsconfig.worker.json` | `dist/worker/index.js` (CJS) |
+| Mode        | Tool                            | Output                       |
+| ----------- | ------------------------------- | ---------------------------- |
+| Development | `tsx watch src/worker/index.ts` | Direct TS execution          |
+| Production  | `tsc -p tsconfig.worker.json`   | `dist/worker/index.js` (CJS) |
 
 ### Testability
 
@@ -456,7 +469,7 @@ Injectable `ProcessSpawner` interface:
 
 ```typescript
 interface ProcessSpawner {
-  spawn(binary, args, options, onData, onExit): { pid: number; kill: (signal) => void }
+  spawn(binary, args, options, onData, onExit): { pid: number; kill: (signal) => void };
 }
 ```
 
@@ -465,6 +478,7 @@ Production: real `child_process.spawn`. Tests: mock spawner.
 ### Startup: Zombie Reconciliation
 
 On cold start (before poll loop):
+
 1. Query `WHERE status IN ('running', 'cancelling') AND worker_id = $myWorkerId`
 2. Check PID alive: `process.kill(pid, 0)`
 3. Dead PID -> mark `failed` with "Worker restarted, execution orphaned"
@@ -570,11 +584,11 @@ AppError (base)
 └── TimeoutError (408)
 ```
 
-| Context | Behavior |
-|---------|----------|
-| API routes | `withErrorBoundary` maps to HTTP status + JSON envelope |
-| Worker | `finalizeWithError` writes one-line summary to `executions.error`, sets terminal status |
-| SSE | Terminal status + one-line error in `done` event; full log via download |
+| Context    | Behavior                                                                                |
+| ---------- | --------------------------------------------------------------------------------------- |
+| API routes | `withErrorBoundary` maps to HTTP status + JSON envelope                                 |
+| Worker     | `finalizeWithError` writes one-line summary to `executions.error`, sets terminal status |
+| SSE        | Terminal status + one-line error in `done` event; full log via download                 |
 
 ---
 
@@ -595,22 +609,22 @@ Next.js: 200-400 MB (limit 1G). Worker: 50-100 MB (limit 512M). Terminal server:
 
 Single package, flat layout. No monorepo. See 04-phases.md for complete file-by-phase reference.
 
-| Directory | Purpose |
-|-----------|---------|
-| `src/app/` | Next.js App Router: `(dashboard)/` pages, `api/` routes |
-| `src/components/` | UI: `ui/` (shadcn), `layout/`, `tasks/`, `agents/`, `executions/`, `forms/`, `dashboard/`, `terminal/` |
-| `src/lib/db/` | `index.ts` (Drizzle singleton, pg pool max:10), `schema.ts` (see 03-data-model.md) |
-| `src/lib/services/` | Business logic (CRUD, validation, state transitions) |
-| `src/lib/actions/` | Next.js Server Actions (mutations from client) |
-| `src/lib/discovery/` | Auto-discovery pipeline (scanner, classifier, schema-extractor, presets) |
-| `src/lib/worker/` | Testable worker modules (queue/pg-boss, runner, safety, heartbeat) |
+| Directory                  | Purpose                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/app/`                 | Next.js App Router: `(dashboard)/` pages, `api/` routes                                                 |
+| `src/components/`          | UI: `ui/` (shadcn), `layout/`, `tasks/`, `agents/`, `executions/`, `forms/`, `dashboard/`, `terminal/`  |
+| `src/lib/db/`              | `index.ts` (Drizzle singleton, pg pool max:10), `schema.ts` (see 03-data-model.md)                      |
+| `src/lib/services/`        | Business logic (CRUD, validation, state transitions)                                                    |
+| `src/lib/actions/`         | Next.js Server Actions (mutations from client)                                                          |
+| `src/lib/discovery/`       | Auto-discovery pipeline (scanner, classifier, schema-extractor, presets)                                |
+| `src/lib/worker/`          | Testable worker modules (queue/pg-boss, runner, safety, heartbeat)                                      |
 | `src/lib/worker/adapters/` | Per-agent adapters: `claude-adapter.ts`, `codex-adapter.ts`, `gemini-adapter.ts`, `template-adapter.ts` |
-| `src/lib/mcp/` | MCP server implementation (`server.ts`, `transport.ts`) — agents call back into Agent Monitor |
-| `src/lib/hooks/` | Client-only SSE hooks |
-| `src/lib/store/` | Client-only Zustand stores |
-| `src/lib/` (root) | `config.ts`, `errors.ts`, `state-machines.ts`, `api-handler.ts`, `api-types.ts`, `types.ts` |
-| `src/terminal/` | WebSocket terminal server entry point (`server.ts`) — standalone process on port 4101 |
-| `src/worker/` | Worker process entry point (`index.ts`) |
+| `src/lib/mcp/`             | MCP server implementation (`server.ts`, `transport.ts`) — agents call back into Agent Monitor           |
+| `src/lib/hooks/`           | Client-only SSE hooks                                                                                   |
+| `src/lib/store/`           | Client-only Zustand stores                                                                              |
+| `src/lib/` (root)          | `config.ts`, `errors.ts`, `state-machines.ts`, `api-handler.ts`, `api-types.ts`, `types.ts`             |
+| `src/terminal/`            | WebSocket terminal server entry point (`server.ts`) — standalone process on port 4101                   |
+| `src/worker/`              | Worker process entry point (`index.ts`)                                                                 |
 
 ### Structural Rules
 
@@ -632,14 +646,14 @@ See `research-auto-discovery.md` (1073 lines) and `research-cli-tool-testing.md`
 SCAN → IDENTIFY → CLASSIFY → SCHEMA → ENRICH → INDEX
 ```
 
-| Stage | What | How | Cost |
-|-------|------|-----|------|
-| 1. SCAN | Find all executables in PATH | `readdir()` on each PATH dir, check `X_OK` | ~200ms, free |
-| 2. IDENTIFY | Map binary → package/source | `dpkg -S`, `apt-cache show`, `file` command | ~5ms/tool |
-| 3. CLASSIFY | CLI tool / daemon / AI agent / TUI / shell-util | Man page section, systemd check, name patterns | ~8ms/tool |
-| 4. SCHEMA | Extract subcommands, flags, args | Fig specs → bash-completion → regex --help parse → LLM (last resort) | Variable |
-| 5. ENRICH | Version, aliases, usage frequency | `--version`, shell history count, alias scan | ~10ms/tool |
-| 6. INDEX | Store in DB as agent + capabilities | Insert into `agents` + `agent_capabilities` | DB write |
+| Stage       | What                                            | How                                                                  | Cost         |
+| ----------- | ----------------------------------------------- | -------------------------------------------------------------------- | ------------ |
+| 1. SCAN     | Find all executables in PATH                    | `readdir()` on each PATH dir, check `X_OK`                           | ~200ms, free |
+| 2. IDENTIFY | Map binary → package/source                     | `dpkg -S`, `apt-cache show`, `file` command                          | ~5ms/tool    |
+| 3. CLASSIFY | CLI tool / daemon / AI agent / TUI / shell-util | Man page section, systemd check, name patterns                       | ~8ms/tool    |
+| 4. SCHEMA   | Extract subcommands, flags, args                | Fig specs → bash-completion → regex --help parse → LLM (last resort) | Variable     |
+| 5. ENRICH   | Version, aliases, usage frequency               | `--version`, shell history count, alias scan                         | ~10ms/tool   |
+| 6. INDEX    | Store in DB as agent + capabilities             | Insert into `agents` + `agent_capabilities`                          | DB write     |
 
 ### Schema Sources (priority order)
 
@@ -653,17 +667,18 @@ SCAN → IDENTIFY → CLASSIFY → SCHEMA → ENRICH → INDEX
 
 Rather than discovering AI agents purely from `--help`, use hardcoded presets for known tools:
 
-| Tool | Binary | Adapter | Protocol | Session Resume | Session ID Source |
-|------|--------|---------|----------|---------------|-------------------|
-| Claude Code | `claude` | `claude-adapter.ts` | `stream-json` bidirectional (NDJSON) | `--resume <uuid>`, `--continue` | `system.init` event `session_id` field |
-| Codex CLI | `codex` | `codex-adapter.ts` | `app-server` JSON-RPC bidirectional | `thread/resume` with threadId | `thread/start` response `thread.id` |
-| Gemini CLI | `gemini` | `gemini-adapter.ts` | tmux send-keys / capture-pane | `--resume latest`, `--resume <index>` | `--list-sessions` parse or filesystem |
+| Tool        | Binary   | Adapter             | Protocol                             | Session Resume                        | Session ID Source                      |
+| ----------- | -------- | ------------------- | ------------------------------------ | ------------------------------------- | -------------------------------------- |
+| Claude Code | `claude` | `claude-adapter.ts` | `stream-json` bidirectional (NDJSON) | `--resume <uuid>`, `--continue`       | `system.init` event `session_id` field |
+| Codex CLI   | `codex`  | `codex-adapter.ts`  | `app-server` JSON-RPC bidirectional  | `thread/resume` with threadId         | `thread/start` response `thread.id`    |
+| Gemini CLI  | `gemini` | `gemini-adapter.ts` | tmux send-keys / capture-pane        | `--resume latest`, `--resume <index>` | `--list-sessions` parse or filesystem  |
 
 Presets are stored in `src/lib/discovery/presets.ts` and matched by binary name during SCAN.
 
 ### Performance Budget
 
 Stages 1-3 run for ALL tools (~20s for ~1500 binaries). Stage 4 runs ONLY for:
+
 - Tools the user has in shell history (frequent use signal)
 - AI tool presets (always)
 - On-demand when user selects a tool in the UI
@@ -697,6 +712,7 @@ See `research-session-management.md` (921 lines), `research-bidirectional-agents
 `@anthropic-ai/claude-agent-sdk` requires an **Anthropic API key** -- it uses API billing, not the user's Claude Pro/Max subscription. Same for direct Anthropic Messages API, OpenAI API, or Google Gemini API. Agent Monitor must use the **CLI binaries with the user's existing OAuth/login** so there are zero additional API costs.
 
 Additionally:
+
 - SDK/API bypasses the CLI's built-in tools (Read, Write, Bash, Glob, Grep)
 - SDK/API has no session persistence (the CLI manages sessions on disk)
 - Using SDK for Claude but subprocess for Gemini/Codex creates inconsistency
@@ -769,6 +785,7 @@ List:      --list-sessions -> parse "N. Title (time) [uuid]"
 ### Session Storage
 
 Session IDs stored on `executions.session_ref`. Enables:
+
 - "Continue" button on completed executions
 - Session history per task (chain of `session_ref` values)
 - `parentExecutionId` links related executions (continuation chain)
@@ -871,13 +888,13 @@ EXIT     Agent completes — tmux session ends
 
 ### Why tmux Is Required
 
-| Requirement | Without tmux | With tmux |
-|-------------|-------------|-----------|
-| Agent survives browser close | No | Yes |
-| Multiple viewers same session | Complex | Built-in |
-| Detach and reattach | Impossible | Native |
-| Session persists across server restart | No | Yes (tmux-resurrect) |
-| Process isolation | Shared PTY | Separate process groups |
+| Requirement                            | Without tmux | With tmux               |
+| -------------------------------------- | ------------ | ----------------------- |
+| Agent survives browser close           | No           | Yes                     |
+| Multiple viewers same session          | Complex      | Built-in                |
+| Detach and reattach                    | Impossible   | Native                  |
+| Session persists across server restart | No           | Yes (tmux-resurrect)    |
+| Process isolation                      | Shared PTY   | Separate process groups |
 
 ### Performance Notes
 
@@ -896,18 +913,19 @@ See `research-agent-task-management.md` (667 lines) for full MCP server implemen
 
 ### MCP Tools
 
-| Tool | Description | Maps To |
-|------|-------------|---------|
-| `create_task` | Create a new task on the board | `POST /api/tasks` |
-| `update_task` | Update task status, assignee, description | `PATCH /api/tasks/:id` |
-| `list_tasks` | List tasks with optional filters (status, assignee) | `GET /api/tasks` |
-| `create_subtask` | Break a task into subtasks | `POST /api/tasks` (with `parentTaskId`) |
-| `assign_task` | Assign a task to a specific agent | `PATCH /api/tasks/:id` |
-| `spawn_agent` | Request Agent Monitor to spawn a new agent for a task | `POST /api/agents/spawn` |
+| Tool             | Description                                           | Maps To                                 |
+| ---------------- | ----------------------------------------------------- | --------------------------------------- |
+| `create_task`    | Create a new task on the board                        | `POST /api/tasks`                       |
+| `update_task`    | Update task status, assignee, description             | `PATCH /api/tasks/:id`                  |
+| `list_tasks`     | List tasks with optional filters (status, assignee)   | `GET /api/tasks`                        |
+| `create_subtask` | Break a task into subtasks                            | `POST /api/tasks` (with `parentTaskId`) |
+| `assign_task`    | Assign a task to a specific agent                     | `PATCH /api/tasks/:id`                  |
+| `spawn_agent`    | Request Agent Monitor to spawn a new agent for a task | `POST /api/agents/spawn`                |
 
 ### How Each Agent Connects
 
 **Claude Code** — via `.mcp.json` in project root or `--mcp-config`:
+
 ```json
 {
   "mcpServers": {
@@ -921,6 +939,7 @@ See `research-agent-task-management.md` (667 lines) for full MCP server implemen
 ```
 
 **Codex CLI** — via `~/.codex/config.toml`:
+
 ```toml
 [mcp_servers.agent-monitor]
 command = "node"
@@ -931,6 +950,7 @@ AGENT_MONITOR_URL = "http://localhost:4100"
 ```
 
 **Gemini CLI** — via `~/.gemini/settings.json`:
+
 ```json
 {
   "mcpServers": {
@@ -945,10 +965,10 @@ AGENT_MONITOR_URL = "http://localhost:4100"
 
 ### Transport Options
 
-| Transport | Use Case | How |
-|-----------|----------|-----|
-| **stdio** (default) | Same machine, per-agent process | Agent spawns MCP server as child process |
-| **HTTP** (Streamable HTTP) | Remote access, shared server | Single MCP server on port 4102, agents connect via URL |
+| Transport                  | Use Case                        | How                                                    |
+| -------------------------- | ------------------------------- | ------------------------------------------------------ |
+| **stdio** (default)        | Same machine, per-agent process | Agent spawns MCP server as child process               |
+| **HTTP** (Streamable HTTP) | Remote access, shared server    | Single MCP server on port 4102, agents connect via URL |
 
 Use **stdio** transport — each agent gets its own MCP server process. Later: add HTTP transport for multi-machine setups.
 
@@ -957,24 +977,28 @@ Use **stdio** transport — each agent gets its own MCP server process. Later: a
 Uses `@modelcontextprotocol/sdk` with Zod schemas for input validation. Each tool is a thin wrapper that calls Agent Monitor's REST API internally:
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-const server = new McpServer({ name: "agent-monitor", version: "1.0.0" });
+const server = new McpServer({ name: 'agent-monitor', version: '1.0.0' });
 
-server.registerTool("create_task", {
-  title: "Create Task",
-  description: "Create a new task on the Agent Monitor board",
-  inputSchema: { title: z.string(), priority: z.enum(["low","medium","high","critical"]) },
-}, async ({ title, priority }) => {
-  const res = await fetch(`${API_URL}/api/tasks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, priority, status: "todo", createdBy: "mcp-agent" }),
-  });
-  const task = await res.json();
-  return { content: [{ type: "text", text: `Task #${task.id} created` }] };
-});
+server.registerTool(
+  'create_task',
+  {
+    title: 'Create Task',
+    description: 'Create a new task on the Agent Monitor board',
+    inputSchema: { title: z.string(), priority: z.enum(['low', 'medium', 'high', 'critical']) },
+  },
+  async ({ title, priority }) => {
+    const res = await fetch(`${API_URL}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, priority, status: 'todo', createdBy: 'mcp-agent' }),
+    });
+    const task = await res.json();
+    return { content: [{ type: 'text', text: `Task #${task.id} created` }] };
+  },
+);
 // ... remaining tools follow same pattern
 ```
 
@@ -982,13 +1006,25 @@ server.registerTool("create_task", {
 
 When agents can spawn other agents, runaway loops are a real risk. Guards:
 
-| Guard | Value | Purpose |
-|-------|-------|---------|
-| **Spawn depth limit** | 3 | Tasks track `depth` — agent cannot spawn if task depth >= 3 |
-| **Spawn cooldown** | 30s per agent type | Prevents rapid-fire spawning |
-| **Max concurrent agents** | 3 | Hard limit on simultaneous AI agent processes |
-| **Per-agent token budget** | `--max-budget-usd 5.00` | Claude/Codex cost cap per execution |
-| **Per-agent max turns** | `--max-turns 50` | Turn limit prevents infinite loops |
-| **Memory ceiling** | ~2GB per agent (`NODE_OPTIONS`) | Prevents OOM on instance-neo |
+| Guard                      | Value                           | Purpose                                                     |
+| -------------------------- | ------------------------------- | ----------------------------------------------------------- |
+| **Spawn depth limit**      | 3                               | Tasks track `depth` — agent cannot spawn if task depth >= 3 |
+| **Spawn cooldown**         | 30s per agent type              | Prevents rapid-fire spawning                                |
+| **Max concurrent agents**  | 3                               | Hard limit on simultaneous AI agent processes               |
+| **Per-agent token budget** | `--max-budget-usd 5.00`         | Claude/Codex cost cap per execution                         |
+| **Per-agent max turns**    | `--max-turns 50`                | Turn limit prevents infinite loops                          |
+| **Memory ceiling**         | ~2GB per agent (`NODE_OPTIONS`) | Prevents OOM on instance-neo                                |
 
 The `spawn_agent` MCP tool checks all guards before creating the execution. If any guard fails, it returns an error message explaining the limit (not a crash).
+
+---
+
+## Future Considerations
+
+### i18n / RTL Support
+
+- **Status:** Deferred (not scheduled for any current phase)
+- **Scope:** Add Hebrew (RTL) language support to the UI
+- **Recommended stack:** `next-intl` (best App Router integration), locale files (`/messages/en.json`, `/messages/he.json`), middleware for locale detection, dynamic `dir="rtl"` on root layout
+- **Impact:** Touches every component with user-facing text; requires RTL-aware Tailwind layout (`rtl:` variant or logical properties)
+- **When:** After core UI is functional and stable. Adding i18n early would increase per-component overhead without immediate benefit for a developer tool.

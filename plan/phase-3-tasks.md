@@ -10,19 +10,19 @@
 
 Before starting Phase 3, verify these files exist and are functional:
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `src/lib/db/schema.ts` | All tables including `tasks`, `task_dependencies`, `task_events` | 1 |
-| `src/lib/db/index.ts` | Drizzle singleton with pg pool (max:10) | 1 |
-| `src/lib/state-machines.ts` | Task status transition table | 1 |
-| `src/lib/errors.ts` | `AppError` hierarchy (`NotFoundError`, `ValidationError`, `ConflictError`) | 1 |
-| `src/lib/api-handler.ts` | `withErrorBoundary` wrapper for API routes | 1 |
-| `src/lib/api-types.ts` | Response envelope types (`{ data: T }`, `{ data: T[], meta }`, `{ error }`) + `apiFetch` | 1 |
-| `src/lib/types.ts` | Drizzle inferred types: `Task`, `NewTask`, `TaskStatus`, `TaskEvent`, etc. | 1 |
-| `src/lib/config.ts` | Zod-validated env config | 1 |
-| `src/lib/services/agent-service.ts` | `listAgents`, `getAgentById` (needed for assignee dropdown) | 2 |
-| `src/components/ui/*` | shadcn components: Sheet, Badge, Dialog, Button, Table, Tooltip, ScrollArea, Separator | 1 |
-| `src/components/layout/app-shell.tsx` | Sidebar + main content area | 1 |
+| File                                  | Purpose                                                                                  | Phase |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- | ----- |
+| `src/lib/db/schema.ts`                | All tables including `tasks`, `task_dependencies`, `task_events`                         | 1     |
+| `src/lib/db/index.ts`                 | Drizzle singleton with pg pool (max:10)                                                  | 1     |
+| `src/lib/state-machines.ts`           | Task status transition table                                                             | 1     |
+| `src/lib/errors.ts`                   | `AppError` hierarchy (`NotFoundError`, `ValidationError`, `ConflictError`)               | 1     |
+| `src/lib/api-handler.ts`              | `withErrorBoundary` wrapper for API routes                                               | 1     |
+| `src/lib/api-types.ts`                | Response envelope types (`{ data: T }`, `{ data: T[], meta }`, `{ error }`) + `apiFetch` | 1     |
+| `src/lib/types.ts`                    | Drizzle inferred types: `Task`, `NewTask`, `TaskStatus`, `TaskEvent`, etc.               | 1     |
+| `src/lib/config.ts`                   | Zod-validated env config                                                                 | 1     |
+| `src/lib/services/agent-service.ts`   | `listAgents`, `getAgentById` (needed for assignee dropdown)                              | 2     |
+| `src/components/ui/*`                 | shadcn components: Sheet, Badge, Dialog, Button, Table, Tooltip, ScrollArea, Separator   | 1     |
+| `src/components/layout/app-shell.tsx` | Sidebar + main content area                                                              | 1     |
 
 ---
 
@@ -93,7 +93,7 @@ export interface TaskWithDetails extends Task {
 export interface ListTasksOptions {
   status?: TaskStatus;
   cursor?: string; // sort_order value for cursor pagination
-  limit?: number;  // default 50
+  limit?: number; // default 50
   parentTaskId?: string;
 }
 
@@ -118,10 +118,7 @@ async function getNextSortOrder(status: TaskStatus): Promise<number> {
  * Calculate sort_order between two neighbors (for reordering in Phase 5).
  * Returns midpoint. If gap < SORT_ORDER_MIN_GAP, returns null to signal reindex needed.
  */
-export function calculateMidpoint(
-  before: number | null,
-  after: number | null
-): number | null {
+export function calculateMidpoint(before: number | null, after: number | null): number | null {
   const low = before ?? 0;
   const high = after ?? low + SORT_ORDER_GAP * 2;
   const mid = Math.floor((low + high) / 2);
@@ -180,18 +177,13 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   return task;
 }
 
-export async function updateTask(
-  id: string,
-  input: UpdateTaskInput
-): Promise<Task> {
+export async function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
   const existing = await getTaskById(id);
 
   // Validate status transition if status is changing
   if (input.status && input.status !== existing.status) {
     if (!isValidTaskTransition(existing.status, input.status)) {
-      throw new ConflictError(
-        `Invalid status transition: ${existing.status} -> ${input.status}`
-      );
+      throw new ConflictError(`Invalid status transition: ${existing.status} -> ${input.status}`);
     }
   }
 
@@ -236,11 +228,7 @@ export async function deleteTask(id: string): Promise<void> {
 }
 
 export async function getTaskById(id: string): Promise<Task> {
-  const [task] = await db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.id, id))
-    .limit(1);
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
 
   if (!task) throw new NotFoundError(`Task ${id} not found`);
   return task;
@@ -299,7 +287,7 @@ export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
  * Returns tasks ordered by sort_order ASC within a status column.
  */
 export async function listTasksByStatus(
-  options: ListTasksOptions
+  options: ListTasksOptions,
 ): Promise<{ tasks: Task[]; nextCursor: string | null }> {
   const limit = options.limit ?? 50;
 
@@ -308,9 +296,7 @@ export async function listTasksByStatus(
     conditions.push(eq(tasks.status, options.status));
   }
   if (options.cursor) {
-    conditions.push(
-      sql`${tasks.sortOrder} > ${parseInt(options.cursor, 10)}`
-    );
+    conditions.push(sql`${tasks.sortOrder} > ${parseInt(options.cursor, 10)}`);
   }
   if (options.parentTaskId) {
     conditions.push(eq(tasks.parentTaskId, options.parentTaskId));
@@ -325,9 +311,7 @@ export async function listTasksByStatus(
 
   const hasMore = result.length > limit;
   const page = hasMore ? result.slice(0, limit) : result;
-  const nextCursor = hasMore
-    ? String(page[page.length - 1].sortOrder)
-    : null;
+  const nextCursor = hasMore ? String(page[page.length - 1].sortOrder) : null;
 
   return { tasks: page, nextCursor };
 }
@@ -345,6 +329,7 @@ export async function listSubtasks(parentTaskId: string): Promise<Task[]> {
 ```
 
 **Key decisions**:
+
 - Sparse `sort_order` with gaps of 1000 so inserts between tasks are O(1) most of the time
 - `calculateMidpoint` returns `null` when the gap is too small, triggering `reindexColumn`
 - Cursor pagination uses `sort_order` (not `created_at`) since board order is the primary display order
@@ -395,10 +380,7 @@ interface Dependency {
  *   - Postgres detects deadlocks and aborts one transaction (safe)
  *   - Advisory locks would need manual cleanup
  */
-export async function addDependency(
-  taskId: string,
-  dependsOnTaskId: string
-): Promise<Dependency> {
+export async function addDependency(taskId: string, dependsOnTaskId: string): Promise<Dependency> {
   // Self-dependency is caught by the DB check constraint, but validate early
   if (taskId === dependsOnTaskId) {
     throw new ConflictError('A task cannot depend on itself');
@@ -408,7 +390,7 @@ export async function addDependency(
     // 1. Lock both task rows to prevent concurrent modifications
     //    FOR UPDATE ensures no other transaction can modify these tasks' dependencies
     const lockedTasks = await tx.execute(
-      sql`SELECT id FROM tasks WHERE id IN (${taskId}, ${dependsOnTaskId}) FOR UPDATE`
+      sql`SELECT id FROM tasks WHERE id IN (${taskId}, ${dependsOnTaskId}) FOR UPDATE`,
     );
 
     if ((lockedTasks as any).rowCount < 2) {
@@ -422,8 +404,8 @@ export async function addDependency(
       .where(
         and(
           eq(taskDependencies.taskId, taskId),
-          eq(taskDependencies.dependsOnTaskId, dependsOnTaskId)
-        )
+          eq(taskDependencies.dependsOnTaskId, dependsOnTaskId),
+        ),
       )
       .limit(1);
 
@@ -475,7 +457,7 @@ export async function addDependency(
       const current = stack.pop()!;
       if (current === taskId) {
         throw new ConflictError(
-          `Adding dependency would create a cycle: task ${taskId} is already a transitive dependency of task ${dependsOnTaskId}`
+          `Adding dependency would create a cycle: task ${taskId} is already a transitive dependency of task ${dependsOnTaskId}`,
         );
       }
       if (visited.has(current)) continue;
@@ -504,17 +486,14 @@ export async function addDependency(
 /**
  * Remove a dependency between two tasks.
  */
-export async function removeDependency(
-  taskId: string,
-  dependsOnTaskId: string
-): Promise<void> {
+export async function removeDependency(taskId: string, dependsOnTaskId: string): Promise<void> {
   const result = await db
     .delete(taskDependencies)
     .where(
       and(
         eq(taskDependencies.taskId, taskId),
-        eq(taskDependencies.dependsOnTaskId, dependsOnTaskId)
-      )
+        eq(taskDependencies.dependsOnTaskId, dependsOnTaskId),
+      ),
     )
     .returning();
 
@@ -527,7 +506,7 @@ export async function removeDependency(
  * List all tasks that a given task depends on (its blockers).
  */
 export async function listDependencies(
-  taskId: string
+  taskId: string,
 ): Promise<Array<{ id: string; title: string; status: string }>> {
   const rows = await db
     .select({
@@ -546,7 +525,7 @@ export async function listDependencies(
  * List all tasks that depend on a given task (tasks it blocks).
  */
 export async function listDependents(
-  taskId: string
+  taskId: string,
 ): Promise<Array<{ id: string; title: string; status: string }>> {
   const rows = await db
     .select({
@@ -563,6 +542,7 @@ export async function listDependents(
 ```
 
 **Key decisions**:
+
 - The recursive CTE with `FOR UPDATE` locks all reachable dependency edges in one query, preventing concurrent cycle creation
 - DFS uses an explicit stack (not recursion) to avoid stack overflow on deeply nested graphs
 - Idempotent: adding an already-existing dependency returns the existing row
@@ -612,10 +592,7 @@ export async function createTaskEvent(input: CreateEventInput): Promise<TaskEven
  * List events for a task, newest first.
  * Limited to 100 to prevent excessive payload sizes.
  */
-export async function listTaskEvents(
-  taskId: string,
-  limit: number = 100
-): Promise<TaskEvent[]> {
+export async function listTaskEvents(taskId: string, limit: number = 100): Promise<TaskEvent[]> {
   return db
     .select()
     .from(taskEvents)
@@ -644,10 +621,7 @@ import {
   deleteTask,
   getTaskWithDetails,
 } from '@/lib/services/task-service';
-import {
-  addDependency,
-  removeDependency,
-} from '@/lib/services/dependency-service';
+import { addDependency, removeDependency } from '@/lib/services/dependency-service';
 import { taskStatusEnum } from '@/lib/db/schema';
 
 // --- Schemas ---
@@ -678,12 +652,10 @@ const dependencySchema = z.object({
 
 // --- Actions ---
 
-type ActionResult<T = unknown> =
-  | { success: true; data: T }
-  | { success: false; error: string };
+type ActionResult<T = unknown> = { success: true; data: T } | { success: false; error: string };
 
 export async function createTaskAction(
-  input: z.input<typeof createTaskSchema>
+  input: z.input<typeof createTaskSchema>,
 ): Promise<ActionResult> {
   try {
     const validated = createTaskSchema.parse(input);
@@ -702,7 +674,7 @@ export async function createTaskAction(
 
 export async function updateTaskAction(
   id: string,
-  input: z.input<typeof updateTaskSchema>
+  input: z.input<typeof updateTaskSchema>,
 ): Promise<ActionResult> {
   try {
     const validated = updateTaskSchema.parse(input);
@@ -719,9 +691,7 @@ export async function updateTaskAction(
   }
 }
 
-export async function deleteTaskAction(
-  id: string
-): Promise<ActionResult> {
+export async function deleteTaskAction(id: string): Promise<ActionResult> {
   try {
     await deleteTask(id);
     return { success: true, data: null };
@@ -733,10 +703,7 @@ export async function deleteTaskAction(
   }
 }
 
-export async function updateTaskStatusAction(
-  id: string,
-  status: string
-): Promise<ActionResult> {
+export async function updateTaskStatusAction(id: string, status: string): Promise<ActionResult> {
   try {
     const validatedStatus = z.enum(taskStatusEnum.enumValues).parse(status);
     const task = await updateTask(id, { status: validatedStatus });
@@ -751,7 +718,7 @@ export async function updateTaskStatusAction(
 
 export async function assignAgentAction(
   taskId: string,
-  agentId: string | null
+  agentId: string | null,
 ): Promise<ActionResult> {
   try {
     const task = await updateTask(taskId, { assigneeAgentId: agentId });
@@ -765,7 +732,7 @@ export async function assignAgentAction(
 }
 
 export async function addDependencyAction(
-  input: z.input<typeof dependencySchema>
+  input: z.input<typeof dependencySchema>,
 ): Promise<ActionResult> {
   try {
     const validated = dependencySchema.parse(input);
@@ -781,7 +748,7 @@ export async function addDependencyAction(
 
 export async function removeDependencyAction(
   taskId: string,
-  dependsOnTaskId: string
+  dependsOnTaskId: string,
 ): Promise<ActionResult> {
   try {
     await removeDependency(taskId, dependsOnTaskId);
@@ -822,9 +789,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const url = new URL(req.url);
   const status = url.searchParams.get('status') as any;
   const cursor = url.searchParams.get('cursor') ?? undefined;
-  const limit = url.searchParams.get('limit')
-    ? parseInt(url.searchParams.get('limit')!, 10)
-    : 50;
+  const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 50;
   const parentTaskId = url.searchParams.get('parentTaskId') ?? undefined;
 
   const result = await listTasksByStatus({
@@ -867,11 +832,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
-import {
-  getTaskWithDetails,
-  updateTask,
-  deleteTask,
-} from '@/lib/services/task-service';
+import { getTaskWithDetails, updateTask, deleteTask } from '@/lib/services/task-service';
 import { taskStatusEnum } from '@/lib/db/schema';
 
 type Params = { params: Promise<{ id: string }> };
@@ -973,13 +934,7 @@ import type { Task, TaskStatus } from '@/lib/types';
 // --- Types ---
 
 /** All valid Kanban column statuses in display order */
-export const BOARD_COLUMNS: TaskStatus[] = [
-  'todo',
-  'in_progress',
-  'blocked',
-  'done',
-  'cancelled',
-];
+export const BOARD_COLUMNS: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 
 interface TaskBoardState {
   /** Normalized task lookup by ID */
@@ -1002,15 +957,11 @@ interface TaskBoardActions {
   /** Hydrate the store from server-fetched data (called once from RSC wrapper) */
   hydrate: (
     tasksByStatus: Record<TaskStatus, Task[]>,
-    cursors: Record<TaskStatus, string | null>
+    cursors: Record<TaskStatus, string | null>,
   ) => void;
 
   /** Append more tasks to a column (from "Load More" pagination) */
-  appendToColumn: (
-    status: TaskStatus,
-    tasks: Task[],
-    nextCursor: string | null
-  ) => void;
+  appendToColumn: (status: TaskStatus, tasks: Task[], nextCursor: string | null) => void;
 
   /** Update a single task in the store (after server action response) */
   updateTask: (task: Task) => void;
@@ -1120,9 +1071,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
       // If status changed, move between columns
       if (oldTask && oldTask.status !== task.status) {
-        const oldColumn = state.columns[oldTask.status].filter(
-          (id) => id !== task.id
-        );
+        const oldColumn = state.columns[oldTask.status].filter((id) => id !== task.id);
         const newColumn = [...state.columns[task.status], task.id];
 
         return {
@@ -1155,15 +1104,12 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       if (!task) return state;
 
       const { [taskId]: _, ...newTasksById } = state.tasksById;
-      const newColumn = state.columns[task.status].filter(
-        (id) => id !== taskId
-      );
+      const newColumn = state.columns[task.status].filter((id) => id !== taskId);
 
       return {
         tasksById: newTasksById,
         columns: { ...state.columns, [task.status]: newColumn },
-        selectedTaskId:
-          state.selectedTaskId === taskId ? null : state.selectedTaskId,
+        selectedTaskId: state.selectedTaskId === taskId ? null : state.selectedTaskId,
       };
     });
   },
@@ -1173,9 +1119,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       const task = state.tasksById[taskId];
       if (!task || task.status === newStatus) return state;
 
-      const oldColumn = state.columns[task.status].filter(
-        (id) => id !== taskId
-      );
+      const oldColumn = state.columns[task.status].filter((id) => id !== taskId);
       const newColumn = [...state.columns[newStatus], taskId];
 
       return {
@@ -1202,6 +1146,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 ```
 
 **Key decisions**:
+
 - **Normalized**: `tasksById` is a flat lookup, `columns` holds only IDs. This prevents object duplication and makes updates O(1).
 - **`moveTask` is NOT optimistic in Phase 3**. It is called only after a successful server action. Phase 5 will make it optimistic with rollback.
 - **`hydrate` is called once** from the RSC wrapper component that passes server-fetched data into the client boundary.
@@ -2348,30 +2293,30 @@ And that `/tasks` is included in the `(dashboard)` layout group from Phase 1.
 
 ## File Summary
 
-| # | File | Action | LOC (est.) |
-|---|------|--------|-----------|
-| 1 | `src/lib/services/task-service.ts` | Create | ~200 |
-| 2 | `src/lib/services/dependency-service.ts` | Create | ~150 |
-| 3 | `src/lib/services/task-event-service.ts` | Create | ~40 |
-| 4 | `src/lib/actions/task-actions.ts` | Create | ~130 |
-| 5a | `src/app/api/tasks/route.ts` | Modify (was stub) | ~50 |
-| 5b | `src/app/api/tasks/[id]/route.ts` | Create | ~50 |
-| 5c | `src/app/api/tasks/[id]/dependencies/route.ts` | Create | ~50 |
-| 6 | `src/lib/store/task-board-store.ts` | Create | ~150 |
-| 7 | `src/app/(dashboard)/tasks/page.tsx` | Modify (was empty shell) | ~40 |
-| 8a | `src/components/tasks/task-board.tsx` | Create | ~50 |
-| 8b | `src/components/tasks/task-column.tsx` | Create | ~70 |
-| 8c | `src/components/tasks/task-card.tsx` | Create | ~60 |
-| 8d | `src/components/tasks/task-card-skeleton.tsx` | Create | ~15 |
-| 9a | `src/components/tasks/task-detail-sheet.tsx` | Create | ~70 |
-| 9b | `src/components/tasks/task-detail-header.tsx` | Create | ~80 |
-| 9c | `src/components/tasks/task-meta-panel.tsx` | Create | ~80 |
-| 9d | `src/components/tasks/task-subtasks-list.tsx` | Create | ~80 |
-| 9e | `src/components/tasks/task-dependencies-panel.tsx` | Create | ~110 |
-| 9f | `src/components/tasks/task-execution-history.tsx` | Create | ~15 |
-| 10a | `src/components/tasks/task-create-dialog.tsx` | Create | ~90 |
-| 10b | `src/components/tasks/task-quick-add.tsx` | Create | ~70 |
-| 11 | `src/components/layout/sidebar.tsx` | Modify | ~5 |
+| #   | File                                               | Action                   | LOC (est.) |
+| --- | -------------------------------------------------- | ------------------------ | ---------- |
+| 1   | `src/lib/services/task-service.ts`                 | Create                   | ~200       |
+| 2   | `src/lib/services/dependency-service.ts`           | Create                   | ~150       |
+| 3   | `src/lib/services/task-event-service.ts`           | Create                   | ~40        |
+| 4   | `src/lib/actions/task-actions.ts`                  | Create                   | ~130       |
+| 5a  | `src/app/api/tasks/route.ts`                       | Modify (was stub)        | ~50        |
+| 5b  | `src/app/api/tasks/[id]/route.ts`                  | Create                   | ~50        |
+| 5c  | `src/app/api/tasks/[id]/dependencies/route.ts`     | Create                   | ~50        |
+| 6   | `src/lib/store/task-board-store.ts`                | Create                   | ~150       |
+| 7   | `src/app/(dashboard)/tasks/page.tsx`               | Modify (was empty shell) | ~40        |
+| 8a  | `src/components/tasks/task-board.tsx`              | Create                   | ~50        |
+| 8b  | `src/components/tasks/task-column.tsx`             | Create                   | ~70        |
+| 8c  | `src/components/tasks/task-card.tsx`               | Create                   | ~60        |
+| 8d  | `src/components/tasks/task-card-skeleton.tsx`      | Create                   | ~15        |
+| 9a  | `src/components/tasks/task-detail-sheet.tsx`       | Create                   | ~70        |
+| 9b  | `src/components/tasks/task-detail-header.tsx`      | Create                   | ~80        |
+| 9c  | `src/components/tasks/task-meta-panel.tsx`         | Create                   | ~80        |
+| 9d  | `src/components/tasks/task-subtasks-list.tsx`      | Create                   | ~80        |
+| 9e  | `src/components/tasks/task-dependencies-panel.tsx` | Create                   | ~110       |
+| 9f  | `src/components/tasks/task-execution-history.tsx`  | Create                   | ~15        |
+| 10a | `src/components/tasks/task-create-dialog.tsx`      | Create                   | ~90        |
+| 10b | `src/components/tasks/task-quick-add.tsx`          | Create                   | ~70        |
+| 11  | `src/components/layout/sidebar.tsx`                | Modify                   | ~5         |
 
 **Total estimated**: ~1,555 lines across 21 files
 
@@ -2385,49 +2330,49 @@ All test files go in `src/__tests__/` mirroring the source structure.
 
 **File**: `src/__tests__/lib/services/task-service.test.ts`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | `createTask` sets sparse sort_order | New task gets `SORT_ORDER_GAP` (1000) increments |
-| 2 | `updateTask` rejects invalid transition | `done` -> `in_progress` throws `ConflictError` |
-| 3 | `updateTask` allows valid transition | `todo` -> `in_progress` succeeds |
-| 4 | `updateTask` allows reopen | `done` -> `todo` succeeds |
-| 5 | `calculateMidpoint` returns correct midpoint | `midpoint(1000, 2000)` = 1500 |
-| 6 | `calculateMidpoint` returns null on tiny gap | `midpoint(1000, 1001)` = null |
-| 7 | `listTasksByStatus` respects cursor | Returns only tasks after cursor value |
-| 8 | `listTasksByStatus` detects hasMore | Returns `nextCursor` when more than `limit` exist |
+| #   | Test                                         | What it verifies                                  |
+| --- | -------------------------------------------- | ------------------------------------------------- |
+| 1   | `createTask` sets sparse sort_order          | New task gets `SORT_ORDER_GAP` (1000) increments  |
+| 2   | `updateTask` rejects invalid transition      | `done` -> `in_progress` throws `ConflictError`    |
+| 3   | `updateTask` allows valid transition         | `todo` -> `in_progress` succeeds                  |
+| 4   | `updateTask` allows reopen                   | `done` -> `todo` succeeds                         |
+| 5   | `calculateMidpoint` returns correct midpoint | `midpoint(1000, 2000)` = 1500                     |
+| 6   | `calculateMidpoint` returns null on tiny gap | `midpoint(1000, 1001)` = null                     |
+| 7   | `listTasksByStatus` respects cursor          | Returns only tasks after cursor value             |
+| 8   | `listTasksByStatus` detects hasMore          | Returns `nextCursor` when more than `limit` exist |
 
 **File**: `src/__tests__/lib/services/dependency-service.test.ts`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Direct cycle rejected | A->B, B->A throws `ConflictError` |
-| 2 | Transitive cycle rejected | A->B, B->C, C->A throws `ConflictError` |
-| 3 | Diamond dependency allowed | A->B, A->C, B->D, C->D (no cycle, succeeds) |
-| 4 | Self-dependency rejected | A->A throws `ConflictError` |
-| 5 | Idempotent add | Adding same dependency twice returns existing |
-| 6 | Remove nonexistent throws | `removeDependency` on missing edge throws `NotFoundError` |
-| 7 | List dependencies correct | After A->B, A->C: `listDependencies(A)` returns [B, C] |
+| #   | Test                       | What it verifies                                          |
+| --- | -------------------------- | --------------------------------------------------------- |
+| 1   | Direct cycle rejected      | A->B, B->A throws `ConflictError`                         |
+| 2   | Transitive cycle rejected  | A->B, B->C, C->A throws `ConflictError`                   |
+| 3   | Diamond dependency allowed | A->B, A->C, B->D, C->D (no cycle, succeeds)               |
+| 4   | Self-dependency rejected   | A->A throws `ConflictError`                               |
+| 5   | Idempotent add             | Adding same dependency twice returns existing             |
+| 6   | Remove nonexistent throws  | `removeDependency` on missing edge throws `NotFoundError` |
+| 7   | List dependencies correct  | After A->B, A->C: `listDependencies(A)` returns [B, C]    |
 
 **File**: `src/__tests__/lib/store/task-board-store.test.ts`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | `hydrate` populates columns | Correct task IDs in each status column |
-| 2 | `addTask` appends to correct column | New task appears at end of its status column |
-| 3 | `moveTask` removes from old, adds to new | Column arrays updated correctly |
-| 4 | `removeTask` clears selection if selected | `selectedTaskId` becomes null |
-| 5 | `updateTask` moves if status changed | Task moves between columns on status change |
+| #   | Test                                      | What it verifies                             |
+| --- | ----------------------------------------- | -------------------------------------------- |
+| 1   | `hydrate` populates columns               | Correct task IDs in each status column       |
+| 2   | `addTask` appends to correct column       | New task appears at end of its status column |
+| 3   | `moveTask` removes from old, adds to new  | Column arrays updated correctly              |
+| 4   | `removeTask` clears selection if selected | `selectedTaskId` becomes null                |
+| 5   | `updateTask` moves if status changed      | Task moves between columns on status change  |
 
 ### Integration Tests
 
 These require a test database. Use `vitest` with a setup that creates/drops a test schema.
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Full cycle detection under concurrency | Two transactions adding edges that would create a cycle -- one succeeds, one is rejected |
-| 2 | Cursor pagination end-to-end | Create 60 tasks, fetch with limit=50, verify nextCursor, fetch again |
-| 3 | Task deletion cascades | Delete task with dependencies and events, verify cascade |
-| 4 | Status transition audit trail | Change status, verify `task_events` row created |
+| #   | Test                                   | What it verifies                                                                         |
+| --- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 1   | Full cycle detection under concurrency | Two transactions adding edges that would create a cycle -- one succeeds, one is rejected |
+| 2   | Cursor pagination end-to-end           | Create 60 tasks, fetch with limit=50, verify nextCursor, fetch again                     |
+| 3   | Task deletion cascades                 | Delete task with dependencies and events, verify cascade                                 |
+| 4   | Status transition audit trail          | Change status, verify `task_events` row created                                          |
 
 ---
 

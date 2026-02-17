@@ -39,10 +39,7 @@ import path from 'node:path';
  */
 async function scanPATH() {
   const envPath = process.env.PATH || '';
-  const pathDirs = envPath
-    .replace(/["]+/g, '')
-    .split(path.delimiter)
-    .filter(Boolean);
+  const pathDirs = envPath.replace(/["]+/g, '').split(path.delimiter).filter(Boolean);
 
   // Deduplicate PATH dirs (common on many systems)
   const uniqueDirs = [...new Set(pathDirs)];
@@ -90,22 +87,17 @@ import path from 'node:path';
 async function findExecutable(exe) {
   const envPath = process.env.PATH || '';
   const envExt = process.env.PATHEXT || '';
-  const pathDirs = envPath
-    .replace(/["]+/g, '')
-    .split(path.delimiter)
-    .filter(Boolean);
+  const pathDirs = envPath.replace(/["]+/g, '').split(path.delimiter).filter(Boolean);
   const extensions = envExt ? envExt.split(';') : [''];
 
-  const candidates = pathDirs.flatMap((d) =>
-    extensions.map((ext) => path.join(d, exe + ext))
-  );
+  const candidates = pathDirs.flatMap((d) => extensions.map((ext) => path.join(d, exe + ext)));
 
   try {
     return await Promise.any(
       candidates.map(async (filePath) => {
         if ((await stat(filePath)).isFile()) return filePath;
         throw new Error('Not a file');
-      })
+      }),
     );
   } catch {
     return null;
@@ -117,12 +109,12 @@ async function findExecutable(exe) {
 
 ### Existing npm Packages
 
-| Package | Purpose | Notes |
-|---------|---------|-------|
-| `which` (npm) | Find executables in PATH | Most popular, cross-platform |
-| `hasbin` | Check if binary exists in PATH | Boolean check, by Springer Nature |
-| `real-executable-path` | Resolve executable + follow symlinks | Returns canonical path |
-| `execa` | Process execution for humans | Can run `which` cross-platform |
+| Package                | Purpose                              | Notes                             |
+| ---------------------- | ------------------------------------ | --------------------------------- |
+| `which` (npm)          | Find executables in PATH             | Most popular, cross-platform      |
+| `hasbin`               | Check if binary exists in PATH       | Boolean check, by Springer Nature |
+| `real-executable-path` | Resolve executable + follow symlinks | Returns canonical path            |
+| `execa`                | Process execution for humans         | Can run `which` cross-platform    |
 
 ### Key Considerations for PATH Scanning
 
@@ -143,6 +135,7 @@ async function findExecutable(exe) {
 On this system there are **912 completion scripts** -- one per command. These are loaded on-demand when the user first TABs a command.
 
 **How it works**: When TAB is pressed and no completion is loaded, bash looks for a file named after the command in the completions directory. The `__load_completion` function searches:
+
 1. `~/.local/share/bash-completion/completions/`
 2. `/usr/local/share/bash-completion/completions/`
 3. `/usr/share/bash-completion/completions/`
@@ -177,6 +170,7 @@ _apt()
 ```
 
 **Parsing strategy**: Completion scripts embed command structure in extractable patterns:
+
 - `COMMANDS=(...)` or `local commands="..."` -- subcommands
 - `COMPREPLY=( $( compgen -W '...' ))` -- option lists
 - `case` statements mapping subcommands to their options
@@ -200,6 +194,7 @@ _arguments \
 ```
 
 **Schema format decoded**:
+
 - `'-f[description]:message:action'` -- option with argument
 - `'-s[description]'` -- boolean flag
 - `'N:message:action'` -- positional argument at position N
@@ -207,6 +202,7 @@ _arguments \
 - Actions: `_files`, `_users`, `_net_interfaces`, `(item1 item2)` (static list), `->state` (branching)
 
 **This is the richest schema source** because zsh completions are essentially declarative grammars. The `_arguments` format directly encodes:
+
 - All options with descriptions
 - Whether options take arguments
 - Positional argument positions and types
@@ -248,35 +244,35 @@ Every CLI tool is defined as a TypeScript object conforming to the `Fig.Spec` in
 
 ```typescript
 const completionSpec: Fig.Spec = {
-  name: "git",
-  description: "the stupid content tracker",
+  name: 'git',
+  description: 'the stupid content tracker',
   subcommands: [
     {
-      name: "checkout",
-      description: "Switch branches or restore working tree files",
+      name: 'checkout',
+      description: 'Switch branches or restore working tree files',
       args: {
-        name: "branch",
+        name: 'branch',
         generators: branchGenerator,
         isOptional: true,
       },
       options: [
         {
-          name: ["-b"],
-          description: "Create and checkout a new branch",
-          args: { name: "branch" },
+          name: ['-b'],
+          description: 'Create and checkout a new branch',
+          args: { name: 'branch' },
         },
       ],
     },
     {
-      name: "add",
-      description: "Stage files to commit",
-      args: { template: "filepaths" },
+      name: 'add',
+      description: 'Stage files to commit',
+      args: { template: 'filepaths' },
     },
   ],
   options: [
     {
-      name: ["--version"],
-      description: "View your current git version",
+      name: ['--version'],
+      description: 'View your current git version',
     },
   ],
 };
@@ -286,23 +282,23 @@ export default completionSpec;
 
 ### Key Schema Objects
 
-| Object | Properties | Purpose |
-|--------|-----------|---------|
-| **Spec** (root) | `name`, `description`, `subcommands[]`, `options[]`, `args` | Top-level CLI tool definition |
-| **Subcommand** | `name`, `description`, `subcommands[]`, `options[]`, `args` | Nested command (recursive) |
-| **Option** | `name[]`, `description`, `args?`, `isRequired?`, `isPersistent?` | Flags like `--verbose`, `-v` |
-| **Arg** | `name`, `description`, `template?`, `generators?`, `isOptional?`, `isVariadic?` | Positional arguments |
-| **Generator** | `script`, `postProcess()`, `trigger`, `custom()` | Dynamic value completion |
+| Object          | Properties                                                                      | Purpose                       |
+| --------------- | ------------------------------------------------------------------------------- | ----------------------------- |
+| **Spec** (root) | `name`, `description`, `subcommands[]`, `options[]`, `args`                     | Top-level CLI tool definition |
+| **Subcommand**  | `name`, `description`, `subcommands[]`, `options[]`, `args`                     | Nested command (recursive)    |
+| **Option**      | `name[]`, `description`, `args?`, `isRequired?`, `isPersistent?`                | Flags like `--verbose`, `-v`  |
+| **Arg**         | `name`, `description`, `template?`, `generators?`, `isOptional?`, `isVariadic?` | Positional arguments          |
+| **Generator**   | `script`, `postProcess()`, `trigger`, `custom()`                                | Dynamic value completion      |
 
 ### Generator Pattern (Dynamic Values)
 
 ```typescript
 const branches: Fig.Generator = {
-  script: "git branch --no-color",
+  script: 'git branch --no-color',
   postProcess: (output) => {
-    return output.split("\n").map((branch) => ({
-      name: branch.replace("*", "").trim(),
-      description: "branch",
+    return output.split('\n').map((branch) => ({
+      name: branch.replace('*', '').trim(),
+      description: 'branch',
     }));
   },
 };
@@ -353,6 +349,7 @@ argc-completions can **automatically generate completion scripts from help text 
 ### The Problem
 
 `--help` output is semi-structured text with no standard format. Examples:
+
 - GNU tools: structured with sections (SYNOPSIS, OPTIONS, DESCRIPTION)
 - Modern tools: may use subcommand format (git, docker)
 - Minimal tools: just a usage line
@@ -446,6 +443,7 @@ function quickParseHelp(helpText) {
 **Phase 2: LLM refinement** (for complex/ambiguous cases)
 
 Only invoke the LLM when:
+
 - Phase 1 finds 0 options and 0 subcommands
 - The help text has unusual formatting
 - The tool is a priority target (in a user's favorites list)
@@ -457,17 +455,19 @@ Use structured output / function calling to guarantee JSON:
 ```javascript
 // With Anthropic Claude API
 const response = await anthropic.messages.create({
-  model: "claude-sonnet-4-20250514",
+  model: 'claude-sonnet-4-20250514',
   max_tokens: 2000,
   system: SYSTEM_PROMPT_ABOVE,
-  messages: [{ role: "user", content: helpOutput }],
+  messages: [{ role: 'user', content: helpOutput }],
   // Use tool_choice to force structured output
-  tools: [{
-    name: "parse_cli_tool",
-    description: "Parse CLI help text into structured format",
-    input_schema: CLI_SCHEMA // the JSON schema above
-  }],
-  tool_choice: { type: "tool", name: "parse_cli_tool" }
+  tools: [
+    {
+      name: 'parse_cli_tool',
+      description: 'Parse CLI help text into structured format',
+      input_schema: CLI_SCHEMA, // the JSON schema above
+    },
+  ],
+  tool_choice: { type: 'tool', name: 'parse_cli_tool' },
 });
 ```
 
@@ -476,6 +476,7 @@ const response = await anthropic.messages.create({
 [Google TextFSM](https://github.com/google/textfsm) implements template-based state machines for parsing semi-structured CLI text. Originally built for network device CLI output. Could be adapted for `--help` parsing with templates for common help formats (GNU, subcommand-style, minimal).
 
 **Sources**:
+
 - [LangChain structured output docs](https://python.langchain.com/docs/how_to/output_parser_structured/)
 - [The guide to structured outputs](https://agenta.ai/blog/the-guide-to-structured-outputs-and-function-calling-with-llms)
 - [Google TextFSM](https://github.com/google/textfsm)
@@ -487,6 +488,7 @@ const response = await anthropic.messages.create({
 ### The Classification Problem
 
 Given a binary name, determine:
+
 - Is it a CLI tool, a daemon, a TUI app, or a library utility?
 - Is it an AI agent?
 - Is it interactive or batch-mode?
@@ -495,16 +497,17 @@ Given a binary name, determine:
 
 Man pages are organized into numbered sections that directly classify binaries:
 
-| Section | Contains | Examples |
-|---------|----------|----------|
-| 1 | User commands | git, ls, grep, curl |
-| 2 | System calls | open, read, write |
-| 3 | Library functions | printf, malloc |
-| 5 | File formats | crontab, passwd |
-| 6 | Games | fortune |
-| 8 | System admin / Daemons | nginx, sshd, iptables |
+| Section | Contains               | Examples              |
+| ------- | ---------------------- | --------------------- |
+| 1       | User commands          | git, ls, grep, curl   |
+| 2       | System calls           | open, read, write     |
+| 3       | Library functions      | printf, malloc        |
+| 5       | File formats           | crontab, passwd       |
+| 6       | Games                  | fortune               |
+| 8       | System admin / Daemons | nginx, sshd, iptables |
 
 **Implementation**:
+
 ```javascript
 import { execFile } from 'node:child_process';
 
@@ -533,31 +536,30 @@ import { execFile } from 'node:child_process';
 
 async function isSystemdService(binaryName) {
   return new Promise((resolve) => {
-    execFile('systemctl', ['list-unit-files', '--type=service'],
-      (err, stdout) => {
-        if (err) return resolve(false);
-        resolve(stdout.toLowerCase().includes(binaryName.toLowerCase()));
-      }
-    );
+    execFile('systemctl', ['list-unit-files', '--type=service'], (err, stdout) => {
+      if (err) return resolve(false);
+      resolve(stdout.toLowerCase().includes(binaryName.toLowerCase()));
+    });
   });
 }
 ```
 
 ### Heuristic 3: Binary Name Patterns
 
-| Pattern | Classification | Examples |
-|---------|---------------|----------|
-| Ends with `d` | Often a daemon | `sshd`, `httpd`, `containerd`, `dockerd` |
-| Starts with `lib` | Library utility | `libtool` |
-| Common AI names | AI agent | `claude`, `gemini`, `codex`, `aichat`, `ollama` |
-| Contains `ctl` | Control interface for daemon | `systemctl`, `kubectl`, `dockerctl` |
-| Standard utils | Shell utility | `ls`, `cat`, `grep`, `find`, `sort`, `awk`, `sed` |
+| Pattern           | Classification               | Examples                                          |
+| ----------------- | ---------------------------- | ------------------------------------------------- |
+| Ends with `d`     | Often a daemon               | `sshd`, `httpd`, `containerd`, `dockerd`          |
+| Starts with `lib` | Library utility              | `libtool`                                         |
+| Common AI names   | AI agent                     | `claude`, `gemini`, `codex`, `aichat`, `ollama`   |
+| Contains `ctl`    | Control interface for daemon | `systemctl`, `kubectl`, `dockerctl`               |
+| Standard utils    | Shell utility                | `ls`, `cat`, `grep`, `find`, `sort`, `awk`, `sed` |
 
 ### Heuristic 4: TTY Detection / Interactive Classification
 
 From [clig.dev](https://clig.dev/): "The most straightforward heuristic for whether output is being read by a human is whether or not it's a TTY."
 
 **Classification signals**:
+
 - Tool accepts `--interactive` or `-i` flag = likely has interactive mode
 - Tool has `--no-pager`, `--color=auto` = designed for terminal use
 - Tool creates a TUI (ncurses, etc.) = interactive (vim, htop, tmux)
@@ -575,6 +577,7 @@ $ file /usr/bin/vim
 ```
 
 The `file` command can identify:
+
 - Script interpreters (Python, shell, Ruby, Perl scripts)
 - ELF executables vs scripts vs symlinks
 - Architecture information
@@ -614,18 +617,39 @@ function classifyBinary(info) {
   if (name.endsWith('d') && manSection === 8) return 'daemon';
 
   // AI agent indicators
-  const aiNames = ['claude', 'gemini', 'codex', 'ollama', 'aichat',
-                    'grok', 'copilot'];
-  if (aiNames.some(ai => name.includes(ai))) return 'ai-agent';
+  const aiNames = ['claude', 'gemini', 'codex', 'ollama', 'aichat', 'grok', 'copilot'];
+  if (aiNames.some((ai) => name.includes(ai))) return 'ai-agent';
 
   // Interactive TUI indicators
-  const tuiTools = ['vim', 'nvim', 'nano', 'emacs', 'htop', 'top',
-                     'tmux', 'screen', 'less', 'more'];
+  const tuiTools = [
+    'vim',
+    'nvim',
+    'nano',
+    'emacs',
+    'htop',
+    'top',
+    'tmux',
+    'screen',
+    'less',
+    'more',
+  ];
   if (tuiTools.includes(name)) return 'interactive-tui';
 
   // Shell builtins and basic utils
-  const shellUtils = ['ls', 'cat', 'grep', 'find', 'sort', 'awk',
-                       'sed', 'tr', 'cut', 'wc', 'head', 'tail'];
+  const shellUtils = [
+    'ls',
+    'cat',
+    'grep',
+    'find',
+    'sort',
+    'awk',
+    'sed',
+    'tr',
+    'cut',
+    'wc',
+    'head',
+    'tail',
+  ];
   if (shellUtils.includes(name)) return 'shell-util';
 
   // Man section classification
@@ -657,6 +681,7 @@ docker-ce-cli: /usr/bin/docker
 ```
 
 **Node.js implementation**:
+
 ```javascript
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -714,6 +739,7 @@ $ npm list -g --depth=0 --json
 ```
 
 The `bin` field in `package.json` maps command names to scripts:
+
 ```json
 {
   "bin": {
@@ -915,8 +941,8 @@ const registry = {
   tools: discoveredTools,
   byCategory: groupBy(discoveredTools, 'toolType'),
   byPackageSection: groupBy(discoveredTools, 'section'),
-  aiAgents: discoveredTools.filter(t => t.toolType === 'ai-agent'),
-  withSchemas: discoveredTools.filter(t => t.source !== 'unknown'),
+  aiAgents: discoveredTools.filter((t) => t.toolType === 'ai-agent'),
+  withSchemas: discoveredTools.filter((t) => t.source !== 'unknown'),
   timestamp: new Date().toISOString(),
 };
 ```
@@ -931,16 +957,21 @@ async function getHelpText(toolName) {
   for (const args of [['--help'], ['-h'], []]) {
     try {
       const result = await new Promise((resolve, reject) => {
-        execFile(toolName, args, {
-          timeout: 5000,         // Kill after 5 seconds
-          maxBuffer: 1024 * 100, // 100KB max output
-          env: { ...process.env, TERM: 'dumb', NO_COLOR: '1' },
-        }, (err, stdout, stderr) => {
-          // Many tools write help to stderr
-          const output = stdout || stderr;
-          if (output && output.length > 20) resolve(output);
-          else reject(new Error('No useful output'));
-        });
+        execFile(
+          toolName,
+          args,
+          {
+            timeout: 5000, // Kill after 5 seconds
+            maxBuffer: 1024 * 100, // 100KB max output
+            env: { ...process.env, TERM: 'dumb', NO_COLOR: '1' },
+          },
+          (err, stdout, stderr) => {
+            // Many tools write help to stderr
+            const output = stdout || stderr;
+            if (output && output.length > 20) resolve(output);
+            else reject(new Error('No useful output'));
+          },
+        );
       });
       return result;
     } catch {
@@ -955,16 +986,16 @@ async function getHelpText(toolName) {
 
 ### Performance Budget
 
-| Stage | Time per tool | Total (1500 tools) |
-|-------|--------------|-------------------|
-| Scan PATH | - | ~200ms total |
-| dpkg -S | ~5ms | ~7.5s |
-| man section | ~3ms | ~4.5s |
-| systemd check | ~5ms | ~7.5s |
-| Fig spec lookup | <1ms | ~1.5s |
-| bash-completion parse | ~2ms | ~3s |
-| --help execution | ~100ms | ~150s (if all) |
-| LLM parse | ~2s | Only for priority tools |
+| Stage                 | Time per tool | Total (1500 tools)      |
+| --------------------- | ------------- | ----------------------- |
+| Scan PATH             | -             | ~200ms total            |
+| dpkg -S               | ~5ms          | ~7.5s                   |
+| man section           | ~3ms          | ~4.5s                   |
+| systemd check         | ~5ms          | ~7.5s                   |
+| Fig spec lookup       | <1ms          | ~1.5s                   |
+| bash-completion parse | ~2ms          | ~3s                     |
+| --help execution      | ~100ms        | ~150s (if all)          |
+| LLM parse             | ~2s           | Only for priority tools |
 
 **Recommendation**: Run stages 1-3 for all tools (~20s total). Run stage 4 only for tools the user actually uses (check shell history) or on-demand when a tool is selected.
 
@@ -978,10 +1009,15 @@ interface DiscoveredTool {
   path: string;
   description: string;
   version?: string;
-  toolType: 'cli-tool' | 'daemon' | 'ai-agent' | 'interactive-tui'
-           | 'shell-util' | 'admin-tool';
-  source: 'fig' | 'argc' | 'bash-completion' | 'zsh-completion'
-         | 'help-regex' | 'help-llm' | 'unknown';
+  toolType: 'cli-tool' | 'daemon' | 'ai-agent' | 'interactive-tui' | 'shell-util' | 'admin-tool';
+  source:
+    | 'fig'
+    | 'argc'
+    | 'bash-completion'
+    | 'zsh-completion'
+    | 'help-regex'
+    | 'help-llm'
+    | 'unknown';
   package?: string;
   section?: string; // apt section: vcs, web, admin, etc.
   schema?: {
@@ -1012,12 +1048,14 @@ interface DiscoveredTool {
 ## 10. Sources
 
 ### PATH Scanning and Binary Discovery
+
 - [Checking executable in PATH - Node.js](https://abdus.dev/posts/checking-executable-exists-in-path-using-node/)
 - [Node.js fs API documentation](https://nodejs.org/api/fs.html)
 - [hasbin - npm](https://github.com/springernature/hasbin)
 - [Cross-platform Node.js guide](https://github.com/ehmicky/cross-platform-node-guide/blob/main/docs/4_terminal/package_binaries.md)
 
 ### Shell Completions
+
 - [bash-completion - GitHub](https://github.com/scop/bash-completion)
 - [zsh-completions - GitHub](https://github.com/zsh-users/zsh-completions)
 - [zsh-completions howto](https://github.com/zsh-users/zsh-completions/blob/master/zsh-completions-howto.org)
@@ -1025,16 +1063,19 @@ interface DiscoveredTool {
 - [Click shell completion](https://click.palletsprojects.com/en/stable/shell-completion/)
 
 ### Fig.io / Amazon Q Autocomplete
+
 - [withfig/autocomplete - GitHub](https://github.com/withfig/autocomplete)
 - [Fig autocomplete docs](https://fig.gitbook.io/fig/autocomplete)
 - [Building first spec](https://fig.io/docs/guides/building-first-spec)
 - [withfig/autocomplete-tools - GitHub](https://github.com/withfig/autocomplete-tools)
 
 ### argc-completions
+
 - [sigoden/argc - GitHub](https://github.com/sigoden/argc)
 - [sigoden/argc-completions - GitHub](https://github.com/sigoden/argc-completions)
 
 ### LLM Structured Output
+
 - [LangChain structured output docs](https://python.langchain.com/docs/how_to/output_parser_structured/)
 - [The guide to structured outputs](https://agenta.ai/blog/the-guide-to-structured-outputs-and-function-calling-with-llms)
 - [strictjson - GitHub](https://github.com/tanchongmin/strictjson)
@@ -1042,6 +1083,7 @@ interface DiscoveredTool {
 - [llmparser - GitHub](https://github.com/kyang6/llmparser)
 
 ### Binary Classification
+
 - [Command Line Interface Guidelines](https://clig.dev/)
 - [Man page sections - Wikipedia](https://en.wikipedia.org/wiki/Man_page)
 - [man-pages(7) conventions](https://man7.org/linux/man-pages/man7/man-pages.7.html)
@@ -1049,6 +1091,7 @@ interface DiscoveredTool {
 - [Node.js TTY module](https://nodejs.org/api/tty.html)
 
 ### Package Manager Databases
+
 - [dpkg binary-to-package mapping](https://www.cyberciti.biz/faq/equivalent-of-rpm-qf-command/)
 - [apt-file - Debian Wiki](https://wiki.debian.org/apt-file)
 - [what-provides manpage](https://manpages.ubuntu.com/manpages/focal/man1/what-provides.1.html)
@@ -1058,15 +1101,18 @@ interface DiscoveredTool {
 - [Homebrew Formulae API](https://formulae.brew.sh/docs/api/)
 
 ### Warp and Terminal Intelligence
+
 - [Warp completions docs](https://docs.warp.dev/terminal/command-completions/completions)
 - [Warp autosuggestions](https://docs.warp.dev/terminal/command-completions/autosuggestions)
 
 ### MCP and AI Agent Tool Discovery
+
 - [Model Context Protocol](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 - [MCP CLI intro](https://www.philschmid.de/mcp-cli)
 - [mcp-agent - GitHub](https://github.com/lastmile-ai/mcp-agent)
 
 ### npm and Node.js CLI Discovery
+
 - [package.json bin field](https://docs.npmjs.com/cli/v8/configuring-npm/package-json/)
 - [npm list global packages](https://www.geeksforgeeks.org/node-js/how-to-get-a-list-of-globally-installed-npm-packages-in-npm/)
 - [execa - GitHub](https://github.com/sindresorhus/execa)

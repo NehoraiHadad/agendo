@@ -22,16 +22,16 @@
 
 ### Session Management Flags
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--continue`, `-c` | Load most recent conversation in current directory | `claude -c` |
-| `--resume`, `-r` | Resume session by ID/name, or show interactive picker | `claude -r "auth-refactor"` |
-| `--session-id` | Use a specific session ID (must be valid UUID) | `claude --session-id "550e8400-..."` |
-| `--fork-session` | When resuming, create new session ID instead of reusing original | `claude --resume abc123 --fork-session` |
-| `--from-pr` | Resume sessions linked to a specific GitHub PR | `claude --from-pr 123` |
-| `--no-session-persistence` | Disable session persistence (print mode only) | `claude -p --no-session-persistence "query"` |
-| `--print`, `-p` | Non-interactive mode (SDK mode) | `claude -p "query"` |
-| `--output-format` | Output format: `text`, `json`, `stream-json` | `claude -p --output-format json "query"` |
+| Flag                       | Description                                                      | Example                                      |
+| -------------------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| `--continue`, `-c`         | Load most recent conversation in current directory               | `claude -c`                                  |
+| `--resume`, `-r`           | Resume session by ID/name, or show interactive picker            | `claude -r "auth-refactor"`                  |
+| `--session-id`             | Use a specific session ID (must be valid UUID)                   | `claude --session-id "550e8400-..."`         |
+| `--fork-session`           | When resuming, create new session ID instead of reusing original | `claude --resume abc123 --fork-session`      |
+| `--from-pr`                | Resume sessions linked to a specific GitHub PR                   | `claude --from-pr 123`                       |
+| `--no-session-persistence` | Disable session persistence (print mode only)                    | `claude -p --no-session-persistence "query"` |
+| `--print`, `-p`            | Non-interactive mode (SDK mode)                                  | `claude -p "query"`                          |
+| `--output-format`          | Output format: `text`, `json`, `stream-json`                     | `claude -p --output-format json "query"`     |
 
 ### Session Storage on Disk
 
@@ -70,6 +70,7 @@ claude -p "Explain recursion" --output-format stream-json --verbose
 ```
 
 **JSON output structure** (when using `--output-format json`):
+
 ```json
 {
   "type": "result",
@@ -86,17 +87,17 @@ claude -p "Explain recursion" --output-format stream-json --verbose
 ### TypeScript Agent SDK (V1)
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Start a new session
 let sessionId: string | undefined;
 const response = query({
-  prompt: "Help me build a web application",
-  options: { model: "claude-opus-4-6" }
+  prompt: 'Help me build a web application',
+  options: { model: 'claude-opus-4-6' },
 });
 
 for await (const message of response) {
-  if (message.type === "system" && message.subtype === "init") {
+  if (message.type === 'system' && message.subtype === 'init') {
     sessionId = message.session_id;
   }
   // Every message has session_id field
@@ -104,35 +105,36 @@ for await (const message of response) {
 
 // Resume a session
 const resumed = query({
-  prompt: "Continue where we left off",
+  prompt: 'Continue where we left off',
   options: {
-    resume: sessionId,         // Pass session ID
-    forkSession: false,        // true = create branch, false = continue original
-    model: "claude-opus-4-6",
-    allowedTools: ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
-  }
+    resume: sessionId, // Pass session ID
+    forkSession: false, // true = create branch, false = continue original
+    model: 'claude-opus-4-6',
+    allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'],
+  },
 });
 
 // Continue most recent session
 const continued = query({
-  prompt: "Keep going",
-  options: { continue: true }
+  prompt: 'Keep going',
+  options: { continue: true },
 });
 ```
 
 **Key SDK Options for session management:**
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `resume` | `string` | Session ID to resume |
-| `forkSession` | `boolean` | Fork to new session ID instead of continuing original |
-| `continue` | `boolean` | Continue most recent conversation |
-| `cwd` | `string` | Working directory (affects which sessions are found) |
-| `abortController` | `AbortController` | Cancel operations |
-| `maxTurns` | `number` | Limit agentic turns |
-| `maxBudgetUsd` | `number` | Budget cap |
+| Option            | Type              | Description                                           |
+| ----------------- | ----------------- | ----------------------------------------------------- |
+| `resume`          | `string`          | Session ID to resume                                  |
+| `forkSession`     | `boolean`         | Fork to new session ID instead of continuing original |
+| `continue`        | `boolean`         | Continue most recent conversation                     |
+| `cwd`             | `string`          | Working directory (affects which sessions are found)  |
+| `abortController` | `AbortController` | Cancel operations                                     |
+| `maxTurns`        | `number`          | Limit agentic turns                                   |
+| `maxBudgetUsd`    | `number`          | Budget cap                                            |
 
 **SDK Message types with session_id:**
+
 - `SDKSystemMessage` (type: "system", subtype: "init") - Contains initial session_id
 - `SDKAssistantMessage` - Contains session_id
 - `SDKUserMessage` - Contains session_id
@@ -143,15 +145,15 @@ const continued = query({
 ```typescript
 import {
   unstable_v2_createSession,
-  unstable_v2_resumeSession
-} from "@anthropic-ai/claude-agent-sdk";
+  unstable_v2_resumeSession,
+} from '@anthropic-ai/claude-agent-sdk';
 
 // Create session
 await using session = unstable_v2_createSession({
-  model: "claude-opus-4-6"
+  model: 'claude-opus-4-6',
 });
 
-await session.send("Remember this number: 42");
+await session.send('Remember this number: 42');
 let sessionId: string | undefined;
 for await (const msg of session.stream()) {
   sessionId = msg.session_id;
@@ -160,15 +162,16 @@ session.close();
 
 // Resume session later
 await using resumed = unstable_v2_resumeSession(sessionId!, {
-  model: "claude-opus-4-6"
+  model: 'claude-opus-4-6',
 });
-await resumed.send("What number did I ask you to remember?");
+await resumed.send('What number did I ask you to remember?');
 for await (const msg of resumed.stream()) {
   // msg.session_id available on every message
 }
 ```
 
 **V2 API surface:**
+
 - `unstable_v2_createSession(options)` - Create new session
 - `unstable_v2_resumeSession(sessionId, options)` - Resume by ID
 - `unstable_v2_prompt(prompt, options)` - One-shot (no session)
@@ -179,6 +182,7 @@ for await (const msg of resumed.stream()) {
 ### Listing Sessions
 
 There is no documented API or CLI flag to list all sessions programmatically. Available approaches:
+
 1. Parse `~/.claude/history.jsonl` for session metadata
 2. Scan `~/.claude/projects/<project-hash>/` for session JSONL files
 3. Use `claude --resume` (without ID) to get interactive picker (not automatable)
@@ -199,19 +203,19 @@ There is no documented API or CLI flag to list all sessions programmatically. Av
 
 ### Session Management Flags
 
-| Flag / Command | Description | Example |
-|----------------|-------------|---------|
-| `--resume` | Resume latest session (no args) or by index/UUID | `gemini --resume` |
-| `--resume <index>` | Resume by index number | `gemini --resume 1` |
-| `--resume <UUID>` | Resume by full session UUID | `gemini --resume a1b2c3d4-e5f6-...` |
-| `--list-sessions` | List available sessions with details | `gemini --list-sessions` |
-| `--delete-session <index/UUID>` | Delete a session | `gemini --delete-session 2` |
-| `/resume` | Interactive session browser (inside CLI) | Type `/resume` at prompt |
-| `/chat save <tag>` | Save current session with a named tag | `/chat save auth-refactor` |
-| `/chat resume <tag>` | Resume a named checkpoint | `/chat resume auth-refactor` |
-| `/chat list` | List saved checkpoints | `/chat list` |
-| `/chat delete <tag>` | Delete a checkpoint | `/chat delete auth-refactor` |
-| `/chat share file.md` | Export session to file | `/chat share output.json` |
+| Flag / Command                  | Description                                      | Example                             |
+| ------------------------------- | ------------------------------------------------ | ----------------------------------- |
+| `--resume`                      | Resume latest session (no args) or by index/UUID | `gemini --resume`                   |
+| `--resume <index>`              | Resume by index number                           | `gemini --resume 1`                 |
+| `--resume <UUID>`               | Resume by full session UUID                      | `gemini --resume a1b2c3d4-e5f6-...` |
+| `--list-sessions`               | List available sessions with details             | `gemini --list-sessions`            |
+| `--delete-session <index/UUID>` | Delete a session                                 | `gemini --delete-session 2`         |
+| `/resume`                       | Interactive session browser (inside CLI)         | Type `/resume` at prompt            |
+| `/chat save <tag>`              | Save current session with a named tag            | `/chat save auth-refactor`          |
+| `/chat resume <tag>`            | Resume a named checkpoint                        | `/chat resume auth-refactor`        |
+| `/chat list`                    | List saved checkpoints                           | `/chat list`                        |
+| `/chat delete <tag>`            | Delete a checkpoint                              | `/chat delete auth-refactor`        |
+| `/chat share file.md`           | Export session to file                           | `/chat share output.json`           |
 
 ### Session Storage on Disk
 
@@ -290,24 +294,24 @@ Available sessions for this project (3):
 
 **Interactive mode:**
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `codex resume` | Interactive session picker (current directory) | `codex resume` |
-| `codex resume --last` | Resume most recent session | `codex resume --last` |
-| `codex resume --all` | Show sessions from all directories | `codex resume --all` |
-| `codex resume <SESSION_ID>` | Resume specific session by UUID | `codex resume 7f9f9a2e-...` |
-| `/resume` | In-session picker (slash command) | Type `/resume` at prompt |
-| `/status` | Show current session info including ID | `/status` |
+| Command                     | Description                                    | Example                     |
+| --------------------------- | ---------------------------------------------- | --------------------------- |
+| `codex resume`              | Interactive session picker (current directory) | `codex resume`              |
+| `codex resume --last`       | Resume most recent session                     | `codex resume --last`       |
+| `codex resume --all`        | Show sessions from all directories             | `codex resume --all`        |
+| `codex resume <SESSION_ID>` | Resume specific session by UUID                | `codex resume 7f9f9a2e-...` |
+| `/resume`                   | In-session picker (slash command)              | Type `/resume` at prompt    |
+| `/status`                   | Show current session info including ID         | `/status`                   |
 
 **Non-interactive (exec) mode:**
 
-| Command | Description | Example |
-|---------|-------------|---------|
+| Command                             | Description                           | Example                                  |
+| ----------------------------------- | ------------------------------------- | ---------------------------------------- |
 | `codex exec resume --last "prompt"` | Resume latest + follow-up instruction | `codex exec resume --last "fix the bug"` |
-| `codex exec resume <ID> "prompt"` | Resume specific session + instruction | `codex exec resume abc123 "add tests"` |
-| `codex exec resume --last --all` | Resume latest from any directory | `codex exec resume --last --all` |
-| `--ephemeral` | Don't persist session to disk | `codex exec --ephemeral "quick check"` |
-| `--json` | JSONL streaming output | `codex exec --json "task"` |
+| `codex exec resume <ID> "prompt"`   | Resume specific session + instruction | `codex exec resume abc123 "add tests"`   |
+| `codex exec resume --last --all`    | Resume latest from any directory      | `codex exec resume --last --all`         |
+| `--ephemeral`                       | Don't persist session to disk         | `codex exec --ephemeral "quick check"`   |
+| `--json`                            | JSONL streaming output                | `codex exec --json "task"`               |
 
 ### Session Storage on Disk
 
@@ -332,6 +336,7 @@ Line 2+: Event messages (user turns, agent responses, tool calls, token counts)
 ```
 
 **Event types in `--json` output:**
+
 - `thread.started` - Session begins (contains `thread_id`)
 - `turn.started` - New turn begins
 - `turn.completed` - Turn finishes
@@ -342,6 +347,7 @@ Line 2+: Event messages (user turns, agent responses, tool calls, token counts)
 ### Session State Preservation
 
 Resumed runs maintain:
+
 - Original transcript
 - Plan history
 - Approvals/permissions
@@ -381,17 +387,17 @@ Sources: [Aider FAQ](https://aider.chat/docs/faq.html), [Issue #166](https://git
 
 A unified TUI/CLI tool that indexes sessions across 11+ AI coding agents. Useful reference for session storage locations:
 
-| Provider | Storage Path | Format |
-|----------|-------------|--------|
-| Claude Code | `~/.claude/projects` | Session JSONL |
-| Codex | `~/.codex/sessions` | Rollout JSONL |
-| Gemini CLI | `~/.gemini/tmp` | Chat JSON |
-| Cline | VS Code global storage | Task directories |
-| Aider | Project directory | Markdown files |
-| OpenCode | `.opencode` directories | SQLite |
-| Amp | `~/.local/share/amp` | Various |
-| Clawdbot | `~/.clawdbot/sessions` | Session JSONL |
-| Vibe (Mistral) | `~/.vibe/logs/session/*/messages.jsonl` | Session JSONL |
+| Provider       | Storage Path                            | Format           |
+| -------------- | --------------------------------------- | ---------------- |
+| Claude Code    | `~/.claude/projects`                    | Session JSONL    |
+| Codex          | `~/.codex/sessions`                     | Rollout JSONL    |
+| Gemini CLI     | `~/.gemini/tmp`                         | Chat JSON        |
+| Cline          | VS Code global storage                  | Task directories |
+| Aider          | Project directory                       | Markdown files   |
+| OpenCode       | `.opencode` directories                 | SQLite           |
+| Amp            | `~/.local/share/amp`                    | Various          |
+| Clawdbot       | `~/.clawdbot/sessions`                  | Session JSONL    |
+| Vibe (Mistral) | `~/.vibe/logs/session/*/messages.jsonl` | Session JSONL    |
 
 Source: [coding_agent_session_search](https://github.com/Dicklesworthstone/coding_agent_session_search)
 
@@ -414,10 +420,10 @@ const tm = await tmux();
 await tm.newSession('agent-1', 'claude -p "task"');
 
 // List sessions
-const sessions = await tm.listSessions();  // Returns string[]
+const sessions = await tm.listSessions(); // Returns string[]
 
 // Check existence
-const exists = await tm.hasSession('agent-1');  // Returns boolean
+const exists = await tm.hasSession('agent-1'); // Returns boolean
 
 // Kill session
 await tm.killSession('agent-1');
@@ -434,6 +440,7 @@ Source: [@audibleblink/tmux-mcp-server](https://www.npmjs.com/package/@audiblebl
 ### Named Tmux Manager (NTM)
 
 Coordinates multiple AI coding agents (Claude, Codex, Gemini) across tmux panes:
+
 - All agents live in a single tmux session with tiled panes
 - Each pane is labeled for identification
 - Supports broadcast prompts to all agents
@@ -473,8 +480,8 @@ tmux has-session -t "agent-claude" 2>/dev/null && echo "exists"
 - **Session isolation**: Each agent in isolated tmux sessions
 - **Communication**: Via MCP (Model Context Protocol) servers
 - **Orchestration patterns**:
-  - *Handoff*: Synchronous task transfer with wait-for-completion
-  - *Assign*: Asynchronous task spawning for parallel execution
+  - _Handoff_: Synchronous task transfer with wait-for-completion
+  - _Assign_: Asynchronous task spawning for parallel execution
 - **Hierarchical**: Supervisor maintains project context while agents focus on domains
 
 Source: [AWS Open Source Blog](https://aws.amazon.com/blogs/opensource/introducing-cli-agent-orchestrator-transforming-developer-cli-tools-into-a-multi-agent-powerhouse/)
@@ -521,34 +528,35 @@ Source: [claude-flow wiki](https://github.com/ruvnet/claude-flow/wiki/session-pe
 
 ### Session Identification
 
-| Tool | ID Format | Named Sessions |
-|------|-----------|----------------|
-| Claude Code | UUID | Yes (string names) |
-| Gemini CLI | UUID | Yes (tags via /chat save) |
-| Codex CLI | UUID | No |
-| Aider | None (file-based) | No |
+| Tool        | ID Format         | Named Sessions            |
+| ----------- | ----------------- | ------------------------- |
+| Claude Code | UUID              | Yes (string names)        |
+| Gemini CLI  | UUID              | Yes (tags via /chat save) |
+| Codex CLI   | UUID              | No                        |
+| Aider       | None (file-based) | No                        |
 
 ### Resume Mechanisms
 
-| Tool | Resume Latest | Resume by ID | Non-Interactive Resume | Fork/Branch |
-|------|--------------|--------------|----------------------|-------------|
-| Claude Code | `--continue` | `--resume <id>` | `--continue -p` / `--resume <id> -p` | `--fork-session` |
-| Gemini CLI | `--resume` | `--resume <uuid>` | Limited | No |
-| Codex CLI | `resume --last` | `resume <id>` | `exec resume --last` | No |
-| Aider | `--restore-chat-history` | No | No | No |
+| Tool        | Resume Latest            | Resume by ID      | Non-Interactive Resume               | Fork/Branch      |
+| ----------- | ------------------------ | ----------------- | ------------------------------------ | ---------------- |
+| Claude Code | `--continue`             | `--resume <id>`   | `--continue -p` / `--resume <id> -p` | `--fork-session` |
+| Gemini CLI  | `--resume`               | `--resume <uuid>` | Limited                              | No               |
+| Codex CLI   | `resume --last`          | `resume <id>`     | `exec resume --last`                 | No               |
+| Aider       | `--restore-chat-history` | No                | No                                   | No               |
 
 ### Storage Formats
 
-| Tool | Format | Location |
-|------|--------|----------|
-| Claude Code | JSONL | `~/.claude/projects/<path-hash>/<session-id>.jsonl` |
-| Gemini CLI | JSON | `~/.gemini/tmp/<project-hash>/chats/<session-uuid>.json` |
-| Codex CLI | JSONL | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
-| Aider | Markdown | `.aider.chat.history.md` (project dir) |
+| Tool        | Format   | Location                                                 |
+| ----------- | -------- | -------------------------------------------------------- |
+| Claude Code | JSONL    | `~/.claude/projects/<path-hash>/<session-id>.jsonl`      |
+| Gemini CLI  | JSON     | `~/.gemini/tmp/<project-hash>/chats/<session-uuid>.json` |
+| Codex CLI   | JSONL    | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`           |
+| Aider       | Markdown | `.aider.chat.history.md` (project dir)                   |
 
 ### Session Lifecycle
 
 All tools follow the same basic lifecycle:
+
 1. **Create**: New session with UUID, store on disk
 2. **Execute**: Stream messages, tool calls, responses (saved incrementally)
 3. **Close/Suspend**: Session persists on disk
@@ -557,11 +565,11 @@ All tools follow the same basic lifecycle:
 
 ### Output Streaming for Automation
 
-| Tool | JSON Output | Session ID in Output | Streaming Events |
-|------|------------|---------------------|-----------------|
-| Claude Code | `--output-format json` | Yes (every message) | `--output-format stream-json` |
-| Codex CLI | `--json` | Yes (`thread_id`) | JSONL events |
-| Gemini CLI | No structured output flag | No standard output | No |
+| Tool        | JSON Output               | Session ID in Output | Streaming Events              |
+| ----------- | ------------------------- | -------------------- | ----------------------------- |
+| Claude Code | `--output-format json`    | Yes (every message)  | `--output-format stream-json` |
+| Codex CLI   | `--json`                  | Yes (`thread_id`)    | JSONL events                  |
+| Gemini CLI  | No structured output flag | No standard output   | No                            |
 
 ---
 
@@ -595,13 +603,13 @@ All tools follow the same basic lifecycle:
 ### Claude Code Adapter (Recommended: SDK)
 
 ```typescript
-import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 interface AgentSession {
   agentId: string;
   sessionId?: string;
-  tool: "claude" | "codex" | "gemini";
-  status: "running" | "paused" | "completed" | "error";
+  tool: 'claude' | 'codex' | 'gemini';
+  status: 'running' | 'paused' | 'completed' | 'error';
   cwd: string;
 }
 
@@ -609,27 +617,27 @@ class ClaudeAdapter {
   async startSession(task: string, cwd: string): Promise<AgentSession> {
     const agent: AgentSession = {
       agentId: crypto.randomUUID(),
-      tool: "claude",
-      status: "running",
+      tool: 'claude',
+      status: 'running',
       cwd,
     };
 
     const response = query({
       prompt: task,
       options: {
-        model: "claude-opus-4-6",
+        model: 'claude-opus-4-6',
         cwd,
-        allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
-        permissionMode: "bypassPermissions",
+        allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
+        permissionMode: 'bypassPermissions',
       },
     });
 
     for await (const msg of response) {
-      if (msg.type === "system" && msg.subtype === "init") {
+      if (msg.type === 'system' && msg.subtype === 'init') {
         agent.sessionId = msg.session_id;
       }
-      if (msg.type === "result") {
-        agent.status = msg.is_error ? "error" : "completed";
+      if (msg.type === 'result') {
+        agent.status = msg.is_error ? 'error' : 'completed';
       }
       // Emit events to UI...
     }
@@ -643,9 +651,9 @@ class ClaudeAdapter {
       options: {
         resume: sessionId,
         cwd,
-        model: "claude-opus-4-6",
-        allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
-        permissionMode: "bypassPermissions",
+        model: 'claude-opus-4-6',
+        allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
+        permissionMode: 'bypassPermissions',
       },
     });
 
@@ -659,9 +667,9 @@ class ClaudeAdapter {
       prompt,
       options: {
         resume: sessionId,
-        forkSession: true,  // Branch without modifying original
+        forkSession: true, // Branch without modifying original
         cwd,
-        model: "claude-opus-4-6",
+        model: 'claude-opus-4-6',
       },
     });
     // New session_id returned in init message
@@ -672,19 +680,19 @@ class ClaudeAdapter {
 ### Codex Adapter (CLI + JSON parsing)
 
 ```typescript
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
 class CodexAdapter {
-  private codexPath = "/home/ubuntu/.bun/bin/codex";
+  private codexPath = '/home/ubuntu/.bun/bin/codex';
 
   async startSession(task: string, cwd: string): Promise<AgentSession> {
     const agent: AgentSession = {
       agentId: crypto.randomUUID(),
-      tool: "codex",
-      status: "running",
+      tool: 'codex',
+      status: 'running',
       cwd,
     };
 
@@ -693,25 +701,25 @@ class CodexAdapter {
     await fs.writeFile(promptFile, task);
 
     // Use execFile (not exec) to avoid shell injection
-    const proc = spawn(this.codexPath, [
-      "exec", "--json", "-C", cwd, "-"
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(this.codexPath, ['exec', '--json', '-C', cwd, '-'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
     // Pipe prompt file content to stdin
-    const promptContent = await fs.readFile(promptFile, "utf-8");
+    const promptContent = await fs.readFile(promptFile, 'utf-8');
     proc.stdin.write(promptContent);
     proc.stdin.end();
 
     // Parse JSONL output for session ID
-    let buffer = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
+    let buffer = '';
+    proc.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === "thread.started") {
+        if (event.type === 'thread.started') {
           agent.sessionId = event.thread_id;
         }
         // Emit events to UI...
@@ -723,16 +731,16 @@ class CodexAdapter {
 
   async resumeSession(sessionId: string, prompt: string, cwd: string) {
     // Use execFile with array args (no shell injection risk)
-    const proc = spawn(this.codexPath, [
-      "exec", "resume", sessionId, "--json", "-C", cwd, prompt
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(this.codexPath, ['exec', 'resume', sessionId, '--json', '-C', cwd, prompt], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     // Parse JSONL output...
   }
 
   async resumeLatest(prompt: string, cwd: string) {
-    const proc = spawn(this.codexPath, [
-      "exec", "resume", "--last", "--json", "-C", cwd, prompt
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(this.codexPath, ['exec', 'resume', '--last', '--json', '-C', cwd, prompt], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     // Parse JSONL output...
   }
 }
@@ -743,8 +751,8 @@ class CodexAdapter {
 Gemini CLI lacks structured output and a programmatic SDK, so use tmux for session management:
 
 ```typescript
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
@@ -752,46 +760,50 @@ class GeminiAdapter {
   async startSession(task: string, cwd: string): Promise<AgentSession> {
     const agent: AgentSession = {
       agentId: crypto.randomUUID(),
-      tool: "gemini",
-      status: "running",
+      tool: 'gemini',
+      status: 'running',
       cwd,
     };
     const tmuxSession = `gemini-${agent.agentId.slice(0, 8)}`;
 
     // Create tmux session running gemini (using execFile for safety)
-    await execFileAsync("tmux", [
-      "new-session", "-d", "-s", tmuxSession, "-c", cwd, "gemini"
-    ]);
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, '-c', cwd, 'gemini']);
 
     // Wait for gemini to initialize, then send the task
     await sleep(2000);
-    await execFileAsync("tmux", [
-      "send-keys", "-t", tmuxSession, task, "Enter"
-    ]);
+    await execFileAsync('tmux', ['send-keys', '-t', tmuxSession, task, 'Enter']);
 
     return agent;
   }
 
   async resumeSession(sessionId: string, cwd: string) {
     const tmuxSession = `gemini-resume-${Date.now()}`;
-    await execFileAsync("tmux", [
-      "new-session", "-d", "-s", tmuxSession, "-c", cwd,
-      `gemini --resume ${sessionId}`
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      '-c',
+      cwd,
+      `gemini --resume ${sessionId}`,
     ]);
   }
 
   async captureOutput(tmuxSession: string): Promise<string> {
-    const { stdout } = await execFileAsync("tmux", [
-      "capture-pane", "-t", tmuxSession, "-p", "-S", "-100"
+    const { stdout } = await execFileAsync('tmux', [
+      'capture-pane',
+      '-t',
+      tmuxSession,
+      '-p',
+      '-S',
+      '-100',
     ]);
     return stdout;
   }
 
   async listSessions(cwd: string): Promise<string> {
     // Parse gemini --list-sessions output
-    const { stdout } = await execFileAsync("gemini", [
-      "--list-sessions"
-    ], { cwd });
+    const { stdout } = await execFileAsync('gemini', ['--list-sessions'], { cwd });
     return stdout;
   }
 }
@@ -887,6 +899,7 @@ gemini --list-sessions
 ## Appendix: Full Source Links
 
 ### Claude Code
+
 - https://code.claude.com/docs/en/cli-reference
 - https://platform.claude.com/docs/en/agent-sdk/sessions
 - https://platform.claude.com/docs/en/agent-sdk/typescript
@@ -898,6 +911,7 @@ gemini --list-sessions
 - https://claudelog.com/faqs/what-is-resume-flag-in-claude-code/
 
 ### Gemini CLI
+
 - https://geminicli.com/docs/cli/session-management/
 - https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md
 - https://developers.googleblog.com/pick-up-exactly-where-you-left-off-with-session-management-in-gemini-cli/
@@ -906,6 +920,7 @@ gemini --list-sessions
 - https://github.com/google-gemini/gemini-cli/issues/8944
 
 ### Codex CLI
+
 - https://developers.openai.com/codex/cli/features/
 - https://developers.openai.com/codex/cli/reference/
 - https://developers.openai.com/codex/noninteractive/
@@ -913,6 +928,7 @@ gemini --list-sessions
 - https://developers.openai.com/codex/cli/slash-commands/
 
 ### Other Tools & Frameworks
+
 - https://github.com/Dicklesworthstone/coding_agent_session_search
 - https://github.com/Dicklesworthstone/ntm
 - https://www.npmjs.com/package/node-tmux

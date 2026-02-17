@@ -26,9 +26,7 @@ export function SchemaFieldBoolean<T extends FieldValues>({
       />
       <div>
         <Label htmlFor={name}>{label}</Label>
-        {description && (
-          <p className="text-xs text-muted-foreground">{description}</p>
-        )}
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
     </div>
   );

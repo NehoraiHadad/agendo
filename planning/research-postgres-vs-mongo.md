@@ -9,16 +9,16 @@
 
 ### Summary Table
 
-| Project | Type | Database | License | Notes |
-|---------|------|----------|---------|-------|
-| **Linear** | Project management | PostgreSQL (Cloud SQL) | Proprietary | [GCP blog](https://cloud.google.com/blog/products/databases/product-workflow-tool-linear-uses-google-cloud-databases) |
-| **Plane.so** | Project management (Jira alt) | PostgreSQL | Open source | [Self-host docs](https://developers.plane.so/self-hosting/methods/docker-compose) |
-| **Hatchet** | Task orchestrator | PostgreSQL | MIT | [GitHub](https://github.com/hatchet-dev/hatchet-v1) |
-| **Trigger.dev** | Background jobs | PostgreSQL + ClickHouse (analytics) | Apache 2.0 | [GitHub](https://github.com/triggerdotdev/trigger.dev) |
-| **Graphile Worker** | Job queue | PostgreSQL | MIT | [Docs](https://worker.graphile.org/) |
-| **BullMQ** | Job queue | Redis | MIT | [Docs](https://docs.bullmq.io/guide/architecture) |
-| **Oban** (Elixir) | Job queue | PostgreSQL | Apache 2.0 | Uses SKIP LOCKED |
-| **Que** (Ruby) | Job queue | PostgreSQL | MIT | Uses SKIP LOCKED |
+| Project             | Type                          | Database                            | License     | Notes                                                                                                                 |
+| ------------------- | ----------------------------- | ----------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Linear**          | Project management            | PostgreSQL (Cloud SQL)              | Proprietary | [GCP blog](https://cloud.google.com/blog/products/databases/product-workflow-tool-linear-uses-google-cloud-databases) |
+| **Plane.so**        | Project management (Jira alt) | PostgreSQL                          | Open source | [Self-host docs](https://developers.plane.so/self-hosting/methods/docker-compose)                                     |
+| **Hatchet**         | Task orchestrator             | PostgreSQL                          | MIT         | [GitHub](https://github.com/hatchet-dev/hatchet-v1)                                                                   |
+| **Trigger.dev**     | Background jobs               | PostgreSQL + ClickHouse (analytics) | Apache 2.0  | [GitHub](https://github.com/triggerdotdev/trigger.dev)                                                                |
+| **Graphile Worker** | Job queue                     | PostgreSQL                          | MIT         | [Docs](https://worker.graphile.org/)                                                                                  |
+| **BullMQ**          | Job queue                     | Redis                               | MIT         | [Docs](https://docs.bullmq.io/guide/architecture)                                                                     |
+| **Oban** (Elixir)   | Job queue                     | PostgreSQL                          | Apache 2.0  | Uses SKIP LOCKED                                                                                                      |
+| **Que** (Ruby)      | Job queue                     | PostgreSQL                          | MIT         | Uses SKIP LOCKED                                                                                                      |
 
 **Key finding: Every task management / project management tool in this list uses PostgreSQL. Zero use MongoDB.** The only non-Postgres option is BullMQ, which uses Redis (a fundamentally different tradeoff -- pure in-memory speed, no relational modeling).
 
@@ -44,6 +44,7 @@ Built entirely on PostgreSQL. Their detailed reasoning:
 > "We feel quite strongly that Postgres solves for 99.9% of queueing use-cases better than most alternatives."
 
 Technical details:
+
 - Each task = minimum 5 Postgres transactions
 - Handles bursts of 5k+ tasks/second (25k TPS)
 - Uses `FOR UPDATE SKIP LOCKED` for job claiming
@@ -70,6 +71,7 @@ Technical details:
 ### Nango (migrated FROM Temporal TO PostgreSQL)
 
 Relevant case study. Nango built a custom Postgres-based orchestrator in ~300 lines of TypeScript:
+
 - Used `SELECT ... FOR UPDATE SKIP LOCKED` for atomic task claiming
 - Migrated millions of production tasks with zero downtime
 - Temporal was "a pretty expensive and complex queuing and scheduling system"
@@ -84,20 +86,24 @@ Relevant case study. Nango built a custom Postgres-based orchestrator in ~300 li
 MongoDB provides `$graphLookup` as an aggregation stage for recursive graph traversal. It works but has significant limitations:
 
 **How it works:**
+
 ```javascript
 db.tasks.aggregate([
-  { $graphLookup: {
-      from: "tasks",
-      startWith: "$dependencies",
-      connectFromField: "dependencies",
-      connectToField: "_id",
-      as: "allDependencies",
-      maxDepth: 10
-  }}
-])
+  {
+    $graphLookup: {
+      from: 'tasks',
+      startWith: '$dependencies',
+      connectFromField: 'dependencies',
+      connectToField: '_id',
+      as: 'allDependencies',
+      maxDepth: 10,
+    },
+  },
+]);
 ```
 
 **Hard limitations:**
+
 1. **100MB memory cap** -- `$graphLookup` cannot spill to disk (`allowDiskUse` is ignored for this stage). Complex DAGs with many nodes will fail.
 2. **16MB document size limit** -- all traversed results must fit in a single output document
 3. **No result ordering** -- results come back unordered; no built-in topological sort
@@ -141,6 +147,7 @@ ORDER BY MAX(depth);
 ```
 
 **Advantages over $graphLookup:**
+
 - No memory cap (uses disk for large results)
 - Native ordering with `ORDER BY`
 - Cycle detection with `CYCLE` clause (PostgreSQL 14+)
@@ -183,6 +190,7 @@ COMMIT;
 ```
 
 **Properties:**
+
 - Truly atomic: claim + read in one transaction
 - No race conditions by design
 - No double-processing
@@ -200,17 +208,18 @@ const job = await db.collection('jobs').findOneAndUpdate(
     $set: {
       status: 'running',
       claimedBy: 'worker-1',
-      startedAt: new Date()
-    }
+      startedAt: new Date(),
+    },
   },
   {
     sort: { priority: -1, createdAt: 1 },
-    returnDocument: 'after'
-  }
+    returnDocument: 'after',
+  },
 );
 ```
 
 **Properties:**
+
 - Atomic at the single-document level
 - Document-level lock during operation
 - Returns the modified document
@@ -220,14 +229,14 @@ const job = await db.collection('jobs').findOneAndUpdate(
 
 ### Key Difference
 
-| Feature | PostgreSQL SKIP LOCKED | MongoDB findOneAndUpdate |
-|---------|----------------------|------------------------|
-| Atomicity | Transaction-level (multi-row) | Single-document only |
-| Concurrent workers | Each gets a different row instantly | One succeeds, others get null + retry |
-| Ordering guarantee | Yes, with ORDER BY | Yes, with sort |
-| Deadlock risk | None (SKIP LOCKED prevents it) | None (single-doc lock) |
-| Multi-step claim+update | Single transaction | Requires separate operations or transactions (needs replica set) |
-| Ecosystem maturity | 5+ production job queue libraries | DIY pattern, no major library |
+| Feature                 | PostgreSQL SKIP LOCKED              | MongoDB findOneAndUpdate                                         |
+| ----------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| Atomicity               | Transaction-level (multi-row)       | Single-document only                                             |
+| Concurrent workers      | Each gets a different row instantly | One succeeds, others get null + retry                            |
+| Ordering guarantee      | Yes, with ORDER BY                  | Yes, with sort                                                   |
+| Deadlock risk           | None (SKIP LOCKED prevents it)      | None (single-doc lock)                                           |
+| Multi-step claim+update | Single transaction                  | Requires separate operations or transactions (needs replica set) |
+| Ecosystem maturity      | 5+ production job queue libraries   | DIY pattern, no major library                                    |
 
 ### Verdict: Job Queue
 
@@ -247,6 +256,7 @@ Infisical (secrets management platform) migrated their entire platform from Mong
 4. **Unfamiliarity**: More support burden because users knew SQL, not MongoDB
 
 **Results after migration:**
+
 - 50% database cost reduction (proper JOINs replaced aggregation pipelines)
 - Database-level validation replaced app-layer enforcement
 - Zero data loss during 3-4 month migration
@@ -255,6 +265,7 @@ Infisical (secrets management platform) migrated their entire platform from Mong
 ### Tyk API Gateway: MongoDB -> PostgreSQL
 
 Tyk built a dedicated migration tool because enough users demanded PostgreSQL support. Common reasons:
+
 - Existing PostgreSQL infrastructure
 - Team familiarity with SQL
 - Operational simplicity
@@ -280,13 +291,14 @@ Source: [Drizzle ORM GitHub issue #2377](https://github.com/drizzle-team/drizzle
 
 ### If You Chose MongoDB, Your ORM Options Would Be:
 
-| ORM/ODM | MongoDB Support | TypeScript | Notes |
-|---------|----------------|------------|-------|
-| **Mongoose** | Native (it's a MongoDB ODM) | Good | Most mature, but not type-safe by default |
-| **Prisma** | Yes (with limitations) | Excellent | No Prisma Studio support for Mongo; no auto-relations from introspection; `_id` mapping issues; requires replica set for transactions; v7 MongoDB support "coming soon" |
-| **Typegoose** | Yes (Mongoose wrapper) | Good | Adds TypeScript decorators to Mongoose |
+| ORM/ODM       | MongoDB Support             | TypeScript | Notes                                                                                                                                                                   |
+| ------------- | --------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Mongoose**  | Native (it's a MongoDB ODM) | Good       | Most mature, but not type-safe by default                                                                                                                               |
+| **Prisma**    | Yes (with limitations)      | Excellent  | No Prisma Studio support for Mongo; no auto-relations from introspection; `_id` mapping issues; requires replica set for transactions; v7 MongoDB support "coming soon" |
+| **Typegoose** | Yes (Mongoose wrapper)      | Good       | Adds TypeScript decorators to Mongoose                                                                                                                                  |
 
 **Prisma's MongoDB limitations are significant:**
+
 - No Prisma Studio (the GUI tool)
 - `_id` fields need `@map` workaround
 - Introspection produces schemas with no relations (must add manually)
@@ -298,6 +310,7 @@ Source: [Drizzle ORM GitHub issue #2377](https://github.com/drizzle-team/drizzle
 ### If You Choose PostgreSQL (Drizzle works perfectly):
 
 Drizzle + PostgreSQL gives you:
+
 - Schema-as-TypeScript-code (no separate schema language)
 - Full type safety
 - ~7.4KB bundle size
@@ -312,17 +325,17 @@ Drizzle + PostgreSQL gives you:
 
 ### Your Requirements vs Database Fit
 
-| Requirement | PostgreSQL | MongoDB |
-|-------------|-----------|---------|
-| 8 relational tables | Native (it's a relational DB) | Requires denormalization or $lookup |
-| 1:N relationships (agents -> capabilities) | Foreign keys + JOINs | Embedded docs or references |
-| DAG dependencies | Recursive CTEs (excellent) | $graphLookup (limited) |
-| State machine (execution status) | CHECK constraints + triggers | Application-level only |
-| Atomic job claim (SKIP LOCKED) | Native, battle-tested | findOneAndUpdate (works, less elegant) |
-| Audit trail (task_events) | Triggers + INSERT | Change streams (overkill) or manual |
-| Drizzle ORM | Full support | Not supported |
-| Schema enforcement | Database-level | Application-level (Mongoose/Prisma) |
-| Self-hosting simplicity | Single binary, no replica set | Needs replica set for transactions |
+| Requirement                                | PostgreSQL                    | MongoDB                                |
+| ------------------------------------------ | ----------------------------- | -------------------------------------- |
+| 8 relational tables                        | Native (it's a relational DB) | Requires denormalization or $lookup    |
+| 1:N relationships (agents -> capabilities) | Foreign keys + JOINs          | Embedded docs or references            |
+| DAG dependencies                           | Recursive CTEs (excellent)    | $graphLookup (limited)                 |
+| State machine (execution status)           | CHECK constraints + triggers  | Application-level only                 |
+| Atomic job claim (SKIP LOCKED)             | Native, battle-tested         | findOneAndUpdate (works, less elegant) |
+| Audit trail (task_events)                  | Triggers + INSERT             | Change streams (overkill) or manual    |
+| Drizzle ORM                                | Full support                  | Not supported                          |
+| Schema enforcement                         | Database-level                | Application-level (Mongoose/Prisma)    |
+| Self-hosting simplicity                    | Single binary, no replica set | Needs replica set for transactions     |
 
 ### Scale Consideration
 
@@ -341,6 +354,7 @@ At <1000 tasks, **both databases are fast enough**. Performance is not the diffe
 **Use PostgreSQL. It is not close.**
 
 The evidence is overwhelming:
+
 - 7 out of 7 comparable task/project management tools use PostgreSQL (or Redis for pure queuing)
 - Your data model is inherently relational (8 tables with foreign keys)
 - DAG operations are a first-class feature in PostgreSQL, a bolted-on afterthought in MongoDB

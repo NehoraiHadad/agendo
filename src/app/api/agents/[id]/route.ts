@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
-import {
-  getAgentById,
-  updateAgent,
-  deleteAgent,
-} from '@/lib/services/agent-service';
+import { getAgentById, updateAgent, deleteAgent } from '@/lib/services/agent-service';
 
-const updateAgentSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  workingDir: z.string().nullable().optional(),
-  envAllowlist: z.array(z.string()).optional(),
-  maxConcurrent: z.number().int().min(1).max(10).optional(),
-  isActive: z.boolean().optional(),
-  mcpEnabled: z.boolean().optional(),
-}).strict();
+const updateAgentSchema = z
+  .object({
+    name: z.string().min(1).max(100).optional(),
+    workingDir: z.string().nullable().optional(),
+    envAllowlist: z.array(z.string()).optional(),
+    maxConcurrent: z.number().int().min(1).max(10).optional(),
+    isActive: z.boolean().optional(),
+    mcpEnabled: z.boolean().optional(),
+  })
+  .strict();
 
 export const GET = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {

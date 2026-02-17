@@ -64,7 +64,7 @@ export function quickParseHelp(helpText: string): ParsedSchema {
 
   // Extract options
   const optionRegex =
-    /^\s+(--?[\w][\w-]*)(?:[,\s]+(--?[\w][\w-]*))?(?:\s+[<\[]([\w.-]+)[>\]]|\s+([A-Z_]{2,}))?\s{2,}(.+)$/gm;
+    /^\s+(--?[\w][\w-]*)(?:[,\s]+(--?[\w][\w-]*))?(?:\s+[<[]([\w.-]+)[>\]]|\s+([A-Z_]{2,}))?\s{2,}(.+)$/gm;
 
   let match: RegExpExecArray | null;
   while ((match = optionRegex.exec(helpText)) !== null) {

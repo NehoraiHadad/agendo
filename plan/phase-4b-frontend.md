@@ -10,25 +10,25 @@
 
 Before starting Phase 4b, verify these files exist and are functional:
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `src/lib/db/schema.ts` | All tables including `executions` (log fields merged onto executions table) | 1 / 4a |
-| `src/lib/types.ts` | Drizzle inferred types: `Execution`, `ExecutionStatus` | 1 / 4a |
-| `src/lib/api-handler.ts` | `withErrorBoundary` wrapper for API routes | 1 |
-| `src/lib/api-types.ts` | Response envelope types + `apiFetch` | 1 |
-| `src/lib/state-machines.ts` | Execution status transitions | 4a |
-| `src/lib/services/execution-service.ts` | `createExecution`, `listExecutions`, `getExecution`, `cancelExecution` | 4a |
-| `src/lib/services/capability-service.ts` | `listCapabilities`, `getCapabilityById` | 2 |
-| `src/app/api/executions/route.ts` | `GET` (list), `POST` (create) | 4a |
-| `src/app/api/executions/[id]/route.ts` | `GET` (detail) | 4a |
-| `src/app/api/executions/[id]/cancel/route.ts` | `POST` (cancel) | 4a |
-| `src/app/api/executions/[id]/logs/route.ts` | `GET` (full log dump) | 4a |
-| `src/app/api/executions/[id]/logs/stream/route.ts` | `GET` (SSE stream) | 4a |
-| `src/app/api/executions/[id]/message/route.ts` | `POST` (send message) | 4a |
-| `src/app/api/terminal/token/route.ts` | `POST` (JWT for terminal WS) | 4a |
-| `src/components/ui/*` | shadcn: Sheet, Badge, Dialog, Button, Table, Tooltip, ScrollArea, Select, Input, Separator | 1 |
-| `src/components/layout/app-shell.tsx` | Sidebar + main content area | 1 |
-| Terminal server running on `:4101` | WebSocket + node-pty + tmux | 4a |
+| File                                               | Purpose                                                                                    | Phase  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------ |
+| `src/lib/db/schema.ts`                             | All tables including `executions` (log fields merged onto executions table)                | 1 / 4a |
+| `src/lib/types.ts`                                 | Drizzle inferred types: `Execution`, `ExecutionStatus`                                     | 1 / 4a |
+| `src/lib/api-handler.ts`                           | `withErrorBoundary` wrapper for API routes                                                 | 1      |
+| `src/lib/api-types.ts`                             | Response envelope types + `apiFetch`                                                       | 1      |
+| `src/lib/state-machines.ts`                        | Execution status transitions                                                               | 4a     |
+| `src/lib/services/execution-service.ts`            | `createExecution`, `listExecutions`, `getExecution`, `cancelExecution`                     | 4a     |
+| `src/lib/services/capability-service.ts`           | `listCapabilities`, `getCapabilityById`                                                    | 2      |
+| `src/app/api/executions/route.ts`                  | `GET` (list), `POST` (create)                                                              | 4a     |
+| `src/app/api/executions/[id]/route.ts`             | `GET` (detail)                                                                             | 4a     |
+| `src/app/api/executions/[id]/cancel/route.ts`      | `POST` (cancel)                                                                            | 4a     |
+| `src/app/api/executions/[id]/logs/route.ts`        | `GET` (full log dump)                                                                      | 4a     |
+| `src/app/api/executions/[id]/logs/stream/route.ts` | `GET` (SSE stream)                                                                         | 4a     |
+| `src/app/api/executions/[id]/message/route.ts`     | `POST` (send message)                                                                      | 4a     |
+| `src/app/api/terminal/token/route.ts`              | `POST` (JWT for terminal WS)                                                               | 4a     |
+| `src/components/ui/*`                              | shadcn: Sheet, Badge, Dialog, Button, Table, Tooltip, ScrollArea, Select, Input, Separator | 1      |
+| `src/components/layout/app-shell.tsx`              | Sidebar + main content area                                                                | 1      |
+| Terminal server running on `:4101`                 | WebSocket + node-pty + tmux                                                                | 4a     |
 
 ---
 
@@ -58,11 +58,11 @@ These types are defined in Phase 4a and consumed by the frontend hooks.
 // --- SSE Log Event Types (discriminated union) ---
 
 export type SseLogEvent =
-  | { type: 'status';  status: ExecutionStatus }
+  | { type: 'status'; status: ExecutionStatus }
   | { type: 'catchup'; content: string }
-  | { type: 'log';     content: string; stream: 'stdout' | 'stderr' | 'system' }
-  | { type: 'done';    status: ExecutionStatus; exitCode: number | null }
-  | { type: 'error';   message: string };
+  | { type: 'log'; content: string; stream: 'stdout' | 'stderr' | 'system' }
+  | { type: 'done'; status: ExecutionStatus; exitCode: number | null }
+  | { type: 'error'; message: string };
 ```
 
 These are already defined in `src/lib/types.ts` by Phase 4a. The frontend simply imports them.
@@ -85,20 +85,20 @@ import DOMPurify from 'isomorphic-dompurify';
 
 // Singleton converter — reuse to avoid re-creating on every line
 const ansiConverter = new AnsiToHtml({
-  fg: '#a9b1d6',     // default text color (zinc-300 equivalent)
-  bg: 'transparent',  // no background override
-  newline: false,     // we handle newlines ourselves
-  escapeXML: true,    // escape HTML entities before ANSI parsing
+  fg: '#a9b1d6', // default text color (zinc-300 equivalent)
+  bg: 'transparent', // no background override
+  newline: false, // we handle newlines ourselves
+  escapeXML: true, // escape HTML entities before ANSI parsing
   colors: {
     // 256-color overrides to match our terminal theme
-    0: '#15161E',   // black
-    1: '#f7768e',   // red
-    2: '#9ece6a',   // green
-    3: '#e0af68',   // yellow
-    4: '#7aa2f7',   // blue
-    5: '#bb9af7',   // magenta
-    6: '#7dcfff',   // cyan
-    7: '#a9b1d6',   // white
+    0: '#15161E', // black
+    1: '#f7768e', // red
+    2: '#9ece6a', // green
+    3: '#e0af68', // yellow
+    4: '#7aa2f7', // blue
+    5: '#bb9af7', // magenta
+    6: '#7dcfff', // cyan
+    7: '#a9b1d6', // white
   },
 });
 
@@ -135,19 +135,22 @@ export function renderLogChunk(raw: string): string[] {
  * Stream classification — determines the Tailwind text color class for a log
  * line based on its source stream.
  */
-export function getStreamColorClass(
-  stream: 'stdout' | 'stderr' | 'system' | 'user'
-): string {
+export function getStreamColorClass(stream: 'stdout' | 'stderr' | 'system' | 'user'): string {
   switch (stream) {
-    case 'stdout':  return 'text-zinc-100';
-    case 'stderr':  return 'text-amber-400';
-    case 'system':  return 'text-blue-400';
-    case 'user':    return 'text-green-400';
+    case 'stdout':
+      return 'text-zinc-100';
+    case 'stderr':
+      return 'text-amber-400';
+    case 'system':
+      return 'text-blue-400';
+    case 'user':
+      return 'text-green-400';
   }
 }
 ```
 
 **Key decisions**:
+
 - `escapeXML: true` on the converter ensures raw `<script>` tags in log output are escaped before ANSI processing, then DOMPurify strips anything that still looks like HTML.
 - Only `<span style="...">` is allowed through DOMPurify — all other elements and attributes are stripped.
 - Color classes are Tailwind utilities applied to the outer wrapper; ANSI colors are inline styles on inner `<span>` elements.
@@ -171,8 +174,8 @@ import type { SseLogEvent, ExecutionStatus } from '@/lib/types';
 // --- Types ---
 
 export interface LogLine {
-  id: number;       // monotonic counter for React key
-  html: string;     // sanitized HTML content
+  id: number; // monotonic counter for React key
+  html: string; // sanitized HTML content
   stream: 'stdout' | 'stderr' | 'system' | 'user';
   colorClass: string;
   timestamp: number; // Date.now() when received
@@ -206,10 +209,7 @@ const RETRY_BACKOFF = 2;
 
 let lineIdCounter = 0;
 
-function logStreamReducer(
-  state: LogStreamState,
-  action: LogStreamAction
-): LogStreamState {
+function logStreamReducer(state: LogStreamState, action: LogStreamAction): LogStreamState {
   switch (action.type) {
     case 'APPEND_LINES': {
       const combined = [...state.lines, ...action.lines];
@@ -276,7 +276,7 @@ export function useExecutionLogStream({
       colorClass: getStreamColorClass(stream),
       timestamp: Date.now(),
     }),
-    []
+    [],
   );
 
   const connect = useCallback(() => {
@@ -302,9 +302,7 @@ export function useExecutionLogStream({
           case 'catchup': {
             // Bulk load existing log content
             const htmlLines = renderLogChunk(data.content);
-            const logLines = htmlLines.map((html) =>
-              createLogLine(html, 'stdout')
-            );
+            const logLines = htmlLines.map((html) => createLogLine(html, 'stdout'));
             dispatch({ type: 'APPEND_LINES', lines: logLines });
             break;
           }
@@ -380,6 +378,7 @@ export function useExecutionLogStream({
 ```
 
 **Key decisions**:
+
 - **useReducer** instead of multiple useState calls — keeps state updates atomic and avoids stale closure issues.
 - **Sliding window**: When lines exceed `MAX_VISIBLE_LINES` (5000), older lines are dropped from the front. A `isTruncated` flag is exposed so the viewer can show a truncation banner.
 - **Exponential backoff**: Starts at 1s, doubles each retry, caps at 30s. Resets on successful connection.
@@ -751,6 +750,7 @@ export function ExecutionTriggerDialog({
 ```
 
 **Key decisions**:
+
 - **Dynamic form generation**: Args are derived from the capability's JSON schema (`argsSchema.properties`). Each property becomes a form field.
 - **Danger warning**: Capabilities with `dangerLevel >= 2` show an amber warning banner and use a destructive-styled submit button.
 - **Textarea for prompts**: If the arg name is `prompt` or its description mentions `multiline`, render a `<Textarea>` instead of `<Input>`.
@@ -1164,6 +1164,7 @@ export function ExecutionLogViewer({
 ```
 
 **Key decisions**:
+
 - **Sanitized HTML rendering**: All HTML is sanitized through DOMPurify in `renderLogLine` (Step 1). Only `<span style="...">` elements survive the sanitizer. This makes the rendering safe.
 - **Auto-scroll pause**: When the user scrolls up (distance from bottom > 50px), auto-scroll pauses. A floating "Scroll to bottom" button appears. Scrolling back to the bottom re-enables auto-scroll.
 - **Search**: Text search strips HTML tags to search raw content. Matching lines get a highlight background. Current match gets a stronger amber highlight.
@@ -1425,6 +1426,7 @@ export function ExecutionMessageInput({
 ```
 
 **Key decisions**:
+
 - **Ctrl+Enter to send**: Standard pattern for multiline inputs. Enter inserts a newline; Ctrl+Enter (or Cmd+Enter on Mac) sends.
 - **Disabled state with tooltip**: When the adapter does not support bidirectional (e.g., generic adapter), the input is disabled and a tooltip explains why.
 - **Callback to parent**: `onMessageSent` fires after a successful send. The parent (log viewer or detail page) can use this to optimistically append the message to the log display.
@@ -1798,6 +1800,7 @@ export function TerminalComponent({
 ```
 
 **Key decisions**:
+
 - **All imports are dynamic**: xterm.js, its addons, socket.io-client, and the xterm CSS are all lazily loaded inside `useEffect`. This ensures zero SSR failures.
 - **JWT authentication**: Before connecting Socket.io, the component requests a short-lived JWT from `/api/terminal/token`. The token is passed as a query parameter on the WebSocket connection.
 - **Socket.io transport**: Forced to `websocket` only (no polling fallback) for lower latency.
@@ -2462,16 +2465,16 @@ Place this section after the dependencies section in the sheet, separated by a `
 
 All API routes are implemented in Phase 4a (backend). The frontend consumes them via `apiFetch`:
 
-| Route | Method | Purpose | Frontend Consumer |
-|-------|--------|---------|-------------------|
-| `/api/executions` | `GET` | List executions (with `taskId`, `agentId` query filters) | `ExecutionTable` (RSC, server-side) |
-| `/api/executions` | `POST` | Create new execution | `ExecutionTriggerDialog`, `SessionResumeButton` |
-| `/api/executions/[id]` | `GET` | Get execution detail | Execution detail page (RSC) |
-| `/api/executions/[id]/cancel` | `POST` | Cancel running execution | `ExecutionCancelButton` |
-| `/api/executions/[id]/logs` | `GET` | Download full log file | `ExecutionLogViewer` download button |
-| `/api/executions/[id]/logs/stream` | `GET` | SSE log stream | `useExecutionLogStream` hook |
-| `/api/executions/[id]/message` | `POST` | Send message to running execution | `ExecutionMessageInput` |
-| `/api/terminal/token` | `POST` | Get JWT for terminal WebSocket | `TerminalComponent` |
+| Route                              | Method | Purpose                                                  | Frontend Consumer                               |
+| ---------------------------------- | ------ | -------------------------------------------------------- | ----------------------------------------------- |
+| `/api/executions`                  | `GET`  | List executions (with `taskId`, `agentId` query filters) | `ExecutionTable` (RSC, server-side)             |
+| `/api/executions`                  | `POST` | Create new execution                                     | `ExecutionTriggerDialog`, `SessionResumeButton` |
+| `/api/executions/[id]`             | `GET`  | Get execution detail                                     | Execution detail page (RSC)                     |
+| `/api/executions/[id]/cancel`      | `POST` | Cancel running execution                                 | `ExecutionCancelButton`                         |
+| `/api/executions/[id]/logs`        | `GET`  | Download full log file                                   | `ExecutionLogViewer` download button            |
+| `/api/executions/[id]/logs/stream` | `GET`  | SSE log stream                                           | `useExecutionLogStream` hook                    |
+| `/api/executions/[id]/message`     | `POST` | Send message to running execution                        | `ExecutionMessageInput`                         |
+| `/api/terminal/token`              | `POST` | Get JWT for terminal WebSocket                           | `TerminalComponent`                             |
 
 ---
 
@@ -2479,35 +2482,35 @@ All API routes are implemented in Phase 4a (backend). The frontend consumes them
 
 ### New Files (20 files)
 
-| # | File | Type | Lines (est.) |
-|---|------|------|-------------|
-| 1 | `src/lib/log-renderer.ts` | Utility | ~55 |
-| 2 | `src/lib/hooks/use-execution-log-stream.ts` | Hook | ~160 |
-| 3 | `src/components/executions/execution-status-badge.tsx` | Component | ~35 |
-| 4 | `src/components/executions/execution-cancel-button.tsx` | Component (client) | ~55 |
-| 5 | `src/components/executions/execution-trigger-dialog.tsx` | Component (client) | ~145 |
-| 6 | `src/components/executions/execution-log-toolbar.tsx` | Component (client) | ~95 |
-| 7 | `src/components/executions/execution-log-viewer.tsx` | Component (client) | ~165 |
-| 8 | `src/components/executions/execution-row.tsx` | Component | ~50 |
-| 9 | `src/components/executions/execution-table.tsx` | Component (RSC) | ~45 |
-| 10 | `src/components/executions/execution-message-input.tsx` | Component (client) | ~95 |
-| 11 | `src/components/executions/session-resume-button.tsx` | Component (client) | ~55 |
-| 12 | `src/components/executions/session-chain-indicator.tsx` | Component | ~25 |
-| 13 | `src/components/terminal/terminal-component.tsx` | Component (client) | ~185 |
-| 14 | `src/components/terminal/terminal-toolbar.tsx` | Component (client) | ~85 |
-| 15 | `src/components/terminal/terminal-panel.tsx` | Component (client) | ~75 |
-| 16 | `src/app/(dashboard)/executions/page.tsx` | Page (RSC) | ~30 |
-| 17 | `src/app/(dashboard)/executions/[id]/page.tsx` | Page (RSC) | ~15 |
-| 18 | `src/app/(dashboard)/executions/[id]/execution-detail-client.tsx` | Component (client) | ~130 |
-| 19 | `src/app/(dashboard)/executions/[id]/terminal/page.tsx` | Page (RSC) | ~15 |
-| 20 | `src/app/(dashboard)/executions/[id]/terminal/terminal-page-client.tsx` | Component (client) | ~65 |
+| #   | File                                                                    | Type               | Lines (est.) |
+| --- | ----------------------------------------------------------------------- | ------------------ | ------------ |
+| 1   | `src/lib/log-renderer.ts`                                               | Utility            | ~55          |
+| 2   | `src/lib/hooks/use-execution-log-stream.ts`                             | Hook               | ~160         |
+| 3   | `src/components/executions/execution-status-badge.tsx`                  | Component          | ~35          |
+| 4   | `src/components/executions/execution-cancel-button.tsx`                 | Component (client) | ~55          |
+| 5   | `src/components/executions/execution-trigger-dialog.tsx`                | Component (client) | ~145         |
+| 6   | `src/components/executions/execution-log-toolbar.tsx`                   | Component (client) | ~95          |
+| 7   | `src/components/executions/execution-log-viewer.tsx`                    | Component (client) | ~165         |
+| 8   | `src/components/executions/execution-row.tsx`                           | Component          | ~50          |
+| 9   | `src/components/executions/execution-table.tsx`                         | Component (RSC)    | ~45          |
+| 10  | `src/components/executions/execution-message-input.tsx`                 | Component (client) | ~95          |
+| 11  | `src/components/executions/session-resume-button.tsx`                   | Component (client) | ~55          |
+| 12  | `src/components/executions/session-chain-indicator.tsx`                 | Component          | ~25          |
+| 13  | `src/components/terminal/terminal-component.tsx`                        | Component (client) | ~185         |
+| 14  | `src/components/terminal/terminal-toolbar.tsx`                          | Component (client) | ~85          |
+| 15  | `src/components/terminal/terminal-panel.tsx`                            | Component (client) | ~75          |
+| 16  | `src/app/(dashboard)/executions/page.tsx`                               | Page (RSC)         | ~30          |
+| 17  | `src/app/(dashboard)/executions/[id]/page.tsx`                          | Page (RSC)         | ~15          |
+| 18  | `src/app/(dashboard)/executions/[id]/execution-detail-client.tsx`       | Component (client) | ~130         |
+| 19  | `src/app/(dashboard)/executions/[id]/terminal/page.tsx`                 | Page (RSC)         | ~15          |
+| 20  | `src/app/(dashboard)/executions/[id]/terminal/terminal-page-client.tsx` | Component (client) | ~65          |
 
 ### Modified Files (2 files)
 
-| # | File | Change |
-|---|------|--------|
-| 1 | `src/components/tasks/task-detail-sheet.tsx` | Add execution history section + "Run" button |
-| 2 | `src/components/layout/sidebar.tsx` | Add "Executions" navigation link |
+| #   | File                                         | Change                                       |
+| --- | -------------------------------------------- | -------------------------------------------- |
+| 1   | `src/components/tasks/task-detail-sheet.tsx` | Add execution history section + "Run" button |
+| 2   | `src/components/layout/sidebar.tsx`          | Add "Executions" navigation link             |
 
 ---
 
@@ -2519,39 +2522,39 @@ All test files go in `src/__tests__/` mirroring the source structure.
 
 **File**: `src/__tests__/lib/log-renderer.test.ts`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | `renderLogLine` strips dangerous HTML from raw input | `renderLogLine('<script>alert(1)</script>')` returns escaped text, no `<script>` tag |
-| 2 | `renderLogLine` converts ANSI bold to `<span>` | `renderLogLine('\x1b[1mBold\x1b[0m')` contains `<span style="font-weight:bold">` |
-| 3 | `renderLogLine` converts ANSI colors to styled spans | `renderLogLine('\x1b[31mRed\x1b[0m')` contains a `<span>` with red color style |
-| 4 | `renderLogLine` passes plain text through unchanged | `renderLogLine('hello world')` returns `'hello world'` |
-| 5 | `renderLogChunk` splits multiline content | `renderLogChunk('line1\nline2')` returns array of length 2 |
-| 6 | `getStreamColorClass` returns correct Tailwind classes | `stdout` -> `text-zinc-100`, `stderr` -> `text-amber-400`, `system` -> `text-blue-400`, `user` -> `text-green-400` |
-| 7 | `renderLogLine` sanitizes nested HTML inside ANSI | `renderLogLine('\x1b[31m<img onerror=alert(1)>\x1b[0m')` contains no `<img>` tag |
+| #   | Test                                                   | What it verifies                                                                                                   |
+| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | `renderLogLine` strips dangerous HTML from raw input   | `renderLogLine('<script>alert(1)</script>')` returns escaped text, no `<script>` tag                               |
+| 2   | `renderLogLine` converts ANSI bold to `<span>`         | `renderLogLine('\x1b[1mBold\x1b[0m')` contains `<span style="font-weight:bold">`                                   |
+| 3   | `renderLogLine` converts ANSI colors to styled spans   | `renderLogLine('\x1b[31mRed\x1b[0m')` contains a `<span>` with red color style                                     |
+| 4   | `renderLogLine` passes plain text through unchanged    | `renderLogLine('hello world')` returns `'hello world'`                                                             |
+| 5   | `renderLogChunk` splits multiline content              | `renderLogChunk('line1\nline2')` returns array of length 2                                                         |
+| 6   | `getStreamColorClass` returns correct Tailwind classes | `stdout` -> `text-zinc-100`, `stderr` -> `text-amber-400`, `system` -> `text-blue-400`, `user` -> `text-green-400` |
+| 7   | `renderLogLine` sanitizes nested HTML inside ANSI      | `renderLogLine('\x1b[31m<img onerror=alert(1)>\x1b[0m')` contains no `<img>` tag                                   |
 
 **File**: `src/__tests__/lib/hooks/use-execution-log-stream.test.ts`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Hook creates EventSource with correct URL | `new EventSource('/api/executions/abc/logs/stream')` called |
-| 2 | Hook processes `catchup` event | Bulk content splits into multiple log lines |
-| 3 | Hook processes `log` event with correct stream class | `stderr` log line gets `text-amber-400` class |
-| 4 | Hook processes `done` event and sets `isDone` | `isDone` becomes true, `isConnected` becomes false |
-| 5 | Hook reconnects with exponential backoff on error | After first error, retries at 1s; after second, at 2s |
-| 6 | Hook does not reconnect after `done` event | Error after `done` does not trigger retry |
-| 7 | Hook enforces 5000-line sliding window | After appending 5500 lines, only 5000 remain; `isTruncated` is true |
-| 8 | Hook resets state when `executionId` changes | Lines array is cleared, `isDone` resets to false |
+| #   | Test                                                 | What it verifies                                                    |
+| --- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| 1   | Hook creates EventSource with correct URL            | `new EventSource('/api/executions/abc/logs/stream')` called         |
+| 2   | Hook processes `catchup` event                       | Bulk content splits into multiple log lines                         |
+| 3   | Hook processes `log` event with correct stream class | `stderr` log line gets `text-amber-400` class                       |
+| 4   | Hook processes `done` event and sets `isDone`        | `isDone` becomes true, `isConnected` becomes false                  |
+| 5   | Hook reconnects with exponential backoff on error    | After first error, retries at 1s; after second, at 2s               |
+| 6   | Hook does not reconnect after `done` event           | Error after `done` does not trigger retry                           |
+| 7   | Hook enforces 5000-line sliding window               | After appending 5500 lines, only 5000 remain; `isTruncated` is true |
+| 8   | Hook resets state when `executionId` changes         | Lines array is cleared, `isDone` resets to false                    |
 
 **File**: `src/__tests__/components/executions/execution-trigger-dialog.test.tsx`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Dialog fetches capabilities on open | `apiFetch('/api/agents/.../capabilities')` is called |
-| 2 | Selecting a capability renders its args form | Select capability -> Input fields appear based on `argsSchema` |
-| 3 | Required arg validation prevents submission | Leave required field empty, click Run -> error message shown |
-| 4 | Danger warning shown for level >= 2 capability | Selecting level 2 capability -> amber warning banner visible |
-| 5 | Successful submission calls `onExecutionCreated` | Fill form, click Run -> `POST /api/executions` called, callback invoked |
-| 6 | Prompt argument renders as Textarea | Arg named `prompt` renders `<textarea>` not `<input>` |
+| #   | Test                                             | What it verifies                                                        |
+| --- | ------------------------------------------------ | ----------------------------------------------------------------------- |
+| 1   | Dialog fetches capabilities on open              | `apiFetch('/api/agents/.../capabilities')` is called                    |
+| 2   | Selecting a capability renders its args form     | Select capability -> Input fields appear based on `argsSchema`          |
+| 3   | Required arg validation prevents submission      | Leave required field empty, click Run -> error message shown            |
+| 4   | Danger warning shown for level >= 2 capability   | Selecting level 2 capability -> amber warning banner visible            |
+| 5   | Successful submission calls `onExecutionCreated` | Fill form, click Run -> `POST /api/executions` called, callback invoked |
+| 6   | Prompt argument renders as Textarea              | Arg named `prompt` renders `<textarea>` not `<input>`                   |
 
 ### Integration Tests
 
@@ -2559,25 +2562,25 @@ These test full component interactions with mocked API responses.
 
 **File**: `src/__tests__/integration/execution-detail.test.tsx`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Execution detail page renders with log viewer | SSE stream connects, log lines appear in viewer |
-| 2 | Send message to running execution | Type message, press Ctrl+Enter -> `POST /api/executions/.../message` called |
-| 3 | Message input hidden when execution is not running | Completed execution -> no message input visible |
-| 4 | Message input disabled for generic adapter | `adapterType='generic'` -> input disabled with tooltip |
-| 5 | Cancel button sends cancel request | Click Cancel, confirm -> `POST /api/executions/.../cancel` called |
-| 6 | Session resume creates new execution | Click "Continue Session" -> `POST /api/executions` with `parentExecutionId` |
-| 7 | Terminal panel appears when tmux session exists | Execution with `tmuxSession` -> "Open Terminal" button visible |
+| #   | Test                                               | What it verifies                                                            |
+| --- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| 1   | Execution detail page renders with log viewer      | SSE stream connects, log lines appear in viewer                             |
+| 2   | Send message to running execution                  | Type message, press Ctrl+Enter -> `POST /api/executions/.../message` called |
+| 3   | Message input hidden when execution is not running | Completed execution -> no message input visible                             |
+| 4   | Message input disabled for generic adapter         | `adapterType='generic'` -> input disabled with tooltip                      |
+| 5   | Cancel button sends cancel request                 | Click Cancel, confirm -> `POST /api/executions/.../cancel` called           |
+| 6   | Session resume creates new execution               | Click "Continue Session" -> `POST /api/executions` with `parentExecutionId` |
+| 7   | Terminal panel appears when tmux session exists    | Execution with `tmuxSession` -> "Open Terminal" button visible              |
 
 **File**: `src/__tests__/integration/terminal.test.tsx`
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 1 | Terminal requests JWT token on mount | `POST /api/terminal/token` called with `sessionName` |
-| 2 | Terminal connects Socket.io with token | `io()` called with `query: { token, session }` |
-| 3 | Terminal writes server output to xterm | `terminal:output` event -> `terminal.write()` called |
-| 4 | Terminal sends user input to server | `terminal.onData()` fires -> `terminal:input` event emitted |
-| 5 | Terminal handles resize via ResizeObserver | Container resize -> `fitAddon.fit()` called, `terminal:resize` emitted |
+| #   | Test                                       | What it verifies                                                       |
+| --- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| 1   | Terminal requests JWT token on mount       | `POST /api/terminal/token` called with `sessionName`                   |
+| 2   | Terminal connects Socket.io with token     | `io()` called with `query: { token, session }`                         |
+| 3   | Terminal writes server output to xterm     | `terminal:output` event -> `terminal.write()` called                   |
+| 4   | Terminal sends user input to server        | `terminal.onData()` fires -> `terminal:input` event emitted            |
+| 5   | Terminal handles resize via ResizeObserver | Container resize -> `fitAddon.fit()` called, `terminal:resize` emitted |
 
 ---
 

@@ -26,10 +26,7 @@ export interface ApiErrorResponse {
  * Type-safe fetch wrapper for internal API calls from client components.
  * Throws on non-2xx responses with the error body.
  */
-export async function apiFetch<T>(
-  url: string,
-  options?: RequestInit,
-): Promise<T> {
+export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',

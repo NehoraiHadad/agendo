@@ -139,7 +139,13 @@ describe('Transition Table Completeness', () => {
 
   it('every execution status has a transition entry', () => {
     const allStatuses = [
-      'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'timed_out',
+      'queued',
+      'running',
+      'cancelling',
+      'succeeded',
+      'failed',
+      'cancelled',
+      'timed_out',
     ] as const;
     for (const status of allStatuses) {
       expect(EXECUTION_TRANSITIONS).toHaveProperty(status);

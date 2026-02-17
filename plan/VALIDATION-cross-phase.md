@@ -10,10 +10,10 @@
 ## Summary
 
 | Severity | Count |
-|----------|-------|
-| CRITICAL | 16 |
-| WARNING  | 15 |
-| INFO     | 6 |
+| -------- | ----- |
+| CRITICAL | 16    |
+| WARNING  | 15    |
+| INFO     | 6     |
 
 ---
 
@@ -73,17 +73,19 @@
 
 **Location**: `planning/04-phases.md:254-265` vs `phase-4a-backend.md` (entire file)
 **Details**: The master checklist (04-phases.md) lists these as Phase 4 deliverables:
+
 - `src/lib/services/execution-service.ts` (createExecution, cancelExecution, getExecutionById, listExecutions)
 - API routes: `/api/executions`, `/api/executions/[id]`, `/api/executions/[id]/cancel`, `/api/executions/[id]/logs`, `/api/executions/[id]/logs/stream`, `/api/executions/[id]/message`
 
 Phase 4b lists `execution-service.ts` as a prerequisite ("from Phase 4a"), and the `ExecutionTable` RSC component (4b Step 8, line 1256) imports `listExecutions` from it. But **Phase 4a's plan file contains zero steps for creating execution-service.ts or any execution API routes**. Phase 4a only covers: safety.ts, log-writer.ts, heartbeat.ts, execution-runner.ts, adapters, tmux-manager, and the terminal server.
 **Impact**: Phase 4b implementation would fail immediately -- it depends on services and API routes that were never created.
 **Fix**: Add explicit steps to Phase 4a for:
+
 1. `src/lib/services/execution-service.ts` (CRUD + cancel)
 2. All execution API routes (`/api/executions/*`)
 3. SSE log streaming endpoint (`/api/executions/[id]/logs/stream`)
 4. Message endpoint (`/api/executions/[id]/message`)
-**Status**: FIXED -- Added Section B7 to phase-4a-backend.md with Steps B7a-B7e covering execution-service.ts, all API routes (GET/POST /api/executions, GET /api/executions/[id], POST /api/executions/[id]/cancel, POST /api/executions/[id]/message, GET /api/executions/[id]/logs, GET /api/executions/[id]/logs/stream), and GET /api/workers/status.
+   **Status**: FIXED -- Added Section B7 to phase-4a-backend.md with Steps B7a-B7e covering execution-service.ts, all API routes (GET/POST /api/executions, GET /api/executions/[id], POST /api/executions/[id]/cancel, POST /api/executions/[id]/message, GET /api/executions/[id]/logs, GET /api/executions/[id]/logs/stream), and GET /api/workers/status.
 
 ---
 
@@ -103,9 +105,10 @@ Phase 4b lists `execution-service.ts` as a prerequisite ("from Phase 4a"), and t
 **Details**: Phase 4a's terminal server references `process.env.TERMINAL_JWT_SECRET` and its PM2 config passes `TERMINAL_JWT_SECRET`. But Phase 1's config.ts Zod schema only defines `JWT_SECRET` (line 107). The Phase 4a env var table (line 2119) lists `TERMINAL_JWT_SECRET` as a new var, but Phase 1's config.ts would need updating to include it.
 **Impact**: Terminal server would start with `JWT_SECRET = ''` and exit immediately ("TERMINAL_JWT_SECRET is required"). Or if config.ts is used for token generation (line 2101: `config.TERMINAL_JWT_SECRET`), it would fail Zod validation since that key doesn't exist.
 **Fix**: Either:
+
 - (a) Add `TERMINAL_JWT_SECRET: z.string().min(16)` to Phase 1's config.ts Zod schema, OR
 - (b) Reuse `JWT_SECRET` for both the Next.js app and terminal server (simpler, single secret)
-**Status**: FIXED -- Added decision note to Phase 4a's Environment Variables section: `TERMINAL_JWT_SECRET` is a separate secret with `z.string().min(16).optional()` in Phase 1's config.ts. Falls back to `JWT_SECRET` when not set. Terminal server reads directly from `process.env.TERMINAL_JWT_SECRET`.
+  **Status**: FIXED -- Added decision note to Phase 4a's Environment Variables section: `TERMINAL_JWT_SECRET` is a separate secret with `z.string().min(16).optional()` in Phase 1's config.ts. Falls back to `JWT_SECRET` when not set. Terminal server reads directly from `process.env.TERMINAL_JWT_SECRET`.
 
 ---
 
@@ -124,9 +127,10 @@ Phase 4b lists `execution-service.ts` as a prerequisite ("from Phase 4a"), and t
 **Details**: After updating task position, the code calls `reindexColumn(updated.workspaceId, updated.status)`. While the data model (03-data-model.md) DOES define `workspaceId` on the tasks table, the Phase 5 reorder function also takes `workspaceId` as a parameter (line 133) and queries `tasks.workspaceId`. However, Phase 3's task-service.ts (which is the primary task service) never references `workspaceId` in any of its queries. This means Phase 5 introduces a `workspaceId` filter that Phase 3 doesn't use, creating inconsistent query behavior.
 **Impact**: If Phase 3 doesn't filter by `workspaceId`, reorder and board queries in Phase 5 would return different results than Phase 3 task queries. More critically, the `workspaceId` value must be set on every task, but Phase 3's `createTask` doesn't set it.
 **Fix**: Either:
+
 - (a) Phase 3's task-service needs to consistently use `workspaceId` in all queries AND set it on task creation, OR
 - (b) Phase 5 should remove the `workspaceId` filter from reindexColumn to match Phase 3's behavior (since the app is personal-first / single-workspace initially)
-**Status**: FIXED -- Removed workspaceId filter from reindexColumn; added TODO comment for future multi-workspace support. Function now imports db/tasks internally instead of accepting as params.
+  **Status**: FIXED -- Removed workspaceId filter from reindexColumn; added TODO comment for future multi-workspace support. Function now imports db/tasks internally instead of accepting as params.
 
 ---
 
@@ -154,11 +158,12 @@ Phase 4b lists `execution-service.ts` as a prerequisite ("from Phase 4a"), and t
 
 **Location**: `phase-4b-frontend.md` (execution-trigger-dialog.tsx)
 **Details**: Beyond the type name issue (C-04), the trigger dialog references `cap.name` and `cap.level` to display capability info. Phase 1's `agent_capabilities` schema defines `key` and `label` (not `name`) and `dangerLevel` (not `level`). These are different fields entirely:
+
 - `cap.name` → should be `cap.label` (or `cap.key` for the identifier)
 - `cap.level` → should be `cap.dangerLevel`
-**Impact**: UI will render `undefined` for capability names and danger indicators in the trigger dialog.
-**Fix**: Replace `cap.name` with `cap.label` and `cap.level` with `cap.dangerLevel` throughout execution-trigger-dialog.tsx.
-**Status**: FIXED -- Replaced `cap.name` with `cap.label`, `cap.level`/`selectedCapability?.level` with `cap.dangerLevel`/`selectedCapability?.dangerLevel` throughout execution-trigger-dialog.tsx in phase-4b-frontend.md.
+  **Impact**: UI will render `undefined` for capability names and danger indicators in the trigger dialog.
+  **Fix**: Replace `cap.name` with `cap.label` and `cap.level` with `cap.dangerLevel` throughout execution-trigger-dialog.tsx.
+  **Status**: FIXED -- Replaced `cap.name` with `cap.label`, `cap.level`/`selectedCapability?.level` with `cap.dangerLevel`/`selectedCapability?.dangerLevel` throughout execution-trigger-dialog.tsx in phase-4b-frontend.md.
 
 ---
 
@@ -336,6 +341,7 @@ Phase 4b lists `execution-service.ts` as a prerequisite ("from Phase 4a"), and t
 
 **Location**: `planning/04-phases.md` Phase 4 section vs `phase-4a-backend.md` + `phase-4b-frontend.md`
 **Details**: Coverage analysis of the Phase 4a/4b split:
+
 - **Phase 4a covers**: safety.ts, log-writer.ts, heartbeat.ts, execution-runner.ts, all adapters (claude, codex, gemini, template, factory), tmux-manager.ts, terminal server (auth, server, PM2 config), token API route, **execution-service.ts, all execution API routes, SSE log stream, worker status route** (added via C-06 fix)
 - **Phase 4b covers**: log-renderer.ts, SSE hook, all execution UI components, all terminal UI components, execution list/detail pages
 - ~~**GAP**: `execution-service.ts` and execution API routes~~ -- FIXED (see C-06)
@@ -356,6 +362,7 @@ Phase 1 (Foundation)
 ```
 
 **Critical path blockers** (all resolved):
+
 1. ~~Phase 4b cannot start until C-06 (missing execution-service.ts) is resolved in Phase 4a~~ -- FIXED
 2. ~~Phase 3 task updates will crash until C-05 (.includes -> .has) is fixed~~ -- FIXED
 3. ~~Phase 4a safety validation will crash until C-07 (string vs array) is fixed~~ -- FIXED
@@ -364,30 +371,30 @@ Phase 1 (Foundation)
 
 ## Package Consistency Matrix
 
-| Package | Installed In | Used In | Status |
-|---------|-------------|---------|--------|
-| `sonner` | Phase 5 | Phase 5 | FIXED |
-| `date-fns` | Phase 1 | Phase 4b | FIXED |
-| `@types/dompurify` | ~~Phase 4b~~ | Phase 4b | FIXED (removed -- isomorphic-dompurify has own types) |
-| `esbuild` | Phase 1 (devDep) | Phase 6 | FIXED |
-| shadcn `select` | Phase 1 | Phase 3, 4b, 6 | FIXED |
-| shadcn `input` | Phase 1 | Phase 3, 4b, 6 | FIXED |
-| shadcn `textarea` | Phase 1 | Phase 3, 4b | FIXED |
-| shadcn `card` | Phase 1 | Phase 6 | FIXED |
-| shadcn `toggle` | Phase 1 | Phase 4b | FIXED |
-| shadcn `table` | Phase 1 | Phase 4b | FIXED |
-| shadcn `command` | Phase 1 | Phase 6 | FIXED |
-| shadcn `label` | Phase 1 | Phase 2, 4b, 6 | FIXED |
-| `socket.io` | Phase 4a | Phase 4a | OK |
-| `socket.io-client` | Phase 4b | Phase 4b | OK |
-| `@xterm/*` | Phase 4b | Phase 4b | OK |
-| `@dnd-kit/*` | Phase 5 | Phase 5 | OK |
-| `@modelcontextprotocol/sdk` | Phase 6 | Phase 6 | OK |
-| `@tanstack/react-virtual` | Phase 6 | Phase 6 | OK |
-| `zustand` | Phase 3 | Phase 3, 5 | OK |
-| `react-hook-form` | Phase 2 | Phase 2, 6 | OK |
-| `ansi-to-html` | Phase 4b | Phase 4b | OK |
-| `isomorphic-dompurify` | Phase 4b | Phase 4b | OK |
+| Package                     | Installed In     | Used In        | Status                                                |
+| --------------------------- | ---------------- | -------------- | ----------------------------------------------------- |
+| `sonner`                    | Phase 5          | Phase 5        | FIXED                                                 |
+| `date-fns`                  | Phase 1          | Phase 4b       | FIXED                                                 |
+| `@types/dompurify`          | ~~Phase 4b~~     | Phase 4b       | FIXED (removed -- isomorphic-dompurify has own types) |
+| `esbuild`                   | Phase 1 (devDep) | Phase 6        | FIXED                                                 |
+| shadcn `select`             | Phase 1          | Phase 3, 4b, 6 | FIXED                                                 |
+| shadcn `input`              | Phase 1          | Phase 3, 4b, 6 | FIXED                                                 |
+| shadcn `textarea`           | Phase 1          | Phase 3, 4b    | FIXED                                                 |
+| shadcn `card`               | Phase 1          | Phase 6        | FIXED                                                 |
+| shadcn `toggle`             | Phase 1          | Phase 4b       | FIXED                                                 |
+| shadcn `table`              | Phase 1          | Phase 4b       | FIXED                                                 |
+| shadcn `command`            | Phase 1          | Phase 6        | FIXED                                                 |
+| shadcn `label`              | Phase 1          | Phase 2, 4b, 6 | FIXED                                                 |
+| `socket.io`                 | Phase 4a         | Phase 4a       | OK                                                    |
+| `socket.io-client`          | Phase 4b         | Phase 4b       | OK                                                    |
+| `@xterm/*`                  | Phase 4b         | Phase 4b       | OK                                                    |
+| `@dnd-kit/*`                | Phase 5          | Phase 5        | OK                                                    |
+| `@modelcontextprotocol/sdk` | Phase 6          | Phase 6        | OK                                                    |
+| `@tanstack/react-virtual`   | Phase 6          | Phase 6        | OK                                                    |
+| `zustand`                   | Phase 3          | Phase 3, 5     | OK                                                    |
+| `react-hook-form`           | Phase 2          | Phase 2, 6     | OK                                                    |
+| `ansi-to-html`              | Phase 4b         | Phase 4b       | OK                                                    |
+| `isomorphic-dompurify`      | Phase 4b         | Phase 4b       | OK                                                    |
 
 ---
 

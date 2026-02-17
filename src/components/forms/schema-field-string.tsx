@@ -25,13 +25,8 @@ export function SchemaFieldString<T extends FieldValues>({
         {label}
         {required && <span className="text-destructive ml-0.5">*</span>}
       </Label>
-      {description && (
-        <p className="text-xs text-muted-foreground">{description}</p>
-      )}
-      <Input
-        id={name}
-        {...register(name, { required })}
-      />
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      <Input id={name} {...register(name, { required })} />
     </div>
   );
 }

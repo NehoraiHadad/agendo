@@ -5,6 +5,7 @@ Use a team of agents to fix all validated issues in the Agent Monitor plan files
 ## Context
 
 Three validation reports identified issues across 7 plan files. The reports are:
+
 - `plan/VALIDATION-cross-phase.md` — cross-phase consistency
 - `plan/VALIDATION-architecture.md` — architecture principles alignment
 - `plan/VALIDATION-data-model.md` — data model and protocol accuracy
@@ -23,12 +24,14 @@ Three validation reports identified issues across 7 plan files. The reports are:
 Create a `plan-fix` team with 3 agents:
 
 ### Agent 1: `fix-phase-1-2-3` (general-purpose)
+
 **Files**: `plan/phase-1-foundation.md`, `plan/phase-2-discovery.md`, `plan/phase-3-tasks.md`
 
 **Fixes to apply:**
 
 1. **Phase 1 — Add missing shadcn components** (W-02 through W-07):
    Update the shadcn install step to include ALL components used across all phases:
+
    ```
    npx shadcn@latest add button badge separator sheet scroll-area skeleton tooltip dialog select input textarea card toggle table command label
    ```
@@ -38,19 +41,24 @@ Create a `plan-fix` team with 3 agents:
 
 3. **Phase 3 — Fix `.includes()` on Set** (C-05 / W-01):
    In `task-service.ts` `updateTask`, replace:
+
    ```typescript
    if (!allowed?.includes(input.status)) {
    ```
+
    With:
+
    ```typescript
    if (!isValidTaskTransition(existing.status, input.status)) {
    ```
+
    And add the import of `isValidTaskTransition` from `@/lib/constants`.
 
 4. **Phase 3 — Fix typo** (I-01):
    `TaskSubtastsListProps` → `TaskSubtasksListProps`
 
 ### Agent 2: `fix-phase-4` (general-purpose)
+
 **Files**: `plan/phase-4a-backend.md`, `plan/phase-4b-frontend.md`
 
 **Fixes to apply:**
@@ -69,15 +77,18 @@ Create a `plan-fix` team with 3 agents:
 
 2. **Phase 4a — Fix `config.ALLOWED_WORKING_DIRS` type mismatch** (C-07):
    In `safety.ts`, replace:
+
    ```typescript
    const allowedDirs = config.ALLOWED_WORKING_DIRS;
    ```
+
    With:
+
    ```typescript
    import { allowedWorkingDirs } from '@/lib/config';
    // ...
    const isAllowed = allowedWorkingDirs.some(
-     (allowed) => resolved === allowed || resolved.startsWith(allowed + '/')
+     (allowed) => resolved === allowed || resolved.startsWith(allowed + '/'),
    );
    ```
 
@@ -86,13 +97,17 @@ Create a `plan-fix` team with 3 agents:
 
 4. **Phase 4a — Fix `capability.workingDir`** (C-14):
    In `execution-runner.ts`, replace:
+
    ```typescript
    const resolvedCwd = validateWorkingDir(capability.workingDir);
    ```
+
    With:
+
    ```typescript
    const resolvedCwd = validateWorkingDir(agent.workingDir ?? '/tmp');
    ```
+
    Ensure the runner fetches the `agent` record (not just capability) before this line.
 
 5. **Phase 4b — Remove phantom `execution_logs` table** (C-01):
@@ -118,6 +133,7 @@ Create a `plan-fix` team with 3 agents:
     Remove from install list. `isomorphic-dompurify` ships its own types.
 
 ### Agent 3: `fix-phase-5-6` (general-purpose)
+
 **Files**: `plan/phase-5-realtime.md`, `plan/phase-6-mcp-dashboard.md`, `planning/04-phases.md`
 
 **Fixes to apply:**
@@ -127,11 +143,14 @@ Create a `plan-fix` team with 3 agents:
 
 2. **Phase 5 — Fix `await params`** (C-11 / W-02):
    In ALL Phase 5 route handlers, change:
+
    ```typescript
    async (req: NextRequest, { params }: { params: { id: string } }) => {
      const { id } = params;
    ```
+
    To:
+
    ```typescript
    async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
      const { id } = await params;
@@ -139,10 +158,12 @@ Create a `plan-fix` team with 3 agents:
 
 3. **Phase 5 — Fix `reindexColumn` signature mismatch** (C-16 / W-04):
    Align the function definition and call site. The function should import `db` and `tasks` internally (like other services), not accept them as parameters:
+
    ```typescript
    export async function reindexColumn(status: string): Promise<void> {
      // import db and schema internally
    ```
+
    Update all call sites accordingly.
 
 4. **Phase 5 — Add `sonner` Toaster provider note**:
@@ -150,6 +171,7 @@ Create a `plan-fix` team with 3 agents:
 
 5. **Phase 6 — Fix MCP `assigneeAgentSlug` to UUID** (C-15):
    In the MCP server's `assign_task` and `create_task` handlers, add a slug-to-UUID resolution step:
+
    ```typescript
    // Resolve agent slug to UUID
    const agentRes = await fetch(`${API_BASE}/api/agents?slug=${assignee}`);
@@ -160,6 +182,7 @@ Create a `plan-fix` team with 3 agents:
 
 6. **Phase 6 — Fix `workerConfig.value` jsonb cast** (W-11):
    Replace raw type assertion with proper parsing:
+
    ```typescript
    const maxDepth = Number(configMap.get('max_spawn_depth') ?? 3);
    ```
@@ -186,6 +209,7 @@ Create a `plan-fix` team with 3 agents:
 ## Verification
 
 After all agents finish, send a final agent to:
+
 1. Grep for `execution_logs` across all plan files (should find zero matches except in validation reports)
 2. Grep for `pending` in execution status contexts (should find zero outside validation reports)
 3. Grep for `cap.name` and `cap.level` (should find zero outside validation reports)

@@ -12,10 +12,7 @@ export async function reconcileZombies(workerId: string): Promise<void> {
     .select({ id: executions.id, pid: executions.pid })
     .from(executions)
     .where(
-      and(
-        eq(executions.workerId, workerId),
-        inArray(executions.status, ['running', 'cancelling']),
-      ),
+      and(eq(executions.workerId, workerId), inArray(executions.status, ['running', 'cancelling'])),
     );
 
   if (orphaned.length === 0) {
@@ -42,7 +39,7 @@ export async function reconcileZombies(workerId: string): Promise<void> {
       // Rare: PID still alive after restart. Send SIGTERM, handle normally.
       console.log(`[worker] Execution ${exec.id} PID ${exec.pid} still alive. Sending SIGTERM.`);
       try {
-        process.kill(exec.pid!, 'SIGTERM');
+        process.kill(exec.pid as number, 'SIGTERM');
       } catch {
         // PID may have died between check and kill -- that's fine
       }

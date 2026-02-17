@@ -16,10 +16,11 @@ pnpm add @dnd-kit/core@6 @dnd-kit/sortable@8 @dnd-kit/utilities@3 sonner
 > **Note**: `sonner` is used for toast notifications on optimistic update rollback.
 > Add `<Toaster />` from `sonner` to the root layout (`src/app/(dashboard)/layout.tsx`)
 > if it was not already added in Phase 1. Example:
+>
 > ```tsx
 > import { Toaster } from 'sonner';
 > // In layout JSX:
-> <Toaster position="bottom-right" />
+> <Toaster position="bottom-right" />;
 > ```
 
 ---
@@ -63,11 +64,7 @@ export const POST = withErrorBoundary(
       updateFields.status = body.status;
     }
 
-    const [updated] = await db
-      .update(tasks)
-      .set(updateFields)
-      .where(eq(tasks.id, id))
-      .returning();
+    const [updated] = await db.update(tasks).set(updateFields).where(eq(tasks.id, id)).returning();
 
     // Check if reindex is needed (gap < 1)
     if (needsReindex(body.afterSortOrder, body.beforeSortOrder, newSortOrder)) {
@@ -75,7 +72,7 @@ export const POST = withErrorBoundary(
     }
 
     return NextResponse.json({ data: updated });
-  }
+  },
 );
 ```
 
@@ -146,9 +143,7 @@ export function needsReindex(
  * and reindexColumn to src/lib/sort-order.ts. Phase 5 should import from there
  * instead of redefining these utilities.
  */
-export async function reindexColumn(
-  status: string,
-): Promise<void> {
+export async function reindexColumn(status: string): Promise<void> {
   const { db } = await import('@/lib/db');
   const { tasks } = await import('@/lib/db/schema');
   const { eq, asc } = await import('drizzle-orm');
@@ -215,9 +210,7 @@ export async function GET(req: NextRequest) {
     async start(controller) {
       const send = (event: BoardSseEvent) => {
         if (closed) return;
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-        );
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
       // Polling loop: every 2 seconds, query for tasks updated since last poll
@@ -257,9 +250,7 @@ export async function GET(req: NextRequest) {
                 taskId: executions.taskId,
               })
               .from(executions)
-              .where(
-                inArray(executions.status, ['running', 'cancelling', 'queued'])
-              );
+              .where(inArray(executions.status, ['running', 'cancelling', 'queued']));
 
             for (const exec of activeExecutions) {
               send({
@@ -356,11 +347,7 @@ interface TaskBoardStore {
    * Optimistic within-column reorder.
    * Same snapshot/apply/rollback pattern as moveTask.
    */
-  reorderTask: (
-    taskId: string,
-    status: TaskStatus,
-    newIndex: number,
-  ) => Promise<void>;
+  reorderTask: (taskId: string, status: TaskStatus, newIndex: number) => Promise<void>;
 
   /**
    * Apply a server-sent update from SSE.
@@ -400,7 +387,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
     // Sort each column by sortOrder
     for (const status of Object.keys(columns) as TaskStatus[]) {
       columns[status].sort(
-        (a, b) => (tasksById[a]?.sortOrder ?? 0) - (tasksById[b]?.sortOrder ?? 0)
+        (a, b) => (tasksById[a]?.sortOrder ?? 0) - (tasksById[b]?.sortOrder ?? 0),
       );
     }
 
@@ -418,9 +405,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
     // 2. Apply optimistically
     const fromColumn = [...state.columns[fromStatus]];
-    const toColumn = fromStatus === toStatus
-      ? fromColumn
-      : [...state.columns[toStatus]];
+    const toColumn = fromStatus === toStatus ? fromColumn : [...state.columns[toStatus]];
 
     fromColumn.splice(fromColumn.indexOf(taskId), 1);
     if (fromStatus !== toStatus) {
@@ -433,8 +418,8 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
     const targetColumn = fromStatus === toStatus ? fromColumn : toColumn;
     const afterId = newIndex > 0 ? targetColumn[newIndex - 1] : null;
     const beforeId = newIndex < targetColumn.length - 1 ? targetColumn[newIndex + 1] : null;
-    const afterSortOrder = afterId ? state.tasksById[afterId]?.sortOrder ?? null : null;
-    const beforeSortOrder = beforeId ? state.tasksById[beforeId]?.sortOrder ?? null : null;
+    const afterSortOrder = afterId ? (state.tasksById[afterId]?.sortOrder ?? null) : null;
+    const beforeSortOrder = beforeId ? (state.tasksById[beforeId]?.sortOrder ?? null) : null;
 
     set({
       columns: {
@@ -485,9 +470,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
     if (existing && existing.status !== task.status) {
       // Status changed: move between columns
-      newColumns[existing.status] = newColumns[existing.status].filter(
-        (id) => id !== task.id
-      );
+      newColumns[existing.status] = newColumns[existing.status].filter((id) => id !== task.id);
       if (!newColumns[task.status].includes(task.id)) {
         newColumns[task.status] = [...newColumns[task.status], task.id];
       }
@@ -500,7 +483,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
     // Re-sort affected column
     newColumns[task.status].sort(
-      (a, b) => (newTasksById[a]?.sortOrder ?? 0) - (newTasksById[b]?.sortOrder ?? 0)
+      (a, b) => (newTasksById[a]?.sortOrder ?? 0) - (newTasksById[b]?.sortOrder ?? 0),
     );
 
     set({ columns: newColumns, tasksById: newTasksById });
@@ -558,7 +541,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
 
   getActiveExecution: (taskId) => {
     return Object.values(get().executions).find(
-      (e) => e.taskId === taskId && ['running', 'queued', 'cancelling'].includes(e.status)
+      (e) => e.taskId === taskId && ['running', 'queued', 'cancelling'].includes(e.status),
     );
   },
 }));

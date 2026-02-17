@@ -369,8 +369,8 @@ export const TASK_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   todo: new Set(['in_progress', 'cancelled', 'blocked']),
   in_progress: new Set(['done', 'blocked', 'cancelled', 'todo']),
   blocked: new Set(['todo', 'in_progress', 'cancelled']),
-  done: new Set(['todo']),       // reopen
-  cancelled: new Set(['todo']),  // reopen
+  done: new Set(['todo']), // reopen
+  cancelled: new Set(['todo']), // reopen
 };
 
 /**
@@ -381,10 +381,10 @@ export const EXECUTION_TRANSITIONS: Record<ExecutionStatus, ReadonlySet<Executio
   queued: new Set(['running', 'cancelled']),
   running: new Set(['cancelling', 'succeeded', 'failed', 'timed_out']),
   cancelling: new Set(['cancelled', 'failed']),
-  succeeded: new Set(),    // terminal
-  failed: new Set(),       // terminal
-  cancelled: new Set(),    // terminal
-  timed_out: new Set(),    // terminal
+  succeeded: new Set(), // terminal
+  failed: new Set(), // terminal
+  cancelled: new Set(), // terminal
+  timed_out: new Set(), // terminal
 };
 
 /** Terminal statuses that cannot transition further */
@@ -392,7 +392,10 @@ export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set();
 // Note: tasks have no truly terminal states -- done and cancelled can reopen to todo
 
 export const TERMINAL_EXECUTION_STATUSES: ReadonlySet<ExecutionStatus> = new Set([
-  'succeeded', 'failed', 'cancelled', 'timed_out',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'timed_out',
 ]);
 
 /**
@@ -403,7 +406,10 @@ export function isValidTaskTransition(current: TaskStatus, next: TaskStatus): bo
   return TASK_TRANSITIONS[current].has(next);
 }
 
-export function isValidExecutionTransition(current: ExecutionStatus, next: ExecutionStatus): boolean {
+export function isValidExecutionTransition(
+  current: ExecutionStatus,
+  next: ExecutionStatus,
+): boolean {
   return EXECUTION_TRANSITIONS[current].has(next);
 }
 
@@ -509,10 +515,7 @@ export interface ApiErrorResponse {
  * Type-safe fetch wrapper for internal API calls from client components.
  * Throws on non-2xx responses with the error body.
  */
-export async function apiFetch<T>(
-  url: string,
-  options?: RequestInit,
-): Promise<T> {
+export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
@@ -624,11 +627,7 @@ import { db, pool } from '../lib/db/index';
 import { executions, workerHeartbeats } from '../lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { config } from '../lib/config';
-import {
-  type ExecuteCapabilityJobData,
-  registerWorker,
-  stopBoss,
-} from '../lib/worker/queue';
+import { type ExecuteCapabilityJobData, registerWorker, stopBoss } from '../lib/worker/queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 
@@ -668,9 +667,7 @@ async function handleJob(job: Job<ExecuteCapabilityJobData>): Promise<void> {
     await db
       .update(executions)
       .set({ status: 'cancelled', endedAt: new Date() })
-      .where(
-        and(eq(executions.id, executionId), eq(executions.status, 'cancelling')),
-      );
+      .where(and(eq(executions.id, executionId), eq(executions.status, 'cancelling')));
     console.log(`[worker] Execution ${executionId} was cancelled during run`);
   } else {
     console.log(`[worker] Execution ${executionId} completed successfully`);
@@ -707,7 +704,9 @@ async function main(): Promise<void> {
 
   // Register the job handler
   await registerWorker(handleJob);
-  console.log(`[worker] Listening for jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`);
+  console.log(
+    `[worker] Listening for jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`,
+  );
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);
@@ -749,10 +748,7 @@ export async function reconcileZombies(workerId: string): Promise<void> {
     .select({ id: executions.id, pid: executions.pid })
     .from(executions)
     .where(
-      and(
-        eq(executions.workerId, workerId),
-        inArray(executions.status, ['running', 'cancelling']),
-      ),
+      and(eq(executions.workerId, workerId), inArray(executions.status, ['running', 'cancelling'])),
     );
 
   if (orphaned.length === 0) {
@@ -843,10 +839,7 @@ export async function checkDiskSpace(logDir: string): Promise<boolean> {
       "@/*": ["./src/*"]
     }
   },
-  "include": [
-    "src/worker/**/*.ts",
-    "src/lib/**/*.ts"
-  ],
+  "include": ["src/worker/**/*.ts", "src/lib/**/*.ts"],
   "exclude": [
     "src/app/**",
     "src/components/**",
@@ -915,6 +908,7 @@ pnpm dlx shadcn@latest init
 ```
 
 When prompted:
+
 - Style: Default
 - Base color: Zinc
 - CSS variables: Yes
@@ -1196,6 +1190,7 @@ export default function RootLayout({
 ```
 
 For **development**, use:
+
 - Next.js: `pm2 restart agent-monitor` (or the PM2 dev configuration)
 - Worker: `pnpm worker:dev` (tsx watch for hot-reload during development)
 
@@ -1376,7 +1371,13 @@ describe('Transition Table Completeness', () => {
 
   it('every execution status has a transition entry', () => {
     const allStatuses = [
-      'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'timed_out',
+      'queued',
+      'running',
+      'cancelling',
+      'succeeded',
+      'failed',
+      'cancelled',
+      'timed_out',
     ] as const;
     for (const status of allStatuses) {
       expect(EXECUTION_TRANSITIONS).toHaveProperty(status);
@@ -1529,13 +1530,13 @@ Add a script to `package.json`:
 
 ## Testing Checklist
 
-| Test | File | What It Verifies |
-|------|------|------------------|
-| Task status transitions | `src/lib/__tests__/state-machines.test.ts` | All valid transitions allowed, all invalid transitions rejected |
+| Test                         | File                                       | What It Verifies                                                    |
+| ---------------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
+| Task status transitions      | `src/lib/__tests__/state-machines.test.ts` | All valid transitions allowed, all invalid transitions rejected     |
 | Execution status transitions | `src/lib/__tests__/state-machines.test.ts` | Terminal states have empty transition sets, cancelling flow correct |
-| Error serialization | `src/lib/__tests__/errors.test.ts` | toJSON produces correct envelope, no internal details exposed |
-| isAppError type guard | `src/lib/__tests__/errors.test.ts` | Correctly identifies AppError subclasses, rejects plain errors |
-| Transition completeness | `src/lib/__tests__/state-machines.test.ts` | Every enum value has a transition table entry |
+| Error serialization          | `src/lib/__tests__/errors.test.ts`         | toJSON produces correct envelope, no internal details exposed       |
+| isAppError type guard        | `src/lib/__tests__/errors.test.ts`         | Correctly identifies AppError subclasses, rejects plain errors      |
+| Transition completeness      | `src/lib/__tests__/state-machines.test.ts` | Every enum value has a transition table entry                       |
 
 Run tests:
 

@@ -1,4 +1,5 @@
 # Claude Code Headless Mode & Stream-JSON Bidirectional Protocol
+
 ## Deep Dive Research Document
 
 **Date**: 2026-02-17
@@ -29,11 +30,11 @@
 
 There are now **three ways** to programmatically control Claude Code:
 
-| Approach | Package/Command | Best For |
-|:---------|:----------------|:---------|
-| **CLI (`claude -p`)** | `claude` binary | Scripts, CI/CD, shell automation |
+| Approach                   | Package/Command                  | Best For                              |
+| :------------------------- | :------------------------------- | :------------------------------------ |
+| **CLI (`claude -p`)**      | `claude` binary                  | Scripts, CI/CD, shell automation      |
 | **Agent SDK (TypeScript)** | `@anthropic-ai/claude-agent-sdk` | Production Node.js apps (RECOMMENDED) |
-| **Agent SDK (Python)** | `claude-agent-sdk` | Production Python apps |
+| **Agent SDK (Python)**     | `claude-agent-sdk`               | Production Python apps                |
 
 **Critical finding**: The CLI's `--input-format stream-json` provides basic stdin-based bidirectional communication, but the **Agent SDK** is the officially recommended approach for programmatic control. It provides native TypeScript/Python objects, callback-based tool approval (`canUseTool`), streaming events, and proper session management -- all without having to parse NDJSON from stdout.
 
@@ -60,93 +61,93 @@ claude -p "Fix the bug in auth.py" --allowedTools "Read,Edit,Bash"
 
 ### 2.2 What Changes in Headless vs Interactive Mode
 
-| Behavior | Interactive Mode | Headless (`-p`) Mode |
-|:---------|:-----------------|:---------------------|
-| UI rendering | Full TUI with panels | No UI, stdout only |
-| Tool approval | Interactive prompts | Must use `--allowedTools`, `--permission-mode`, or `--permission-prompt-tool` |
-| Slash commands | Available (`/commit`, `/review`) | NOT available; describe the task instead |
-| Skills | Available | NOT available directly |
-| Input | Terminal keyboard | stdin (text or stream-json) |
-| Output | Terminal rendering | text, json, or stream-json |
-| Session persistence | Automatic | Automatic (disable with `--no-session-persistence`) |
-| Multi-turn | Built-in REPL | Via `--continue`, `--resume`, or `--input-format stream-json` |
+| Behavior            | Interactive Mode                 | Headless (`-p`) Mode                                                          |
+| :------------------ | :------------------------------- | :---------------------------------------------------------------------------- |
+| UI rendering        | Full TUI with panels             | No UI, stdout only                                                            |
+| Tool approval       | Interactive prompts              | Must use `--allowedTools`, `--permission-mode`, or `--permission-prompt-tool` |
+| Slash commands      | Available (`/commit`, `/review`) | NOT available; describe the task instead                                      |
+| Skills              | Available                        | NOT available directly                                                        |
+| Input               | Terminal keyboard                | stdin (text or stream-json)                                                   |
+| Output              | Terminal rendering               | text, json, or stream-json                                                    |
+| Session persistence | Automatic                        | Automatic (disable with `--no-session-persistence`)                           |
+| Multi-turn          | Built-in REPL                    | Via `--continue`, `--resume`, or `--input-format stream-json`                 |
 
 ### 2.3 Complete CLI Flags Reference
 
 #### Core Flags
 
-| Flag | Description | Example |
-|:-----|:------------|:--------|
-| `--print`, `-p` | Run non-interactively | `claude -p "query"` |
-| `--output-format` | Output format: `text`, `json`, `stream-json` | `--output-format stream-json` |
-| `--input-format` | Input format: `text`, `stream-json` | `--input-format stream-json` |
-| `--verbose` | Show full turn-by-turn output | `--verbose` |
-| `--include-partial-messages` | Include streaming token events (requires stream-json) | `--include-partial-messages` |
-| `--replay-user-messages` | Re-emit user messages from stdin on stdout | `--replay-user-messages` |
+| Flag                         | Description                                           | Example                       |
+| :--------------------------- | :---------------------------------------------------- | :---------------------------- |
+| `--print`, `-p`              | Run non-interactively                                 | `claude -p "query"`           |
+| `--output-format`            | Output format: `text`, `json`, `stream-json`          | `--output-format stream-json` |
+| `--input-format`             | Input format: `text`, `stream-json`                   | `--input-format stream-json`  |
+| `--verbose`                  | Show full turn-by-turn output                         | `--verbose`                   |
+| `--include-partial-messages` | Include streaming token events (requires stream-json) | `--include-partial-messages`  |
+| `--replay-user-messages`     | Re-emit user messages from stdin on stdout            | `--replay-user-messages`      |
 
 #### Permission Flags
 
-| Flag | Description | Example |
-|:-----|:------------|:--------|
-| `--permission-mode` | Set permission mode | `--permission-mode acceptEdits` |
-| `--allowedTools` | Tools that auto-execute without prompting | `"Bash(git log *)" "Read"` |
-| `--disallowedTools` | Tools removed from model context entirely | `"Bash(rm *)" "Write"` |
-| `--tools` | Restrict which tools are available | `"Bash,Edit,Read"` |
-| `--dangerously-skip-permissions` | Skip ALL permission prompts (dangerous) | `--dangerously-skip-permissions` |
-| `--permission-prompt-tool` | MCP tool to handle permission prompts | `--permission-prompt-tool mcp__approver__check` |
+| Flag                             | Description                               | Example                                         |
+| :------------------------------- | :---------------------------------------- | :---------------------------------------------- |
+| `--permission-mode`              | Set permission mode                       | `--permission-mode acceptEdits`                 |
+| `--allowedTools`                 | Tools that auto-execute without prompting | `"Bash(git log *)" "Read"`                      |
+| `--disallowedTools`              | Tools removed from model context entirely | `"Bash(rm *)" "Write"`                          |
+| `--tools`                        | Restrict which tools are available        | `"Bash,Edit,Read"`                              |
+| `--dangerously-skip-permissions` | Skip ALL permission prompts (dangerous)   | `--dangerously-skip-permissions`                |
+| `--permission-prompt-tool`       | MCP tool to handle permission prompts     | `--permission-prompt-tool mcp__approver__check` |
 
 #### Budget and Limit Flags
 
-| Flag | Description | Example |
-|:-----|:------------|:--------|
-| `--max-budget-usd` | Maximum dollar spend before stopping | `--max-budget-usd 5.00` |
-| `--max-turns` | Limit agentic turns (exits with error when reached) | `--max-turns 10` |
+| Flag               | Description                                         | Example                 |
+| :----------------- | :-------------------------------------------------- | :---------------------- |
+| `--max-budget-usd` | Maximum dollar spend before stopping                | `--max-budget-usd 5.00` |
+| `--max-turns`      | Limit agentic turns (exits with error when reached) | `--max-turns 10`        |
 
 #### Session Flags
 
-| Flag | Description | Example |
-|:-----|:------------|:--------|
-| `--continue`, `-c` | Continue most recent conversation | `claude -c -p "Follow up"` |
-| `--resume`, `-r` | Resume specific session by ID or name | `--resume "auth-refactor"` |
-| `--session-id` | Use a specific UUID for the session | `--session-id "550e8400-..."` |
-| `--fork-session` | Create new session ID when resuming | `--resume abc --fork-session` |
-| `--no-session-persistence` | Don't save session to disk | `--no-session-persistence` |
+| Flag                       | Description                           | Example                       |
+| :------------------------- | :------------------------------------ | :---------------------------- |
+| `--continue`, `-c`         | Continue most recent conversation     | `claude -c -p "Follow up"`    |
+| `--resume`, `-r`           | Resume specific session by ID or name | `--resume "auth-refactor"`    |
+| `--session-id`             | Use a specific UUID for the session   | `--session-id "550e8400-..."` |
+| `--fork-session`           | Create new session ID when resuming   | `--resume abc --fork-session` |
+| `--no-session-persistence` | Don't save session to disk            | `--no-session-persistence`    |
 
 #### System Prompt Flags
 
-| Flag | Description | Modes |
-|:-----|:------------|:------|
-| `--system-prompt` | Replace entire system prompt | Interactive + Print |
-| `--system-prompt-file` | Replace with file contents | Print only |
-| `--append-system-prompt` | Append to default prompt | Interactive + Print |
-| `--append-system-prompt-file` | Append file contents | Print only |
+| Flag                          | Description                  | Modes               |
+| :---------------------------- | :--------------------------- | :------------------ |
+| `--system-prompt`             | Replace entire system prompt | Interactive + Print |
+| `--system-prompt-file`        | Replace with file contents   | Print only          |
+| `--append-system-prompt`      | Append to default prompt     | Interactive + Print |
+| `--append-system-prompt-file` | Append file contents         | Print only          |
 
 #### Model and MCP Flags
 
-| Flag | Description | Example |
-|:-----|:------------|:--------|
-| `--model` | Set model (alias or full name) | `--model sonnet` |
-| `--fallback-model` | Fallback when primary overloaded | `--fallback-model sonnet` |
-| `--mcp-config` | Load MCP servers from JSON | `--mcp-config ./mcp.json` |
-| `--strict-mcp-config` | Only use MCP from --mcp-config | `--strict-mcp-config` |
+| Flag                  | Description                      | Example                   |
+| :-------------------- | :------------------------------- | :------------------------ |
+| `--model`             | Set model (alias or full name)   | `--model sonnet`          |
+| `--fallback-model`    | Fallback when primary overloaded | `--fallback-model sonnet` |
+| `--mcp-config`        | Load MCP servers from JSON       | `--mcp-config ./mcp.json` |
+| `--strict-mcp-config` | Only use MCP from --mcp-config   | `--strict-mcp-config`     |
 
 #### Other Flags
 
-| Flag | Description |
-|:-----|:------------|
+| Flag            | Description                                 |
+| :-------------- | :------------------------------------------ |
 | `--json-schema` | Get validated JSON output matching a schema |
-| `--add-dir` | Add additional working directories |
-| `--agents` | Define custom subagents via JSON |
-| `--debug` | Enable debug mode with category filtering |
+| `--add-dir`     | Add additional working directories          |
+| `--agents`      | Define custom subagents via JSON            |
+| `--debug`       | Enable debug mode with category filtering   |
 
 ### 2.4 Permission Modes
 
-| Mode | Description | Tool Behavior |
-|:-----|:------------|:--------------|
-| `default` | Standard behavior | Unmatched tools trigger `canUseTool` callback (SDK) or block (CLI) |
-| `acceptEdits` | Auto-accept file edits | File edits, `mkdir`, `rm`, `mv`, `cp` auto-approved |
-| `bypassPermissions` | Skip all checks | All tools run without prompts (dangerous -- propagates to subagents) |
-| `plan` | Planning only | No tool execution; Claude plans without making changes |
+| Mode                | Description            | Tool Behavior                                                        |
+| :------------------ | :--------------------- | :------------------------------------------------------------------- |
+| `default`           | Standard behavior      | Unmatched tools trigger `canUseTool` callback (SDK) or block (CLI)   |
+| `acceptEdits`       | Auto-accept file edits | File edits, `mkdir`, `rm`, `mv`, `cp` auto-approved                  |
+| `bypassPermissions` | Skip all checks        | All tools run without prompts (dangerous -- propagates to subagents) |
+| `plan`              | Planning only          | No tool execution; Claude plans without making changes               |
 
 ---
 
@@ -191,6 +192,7 @@ Messages sent via stdin use this JSONL format:
 ```
 
 **Field definitions**:
+
 - `type`: Always `"user"` for user input messages
 - `message.role`: Always `"user"`
 - `message.content`: String or array of content blocks (text, images)
@@ -291,14 +293,14 @@ Messages sent via stdin use this JSONL format:
 
 When `--include-partial-messages` is enabled, you receive raw Claude API streaming events:
 
-| Event Type | Description | Contains |
-|:-----------|:------------|:---------|
-| `message_start` | Start of a new message | Message metadata |
-| `content_block_start` | Start of text or tool_use block | Block type, tool name |
-| `content_block_delta` | Incremental content update | `text_delta` or `input_json_delta` |
-| `content_block_stop` | End of a content block | -- |
-| `message_delta` | Message-level update | Stop reason, usage |
-| `message_stop` | End of the message | -- |
+| Event Type            | Description                     | Contains                           |
+| :-------------------- | :------------------------------ | :--------------------------------- |
+| `message_start`       | Start of a new message          | Message metadata                   |
+| `content_block_start` | Start of text or tool_use block | Block type, tool name              |
+| `content_block_delta` | Incremental content update      | `text_delta` or `input_json_delta` |
+| `content_block_stop`  | End of a content block          | --                                 |
+| `message_delta`       | Message-level update            | Stop reason, usage                 |
+| `message_stop`        | End of the message              | --                                 |
 
 ### 3.6 Message Flow Sequence
 
@@ -330,13 +332,13 @@ With --include-partial-messages:
 
 ### 3.7 Key Flags for Stream-JSON
 
-| Flag | Purpose |
-|:-----|:--------|
-| `--output-format stream-json` | Enable NDJSON output |
-| `--input-format stream-json` | Enable JSONL input via stdin |
-| `--verbose` | Include tool results and full turn data |
-| `--include-partial-messages` | Include per-token streaming events |
-| `--replay-user-messages` | Echo stdin user messages back on stdout |
+| Flag                          | Purpose                                 |
+| :---------------------------- | :-------------------------------------- |
+| `--output-format stream-json` | Enable NDJSON output                    |
+| `--input-format stream-json`  | Enable JSONL input via stdin            |
+| `--verbose`                   | Include tool results and full turn data |
+| `--include-partial-messages`  | Include per-token streaming events      |
+| `--replay-user-messages`      | Echo stdin user messages back on stdout |
 
 ### 3.8 Answering Critical Questions
 
@@ -345,6 +347,7 @@ With the CLI: Not directly mid-stream. The protocol is turn-based -- you send a 
 
 **Can we approve/reject tool calls via the CLI?**
 Not via stdin stream-json messages. Tool approval in headless CLI mode is handled by:
+
 1. Pre-configured `--allowedTools` / `--disallowedTools`
 2. `--permission-mode` (acceptEdits, bypassPermissions, etc.)
 3. `--permission-prompt-tool` (delegates to an MCP tool)
@@ -370,22 +373,23 @@ The first message emitted by Claude Code in stream-json mode:
 
 ```typescript
 type SDKSystemMessage = {
-  type: "system";
-  subtype: "init";
-  uuid: string;        // UUID for this message
-  session_id: string;  // Session identifier (CAPTURE THIS)
+  type: 'system';
+  subtype: 'init';
+  uuid: string; // UUID for this message
+  session_id: string; // Session identifier (CAPTURE THIS)
   apiKeySource: string;
-  cwd: string;         // Working directory
-  tools: string[];     // Available tools: ["Read", "Edit", "Bash", ...]
-  mcp_servers: {       // Connected MCP servers
+  cwd: string; // Working directory
+  tools: string[]; // Available tools: ["Read", "Edit", "Bash", ...]
+  mcp_servers: {
+    // Connected MCP servers
     name: string;
-    status: string;    // "connected" | "failed" | "needs-auth" | "pending"
+    status: string; // "connected" | "failed" | "needs-auth" | "pending"
   }[];
-  model: string;       // e.g. "claude-opus-4-6"
+  model: string; // e.g. "claude-opus-4-6"
   permissionMode: string;
   slash_commands: string[];
   output_style: string;
-}
+};
 ```
 
 ### 4.2 Assistant Message
@@ -394,13 +398,13 @@ Complete assistant response after all content is generated:
 
 ```typescript
 type SDKAssistantMessage = {
-  type: "assistant";
+  type: 'assistant';
   uuid: string;
   session_id: string;
   message: {
     content: Array<
-      | { type: "text"; text: string }
-      | { type: "tool_use"; id: string; name: string; input: Record<string, any> }
+      | { type: 'text'; text: string }
+      | { type: 'tool_use'; id: string; name: string; input: Record<string, any> }
     >;
     usage: {
       input_tokens: number;
@@ -409,40 +413,43 @@ type SDKAssistantMessage = {
       cache_read_input_tokens?: number;
     };
   };
-  parent_tool_use_id: string | null;  // Non-null if from a subagent
-}
+  parent_tool_use_id: string | null; // Non-null if from a subagent
+};
 ```
 
 ### 4.3 User Message (Input via stdin)
 
 ```typescript
 type SDKUserMessage = {
-  type: "user";
+  type: 'user';
   message: {
-    role: "user";
-    content: string | Array<
-      | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-    >;
+    role: 'user';
+    content:
+      | string
+      | Array<
+          | { type: 'text'; text: string }
+          | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+        >;
   };
-  session_id: string;           // Use "default" initially, then captured ID
-  parent_tool_use_id: string | null;  // Usually null
-}
+  session_id: string; // Use "default" initially, then captured ID
+  parent_tool_use_id: string | null; // Usually null
+};
 ```
 
 ### 4.4 Stream Event (Partial Messages)
 
 ```typescript
 type SDKPartialAssistantMessage = {
-  type: "stream_event";
-  event: RawMessageStreamEvent;  // Raw Claude API event
+  type: 'stream_event';
+  event: RawMessageStreamEvent; // Raw Claude API event
   parent_tool_use_id: string | null;
   uuid: string;
   session_id: string;
-}
+};
 ```
 
 The `event` field contains standard Anthropic API stream events:
+
 - `{ type: "message_start", message: {...} }`
 - `{ type: "content_block_start", content_block: { type: "text" | "tool_use", ... } }`
 - `{ type: "content_block_delta", delta: { type: "text_delta", text: "..." } }`
@@ -456,15 +463,15 @@ The `event` field contains standard Anthropic API stream events:
 ```typescript
 type SDKResultMessage =
   | {
-      type: "result";
-      subtype: "success";
+      type: 'result';
+      subtype: 'success';
       uuid: string;
       session_id: string;
       duration_ms: number;
       duration_api_ms: number;
       is_error: boolean;
       num_turns: number;
-      result: string;              // Final text result
+      result: string; // Final text result
       total_cost_usd: number;
       usage: {
         input_tokens: number;
@@ -488,14 +495,17 @@ type SDKResultMessage =
         tool_use_id: string;
         tool_input: any;
       }>;
-      structured_output?: unknown;  // When using --json-schema
+      structured_output?: unknown; // When using --json-schema
     }
   | {
-      type: "result";
-      subtype: "error_max_turns" | "error_during_execution"
-             | "error_max_budget_usd" | "error_max_structured_output_retries";
+      type: 'result';
+      subtype:
+        | 'error_max_turns'
+        | 'error_during_execution'
+        | 'error_max_budget_usd'
+        | 'error_max_structured_output_retries';
       // ... same fields but with errors: string[] instead of result
-    }
+    };
 ```
 
 ### 4.6 Compact Boundary Message
@@ -504,15 +514,15 @@ Emitted when conversation history is compacted (context window management):
 
 ```typescript
 type SDKCompactBoundaryMessage = {
-  type: "system";
-  subtype: "compact_boundary";
+  type: 'system';
+  subtype: 'compact_boundary';
   uuid: string;
   session_id: string;
   compact_metadata: {
-    trigger: "manual" | "auto";
+    trigger: 'manual' | 'auto';
     pre_tokens: number;
   };
-}
+};
 ```
 
 ---
@@ -535,6 +545,7 @@ claude -p "Follow up" --continue
 ### 5.2 Session Storage
 
 Sessions are stored as JSONL files at:
+
 ```
 ~/.claude/projects/<project-hash>/<session_id>.jsonl
 ```
@@ -542,6 +553,7 @@ Sessions are stored as JSONL files at:
 ### 5.3 Fork Sessions
 
 Create a new branch from an existing session:
+
 ```bash
 claude -p "Try a different approach" --resume "$session_id" --fork-session
 ```
@@ -556,13 +568,25 @@ claude -p --input-format stream-json --output-format stream-json --verbose
 ```
 
 Then pipe JSONL messages via stdin:
+
 ```json
-{"type":"user","message":{"role":"user","content":"First message"},"session_id":"default","parent_tool_use_id":null}
+{
+  "type": "user",
+  "message": { "role": "user", "content": "First message" },
+  "session_id": "default",
+  "parent_tool_use_id": null
+}
 ```
 
 Wait for the result message, then send the next:
+
 ```json
-{"type":"user","message":{"role":"user","content":"Follow up"},"session_id":"<captured_id>","parent_tool_use_id":null}
+{
+  "type": "user",
+  "message": { "role": "user", "content": "Follow up" },
+  "session_id": "<captured_id>",
+  "parent_tool_use_id": null
+}
 ```
 
 ### 5.5 Multiple Simultaneous Sessions
@@ -615,12 +639,12 @@ The `--mcp-config` flag accepts a path to a JSON file:
 
 ### 6.2 Transport Types
 
-| Type | Config | Use Case |
-|:-----|:-------|:---------|
-| stdio | `command` + `args` | Local process, stdin/stdout |
-| SSE | `type: "sse"` + `url` | Cloud-hosted, server-sent events |
-| HTTP | `type: "http"` + `url` | Cloud-hosted, request/response |
-| SDK | `type: "sdk"` + `instance` | In-process (Agent SDK only) |
+| Type  | Config                     | Use Case                         |
+| :---- | :------------------------- | :------------------------------- |
+| stdio | `command` + `args`         | Local process, stdin/stdout      |
+| SSE   | `type: "sse"` + `url`      | Cloud-hosted, server-sent events |
+| HTTP  | `type: "http"` + `url`     | Cloud-hosted, request/response   |
+| SDK   | `type: "sdk"` + `instance` | In-process (Agent SDK only)      |
 
 ### 6.3 Using MCP in Headless Mode
 
@@ -638,13 +662,14 @@ Wildcards work: `mcp__github__*` allows all tools from the github server.
 ### 6.4 Verifying MCP Connection
 
 In stream-json mode, the init message includes MCP server status:
+
 ```json
 {
   "type": "system",
   "subtype": "init",
   "mcp_servers": [
-    {"name": "github", "status": "connected"},
-    {"name": "broken", "status": "failed"}
+    { "name": "github", "status": "connected" },
+    { "name": "broken", "status": "failed" }
   ]
 }
 ```
@@ -666,6 +691,7 @@ Yes. If you create an MCP server (stdio, SSE, or HTTP), you can configure headle
 ```
 
 Then:
+
 ```bash
 claude -p "Fix the auth bug and log progress to agent-monitor" \
   --mcp-config ./mcp.json \
@@ -706,6 +732,7 @@ claude -p "Refactor the codebase" \
 ### 7.3 MCP Permission Tool Interface
 
 Your MCP tool receives:
+
 ```json
 {
   "tool_name": "Bash",
@@ -719,6 +746,7 @@ Your MCP tool receives:
 Your MCP tool must return JSON in the response text content:
 
 **Allow**:
+
 ```json
 {
   "behavior": "allow",
@@ -730,6 +758,7 @@ Your MCP tool must return JSON in the response text content:
 ```
 
 **Deny**:
+
 ```json
 {
   "behavior": "deny",
@@ -742,30 +771,30 @@ The `updatedInput` field is powerful -- it lets your permission server modify th
 ### 7.4 Implementation Example (TypeScript MCP Server)
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
-const server = new McpServer({ name: "approver", version: "1.0.0" });
+const server = new McpServer({ name: 'approver', version: '1.0.0' });
 
 server.tool(
-  "check_permission",
-  "Approve or deny tool usage requests",
+  'check_permission',
+  'Approve or deny tool usage requests',
   {
     tool_name: z.string(),
-    input: z.object({}).passthrough()
+    input: z.object({}).passthrough(),
   },
   async ({ tool_name, input }) => {
     // Your approval logic here
     const allowed = await checkPolicy(tool_name, input);
 
     const payload = allowed
-      ? { behavior: "allow", updatedInput: input }
-      : { behavior: "deny", message: `Policy denied: ${tool_name}` };
+      ? { behavior: 'allow', updatedInput: input }
+      : { behavior: 'deny', message: `Policy denied: ${tool_name}` };
 
     return {
-      content: [{ type: "text", text: JSON.stringify(payload) }]
+      content: [{ type: 'text', text: JSON.stringify(payload) }],
     };
-  }
+  },
 );
 ```
 
@@ -795,22 +824,22 @@ npm install @anthropic-ai/claude-agent-sdk
 ### 8.3 Basic One-Shot Query
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
-  prompt: "Find and fix the bug in auth.py",
+  prompt: 'Find and fix the bug in auth.py',
   options: {
-    allowedTools: ["Read", "Edit", "Bash"],
-    permissionMode: "acceptEdits"
-  }
+    allowedTools: ['Read', 'Edit', 'Bash'],
+    permissionMode: 'acceptEdits',
+  },
 })) {
-  if (message.type === "assistant") {
+  if (message.type === 'assistant') {
     for (const block of message.message.content) {
-      if ("text" in block) console.log(block.text);
-      if ("name" in block) console.log(`Tool: ${block.name}`);
+      if ('text' in block) console.log(block.text);
+      if ('name' in block) console.log(`Tool: ${block.name}`);
     }
   }
-  if (message.type === "result") {
+  if (message.type === 'result') {
     console.log(`Done: ${message.subtype}, Cost: $${message.total_cost_usd}`);
   }
 }
@@ -819,37 +848,37 @@ for await (const message of query({
 ### 8.4 Multi-Turn with Streaming Input (V1)
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 async function* generateMessages() {
   // First message
   yield {
-    type: "user" as const,
+    type: 'user' as const,
     message: {
-      role: "user" as const,
-      content: "Analyze this codebase for security issues"
-    }
+      role: 'user' as const,
+      content: 'Analyze this codebase for security issues',
+    },
   };
 
   // Wait for some condition
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   // Follow-up message
   yield {
-    type: "user" as const,
+    type: 'user' as const,
     message: {
-      role: "user" as const,
-      content: "Now fix the critical vulnerabilities"
-    }
+      role: 'user' as const,
+      content: 'Now fix the critical vulnerabilities',
+    },
   };
 }
 
 for await (const message of query({
   prompt: generateMessages(),
   options: {
-    allowedTools: ["Read", "Edit", "Bash"],
-    maxTurns: 20
-  }
+    allowedTools: ['Read', 'Edit', 'Bash'],
+    maxTurns: 20,
+  },
 })) {
   console.log(message);
 }
@@ -860,33 +889,33 @@ for await (const message of query({
 ```typescript
 import {
   unstable_v2_createSession,
-  unstable_v2_resumeSession
-} from "@anthropic-ai/claude-agent-sdk";
+  unstable_v2_resumeSession,
+} from '@anthropic-ai/claude-agent-sdk';
 
 // Create session
 await using session = unstable_v2_createSession({
-  model: "claude-opus-4-6",
-  allowedTools: ["Read", "Edit", "Bash"],
-  permissionMode: "acceptEdits"
+  model: 'claude-opus-4-6',
+  allowedTools: ['Read', 'Edit', 'Bash'],
+  permissionMode: 'acceptEdits',
 });
 
 // Turn 1
-await session.send("Review auth.py for bugs");
+await session.send('Review auth.py for bugs');
 for await (const msg of session.stream()) {
-  if (msg.type === "assistant") {
+  if (msg.type === 'assistant') {
     const text = msg.message.content
-      .filter(block => block.type === "text")
-      .map(block => block.text)
-      .join("");
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
     console.log(text);
   }
 }
 
 // Turn 2 (same session, full context)
-await session.send("Now fix the critical ones");
+await session.send('Now fix the critical ones');
 for await (const msg of session.stream()) {
-  if (msg.type === "result") {
-    console.log("Done:", msg.result);
+  if (msg.type === 'result') {
+    console.log('Done:', msg.result);
   }
 }
 ```
@@ -894,59 +923,59 @@ for await (const msg of session.stream()) {
 ### 8.6 Tool Approval with `canUseTool`
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
-  prompt: "Refactor the authentication module",
+  prompt: 'Refactor the authentication module',
   options: {
     canUseTool: async (toolName, input) => {
       console.log(`Claude wants to use: ${toolName}`);
       console.log(`Input:`, JSON.stringify(input, null, 2));
 
       // Custom approval logic
-      if (toolName === "Bash" && input.command.includes("rm")) {
+      if (toolName === 'Bash' && input.command.includes('rm')) {
         return {
-          behavior: "deny",
-          message: "Deletion not allowed in this context"
+          behavior: 'deny',
+          message: 'Deletion not allowed in this context',
         };
       }
 
-      if (toolName === "Edit") {
+      if (toolName === 'Edit') {
         // Allow but modify the input
         return {
-          behavior: "allow",
+          behavior: 'allow',
           updatedInput: {
             ...input,
             // Could sanitize or modify the edit
-          }
+          },
         };
       }
 
       // Default: allow
-      return { behavior: "allow", updatedInput: input };
-    }
-  }
+      return { behavior: 'allow', updatedInput: input };
+    },
+  },
 })) {
-  if ("result" in message) console.log(message.result);
+  if ('result' in message) console.log(message.result);
 }
 ```
 
 ### 8.7 Streaming with Real-Time Token Output
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
-  prompt: "Explain the architecture of this project",
+  prompt: 'Explain the architecture of this project',
   options: {
     includePartialMessages: true,
-    allowedTools: ["Read", "Glob", "Grep"]
-  }
+    allowedTools: ['Read', 'Glob', 'Grep'],
+  },
 })) {
-  if (message.type === "stream_event") {
+  if (message.type === 'stream_event') {
     const event = message.event;
-    if (event.type === "content_block_delta") {
-      if (event.delta.type === "text_delta") {
+    if (event.type === 'content_block_delta') {
+      if (event.delta.type === 'text_delta') {
         process.stdout.write(event.delta.text);
       }
     }
@@ -957,16 +986,16 @@ for await (const message of query({
 ### 8.8 Session Management
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 let sessionId: string | undefined;
 
 // First query: capture session ID
 for await (const message of query({
-  prompt: "Read the authentication module",
-  options: { allowedTools: ["Read", "Glob"] }
+  prompt: 'Read the authentication module',
+  options: { allowedTools: ['Read', 'Glob'] },
 })) {
-  if (message.type === "system" && message.subtype === "init") {
+  if (message.type === 'system' && message.subtype === 'init') {
     sessionId = message.session_id;
     console.log(`Session: ${sessionId}`);
   }
@@ -974,16 +1003,16 @@ for await (const message of query({
 
 // Resume with full context
 for await (const message of query({
-  prompt: "Now find all places that call it",
-  options: { resume: sessionId }
+  prompt: 'Now find all places that call it',
+  options: { resume: sessionId },
 })) {
-  if ("result" in message) console.log(message.result);
+  if ('result' in message) console.log(message.result);
 }
 
 // Fork the session (explore different approach)
 for await (const message of query({
-  prompt: "Try a completely different approach",
-  options: { resume: sessionId, forkSession: true }
+  prompt: 'Try a completely different approach',
+  options: { resume: sessionId, forkSession: true },
 })) {
   // This creates a NEW session branching from the original
 }
@@ -992,25 +1021,25 @@ for await (const message of query({
 ### 8.9 MCP in the Agent SDK
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
-  prompt: "List recent issues in my repo",
+  prompt: 'List recent issues in my repo',
   options: {
     mcpServers: {
       github: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-github"],
-        env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }
-      }
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN },
+      },
     },
-    allowedTools: ["mcp__github__list_issues"]
-  }
+    allowedTools: ['mcp__github__list_issues'],
+  },
 })) {
-  if (message.type === "system" && message.subtype === "init") {
-    console.log("MCP servers:", message.mcp_servers);
+  if (message.type === 'system' && message.subtype === 'init') {
+    console.log('MCP servers:', message.mcp_servers);
   }
-  if (message.type === "result" && message.subtype === "success") {
+  if (message.type === 'result' && message.subtype === 'success') {
     console.log(message.result);
   }
 }
@@ -1019,33 +1048,33 @@ for await (const message of query({
 ### 8.10 In-Process Custom MCP Tools
 
 ```typescript
-import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 
 // Define a custom tool
 const logProgressTool = tool(
-  "log_progress",
-  "Log agent progress to monitoring system",
+  'log_progress',
+  'Log agent progress to monitoring system',
   { message: z.string(), percentage: z.number() },
   async ({ message, percentage }) => {
     console.log(`[PROGRESS ${percentage}%] ${message}`);
-    return { content: [{ type: "text", text: "Progress logged" }] };
-  }
+    return { content: [{ type: 'text', text: 'Progress logged' }] };
+  },
 );
 
 // Create in-process MCP server
 const monitorServer = createSdkMcpServer({
-  name: "monitor",
-  tools: [logProgressTool]
+  name: 'monitor',
+  tools: [logProgressTool],
 });
 
 // Use it
 for await (const message of query({
-  prompt: "Fix all bugs and log your progress",
+  prompt: 'Fix all bugs and log your progress',
   options: {
     mcpServers: { monitor: monitorServer },
-    allowedTools: ["Read", "Edit", "Bash", "mcp__monitor__*"]
-  }
+    allowedTools: ['Read', 'Edit', 'Bash', 'mcp__monitor__*'],
+  },
 })) {
   // ...
 }
@@ -1054,55 +1083,59 @@ for await (const message of query({
 ### 8.11 Hooks
 
 ```typescript
-import { query, HookCallback } from "@anthropic-ai/claude-agent-sdk";
+import { query, HookCallback } from '@anthropic-ai/claude-agent-sdk';
 
 const auditLog: HookCallback = async (input) => {
-  if (input.hook_event_name === "PostToolUse") {
+  if (input.hook_event_name === 'PostToolUse') {
     console.log(`[AUDIT] Tool: ${input.tool_name}, Input: ${JSON.stringify(input.tool_input)}`);
   }
   return {};
 };
 
 for await (const message of query({
-  prompt: "Refactor utils.py",
+  prompt: 'Refactor utils.py',
   options: {
-    permissionMode: "acceptEdits",
+    permissionMode: 'acceptEdits',
     hooks: {
       PostToolUse: [{ hooks: [auditLog] }],
-      PreToolUse: [{
-        matcher: "Bash",
-        hooks: [async (input) => {
-          // Block dangerous commands
-          const cmd = (input as any).tool_input?.command || "";
-          if (cmd.includes("rm -rf /")) {
-            return { decision: "block", reason: "Dangerous command blocked" };
-          }
-          return { continue: true };
-        }]
-      }]
-    }
-  }
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            async (input) => {
+              // Block dangerous commands
+              const cmd = (input as any).tool_input?.command || '';
+              if (cmd.includes('rm -rf /')) {
+                return { decision: 'block', reason: 'Dangerous command blocked' };
+              }
+              return { continue: true };
+            },
+          ],
+        },
+      ],
+    },
+  },
 })) {
-  if ("result" in message) console.log(message.result);
+  if ('result' in message) console.log(message.result);
 }
 ```
 
 ### 8.12 Available Hook Events
 
-| Hook Event | When It Fires |
-|:-----------|:--------------|
-| `PreToolUse` | Before a tool executes |
-| `PostToolUse` | After a tool executes successfully |
-| `PostToolUseFailure` | After a tool fails |
-| `Notification` | When agent sends a notification |
-| `UserPromptSubmit` | When a user prompt is submitted |
-| `SessionStart` | When a session starts |
-| `SessionEnd` | When a session ends |
-| `Stop` | When agent stops |
-| `SubagentStart` | When a subagent is spawned |
-| `SubagentStop` | When a subagent finishes |
-| `PreCompact` | Before context compaction |
-| `PermissionRequest` | When a permission is requested (for external notifications) |
+| Hook Event           | When It Fires                                               |
+| :------------------- | :---------------------------------------------------------- |
+| `PreToolUse`         | Before a tool executes                                      |
+| `PostToolUse`        | After a tool executes successfully                          |
+| `PostToolUseFailure` | After a tool fails                                          |
+| `Notification`       | When agent sends a notification                             |
+| `UserPromptSubmit`   | When a user prompt is submitted                             |
+| `SessionStart`       | When a session starts                                       |
+| `SessionEnd`         | When a session ends                                         |
+| `Stop`               | When agent stops                                            |
+| `SubagentStart`      | When a subagent is spawned                                  |
+| `SubagentStop`       | When a subagent finishes                                    |
+| `PreCompact`         | Before context compaction                                   |
+| `PermissionRequest`  | When a permission is requested (for external notifications) |
 
 ---
 
@@ -1155,55 +1188,62 @@ claude -p "Analyze the auth module" --output-format stream-json | \
 ### 9.5 Node.js Bidirectional Communication (Raw CLI)
 
 ```typescript
-import { spawn } from "child_process";
-import { createInterface } from "readline";
+import { spawn } from 'child_process';
+import { createInterface } from 'readline';
 
 async function runClaudeHeadless(initialPrompt: string) {
-  const proc = spawn("claude", [
-    "-p", initialPrompt,
-    "--output-format", "stream-json",
-    "--input-format", "stream-json",
-    "--verbose",
-    "--include-partial-messages"
-  ], {
-    stdio: ["pipe", "pipe", "pipe"]
-  });
+  const proc = spawn(
+    'claude',
+    [
+      '-p',
+      initialPrompt,
+      '--output-format',
+      'stream-json',
+      '--input-format',
+      'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+    ],
+    {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
 
   const rl = createInterface({ input: proc.stdout! });
   let sessionId: string | null = null;
 
-  rl.on("line", (line) => {
+  rl.on('line', (line) => {
     try {
       const msg = JSON.parse(line);
 
       switch (msg.type) {
-        case "system":
-          if (msg.subtype === "init") {
+        case 'system':
+          if (msg.subtype === 'init') {
             sessionId = msg.session_id;
             console.log(`Session started: ${sessionId}`);
-            console.log(`Tools: ${msg.tools.join(", ")}`);
+            console.log(`Tools: ${msg.tools.join(', ')}`);
             console.log(`Model: ${msg.model}`);
           }
           break;
 
-        case "stream_event":
-          if (msg.event?.type === "content_block_delta") {
-            if (msg.event.delta?.type === "text_delta") {
+        case 'stream_event':
+          if (msg.event?.type === 'content_block_delta') {
+            if (msg.event.delta?.type === 'text_delta') {
               process.stdout.write(msg.event.delta.text);
             }
           }
           break;
 
-        case "assistant":
+        case 'assistant':
           // Complete assistant message
           for (const block of msg.message?.content || []) {
-            if (block.type === "tool_use") {
+            if (block.type === 'tool_use') {
               console.log(`\n[Tool: ${block.name}]`);
             }
           }
           break;
 
-        case "result":
+        case 'result':
           console.log(`\n--- Result (${msg.subtype}) ---`);
           console.log(`Cost: $${msg.total_cost_usd}`);
           console.log(`Turns: ${msg.num_turns}`);
@@ -1211,12 +1251,12 @@ async function runClaudeHeadless(initialPrompt: string) {
           // Send follow-up message
           if (sessionId) {
             const followUp = JSON.stringify({
-              type: "user",
-              message: { role: "user", content: "Now fix the issues you found" },
+              type: 'user',
+              message: { role: 'user', content: 'Now fix the issues you found' },
               session_id: sessionId,
-              parent_tool_use_id: null
+              parent_tool_use_id: null,
             });
-            proc.stdin!.write(followUp + "\n");
+            proc.stdin!.write(followUp + '\n');
           }
           break;
       }
@@ -1225,22 +1265,22 @@ async function runClaudeHeadless(initialPrompt: string) {
     }
   });
 
-  proc.stderr?.on("data", (data) => {
+  proc.stderr?.on('data', (data) => {
     console.error(`[stderr] ${data}`);
   });
 
-  proc.on("close", (code) => {
+  proc.on('close', (code) => {
     console.log(`Claude exited with code ${code}`);
   });
 }
 
-runClaudeHeadless("Review auth.py for security vulnerabilities");
+runClaudeHeadless('Review auth.py for security vulnerabilities');
 ```
 
 ### 9.6 Full Agent SDK Application
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 interface TaskResult {
   sessionId: string;
@@ -1257,10 +1297,10 @@ async function runAgent(
     maxTurns?: number;
     onToolUse?: (name: string, input: any) => Promise<boolean>;
     onProgress?: (text: string) => void;
-  } = {}
+  } = {},
 ): Promise<TaskResult> {
-  let sessionId = "";
-  let result = "";
+  let sessionId = '';
+  let result = '';
   let cost = 0;
   let turns = 0;
 
@@ -1271,33 +1311,35 @@ async function runAgent(
       maxBudgetUsd: options.maxBudget,
       maxTurns: options.maxTurns,
       includePartialMessages: true,
-      allowedTools: ["Read", "Edit", "Bash", "Glob", "Grep"],
+      allowedTools: ['Read', 'Edit', 'Bash', 'Glob', 'Grep'],
       canUseTool: options.onToolUse
         ? async (toolName, input) => {
             const allowed = await options.onToolUse!(toolName, input);
             return allowed
-              ? { behavior: "allow", updatedInput: input }
-              : { behavior: "deny", message: "Denied by policy" };
+              ? { behavior: 'allow', updatedInput: input }
+              : { behavior: 'deny', message: 'Denied by policy' };
           }
         : undefined,
-    }
+    },
   })) {
     switch (message.type) {
-      case "system":
-        if (message.subtype === "init") {
+      case 'system':
+        if (message.subtype === 'init') {
           sessionId = message.session_id;
         }
         break;
 
-      case "stream_event":
-        if (message.event.type === "content_block_delta"
-            && message.event.delta.type === "text_delta") {
+      case 'stream_event':
+        if (
+          message.event.type === 'content_block_delta' &&
+          message.event.delta.type === 'text_delta'
+        ) {
           options.onProgress?.(message.event.delta.text);
         }
         break;
 
-      case "result":
-        if (message.subtype === "success") {
+      case 'result':
+        if (message.subtype === 'success') {
           result = message.result;
         }
         cost = message.total_cost_usd;
@@ -1312,31 +1354,25 @@ async function runAgent(
 // Usage
 async function main() {
   // Step 1: Initial review
-  const review = await runAgent(
-    "Review the auth module for security issues",
-    {
-      maxBudget: 5.0,
-      maxTurns: 10,
-      onProgress: (text) => process.stdout.write(text),
-      onToolUse: async (name, input) => {
-        // Auto-approve reads, require approval for writes
-        if (["Read", "Glob", "Grep"].includes(name)) return true;
-        console.log(`\nApprove ${name}? (auto-approving for demo)`);
-        return true;
-      }
-    }
-  );
+  const review = await runAgent('Review the auth module for security issues', {
+    maxBudget: 5.0,
+    maxTurns: 10,
+    onProgress: (text) => process.stdout.write(text),
+    onToolUse: async (name, input) => {
+      // Auto-approve reads, require approval for writes
+      if (['Read', 'Glob', 'Grep'].includes(name)) return true;
+      console.log(`\nApprove ${name}? (auto-approving for demo)`);
+      return true;
+    },
+  });
   console.log(`\n\nReview complete. Cost: $${review.cost}`);
 
   // Step 2: Fix issues (resume same session)
-  const fix = await runAgent(
-    "Fix the critical vulnerabilities you identified",
-    {
-      resume: review.sessionId,
-      maxBudget: 3.0,
-      onProgress: (text) => process.stdout.write(text)
-    }
-  );
+  const fix = await runAgent('Fix the critical vulnerabilities you identified', {
+    resume: review.sessionId,
+    maxBudget: 3.0,
+    onProgress: (text) => process.stdout.write(text),
+  });
   console.log(`\n\nFix complete. Cost: $${fix.cost}`);
 }
 
@@ -1349,42 +1385,43 @@ main();
 
 ### 10.1 Feature Matrix
 
-| Feature | CLI (`claude -p`) | Agent SDK | Anthropic Messages API |
-|:--------|:-----------------|:----------|:----------------------|
-| Built-in tools (Read, Edit, Bash) | Yes | Yes | No (must implement) |
-| Tool execution | Automatic | Automatic | Manual (your code) |
-| Session persistence | Yes | Yes | No (must implement) |
-| Context compaction | Automatic | Automatic | No |
-| Multi-turn conversations | Via --continue/--resume | Native streaming input | Manual message history |
-| Tool approval | --permission-prompt-tool | canUseTool callback | N/A (you execute tools) |
-| Streaming | stream-json NDJSON | Native async iterators | SSE events |
-| MCP servers | --mcp-config | mcpServers option | No |
-| Hooks | settings.json + shell scripts | Native callbacks | No |
-| Subagents | --agents JSON | agents option | No |
-| Custom system prompt | --system-prompt | systemPrompt option | system parameter |
-| Budget limits | --max-budget-usd | maxBudgetUsd | No (manual tracking) |
-| Turn limits | --max-turns | maxTurns | No |
-| Structured output | --json-schema | outputFormat | response_format |
-| Image input | Via stdin content blocks | Via message content | Via messages |
-| Sandbox | Via settings | sandbox option | N/A |
+| Feature                           | CLI (`claude -p`)             | Agent SDK              | Anthropic Messages API  |
+| :-------------------------------- | :---------------------------- | :--------------------- | :---------------------- |
+| Built-in tools (Read, Edit, Bash) | Yes                           | Yes                    | No (must implement)     |
+| Tool execution                    | Automatic                     | Automatic              | Manual (your code)      |
+| Session persistence               | Yes                           | Yes                    | No (must implement)     |
+| Context compaction                | Automatic                     | Automatic              | No                      |
+| Multi-turn conversations          | Via --continue/--resume       | Native streaming input | Manual message history  |
+| Tool approval                     | --permission-prompt-tool      | canUseTool callback    | N/A (you execute tools) |
+| Streaming                         | stream-json NDJSON            | Native async iterators | SSE events              |
+| MCP servers                       | --mcp-config                  | mcpServers option      | No                      |
+| Hooks                             | settings.json + shell scripts | Native callbacks       | No                      |
+| Subagents                         | --agents JSON                 | agents option          | No                      |
+| Custom system prompt              | --system-prompt               | systemPrompt option    | system parameter        |
+| Budget limits                     | --max-budget-usd              | maxBudgetUsd           | No (manual tracking)    |
+| Turn limits                       | --max-turns                   | maxTurns               | No                      |
+| Structured output                 | --json-schema                 | outputFormat           | response_format         |
+| Image input                       | Via stdin content blocks      | Via message content    | Via messages            |
+| Sandbox                           | Via settings                  | sandbox option         | N/A                     |
 
 ### 10.2 When to Use Each
 
-| Use Case | Best Choice | Why |
-|:---------|:------------|:----|
-| Shell scripts & CI/CD | CLI (`claude -p`) | Simple, no code dependencies |
-| Production Node.js apps | Agent SDK (TypeScript) | Native types, callbacks, streaming |
-| Production Python apps | Agent SDK (Python) | Same as TypeScript |
-| Custom tool implementations | Anthropic Messages API | Full control over tool execution |
-| Agent chaining/pipelines | CLI with stream-json | Unix pipe philosophy |
-| Interactive approval flows | Agent SDK | canUseTool callback |
-| One-off automation | CLI | Quick and simple |
+| Use Case                    | Best Choice            | Why                                |
+| :-------------------------- | :--------------------- | :--------------------------------- |
+| Shell scripts & CI/CD       | CLI (`claude -p`)      | Simple, no code dependencies       |
+| Production Node.js apps     | Agent SDK (TypeScript) | Native types, callbacks, streaming |
+| Production Python apps      | Agent SDK (Python)     | Same as TypeScript                 |
+| Custom tool implementations | Anthropic Messages API | Full control over tool execution   |
+| Agent chaining/pipelines    | CLI with stream-json   | Unix pipe philosophy               |
+| Interactive approval flows  | Agent SDK              | canUseTool callback                |
+| One-off automation          | CLI                    | Quick and simple                   |
 
 ### 10.3 Architecture Decision
 
 For our use case (programmatic control from a Node.js app with bidirectional communication):
 
 **The Agent SDK is the clear winner.** It provides:
+
 - Native TypeScript objects instead of parsing NDJSON
 - `canUseTool` callback for tool approval (no MCP server needed)
 - AsyncIterable/V2 `send()`/`stream()` for multi-turn conversations
@@ -1399,12 +1436,12 @@ For our use case (programmatic control from a Node.js app with bidirectional com
 
 ### 11.1 Permission Mode Risks
 
-| Mode | Risk Level | Notes |
-|:-----|:-----------|:------|
-| `default` | Low | Requires explicit approval for tools |
-| `acceptEdits` | Medium | Auto-approves file edits (mkdir, rm, mv, cp) |
-| `bypassPermissions` | HIGH | All tools run without prompts; propagates to subagents |
-| `plan` | Minimal | No tool execution at all |
+| Mode                | Risk Level | Notes                                                  |
+| :------------------ | :--------- | :----------------------------------------------------- |
+| `default`           | Low        | Requires explicit approval for tools                   |
+| `acceptEdits`       | Medium     | Auto-approves file edits (mkdir, rm, mv, cp)           |
+| `bypassPermissions` | HIGH       | All tools run without prompts; propagates to subagents |
+| `plan`              | Minimal    | No tool execution at all                               |
 
 ### 11.2 Subagent Inheritance Warning
 
@@ -1427,6 +1464,7 @@ options: {
 ```
 
 Key sandbox settings:
+
 - `enabled`: Enable sandbox for command execution
 - `autoAllowBashIfSandboxed`: Auto-approve bash when sandboxed
 - `excludedCommands`: Commands that always bypass sandbox
@@ -1451,120 +1489,121 @@ Key sandbox settings:
 
 ### 12.1 All CLI Flags for Headless Mode
 
-| Flag | Required | Print Mode | Interactive |
-|:-----|:---------|:-----------|:------------|
-| `-p, --print` | Yes (for headless) | N/A | N/A |
-| `--output-format` | No | Yes | No |
-| `--input-format` | No | Yes | No |
-| `--include-partial-messages` | No | Yes | No |
-| `--replay-user-messages` | No | Yes | No |
-| `--verbose` | No | Yes | Yes |
-| `--allowedTools` | No | Yes | Yes |
-| `--disallowedTools` | No | Yes | Yes |
-| `--tools` | No | Yes | Yes |
-| `--permission-mode` | No | Yes | Yes |
-| `--permission-prompt-tool` | No | Yes | No |
-| `--max-budget-usd` | No | Yes | No |
-| `--max-turns` | No | Yes | No |
-| `--model` | No | Yes | Yes |
-| `--fallback-model` | No | Yes | No |
-| `--continue, -c` | No | Yes | Yes |
-| `--resume, -r` | No | Yes | Yes |
-| `--session-id` | No | Yes | Yes |
-| `--fork-session` | No | Yes | Yes |
-| `--no-session-persistence` | No | Yes | No |
-| `--mcp-config` | No | Yes | Yes |
-| `--strict-mcp-config` | No | Yes | Yes |
-| `--system-prompt` | No | Yes | Yes |
-| `--system-prompt-file` | No | Yes | No |
-| `--append-system-prompt` | No | Yes | Yes |
-| `--append-system-prompt-file` | No | Yes | No |
-| `--json-schema` | No | Yes | No |
-| `--agents` | No | Yes | Yes |
-| `--add-dir` | No | Yes | Yes |
-| `--debug` | No | Yes | Yes |
+| Flag                          | Required           | Print Mode | Interactive |
+| :---------------------------- | :----------------- | :--------- | :---------- |
+| `-p, --print`                 | Yes (for headless) | N/A        | N/A         |
+| `--output-format`             | No                 | Yes        | No          |
+| `--input-format`              | No                 | Yes        | No          |
+| `--include-partial-messages`  | No                 | Yes        | No          |
+| `--replay-user-messages`      | No                 | Yes        | No          |
+| `--verbose`                   | No                 | Yes        | Yes         |
+| `--allowedTools`              | No                 | Yes        | Yes         |
+| `--disallowedTools`           | No                 | Yes        | Yes         |
+| `--tools`                     | No                 | Yes        | Yes         |
+| `--permission-mode`           | No                 | Yes        | Yes         |
+| `--permission-prompt-tool`    | No                 | Yes        | No          |
+| `--max-budget-usd`            | No                 | Yes        | No          |
+| `--max-turns`                 | No                 | Yes        | No          |
+| `--model`                     | No                 | Yes        | Yes         |
+| `--fallback-model`            | No                 | Yes        | No          |
+| `--continue, -c`              | No                 | Yes        | Yes         |
+| `--resume, -r`                | No                 | Yes        | Yes         |
+| `--session-id`                | No                 | Yes        | Yes         |
+| `--fork-session`              | No                 | Yes        | Yes         |
+| `--no-session-persistence`    | No                 | Yes        | No          |
+| `--mcp-config`                | No                 | Yes        | Yes         |
+| `--strict-mcp-config`         | No                 | Yes        | Yes         |
+| `--system-prompt`             | No                 | Yes        | Yes         |
+| `--system-prompt-file`        | No                 | Yes        | No          |
+| `--append-system-prompt`      | No                 | Yes        | Yes         |
+| `--append-system-prompt-file` | No                 | Yes        | No          |
+| `--json-schema`               | No                 | Yes        | No          |
+| `--agents`                    | No                 | Yes        | Yes         |
+| `--add-dir`                   | No                 | Yes        | Yes         |
+| `--debug`                     | No                 | Yes        | Yes         |
 
 ### 12.2 All Message Types (Output)
 
-| type | subtype | When | Contains |
-|:-----|:--------|:-----|:---------|
-| `system` | `init` | First message | session_id, tools, model, mcp_servers |
-| `system` | `compact_boundary` | After compaction | compact_metadata |
-| `assistant` | -- | After each response | message.content (text + tool_use blocks) |
-| `user` | -- | When --replay-user-messages | message.content |
-| `stream_event` | -- | When --include-partial | event (raw API stream event) |
-| `result` | `success` | Task complete | result, cost, usage, turns |
-| `result` | `error_max_turns` | Turn limit hit | errors array |
-| `result` | `error_during_execution` | Runtime error | errors array |
-| `result` | `error_max_budget_usd` | Budget exceeded | errors array |
+| type           | subtype                  | When                        | Contains                                 |
+| :------------- | :----------------------- | :-------------------------- | :--------------------------------------- |
+| `system`       | `init`                   | First message               | session_id, tools, model, mcp_servers    |
+| `system`       | `compact_boundary`       | After compaction            | compact_metadata                         |
+| `assistant`    | --                       | After each response         | message.content (text + tool_use blocks) |
+| `user`         | --                       | When --replay-user-messages | message.content                          |
+| `stream_event` | --                       | When --include-partial      | event (raw API stream event)             |
+| `result`       | `success`                | Task complete               | result, cost, usage, turns               |
+| `result`       | `error_max_turns`        | Turn limit hit              | errors array                             |
+| `result`       | `error_during_execution` | Runtime error               | errors array                             |
+| `result`       | `error_max_budget_usd`   | Budget exceeded             | errors array                             |
 
 ### 12.3 Stream Event Types (Within stream_event)
 
-| event.type | Description |
-|:-----------|:------------|
-| `message_start` | New message begins |
-| `content_block_start` | New text or tool_use block begins |
+| event.type            | Description                                          |
+| :-------------------- | :--------------------------------------------------- |
+| `message_start`       | New message begins                                   |
+| `content_block_start` | New text or tool_use block begins                    |
 | `content_block_delta` | Incremental content (text_delta or input_json_delta) |
-| `content_block_stop` | Block complete |
-| `message_delta` | Message-level update (stop_reason, usage) |
-| `message_stop` | Message complete |
+| `content_block_stop`  | Block complete                                       |
+| `message_delta`       | Message-level update (stop_reason, usage)            |
+| `message_stop`        | Message complete                                     |
 
 ### 12.4 Built-in Tools
 
-| Tool | Description | Auto-approved in acceptEdits? |
-|:-----|:------------|:------------------------------|
-| Read | Read files | No (but generally safe) |
-| Write | Create/overwrite files | Yes |
-| Edit | String replacement in files | Yes |
-| Bash | Execute shell commands | No (except filesystem ops) |
-| Glob | Find files by pattern | No |
-| Grep | Search file contents | No |
-| WebSearch | Search the web | No |
-| WebFetch | Fetch URL content | No |
-| Task | Spawn subagent | No |
-| AskUserQuestion | Ask clarifying questions | Special handling |
-| TodoWrite | Manage task lists | No |
-| NotebookEdit | Edit Jupyter notebooks | Yes |
-| ExitPlanMode | Exit plan mode | Special handling |
-| KillBash | Kill background shell | No |
-| BashOutput | Get background shell output | No |
-| ListMcpResources | List MCP resources | No |
-| ReadMcpResource | Read MCP resource | No |
+| Tool             | Description                 | Auto-approved in acceptEdits? |
+| :--------------- | :-------------------------- | :---------------------------- |
+| Read             | Read files                  | No (but generally safe)       |
+| Write            | Create/overwrite files      | Yes                           |
+| Edit             | String replacement in files | Yes                           |
+| Bash             | Execute shell commands      | No (except filesystem ops)    |
+| Glob             | Find files by pattern       | No                            |
+| Grep             | Search file contents        | No                            |
+| WebSearch        | Search the web              | No                            |
+| WebFetch         | Fetch URL content           | No                            |
+| Task             | Spawn subagent              | No                            |
+| AskUserQuestion  | Ask clarifying questions    | Special handling              |
+| TodoWrite        | Manage task lists           | No                            |
+| NotebookEdit     | Edit Jupyter notebooks      | Yes                           |
+| ExitPlanMode     | Exit plan mode              | Special handling              |
+| KillBash         | Kill background shell       | No                            |
+| BashOutput       | Get background shell output | No                            |
+| ListMcpResources | List MCP resources          | No                            |
+| ReadMcpResource  | Read MCP resource           | No                            |
 
 ### 12.5 Agent SDK Options (TypeScript)
 
-| Option | Type | Default | Description |
-|:-------|:-----|:--------|:------------|
-| `allowedTools` | `string[]` | All tools | Tools that auto-execute |
-| `disallowedTools` | `string[]` | `[]` | Tools removed from context |
-| `tools` | `string[] \| preset` | undefined | Restrict available tools |
-| `permissionMode` | `PermissionMode` | `'default'` | Permission mode |
-| `canUseTool` | `CanUseTool` | undefined | Tool approval callback |
-| `resume` | `string` | undefined | Session ID to resume |
-| `continue` | `boolean` | `false` | Continue most recent |
-| `forkSession` | `boolean` | `false` | Fork when resuming |
-| `model` | `string` | Default | Model to use |
-| `maxBudgetUsd` | `number` | unlimited | Max spend |
-| `maxTurns` | `number` | unlimited | Max agentic turns |
-| `maxThinkingTokens` | `number` | undefined | Max thinking tokens |
-| `includePartialMessages` | `boolean` | `false` | Stream token events |
-| `mcpServers` | `Record<string, config>` | `{}` | MCP server configs |
-| `systemPrompt` | `string \| preset` | undefined | System prompt |
-| `hooks` | `Record<event, matchers>` | `{}` | Hook callbacks |
-| `agents` | `Record<string, def>` | undefined | Subagent definitions |
-| `cwd` | `string` | `process.cwd()` | Working directory |
-| `abortController` | `AbortController` | new | For cancellation |
-| `sandbox` | `SandboxSettings` | undefined | Sandbox config |
-| `settingSources` | `SettingSource[]` | `[]` | Which settings to load |
-| `plugins` | `SdkPluginConfig[]` | `[]` | Plugin configs |
-| `outputFormat` | `{ type, schema }` | undefined | Structured output |
-| `betas` | `SdkBeta[]` | `[]` | Beta features |
+| Option                   | Type                      | Default         | Description                |
+| :----------------------- | :------------------------ | :-------------- | :------------------------- |
+| `allowedTools`           | `string[]`                | All tools       | Tools that auto-execute    |
+| `disallowedTools`        | `string[]`                | `[]`            | Tools removed from context |
+| `tools`                  | `string[] \| preset`      | undefined       | Restrict available tools   |
+| `permissionMode`         | `PermissionMode`          | `'default'`     | Permission mode            |
+| `canUseTool`             | `CanUseTool`              | undefined       | Tool approval callback     |
+| `resume`                 | `string`                  | undefined       | Session ID to resume       |
+| `continue`               | `boolean`                 | `false`         | Continue most recent       |
+| `forkSession`            | `boolean`                 | `false`         | Fork when resuming         |
+| `model`                  | `string`                  | Default         | Model to use               |
+| `maxBudgetUsd`           | `number`                  | unlimited       | Max spend                  |
+| `maxTurns`               | `number`                  | unlimited       | Max agentic turns          |
+| `maxThinkingTokens`      | `number`                  | undefined       | Max thinking tokens        |
+| `includePartialMessages` | `boolean`                 | `false`         | Stream token events        |
+| `mcpServers`             | `Record<string, config>`  | `{}`            | MCP server configs         |
+| `systemPrompt`           | `string \| preset`        | undefined       | System prompt              |
+| `hooks`                  | `Record<event, matchers>` | `{}`            | Hook callbacks             |
+| `agents`                 | `Record<string, def>`     | undefined       | Subagent definitions       |
+| `cwd`                    | `string`                  | `process.cwd()` | Working directory          |
+| `abortController`        | `AbortController`         | new             | For cancellation           |
+| `sandbox`                | `SandboxSettings`         | undefined       | Sandbox config             |
+| `settingSources`         | `SettingSource[]`         | `[]`            | Which settings to load     |
+| `plugins`                | `SdkPluginConfig[]`       | `[]`            | Plugin configs             |
+| `outputFormat`           | `{ type, schema }`        | undefined       | Structured output          |
+| `betas`                  | `SdkBeta[]`               | `[]`            | Beta features              |
 
 ---
 
 ## 13. Sources
 
 ### Official Documentation
+
 - [Run Claude Code programmatically (Headless)](https://code.claude.com/docs/en/headless)
 - [CLI Reference](https://code.claude.com/docs/en/cli-reference)
 - [Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
@@ -1579,12 +1618,14 @@ Key sandbox settings:
 - [Agent SDK MCP Integration](https://platform.claude.com/docs/en/agent-sdk/mcp)
 
 ### GitHub Issues & Discussions
+
 - [#3187: stream-json input hang bug](https://github.com/anthropics/claude-code/issues/3187)
 - [#5034: Duplicate entries in session JSONL with stream-json](https://github.com/anthropics/claude-code/issues/5034)
 - [#1175: permission-prompt-tool documentation request](https://github.com/anthropics/claude-code/issues/1175)
 - [#15511: Stream partial JSON tokens feature request](https://github.com/anthropics/claude-code/issues/15511)
 
 ### Community Resources
+
 - [Claude Code Headless - Adriano Melo](https://adrianomelo.com/posts/claude-code-headless.html)
 - [claude-flow Stream-JSON Chaining Wiki](https://github.com/ruvnet/claude-flow/wiki/Stream-Chaining)
 - [claude-flow Non-Interactive Mode Wiki](https://github.com/ruvnet/claude-flow/wiki/Non-Interactive-Mode)
@@ -1594,6 +1635,7 @@ Key sandbox settings:
 - [Permission-prompt-tool guide](https://www.vibesparking.com/en/blog/ai/claude-code/docs/cli/2025-08-28-outsourcing-permissions-with-claude-code-permission-prompt-tool/)
 
 ### SDK Repositories
+
 - [claude-agent-sdk-typescript](https://github.com/anthropics/claude-agent-sdk-typescript)
 - [claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python)
 

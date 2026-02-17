@@ -16,10 +16,7 @@ export interface ScannedBinary {
  */
 export async function scanPATH(): Promise<Map<string, ScannedBinary>> {
   const envPath = process.env.PATH || '';
-  const pathDirs = envPath
-    .replace(/["]+/g, '')
-    .split(path.delimiter)
-    .filter(Boolean);
+  const pathDirs = envPath.replace(/["]+/g, '').split(path.delimiter).filter(Boolean);
 
   // Deduplicate PATH dirs (common: /usr/bin and /bin are often the same)
   const uniqueDirs = [...new Set(pathDirs)];

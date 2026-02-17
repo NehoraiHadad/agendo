@@ -25,11 +25,11 @@
 
 Each AI CLI agent has a different level of bidirectional support:
 
-| Agent | Native Bidirectional | Recommended Approach |
-|-------|---------------------|---------------------|
+| Agent           | Native Bidirectional                                           | Recommended Approach                                                                                |
+| --------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | **Claude Code** | YES -- Agent SDK (TypeScript/Python) with streaming input mode | Use `@anthropic-ai/claude-agent-sdk` with `AsyncIterable<SDKUserMessage>` or V2 `send()`/`stream()` |
-| **Codex CLI** | YES -- `codex app-server` JSON-RPC over stdio | Use `codex app-server` subprocess with full JSON-RPC 2.0 bidirectional protocol |
-| **Gemini CLI** | NO -- headless mode is one-shot only | Use tmux sessions + `tmux send-keys` / `tmux capture-pane` for pseudo-bidirectional |
+| **Codex CLI**   | YES -- `codex app-server` JSON-RPC over stdio                  | Use `codex app-server` subprocess with full JSON-RPC 2.0 bidirectional protocol                     |
+| **Gemini CLI**  | NO -- headless mode is one-shot only                           | Use tmux sessions + `tmux send-keys` / `tmux capture-pane` for pseudo-bidirectional                 |
 
 For web terminal access (manual interaction via browser), the universal approach is:
 **tmux sessions + node-pty + xterm.js + WebSocket**
@@ -54,6 +54,7 @@ claude -p \
 ```
 
 Key flags:
+
 - `--input-format stream-json` -- Accept NDJSON user messages via stdin
 - `--output-format stream-json` -- Emit NDJSON events to stdout
 - `--verbose` -- Required for stream-json output to include full details
@@ -63,17 +64,18 @@ Key flags:
 
 Each line is a complete JSON object. The `type` field identifies the message:
 
-| Type | Description |
-|------|-------------|
-| `system` | Session initialization (sent once at start). Subtype `init` includes `session_id`, `model`, `tools[]`, `mcp_servers[]`, `permissionMode` |
-| `assistant` | Claude's response messages. Content is an array of `text` and `tool_use` blocks |
-| `user` | Tool results being returned to Claude (internal messages) |
-| `result` | Final completion. Subtype `success` includes `result`, `duration_ms`, `total_cost_usd`, `usage`. Error subtypes: `error_max_turns`, `error_during_execution`, `error_max_budget_usd` |
-| `stream_event` | Token-level partial updates (only with `--include-partial-messages`). Contains `event.delta.type` and `event.delta.text` for text streaming |
+| Type           | Description                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `system`       | Session initialization (sent once at start). Subtype `init` includes `session_id`, `model`, `tools[]`, `mcp_servers[]`, `permissionMode`                                             |
+| `assistant`    | Claude's response messages. Content is an array of `text` and `tool_use` blocks                                                                                                      |
+| `user`         | Tool results being returned to Claude (internal messages)                                                                                                                            |
+| `result`       | Final completion. Subtype `success` includes `result`, `duration_ms`, `total_cost_usd`, `usage`. Error subtypes: `error_max_turns`, `error_during_execution`, `error_max_budget_usd` |
+| `stream_event` | Token-level partial updates (only with `--include-partial-messages`). Contains `event.delta.type` and `event.delta.text` for text streaming                                          |
 
 #### Output Schemas
 
 **System Init Message:**
+
 ```json
 {
   "type": "system",
@@ -83,13 +85,14 @@ Each line is a complete JSON object. The `type` field identifies the message:
   "apiKeySource": "user",
   "cwd": "/path/to/project",
   "tools": ["Bash", "Read", "Edit", "Grep", "Glob"],
-  "mcp_servers": [{"name": "server1", "status": "connected"}],
+  "mcp_servers": [{ "name": "server1", "status": "connected" }],
   "model": "claude-opus-4-6",
   "permissionMode": "default"
 }
 ```
 
 **Assistant Message:**
+
 ```json
 {
   "type": "assistant",
@@ -98,8 +101,13 @@ Each line is a complete JSON object. The `type` field identifies the message:
   "message": {
     "role": "assistant",
     "content": [
-      {"type": "text", "text": "I'll analyze..."},
-      {"type": "tool_use", "id": "toolu_...", "name": "Read", "input": {"file_path": "/src/auth.ts"}}
+      { "type": "text", "text": "I'll analyze..." },
+      {
+        "type": "tool_use",
+        "id": "toolu_...",
+        "name": "Read",
+        "input": { "file_path": "/src/auth.ts" }
+      }
     ]
   },
   "parent_tool_use_id": null
@@ -107,6 +115,7 @@ Each line is a complete JSON object. The `type` field identifies the message:
 ```
 
 **Result Message:**
+
 ```json
 {
   "type": "result",
@@ -133,12 +142,16 @@ Each line is a complete JSON object. The `type` field identifies the message:
 When using `--input-format stream-json`, user messages are sent as NDJSON on stdin:
 
 ```json
-{"type":"user","message":{"role":"user","content":"Analyze this codebase for security issues"}}
+{
+  "type": "user",
+  "message": { "role": "user", "content": "Analyze this codebase for security issues" }
+}
 ```
 
 For follow-up messages during a running session:
+
 ```json
-{"type":"user","message":{"role":"user","content":"Now focus on the database queries"}}
+{ "type": "user", "message": { "role": "user", "content": "Now focus on the database queries" } }
 ```
 
 **Important caveat**: The `--input-format stream-json` mode via CLI has been reported to have stability issues (GitHub issue #3187 -- process hanging after first turn). The recommended approach is to use the Agent SDK (Section 3) instead of raw CLI stdin for production bidirectional communication.
@@ -188,34 +201,30 @@ npm install @anthropic-ai/claude-agent-sdk
 The V1 API uses an async generator pattern. The `prompt` parameter accepts `string | AsyncIterable<SDKUserMessage>`. The `AsyncIterable` form keeps stdin open for sending multiple messages:
 
 ```typescript
-import {
-  query,
-  type SDKUserMessage,
-  type SDKMessage
-} from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKUserMessage, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 // Create an async generator that yields user messages on demand
 async function* createMessageStream(): AsyncGenerator<SDKUserMessage> {
   // First message -- sent immediately
   yield {
-    type: "user",
+    type: 'user',
     message: {
-      role: "user",
-      content: "Analyze this codebase for security issues"
-    }
+      role: 'user',
+      content: 'Analyze this codebase for security issues',
+    },
   } as SDKUserMessage;
 
   // Simulate waiting for user to type a follow-up
   // In practice, this would await a queue, event emitter, or similar
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   // Follow-up message sent to the RUNNING agent
   yield {
-    type: "user",
+    type: 'user',
     message: {
-      role: "user",
-      content: "Now focus specifically on SQL injection vulnerabilities"
-    }
+      role: 'user',
+      content: 'Now focus specifically on SQL injection vulnerabilities',
+    },
   } as SDKUserMessage;
 }
 
@@ -223,34 +232,34 @@ async function* createMessageStream(): AsyncGenerator<SDKUserMessage> {
 const q = query({
   prompt: createMessageStream(),
   options: {
-    model: "claude-opus-4-6",
+    model: 'claude-opus-4-6',
     maxTurns: 20,
-    allowedTools: ["Read", "Grep", "Glob", "Bash"],
-    includePartialMessages: true,  // for token-level streaming
-    cwd: "/path/to/project"
-  }
+    allowedTools: ['Read', 'Grep', 'Glob', 'Bash'],
+    includePartialMessages: true, // for token-level streaming
+    cwd: '/path/to/project',
+  },
 });
 
 // Process streaming output
 for await (const message of q) {
   switch (message.type) {
-    case "system":
-      console.log("Session started:", message.session_id);
+    case 'system':
+      console.log('Session started:', message.session_id);
       break;
-    case "assistant":
+    case 'assistant':
       // Process assistant messages (text + tool use)
       for (const block of message.message.content) {
-        if (block.type === "text") {
+        if (block.type === 'text') {
           process.stdout.write(block.text);
         }
       }
       break;
-    case "result":
-      console.log("Done:", message.result);
+    case 'result':
+      console.log('Done:', message.result);
       break;
-    case "stream_event":
+    case 'stream_event':
       // Token-level streaming
-      if (message.event?.delta?.type === "text_delta") {
+      if (message.event?.delta?.type === 'text_delta') {
         process.stdout.write(message.event.delta.text);
       }
       break;
@@ -263,8 +272,8 @@ for await (const message of q) {
 For a web application, use an event emitter or async queue to push messages from HTTP/WebSocket handlers into the generator:
 
 ```typescript
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { EventEmitter } from "events";
+import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { EventEmitter } from 'events';
 
 class AgentSession {
   private messageEmitter = new EventEmitter();
@@ -277,21 +286,21 @@ class AgentSession {
     async function* messageStream(): AsyncGenerator<SDKUserMessage> {
       // Yield initial prompt
       yield {
-        type: "user",
-        message: { role: "user", content: initialPrompt }
+        type: 'user',
+        message: { role: 'user', content: initialPrompt },
       } as SDKUserMessage;
 
       // Keep the generator open, yielding messages as they arrive
       while (true) {
-        const message: string = await new Promise(resolve => {
-          self.messageEmitter.once("user-message", resolve);
+        const message: string = await new Promise((resolve) => {
+          self.messageEmitter.once('user-message', resolve);
         });
 
-        if (message === "__CLOSE__") return;
+        if (message === '__CLOSE__') return;
 
         yield {
-          type: "user",
-          message: { role: "user", content: message }
+          type: 'user',
+          message: { role: 'user', content: message },
         } as SDKUserMessage;
       }
     }
@@ -299,9 +308,9 @@ class AgentSession {
     this.queryInstance = query({
       prompt: messageStream(),
       options: {
-        allowedTools: ["Read", "Edit", "Bash", "Grep", "Glob"],
-        includePartialMessages: true
-      }
+        allowedTools: ['Read', 'Edit', 'Bash', 'Grep', 'Glob'],
+        includePartialMessages: true,
+      },
     });
 
     // Process output in background
@@ -313,7 +322,7 @@ class AgentSession {
 
   // Called from web handler to send follow-up message
   sendMessage(text: string) {
-    this.messageEmitter.emit("user-message", text);
+    this.messageEmitter.emit('user-message', text);
   }
 
   // Interrupt the running agent
@@ -322,7 +331,7 @@ class AgentSession {
   }
 
   close() {
-    this.messageEmitter.emit("user-message", "__CLOSE__");
+    this.messageEmitter.emit('user-message', '__CLOSE__');
   }
 
   private handleMessage(msg: any) {
@@ -335,17 +344,17 @@ class AgentSession {
 
 The `Query` object returned by `query()` has these methods (only available in streaming input mode):
 
-| Method | Description |
-|--------|-------------|
-| `interrupt()` | Interrupts the currently running turn |
-| `rewindFiles(uuid)` | Restores files to state at a specific message (requires `enableFileCheckpointing: true`) |
-| `setPermissionMode(mode)` | Changes permission mode mid-session |
-| `setModel(model)` | Switches model mid-session |
-| `setMaxThinkingTokens(n)` | Adjusts thinking budget |
-| `supportedCommands()` | Lists available slash commands |
-| `supportedModels()` | Lists available models |
-| `mcpServerStatus()` | Returns MCP server connection status |
-| `accountInfo()` | Returns account info |
+| Method                    | Description                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `interrupt()`             | Interrupts the currently running turn                                                    |
+| `rewindFiles(uuid)`       | Restores files to state at a specific message (requires `enableFileCheckpointing: true`) |
+| `setPermissionMode(mode)` | Changes permission mode mid-session                                                      |
+| `setModel(model)`         | Switches model mid-session                                                               |
+| `setMaxThinkingTokens(n)` | Adjusts thinking budget                                                                  |
+| `supportedCommands()`     | Lists available slash commands                                                           |
+| `supportedModels()`       | Lists available models                                                                   |
+| `mcpServerStatus()`       | Returns MCP server connection status                                                     |
+| `accountInfo()`           | Returns account info                                                                     |
 
 ### 3.3 V2 API (Preview): `send()` / `stream()` Pattern
 
@@ -355,34 +364,34 @@ The V2 API simplifies multi-turn conversations with an explicit send/stream cycl
 import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
-  type SDKMessage
-} from "@anthropic-ai/claude-agent-sdk";
+  type SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
 // Create a persistent session
 await using session = unstable_v2_createSession({
-  model: "claude-opus-4-6"
+  model: 'claude-opus-4-6',
 });
 
 // Turn 1: Send message and stream response
-await session.send("Analyze this codebase for security issues");
+await session.send('Analyze this codebase for security issues');
 for await (const msg of session.stream()) {
-  if (msg.type === "assistant") {
+  if (msg.type === 'assistant') {
     const text = msg.message.content
-      .filter(block => block.type === "text")
-      .map(block => block.text)
-      .join("");
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
     console.log(text);
   }
 }
 
 // Turn 2: Send follow-up (session remembers context)
-await session.send("Now check for SQL injection specifically");
+await session.send('Now check for SQL injection specifically');
 for await (const msg of session.stream()) {
-  if (msg.type === "assistant") {
+  if (msg.type === 'assistant') {
     const text = msg.message.content
-      .filter(block => block.type === "text")
-      .map(block => block.text)
-      .join("");
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
     console.log(text);
   }
 }
@@ -392,8 +401,8 @@ for await (const msg of session.stream()) {
 
 ```typescript
 // Save session ID to database
-const session1 = unstable_v2_createSession({ model: "claude-opus-4-6" });
-await session1.send("Remember: the auth module uses JWT");
+const session1 = unstable_v2_createSession({ model: 'claude-opus-4-6' });
+await session1.send('Remember: the auth module uses JWT');
 let sessionId: string;
 for await (const msg of session1.stream()) {
   sessionId = msg.session_id;
@@ -402,9 +411,9 @@ session1.close();
 
 // Later: resume from stored session ID
 await using session2 = unstable_v2_resumeSession(sessionId!, {
-  model: "claude-opus-4-6"
+  model: 'claude-opus-4-6',
 });
-await session2.send("What auth approach did I mention?");
+await session2.send('What auth approach did I mention?');
 for await (const msg of session2.stream()) {
   // Claude remembers the JWT context
 }
@@ -435,20 +444,20 @@ The SDK supports custom permission handling via `canUseTool`:
 const q = query({
   prompt: messageStream(),
   options: {
-    permissionMode: "default",
+    permissionMode: 'default',
     canUseTool: async (toolName, input, { signal, suggestions }) => {
       // Forward to web UI for user approval
       const approved = await askUserViaWebSocket(toolName, input);
       if (approved) {
-        return { behavior: "allow", updatedInput: input };
+        return { behavior: 'allow', updatedInput: input };
       } else {
         return {
-          behavior: "deny",
-          message: "User denied permission"
+          behavior: 'deny',
+          message: 'User denied permission',
         };
       }
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -458,35 +467,47 @@ Hooks allow injecting logic at various lifecycle points:
 
 ```typescript
 const q = query({
-  prompt: "Fix the tests",
+  prompt: 'Fix the tests',
   options: {
     hooks: {
-      PreToolUse: [{
-        matcher: "Bash",
-        hooks: [async (input) => {
-          console.log("About to run:", input.tool_input.command);
-          return { continue: true };
-        }]
-      }],
-      Notification: [{
-        hooks: [async (input) => {
-          // Forward notification to web UI
-          broadcastToWebSocket({
-            type: "notification",
-            message: input.message
-          });
-          return { continue: true };
-        }]
-      }],
-      Stop: [{
-        hooks: [async (input) => {
-          // Agent finished -- notify UI
-          broadcastToWebSocket({ type: "agent-stopped" });
-          return { continue: true };
-        }]
-      }]
-    }
-  }
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            async (input) => {
+              console.log('About to run:', input.tool_input.command);
+              return { continue: true };
+            },
+          ],
+        },
+      ],
+      Notification: [
+        {
+          hooks: [
+            async (input) => {
+              // Forward notification to web UI
+              broadcastToWebSocket({
+                type: 'notification',
+                message: input.message,
+              });
+              return { continue: true };
+            },
+          ],
+        },
+      ],
+      Stop: [
+        {
+          hooks: [
+            async (input) => {
+              // Agent finished -- notify UI
+              broadcastToWebSocket({ type: 'agent-stopped' });
+              return { continue: true };
+            },
+          ],
+        },
+      ],
+    },
+  },
 });
 ```
 
@@ -511,6 +532,7 @@ echo "Review this file" | gemini --output-format json
 #### Headless Output Formats
 
 **JSON** (`--output-format json`):
+
 ```json
 {
   "response": "The code analysis shows...",
@@ -522,7 +544,7 @@ echo "Review this file" | gemini --output-format json
         "output_tokens": 800
       }
     ],
-    "tool_executions": {"accept": 3, "reject": 0}
+    "tool_executions": { "accept": 3, "reject": 0 }
   }
 }
 ```
@@ -554,7 +576,7 @@ There is an open feature request (GitHub issue #8203) to add `stream-json` input
 The most practical approach for Gemini is to manage it through tmux sessions:
 
 ```typescript
-import { execSync } from "child_process";
+import { execSync } from 'child_process';
 
 class GeminiTmuxSession {
   private sessionName: string;
@@ -565,9 +587,7 @@ class GeminiTmuxSession {
 
   async start(): Promise<void> {
     // Create a detached tmux session running Gemini in interactive mode
-    execSync(
-      `tmux new-session -d -s "${this.sessionName}" -x 200 -y 50 "gemini"`
-    );
+    execSync(`tmux new-session -d -s "${this.sessionName}" -x 200 -y 50 "gemini"`);
     // Wait for Gemini to initialize
     await this.waitForPrompt();
   }
@@ -575,21 +595,16 @@ class GeminiTmuxSession {
   async sendMessage(message: string): Promise<void> {
     // Send message text to the tmux pane
     // Use send-keys with -l (literal) to avoid key interpretation
-    execSync(
-      `tmux send-keys -t "${this.sessionName}" -l ${JSON.stringify(message)}`
-    );
+    execSync(`tmux send-keys -t "${this.sessionName}" -l ${JSON.stringify(message)}`);
     // Press Enter to submit
-    execSync(
-      `tmux send-keys -t "${this.sessionName}" Enter`
-    );
+    execSync(`tmux send-keys -t "${this.sessionName}" Enter`);
   }
 
   captureOutput(): string {
     // Capture the entire visible pane content
-    const output = execSync(
-      `tmux capture-pane -t "${this.sessionName}" -p -S -1000`,
-      { encoding: "utf8" }
-    );
+    const output = execSync(`tmux capture-pane -t "${this.sessionName}" -p -S -1000`, {
+      encoding: 'utf8',
+    });
     return output;
   }
 
@@ -602,17 +617,17 @@ class GeminiTmuxSession {
 
   async waitForPrompt(timeoutMs = 60000): Promise<string> {
     const start = Date.now();
-    let lastOutput = "";
+    let lastOutput = '';
     while (Date.now() - start < timeoutMs) {
       const output = this.captureOutput();
       // Gemini shows a ">" prompt when ready for input
-      if (output.trimEnd().endsWith(">") && output !== lastOutput) {
+      if (output.trimEnd().endsWith('>') && output !== lastOutput) {
         return output;
       }
       lastOutput = output;
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     }
-    throw new Error("Timeout waiting for Gemini prompt");
+    throw new Error('Timeout waiting for Gemini prompt');
   }
 
   async sendAndWait(message: string): Promise<string> {
@@ -634,9 +649,7 @@ class GeminiTmuxSession {
 
   isAlive(): boolean {
     try {
-      execSync(
-        `tmux has-session -t "${this.sessionName}" 2>/dev/null`
-      );
+      execSync(`tmux has-session -t "${this.sessionName}" 2>/dev/null`);
       return true;
     } catch {
       return false;
@@ -687,25 +700,26 @@ This starts a process that reads JSON-RPC requests from stdin and writes respons
 ```typescript
 // Step 1: Send initialize request
 send({
-  method: "initialize",
+  method: 'initialize',
   id: 0,
   params: {
     clientInfo: {
-      name: "agent-monitor",
-      title: "Agent Monitor",
-      version: "1.0.0"
+      name: 'agent-monitor',
+      title: 'Agent Monitor',
+      version: '1.0.0',
     },
-    capabilities: { experimentalApi: true }
-  }
+    capabilities: { experimentalApi: true },
+  },
 });
 
 // Step 2: Send initialized notification
-send({ method: "initialized", params: {} });
+send({ method: 'initialized', params: {} });
 ```
 
 ### 5.5 Thread and Turn Management
 
 #### Start a Thread
+
 ```json
 {
   "method": "thread/start",
@@ -720,20 +734,20 @@ send({ method: "initialized", params: {} });
 ```
 
 #### Send a Turn (Message to Running Agent)
+
 ```json
 {
   "method": "turn/start",
   "id": 30,
   "params": {
     "threadId": "thr_123",
-    "input": [
-      { "type": "text", "text": "Now fix the failing tests" }
-    ]
+    "input": [{ "type": "text", "text": "Now fix the failing tests" }]
   }
 }
 ```
 
 #### Steer a Running Turn (Inject Message Mid-Turn)
+
 ```json
 {
   "method": "turn/steer",
@@ -741,14 +755,13 @@ send({ method: "initialized", params: {} });
   "params": {
     "threadId": "thr_123",
     "turnId": "turn_456",
-    "input": [
-      { "type": "text", "text": "Actually, focus on the auth tests first" }
-    ]
+    "input": [{ "type": "text", "text": "Actually, focus on the auth tests first" }]
   }
 }
 ```
 
 #### Interrupt a Running Turn
+
 ```json
 {
   "method": "turn/interrupt",
@@ -763,12 +776,14 @@ send({ method: "initialized", params: {} });
 ### 5.6 Event Notifications (Server to Client)
 
 Turn events:
+
 - `turn/started` -- Turn begins
 - `turn/completed` -- Turn finished (completed, interrupted, or failed)
 - `turn/diff/updated` -- Aggregated unified diff of changes
 - `turn/plan/updated` -- Agent plan with step status
 
 Item events:
+
 - `item/started` -- Work unit begins
 - `item/completed` -- Work unit finishes
 - `item/agentMessage/delta` -- Streaming text append
@@ -790,41 +805,41 @@ When Codex needs approval for a command or file change:
 ### 5.8 Complete Node.js Implementation
 
 ```typescript
-import { spawn, ChildProcess } from "node:child_process";
-import readline from "node:readline";
-import { EventEmitter } from "node:events";
+import { spawn, ChildProcess } from 'node:child_process';
+import readline from 'node:readline';
+import { EventEmitter } from 'node:events';
 
 class CodexAppServerClient extends EventEmitter {
   private proc: ChildProcess;
   private rl: readline.Interface;
   private nextId = 1;
-  private pendingRequests = new Map<number, {
-    resolve: (value: any) => void;
-    reject: (error: any) => void;
-  }>();
+  private pendingRequests = new Map<
+    number,
+    {
+      resolve: (value: any) => void;
+      reject: (error: any) => void;
+    }
+  >();
 
   constructor() {
     super();
-    this.proc = spawn("codex", ["app-server"], {
-      stdio: ["pipe", "pipe", "inherit"],
+    this.proc = spawn('codex', ['app-server'], {
+      stdio: ['pipe', 'pipe', 'inherit'],
     });
 
     this.rl = readline.createInterface({
-      input: this.proc.stdout!
+      input: this.proc.stdout!,
     });
-    this.rl.on("line", (line) => {
+    this.rl.on('line', (line) => {
       this.handleMessage(JSON.parse(line));
     });
   }
 
   private send(message: unknown): void {
-    this.proc.stdin!.write(JSON.stringify(message) + "\n");
+    this.proc.stdin!.write(JSON.stringify(message) + '\n');
   }
 
-  private request(
-    method: string,
-    params: unknown
-  ): Promise<any> {
+  private request(method: string, params: unknown): Promise<any> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
@@ -838,10 +853,7 @@ class CodexAppServerClient extends EventEmitter {
 
   private handleMessage(msg: any): void {
     // Response to our request
-    if (
-      msg.id !== undefined &&
-      this.pendingRequests.has(msg.id)
-    ) {
+    if (msg.id !== undefined && this.pendingRequests.has(msg.id)) {
       const pending = this.pendingRequests.get(msg.id)!;
       this.pendingRequests.delete(msg.id);
       if (msg.error) {
@@ -855,72 +867,59 @@ class CodexAppServerClient extends EventEmitter {
     // Server notification
     if (msg.method) {
       this.emit(msg.method, msg.params);
-      this.emit("notification", msg);
+      this.emit('notification', msg);
     }
   }
 
   async initialize(): Promise<void> {
-    await this.request("initialize", {
+    await this.request('initialize', {
       clientInfo: {
-        name: "agent-monitor",
-        title: "Agent Monitor",
-        version: "1.0.0"
+        name: 'agent-monitor',
+        title: 'Agent Monitor',
+        version: '1.0.0',
       },
-      capabilities: { experimentalApi: true }
+      capabilities: { experimentalApi: true },
     });
-    this.notify("initialized", {});
+    this.notify('initialized', {});
   }
 
-  async startThread(
-    model: string,
-    cwd: string
-  ): Promise<{ thread: { id: string } }> {
-    return this.request("thread/start", {
+  async startThread(model: string, cwd: string): Promise<{ thread: { id: string } }> {
+    return this.request('thread/start', {
       model,
       cwd,
-      approvalPolicy: "never",
-      sandbox: "workspaceWrite"
+      approvalPolicy: 'never',
+      sandbox: 'workspaceWrite',
     });
   }
 
-  async sendTurn(
-    threadId: string,
-    text: string
-  ): Promise<any> {
-    return this.request("turn/start", {
+  async sendTurn(threadId: string, text: string): Promise<any> {
+    return this.request('turn/start', {
       threadId,
-      input: [{ type: "text", text }]
+      input: [{ type: 'text', text }],
     });
   }
 
-  async steerTurn(
-    threadId: string,
-    turnId: string,
-    text: string
-  ): Promise<any> {
-    return this.request("turn/steer", {
+  async steerTurn(threadId: string, turnId: string, text: string): Promise<any> {
+    return this.request('turn/steer', {
       threadId,
       turnId,
-      input: [{ type: "text", text }]
+      input: [{ type: 'text', text }],
     });
   }
 
-  async interruptTurn(
-    threadId: string,
-    turnId: string
-  ): Promise<any> {
-    return this.request("turn/interrupt", {
+  async interruptTurn(threadId: string, turnId: string): Promise<any> {
+    return this.request('turn/interrupt', {
       threadId,
-      turnId
+      turnId,
     });
   }
 
   async resumeThread(threadId: string): Promise<any> {
-    return this.request("thread/resume", { threadId });
+    return this.request('thread/resume', { threadId });
   }
 
   async listThreads(): Promise<any> {
-    return this.request("thread/list", { limit: 50 });
+    return this.request('thread/list', { limit: 50 });
   }
 
   destroy(): void {
@@ -932,31 +931,22 @@ class CodexAppServerClient extends EventEmitter {
 const client = new CodexAppServerClient();
 await client.initialize();
 
-const { thread } = await client.startThread(
-  "gpt-5.1-codex",
-  "/project"
-);
+const { thread } = await client.startThread('gpt-5.1-codex', '/project');
 
 // Listen for events
-client.on("item/agentMessage/delta", (params) => {
-  process.stdout.write(params.text);  // Stream text to UI
+client.on('item/agentMessage/delta', (params) => {
+  process.stdout.write(params.text); // Stream text to UI
 });
 
-client.on("turn/completed", (params) => {
-  console.log("Turn done:", params.status);
+client.on('turn/completed', (params) => {
+  console.log('Turn done:', params.status);
 });
 
 // Send initial task
-await client.sendTurn(
-  thread.id,
-  "Analyze the auth module for security issues"
-);
+await client.sendTurn(thread.id, 'Analyze the auth module for security issues');
 
 // Later: send follow-up to the same thread
-await client.sendTurn(
-  thread.id,
-  "Now fix the SQL injection vulnerability you found"
-);
+await client.sendTurn(thread.id, 'Now fix the SQL injection vulnerability you found');
 ```
 
 ### 5.9 Codex exec Mode (Simpler, Less Interactive)
@@ -970,6 +960,7 @@ codex exec --json "Analyze codebase" 2>/dev/null
 Event types: `thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.completed`, `error`.
 
 Session resume:
+
 ```bash
 codex exec resume --last "Fix the issues you found"
 codex exec resume <SESSION_ID> "Continue the analysis"
@@ -980,6 +971,7 @@ codex exec resume <SESSION_ID> "Continue the analysis"
 ### 5.10 Schema Generation
 
 Generate TypeScript types from the protocol:
+
 ```bash
 codex app-server generate-ts --out ./schemas
 codex app-server generate-json-schema --out ./schemas
@@ -1001,20 +993,20 @@ Browser (xterm.js) <--WebSocket--> Node.js Server (node-pty) <--PTY--> Process (
 
 ```typescript
 // server.ts
-import http from "node:http";
-import { Server as SocketIOServer } from "socket.io";
-import * as pty from "node-pty";
-import os from "node:os";
+import http from 'node:http';
+import { Server as SocketIOServer } from 'socket.io';
+import * as pty from 'node-pty';
+import os from 'node:os';
 
 const server = http.createServer();
 const io = new SocketIOServer(server, {
-  cors: { origin: "*" }
+  cors: { origin: '*' },
 });
 
 // Map of session ID to PTY process
 const sessions = new Map<string, pty.IPty>();
 
-io.on("connection", (socket) => {
+io.on('connection', (socket) => {
   const sessionId = socket.handshake.query.sessionId as string;
 
   if (!sessionId) {
@@ -1029,45 +1021,38 @@ io.on("connection", (socket) => {
     ptyProcess = sessions.get(sessionId)!;
   } else {
     // Spawn a new shell
-    ptyProcess = pty.spawn(
-      os.platform() === "win32" ? "powershell.exe" : "bash",
-      [],
-      {
-        name: "xterm-256color",
-        cols: 120,
-        rows: 40,
-        cwd: process.env.HOME,
-        env: process.env as Record<string, string>
-      }
-    );
+    ptyProcess = pty.spawn(os.platform() === 'win32' ? 'powershell.exe' : 'bash', [], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 40,
+      cwd: process.env.HOME,
+      env: process.env as Record<string, string>,
+    });
     sessions.set(sessionId, ptyProcess);
   }
 
   // Forward PTY output to browser
   ptyProcess.onData((data: string) => {
-    socket.emit("terminal:output", data);
+    socket.emit('terminal:output', data);
   });
 
   // Forward browser input to PTY
-  socket.on("terminal:input", (data: string) => {
+  socket.on('terminal:input', (data: string) => {
     ptyProcess.write(data);
   });
 
   // Handle terminal resize
-  socket.on("terminal:resize", (size: {
-    cols: number;
-    rows: number
-  }) => {
+  socket.on('terminal:resize', (size: { cols: number; rows: number }) => {
     ptyProcess.resize(size.cols, size.rows);
   });
 
-  socket.on("disconnect", () => {
+  socket.on('disconnect', () => {
     // Don't kill the PTY -- allow reattach
   });
 });
 
 server.listen(8080, () => {
-  console.log("Terminal server on port 8080");
+  console.log('Terminal server on port 8080');
 });
 ```
 
@@ -1076,21 +1061,15 @@ server.listen(8080, () => {
 To attach a web terminal to an EXISTING tmux session (e.g., one running a Gemini agent):
 
 ```typescript
-function attachToTmuxSession(
-  tmuxSessionName: string
-): pty.IPty {
+function attachToTmuxSession(tmuxSessionName: string): pty.IPty {
   // Spawn a PTY that runs `tmux attach`
-  const ptyProcess = pty.spawn(
-    "tmux",
-    ["attach-session", "-t", tmuxSessionName],
-    {
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
-      cwd: process.env.HOME,
-      env: process.env as Record<string, string>
-    }
-  );
+  const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxSessionName], {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 40,
+    cwd: process.env.HOME,
+    env: process.env as Record<string, string>,
+  });
   return ptyProcess;
 }
 
@@ -1099,20 +1078,25 @@ function createAgentTmuxSession(
   agentName: string,
   command: string,
   args: string[],
-  cwd: string
+  cwd: string,
 ): string {
   const sessionName = `agent-${agentName}-${Date.now()}`;
-  const fullCommand = [command, ...args].join(" ");
+  const fullCommand = [command, ...args].join(' ');
 
   // Create detached tmux session with the agent command
-  const { execFileSync } = require("child_process");
-  execFileSync("tmux", [
-    "new-session", "-d",
-    "-s", sessionName,
-    "-x", "200",
-    "-y", "50",
-    "-c", cwd,
-    fullCommand
+  const { execFileSync } = require('child_process');
+  execFileSync('tmux', [
+    'new-session',
+    '-d',
+    '-s',
+    sessionName,
+    '-x',
+    '200',
+    '-y',
+    '50',
+    '-c',
+    cwd,
+    fullCommand,
   ]);
   return sessionName;
 }
@@ -1122,17 +1106,14 @@ function createAgentTmuxSession(
 
 ```typescript
 // client.ts (browser)
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { io } from "socket.io-client";
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { io } from 'socket.io-client';
 
-function createTerminal(
-  containerId: string,
-  sessionId: string
-) {
-  const socket = io("ws://localhost:8080", {
-    query: { sessionId }
+function createTerminal(containerId: string, sessionId: string) {
+  const socket = io('ws://localhost:8080', {
+    query: { sessionId },
   });
 
   const terminal = new Terminal({
@@ -1140,10 +1121,10 @@ function createTerminal(
     fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
     fontSize: 14,
     theme: {
-      background: "#1e1e2e",
-      foreground: "#cdd6f4",
-      cursor: "#f5e0dc"
-    }
+      background: '#1e1e2e',
+      foreground: '#cdd6f4',
+      cursor: '#f5e0dc',
+    },
   });
 
   const fitAddon = new FitAddon();
@@ -1155,21 +1136,21 @@ function createTerminal(
   fitAddon.fit();
 
   // Server to terminal
-  socket.on("terminal:output", (data: string) => {
+  socket.on('terminal:output', (data: string) => {
     terminal.write(data);
   });
 
   // Terminal to server
   terminal.onData((data) => {
-    socket.emit("terminal:input", data);
+    socket.emit('terminal:input', data);
   });
 
   // Handle resize
   const resizeObserver = new ResizeObserver(() => {
     fitAddon.fit();
-    socket.emit("terminal:resize", {
+    socket.emit('terminal:resize', {
       cols: terminal.cols,
-      rows: terminal.rows
+      rows: terminal.rows,
     });
   });
   resizeObserver.observe(container);
@@ -1202,6 +1183,7 @@ function createTerminal(
 ### 7.1 Why tmux?
 
 tmux provides:
+
 - **Process isolation**: Agent runs in its own session, survives server restarts
 - **Attach/detach**: Multiple web clients can attach/detach without interrupting the agent
 - **Output capture**: `capture-pane` provides output without needing to intercept stdout
@@ -1215,24 +1197,24 @@ npm install node-tmux
 ```
 
 ```typescript
-import { tmux } from "node-tmux";
+import { tmux } from 'node-tmux';
 
 const tm = await tmux();
 
 // Create a session
-await tm.newSession("agent-claude-1", "claude --model opus");
+await tm.newSession('agent-claude-1', 'claude --model opus');
 
 // Send input (with Enter key)
-await tm.writeInput("agent-claude-1", "Analyze the auth module", true);
+await tm.writeInput('agent-claude-1', 'Analyze the auth module', true);
 
 // Check if session exists
-const exists = await tm.hasSession("agent-claude-1");
+const exists = await tm.hasSession('agent-claude-1');
 
 // List all sessions
 const sessions = await tm.listSessions();
 
 // Kill session
-await tm.killSession("agent-claude-1");
+await tm.killSession('agent-claude-1');
 ```
 
 **Limitation**: node-tmux does NOT have a `captureOutput()` method. You need to call tmux directly for output capture.
@@ -1240,37 +1222,34 @@ await tm.killSession("agent-claude-1");
 ### 7.3 Direct tmux Commands (More Control)
 
 ```typescript
-import { execFileSync } from "child_process";
+import { execFileSync } from 'child_process';
 
 class TmuxManager {
   // Create a named session running a specific command
-  createSession(
-    name: string,
-    command: string,
-    cwd: string
-  ): void {
-    execFileSync("tmux", [
-      "new-session", "-d",
-      "-s", name,
-      "-x", "200",
-      "-y", "50",
-      "-c", cwd,
-      command
+  createSession(name: string, command: string, cwd: string): void {
+    execFileSync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      name,
+      '-x',
+      '200',
+      '-y',
+      '50',
+      '-c',
+      cwd,
+      command,
     ]);
   }
 
   // Send text input to a session (literal mode)
   sendInput(name: string, text: string): void {
-    execFileSync("tmux", [
-      "send-keys", "-t", name, "-l", text
-    ]);
+    execFileSync('tmux', ['send-keys', '-t', name, '-l', text]);
   }
 
   // Press Enter in a session
   pressEnter(name: string): void {
-    execFileSync("tmux", [
-      "send-keys", "-t", name, "Enter"
-    ]);
+    execFileSync('tmux', ['send-keys', '-t', name, 'Enter']);
   }
 
   // Send text and press Enter
@@ -1280,24 +1259,16 @@ class TmuxManager {
   }
 
   // Capture current pane content
-  capturePane(
-    name: string,
-    historyLines = 1000
-  ): string {
-    return execFileSync("tmux", [
-      "capture-pane",
-      "-t", name,
-      "-p",
-      "-S", `-${historyLines}`
-    ], { encoding: "utf8" });
+  capturePane(name: string, historyLines = 1000): string {
+    return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-S', `-${historyLines}`], {
+      encoding: 'utf8',
+    });
   }
 
   // Check if session exists
   hasSession(name: string): boolean {
     try {
-      execFileSync("tmux", [
-        "has-session", "-t", name
-      ], { stdio: "ignore" });
+      execFileSync('tmux', ['has-session', '-t', name], { stdio: 'ignore' });
       return true;
     } catch {
       return false;
@@ -1307,11 +1278,10 @@ class TmuxManager {
   // List all sessions
   listSessions(): string[] {
     try {
-      const output = execFileSync("tmux", [
-        "list-sessions",
-        "-F", "#{session_name}"
-      ], { encoding: "utf8" });
-      return output.trim().split("\n").filter(Boolean);
+      const output = execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], {
+        encoding: 'utf8',
+      });
+      return output.trim().split('\n').filter(Boolean);
     } catch {
       return [];
     }
@@ -1319,23 +1289,12 @@ class TmuxManager {
 
   // Kill a session
   killSession(name: string): void {
-    execFileSync("tmux", [
-      "kill-session", "-t", name
-    ]);
+    execFileSync('tmux', ['kill-session', '-t', name]);
   }
 
   // Resize a session (important for output formatting)
-  resizeSession(
-    name: string,
-    cols: number,
-    rows: number
-  ): void {
-    execFileSync("tmux", [
-      "resize-window",
-      "-t", name,
-      "-x", String(cols),
-      "-y", String(rows)
-    ]);
+  resizeSession(name: string, cols: number, rows: number): void {
+    execFileSync('tmux', ['resize-window', '-t', name, '-x', String(cols), '-y', String(rows)]);
   }
 }
 ```
@@ -1349,6 +1308,7 @@ tmux -CC attach-session -t "agent-session"
 ```
 
 In control mode:
+
 - tmux outputs events as text lines (e.g., `%output`, `%window-changed`, `%session-changed`)
 - You send tmux commands via stdin
 - The terminal is not rendered -- all I/O is structured text
@@ -1360,54 +1320,45 @@ This could be useful for building a custom tmux client in Node.js without needin
 ```typescript
 class AgentSessionManager {
   private tmux = new TmuxManager();
-  private sessions = new Map<string, {
-    name: string;
-    agent: string;
-    status: string;
-  }>();
+  private sessions = new Map<
+    string,
+    {
+      name: string;
+      agent: string;
+      status: string;
+    }
+  >();
 
-  createClaudeSession(
-    taskId: string,
-    cwd: string
-  ): string {
+  createClaudeSession(taskId: string, cwd: string): string {
     const name = `claude-${taskId}`;
-    this.tmux.createSession(name, "claude", cwd);
+    this.tmux.createSession(name, 'claude', cwd);
     this.sessions.set(taskId, {
       name,
-      agent: "claude",
-      status: "running"
+      agent: 'claude',
+      status: 'running',
     });
     return name;
   }
 
-  createGeminiSession(
-    taskId: string,
-    cwd: string,
-    initialPrompt?: string
-  ): string {
+  createGeminiSession(taskId: string, cwd: string, initialPrompt?: string): string {
     const name = `gemini-${taskId}`;
-    const cmd = initialPrompt
-      ? `gemini -i "${initialPrompt.replace(/"/g, '\\"')}"`
-      : "gemini";
+    const cmd = initialPrompt ? `gemini -i "${initialPrompt.replace(/"/g, '\\"')}"` : 'gemini';
     this.tmux.createSession(name, cmd, cwd);
     this.sessions.set(taskId, {
       name,
-      agent: "gemini",
-      status: "running"
+      agent: 'gemini',
+      status: 'running',
     });
     return name;
   }
 
-  createCodexSession(
-    taskId: string,
-    cwd: string
-  ): string {
+  createCodexSession(taskId: string, cwd: string): string {
     const name = `codex-${taskId}`;
-    this.tmux.createSession(name, "codex", cwd);
+    this.tmux.createSession(name, 'codex', cwd);
     this.sessions.set(taskId, {
       name,
-      agent: "codex",
-      status: "running"
+      agent: 'codex',
+      status: 'running',
     });
     return name;
   }
@@ -1459,6 +1410,7 @@ Agentboard is the closest existing implementation to what Agent Monitor needs. K
 **Architecture**: Multi-agent orchestration via MCP
 
 Claude-Flow orchestrates multiple Claude instances using stream-json chaining:
+
 - Detects task dependencies from workflow definitions
 - Captures stdout streams from dependency tasks
 - Pipes them to stdin of dependent tasks
@@ -1483,6 +1435,7 @@ Primarily focused on agent-to-agent communication rather than human-to-agent int
 **Tech Stack**: Express + Socket.io + xterm.js
 
 A straightforward web-based tmux session viewer:
+
 - Connect to tmux sessions through a browser
 - Uses Express for HTTP, Socket.io for WebSocket, xterm.js for rendering
 - Good reference implementation for the tmux-to-web bridge pattern
@@ -1493,6 +1446,7 @@ A straightforward web-based tmux session viewer:
 **Tech Stack**: Rust backend + Vue.js frontend
 
 High-performance web-based tmux session viewer:
+
 - All communication via WebSocket (no REST endpoints)
 - PWA support with mobile optimization
 - Rust backend for low-latency terminal streaming
@@ -1503,36 +1457,36 @@ High-performance web-based tmux session viewer:
 
 ### 9.1 Agent Communication Capabilities
 
-| Feature | Claude Code (SDK) | Codex (app-server) | Gemini CLI |
-|---------|------------------|--------------------|-----------|
-| Native bidirectional | YES | YES | NO |
-| Send follow-up to running agent | YES (yield to generator / send()) | YES (turn/start, turn/steer) | NO (tmux workaround) |
-| Interrupt running task | YES (interrupt()) | YES (turn/interrupt) | NO (Ctrl+C via tmux) |
-| Stream output tokens | YES (includePartialMessages) | YES (item/agentMessage/delta) | Partial (stream-json output only) |
-| Tool approval callback | YES (canUseTool) | YES (requestApproval protocol) | NO |
-| Session resume | YES (resume option, session ID) | YES (thread/resume) | NO |
-| Multi-turn conversations | YES (async generator / V2 sessions) | YES (multiple turns per thread) | YES (tmux interactive only) |
-| Structured output | YES (json-schema) | YES (output-schema) | YES (--output-format json) |
-| Protocol | NDJSON over subprocess stdio | JSON-RPC 2.0 over stdio | None (CLI args + stdout) |
-| SDK language | TypeScript, Python | TypeScript, Go, Python, Swift, Kotlin | None (CLI only) |
+| Feature                         | Claude Code (SDK)                   | Codex (app-server)                    | Gemini CLI                        |
+| ------------------------------- | ----------------------------------- | ------------------------------------- | --------------------------------- |
+| Native bidirectional            | YES                                 | YES                                   | NO                                |
+| Send follow-up to running agent | YES (yield to generator / send())   | YES (turn/start, turn/steer)          | NO (tmux workaround)              |
+| Interrupt running task          | YES (interrupt())                   | YES (turn/interrupt)                  | NO (Ctrl+C via tmux)              |
+| Stream output tokens            | YES (includePartialMessages)        | YES (item/agentMessage/delta)         | Partial (stream-json output only) |
+| Tool approval callback          | YES (canUseTool)                    | YES (requestApproval protocol)        | NO                                |
+| Session resume                  | YES (resume option, session ID)     | YES (thread/resume)                   | NO                                |
+| Multi-turn conversations        | YES (async generator / V2 sessions) | YES (multiple turns per thread)       | YES (tmux interactive only)       |
+| Structured output               | YES (json-schema)                   | YES (output-schema)                   | YES (--output-format json)        |
+| Protocol                        | NDJSON over subprocess stdio        | JSON-RPC 2.0 over stdio               | None (CLI args + stdout)          |
+| SDK language                    | TypeScript, Python                  | TypeScript, Go, Python, Swift, Kotlin | None (CLI only)                   |
 
 ### 9.2 Approach Comparison for Web UI Integration
 
-| Approach | Pros | Cons | Best For |
-|----------|------|------|----------|
-| **Claude Agent SDK** | Full control, typed API, hooks, interrupts | Claude only, Node.js dependency | Claude programmatic control |
-| **Codex app-server** | Full bidirectional JSON-RPC, approval flow | Codex only, more complex protocol | Codex programmatic control |
-| **tmux + send-keys** | Universal, works with any CLI agent | Polling-based, no structured output, parsing fragile | Gemini, fallback for all agents |
-| **tmux + node-pty + xterm.js** | Full terminal in browser, manual interaction | Complex setup, requires tmux on server | Manual agent interaction via web |
-| **Direct node-pty** | Simple PTY management, no tmux needed | No detach/reattach, no multi-client | Single-user web terminal |
+| Approach                       | Pros                                         | Cons                                                 | Best For                         |
+| ------------------------------ | -------------------------------------------- | ---------------------------------------------------- | -------------------------------- |
+| **Claude Agent SDK**           | Full control, typed API, hooks, interrupts   | Claude only, Node.js dependency                      | Claude programmatic control      |
+| **Codex app-server**           | Full bidirectional JSON-RPC, approval flow   | Codex only, more complex protocol                    | Codex programmatic control       |
+| **tmux + send-keys**           | Universal, works with any CLI agent          | Polling-based, no structured output, parsing fragile | Gemini, fallback for all agents  |
+| **tmux + node-pty + xterm.js** | Full terminal in browser, manual interaction | Complex setup, requires tmux on server               | Manual agent interaction via web |
+| **Direct node-pty**            | Simple PTY management, no tmux needed        | No detach/reattach, no multi-client                  | Single-user web terminal         |
 
 ### 9.3 Recommended Stack Per Agent
 
-| Agent | Programmatic Control | Web Terminal (Manual) |
-|-------|---------------------|-----------------------|
-| **Claude Code** | Agent SDK (TypeScript V2) | tmux session + xterm.js attach |
-| **Codex CLI** | `codex app-server` JSON-RPC client | tmux session + xterm.js attach |
-| **Gemini CLI** | tmux + send-keys/capture-pane | tmux session + xterm.js attach |
+| Agent           | Programmatic Control               | Web Terminal (Manual)          |
+| --------------- | ---------------------------------- | ------------------------------ |
+| **Claude Code** | Agent SDK (TypeScript V2)          | tmux session + xterm.js attach |
+| **Codex CLI**   | `codex app-server` JSON-RPC client | tmux session + xterm.js attach |
+| **Gemini CLI**  | tmux + send-keys/capture-pane      | tmux session + xterm.js attach |
 
 ---
 
@@ -1570,7 +1524,7 @@ High-performance web-based tmux session viewer:
 ```typescript
 interface AgentController {
   // Lifecycle
-  start(config: AgentConfig): Promise<string>;  // returns session ID
+  start(config: AgentConfig): Promise<string>; // returns session ID
   stop(sessionId: string): Promise<void>;
   isAlive(sessionId: string): boolean;
 
@@ -1579,30 +1533,21 @@ interface AgentController {
   interrupt(sessionId: string): Promise<void>;
 
   // Output streaming
-  onOutput(
-    sessionId: string,
-    callback: (event: AgentEvent) => void
-  ): void;
+  onOutput(sessionId: string, callback: (event: AgentEvent) => void): void;
 
   // Web terminal access
   getTmuxSessionName(sessionId: string): string | null;
 }
 
 interface AgentEvent {
-  type:
-    | "text"
-    | "tool_use"
-    | "tool_result"
-    | "status"
-    | "error"
-    | "completion";
+  type: 'text' | 'tool_use' | 'tool_result' | 'status' | 'error' | 'completion';
   content: string;
   metadata?: Record<string, unknown>;
   timestamp: number;
 }
 
 interface AgentConfig {
-  agent: "claude" | "codex" | "gemini";
+  agent: 'claude' | 'codex' | 'gemini';
   cwd: string;
   model?: string;
   initialPrompt?: string;
@@ -1614,10 +1559,12 @@ interface AgentConfig {
 ### 10.3 Dual-Mode Architecture (Recommended)
 
 For each agent session, maintain BOTH:
+
 1. **Programmatic channel** (SDK/app-server/tmux-polling) for structured data
 2. **tmux session** for web terminal attachment
 
 This allows:
+
 - Structured events and data flow through the programmatic channel
 - Users can "drop into" the terminal at any time via xterm.js
 - The agent process survives web disconnections (tmux keeps it alive)
@@ -1641,18 +1588,21 @@ This allows:
 ### 10.4 Implementation Priority
 
 **Phase 1: Foundation**
+
 - Implement `TmuxManager` class for session lifecycle management
 - Implement web terminal attachment (node-pty + xterm.js + WebSocket)
 - All three agents run in tmux sessions with tmux-based bidirectional communication
 - This gives immediate bidirectional support for all agents with a single codebase
 
 **Phase 2: Native Protocols**
+
 - Add Claude Agent SDK integration (V2 `send()`/`stream()`) for richer Claude control
 - Add Codex app-server JSON-RPC client for richer Codex control
 - Keep tmux sessions running underneath for terminal attachment fallback
 - Structured events flow through native protocols; terminal access remains via tmux
 
 **Phase 3: Advanced Features**
+
 - Tool approval forwarding to web UI (Claude `canUseTool`, Codex `requestApproval`)
 - Session resume across server restarts
 - Multi-user concurrent terminal viewing
@@ -1663,6 +1613,7 @@ This allows:
 ## 11. Sources
 
 ### Claude Code
+
 - [Run Claude Code programmatically (headless)](https://code.claude.com/docs/en/headless)
 - [CLI reference](https://code.claude.com/docs/en/cli-reference)
 - [Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
@@ -1674,6 +1625,7 @@ This allows:
 - [Claude Agent SDK TypeScript (GitHub)](https://github.com/anthropics/claude-agent-sdk-typescript)
 
 ### Codex CLI
+
 - [Codex app-server documentation](https://developers.openai.com/codex/app-server/)
 - [Codex CLI reference](https://developers.openai.com/codex/cli/reference/)
 - [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive/)
@@ -1681,6 +1633,7 @@ This allows:
 - [Codex app-server README (GitHub)](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 
 ### Gemini CLI
+
 - [Gemini CLI headless mode (official)](https://google-gemini.github.io/gemini-cli/docs/cli/headless.html)
 - [Gemini CLI headless mode (community docs)](https://geminicli.com/docs/cli/headless/)
 - [Gemini CLI GitHub](https://github.com/google-gemini/gemini-cli)
@@ -1688,6 +1641,7 @@ This allows:
 - [New interactivity in Gemini CLI (Google blog)](https://developers.googleblog.com/en/say-hello-to-a-new-level-of-interactivity-in-gemini-cli/)
 
 ### Web Terminal
+
 - [xterm.js](https://xtermjs.org/)
 - [xterm.js GitHub](https://github.com/xtermjs/xterm.js)
 - [Web terminal with xterm.js, node-pty, and WebSockets](https://ashishpoudel.substack.com/p/web-terminal-with-xtermjs-node-pty)
@@ -1696,11 +1650,13 @@ This allows:
 - [tmux attach in xterm issue #1345](https://github.com/xtermjs/xterm.js/issues/1345)
 
 ### tmux Management
+
 - [node-tmux (npm)](https://www.npmjs.com/package/node-tmux)
 - [node-tmux GitHub](https://github.com/StarlaneStudios/node-tmux)
 - [tmux control mode](https://github.com/tmux/tmux/wiki/Control-Mode)
 
 ### Agent Orchestration
+
 - [Agentboard -- Web GUI for tmux + AI agents](https://github.com/gbasin/agentboard)
 - [claude-flow -- Multi-agent orchestration](https://github.com/ruvnet/claude-flow)
 - [claude-code-by-agents](https://github.com/baryhuang/claude-code-by-agents)

@@ -10,10 +10,7 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": [
-    "src/worker/**/*.ts",
-    "src/lib/**/*.ts"
-  ],
+  "include": ["src/worker/**/*.ts", "src/lib/**/*.ts"],
   "exclude": [
     "src/app/**",
     "src/components/**",

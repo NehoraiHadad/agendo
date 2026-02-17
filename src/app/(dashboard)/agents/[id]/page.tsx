@@ -8,20 +8,10 @@ import { CapabilityRow } from '@/components/agents/capability-row';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
 
-export default async function AgentDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  let agent;
-  try {
-    agent = await getAgentById(id);
-  } catch {
-    notFound();
-  }
-
+  const agent = await getAgentById(id).catch(() => notFound());
   const capabilities = await getCapabilitiesByAgent(id);
 
   return (
@@ -83,9 +73,7 @@ export default async function AgentDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>
-            Capabilities ({capabilities.length})
-          </CardTitle>
+          <CardTitle>Capabilities ({capabilities.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {capabilities.length === 0 ? (

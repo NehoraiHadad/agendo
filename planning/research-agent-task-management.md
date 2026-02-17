@@ -77,34 +77,35 @@ task list, and self-coordinate.
 
 **Components:**
 
-| Component     | Role                                                              |
-|:------------- |:----------------------------------------------------------------- |
-| **Team lead** | Creates team, spawns teammates, coordinates work                  |
-| **Teammates** | Separate Claude Code instances with own context windows           |
-| **Task list** | Shared list of work items (JSON files on disk)                    |
-| **Mailbox**   | Messaging system for communication between agents                 |
+| Component     | Role                                                    |
+| :------------ | :------------------------------------------------------ |
+| **Team lead** | Creates team, spawns teammates, coordinates work        |
+| **Teammates** | Separate Claude Code instances with own context windows |
+| **Task list** | Shared list of work items (JSON files on disk)          |
+| **Mailbox**   | Messaging system for communication between agents       |
 
 **Storage locations:**
+
 - Team config: `~/.claude/teams/{team-name}/config.json`
 - Task list: `~/.claude/tasks/{team-name}/N.json`
 
 ### 1.3 TeammateTool Operations (13 operations)
 
-| Operation          | Purpose                                    |
-|:------------------ |:------------------------------------------ |
-| **spawnTeam**      | Create team; you become leader             |
-| **discoverTeams**  | List available teams to join               |
-| **requestJoin**    | Request team membership                    |
-| **approveJoin**    | Leader accepts join request                |
-| **rejectJoin**     | Leader declines join request               |
-| **write**          | Message specific teammate                  |
-| **broadcast**      | Message all teammates (expensive)          |
-| **requestShutdown**| Leader orders teammate exit                |
-| **approveShutdown**| Teammate confirms shutdown                 |
-| **rejectShutdown** | Teammate declines shutdown                 |
-| **approvePlan**    | Leader approves teammate plan              |
-| **rejectPlan**     | Leader rejects with feedback               |
-| **cleanup**        | Remove team resources                      |
+| Operation           | Purpose                           |
+| :------------------ | :-------------------------------- |
+| **spawnTeam**       | Create team; you become leader    |
+| **discoverTeams**   | List available teams to join      |
+| **requestJoin**     | Request team membership           |
+| **approveJoin**     | Leader accepts join request       |
+| **rejectJoin**      | Leader declines join request      |
+| **write**           | Message specific teammate         |
+| **broadcast**       | Message all teammates (expensive) |
+| **requestShutdown** | Leader orders teammate exit       |
+| **approveShutdown** | Teammate confirms shutdown        |
+| **rejectShutdown**  | Teammate declines shutdown        |
+| **approvePlan**     | Leader approves teammate plan     |
+| **rejectPlan**      | Leader rejects with feedback      |
+| **cleanup**         | Remove team resources             |
 
 ### 1.4 Task Management System
 
@@ -133,10 +134,12 @@ File locking prevents race conditions when multiple teammates claim simultaneous
 ### 1.5 Communication Protocol
 
 **Message types:**
+
 - `message` — send to one specific teammate
 - `broadcast` — send to all teammates (costs scale with team size)
 
 **Structured message formats (JSON in text field):**
+
 - `shutdown_request` — leader orders exit with reason and requestId
 - `shutdown_approved` — teammate confirms shutdown
 - `idle_notification` — auto-sent when teammate stops
@@ -164,14 +167,14 @@ File locking prevents race conditions when multiple teammates claim simultaneous
 
 ### 1.7 Subagents vs Agent Teams
 
-| Aspect              | Subagents                            | Agent Teams                           |
-|:-------------------- |:------------------------------------ |:------------------------------------- |
-| **Context**         | Own window; results return to caller | Own window; fully independent         |
-| **Communication**   | Report back to main agent only       | Message each other directly           |
-| **Coordination**    | Main agent manages all work          | Shared task list, self-coordination   |
-| **Best for**        | Focused tasks, result-only           | Complex work requiring collaboration  |
-| **Token cost**      | Lower: results summarized            | Higher: each is a separate instance   |
-| **Nesting**         | Cannot spawn sub-subagents           | Cannot spawn nested teams             |
+| Aspect            | Subagents                            | Agent Teams                          |
+| :---------------- | :----------------------------------- | :----------------------------------- |
+| **Context**       | Own window; results return to caller | Own window; fully independent        |
+| **Communication** | Report back to main agent only       | Message each other directly          |
+| **Coordination**  | Main agent manages all work          | Shared task list, self-coordination  |
+| **Best for**      | Focused tasks, result-only           | Complex work requiring collaboration |
+| **Token cost**    | Lower: results summarized            | Higher: each is a separate instance  |
+| **Nesting**       | Cannot spawn sub-subagents           | Cannot spawn nested teams            |
 
 ### 1.8 Subagents in the Claude Agent SDK
 
@@ -179,29 +182,29 @@ The Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) allows programmatic suba
 definition:
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
-  prompt: "Review the authentication module for security issues",
+  prompt: 'Review the authentication module for security issues',
   options: {
-    allowedTools: ["Read", "Grep", "Glob", "Task"],
+    allowedTools: ['Read', 'Grep', 'Glob', 'Task'],
     agents: {
-      "code-reviewer": {
-        description: "Expert code review specialist.",
+      'code-reviewer': {
+        description: 'Expert code review specialist.',
         prompt: `You are a code review specialist with expertise in
                  security, performance, and best practices.`,
-        tools: ["Read", "Grep", "Glob"],
-        model: "sonnet"
+        tools: ['Read', 'Grep', 'Glob'],
+        model: 'sonnet',
       },
-      "test-runner": {
-        description: "Runs and analyzes test suites.",
+      'test-runner': {
+        description: 'Runs and analyzes test suites.',
         prompt: `You are a test execution specialist.`,
-        tools: ["Bash", "Read", "Grep"]
-      }
-    }
-  }
+        tools: ['Bash', 'Read', 'Grep'],
+      },
+    },
+  },
 })) {
-  if ("result" in message) console.log(message.result);
+  if ('result' in message) console.log(message.result);
 }
 ```
 
@@ -209,11 +212,11 @@ for await (const message of query({
 
 ```typescript
 type AgentDefinition = {
-  description: string;       // When to use this agent (required)
-  tools?: string[];          // Allowed tools; omit = inherit all
-  prompt: string;            // System prompt (required)
-  model?: "sonnet" | "opus" | "haiku" | "inherit";
-}
+  description: string; // When to use this agent (required)
+  tools?: string[]; // Allowed tools; omit = inherit all
+  prompt: string; // System prompt (required)
+  model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+};
 ```
 
 ### 1.9 Hooks for External Integration
@@ -227,6 +230,7 @@ Claude Code hooks provide event-driven integration points:
 - **PostToolUse** — fires after any tool completes
 
 **TaskCompleted hook input includes:**
+
 - `task_id`, `task_subject`, `task_description`
 - `teammate_name`, `team_name`
 
@@ -235,12 +239,14 @@ These hooks can call external APIs (e.g., Agent Monitor) to sync state.
 ### 1.10 Can External Systems Participate?
 
 **Current limitations:**
+
 - No public API to observe or join Claude Code teams from outside
 - Team coordination is entirely file-based (JSON on local disk)
 - No WebSocket/HTTP interface to the team protocol
 - External systems cannot directly create/update tasks in a Claude team
 
 **Integration points available:**
+
 - Hooks (TeammateIdle, TaskCompleted) can POST to external APIs
 - MCP servers loaded by teammates can communicate with external systems
 - The Claude Agent SDK `query()` function can spawn agents with custom MCP servers
@@ -281,36 +287,36 @@ Using `@modelcontextprotocol/sdk` (current version v1.x, stable v2 expected Q1 2
 
 ```typescript
 // agent-monitor-mcp-server.ts
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 
-const AGENT_MONITOR_API = process.env.AGENT_MONITOR_URL || "http://localhost:4100";
+const AGENT_MONITOR_API = process.env.AGENT_MONITOR_URL || 'http://localhost:4100';
 
 const server = new McpServer({
-  name: "agent-monitor",
-  version: "1.0.0",
+  name: 'agent-monitor',
+  version: '1.0.0',
 });
 
 // --- Tool: create_task ---
 server.registerTool(
-  "create_task",
+  'create_task',
   {
-    title: "Create Task",
-    description: "Create a new task on the Agent Monitor board",
+    title: 'Create Task',
+    description: 'Create a new task on the Agent Monitor board',
     inputSchema: {
-      title: z.string().describe("Task title"),
-      description: z.string().optional().describe("Task description"),
-      priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
-      assignee: z.string().optional().describe("Agent slug to assign to"),
-      parentTaskId: z.string().optional().describe("Parent task ID for subtasks"),
-      tags: z.array(z.string()).optional().describe("Tags for categorization"),
+      title: z.string().describe('Task title'),
+      description: z.string().optional().describe('Task description'),
+      priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+      assignee: z.string().optional().describe('Agent slug to assign to'),
+      parentTaskId: z.string().optional().describe('Parent task ID for subtasks'),
+      tags: z.array(z.string()).optional().describe('Tags for categorization'),
     },
   },
   async ({ title, description, priority, assignee, parentTaskId, tags }) => {
     const res = await fetch(`${AGENT_MONITOR_API}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title,
         description,
@@ -318,201 +324,187 @@ server.registerTool(
         assignee,
         parentTaskId,
         tags,
-        status: "todo",
-        createdBy: "mcp-agent",
+        status: 'todo',
+        createdBy: 'mcp-agent',
       }),
     });
     const task = await res.json();
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Task created: #${task.id} "${task.title}" [${task.status}]`,
         },
       ],
     };
-  }
+  },
 );
 
 // --- Tool: update_task ---
 server.registerTool(
-  "update_task",
+  'update_task',
   {
-    title: "Update Task",
+    title: 'Update Task',
     description: "Update a task's status, assignee, or other fields",
     inputSchema: {
-      taskId: z.string().describe("Task ID to update"),
-      status: z
-        .enum(["todo", "in_progress", "in_review", "done", "blocked"])
-        .optional(),
+      taskId: z.string().describe('Task ID to update'),
+      status: z.enum(['todo', 'in_progress', 'in_review', 'done', 'blocked']).optional(),
       assignee: z.string().optional(),
       description: z.string().optional(),
-      priority: z.enum(["low", "medium", "high", "critical"]).optional(),
+      priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
     },
   },
   async ({ taskId, ...updates }) => {
     const res = await fetch(`${AGENT_MONITOR_API}/api/tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
     const task = await res.json();
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Task #${task.id} updated: status=${task.status}`,
         },
       ],
     };
-  }
+  },
 );
 
 // --- Tool: list_tasks ---
 server.registerTool(
-  "list_tasks",
+  'list_tasks',
   {
-    title: "List Tasks",
-    description: "List tasks from the Agent Monitor board with optional filters",
+    title: 'List Tasks',
+    description: 'List tasks from the Agent Monitor board with optional filters',
     inputSchema: {
-      status: z
-        .enum(["todo", "in_progress", "in_review", "done", "blocked", "all"])
-        .default("all"),
+      status: z.enum(['todo', 'in_progress', 'in_review', 'done', 'blocked', 'all']).default('all'),
       assignee: z.string().optional(),
       parentTaskId: z.string().optional(),
     },
   },
   async ({ status, assignee, parentTaskId }) => {
     const params = new URLSearchParams();
-    if (status !== "all") params.set("status", status);
-    if (assignee) params.set("assignee", assignee);
-    if (parentTaskId) params.set("parentTaskId", parentTaskId);
+    if (status !== 'all') params.set('status', status);
+    if (assignee) params.set('assignee', assignee);
+    if (parentTaskId) params.set('parentTaskId', parentTaskId);
 
-    const res = await fetch(
-      `${AGENT_MONITOR_API}/api/tasks?${params.toString()}`
-    );
+    const res = await fetch(`${AGENT_MONITOR_API}/api/tasks?${params.toString()}`);
     const tasks = await res.json();
 
     const formatted = tasks
-      .map(
-        (t: any) =>
-          `#${t.id} [${t.status}] ${t.title} (${t.assignee || "unassigned"})`
-      )
-      .join("\n");
+      .map((t: any) => `#${t.id} [${t.status}] ${t.title} (${t.assignee || 'unassigned'})`)
+      .join('\n');
 
     return {
       content: [
         {
-          type: "text",
-          text: formatted || "No tasks found.",
+          type: 'text',
+          text: formatted || 'No tasks found.',
         },
       ],
     };
-  }
+  },
 );
 
 // --- Tool: create_subtask ---
 server.registerTool(
-  "create_subtask",
+  'create_subtask',
   {
-    title: "Create Subtask",
-    description: "Break a task into a subtask",
+    title: 'Create Subtask',
+    description: 'Break a task into a subtask',
     inputSchema: {
-      parentTaskId: z.string().describe("Parent task ID"),
-      title: z.string().describe("Subtask title"),
+      parentTaskId: z.string().describe('Parent task ID'),
+      title: z.string().describe('Subtask title'),
       description: z.string().optional(),
       assignee: z.string().optional(),
-      priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+      priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
     },
   },
   async ({ parentTaskId, title, description, assignee, priority }) => {
     const res = await fetch(`${AGENT_MONITOR_API}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title,
         description,
         priority,
         assignee,
         parentTaskId,
-        status: "todo",
-        createdBy: "mcp-agent",
+        status: 'todo',
+        createdBy: 'mcp-agent',
       }),
     });
     const task = await res.json();
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Subtask created: #${task.id} "${task.title}" under parent #${parentTaskId}`,
         },
       ],
     };
-  }
+  },
 );
 
 // --- Tool: assign_task ---
 server.registerTool(
-  "assign_task",
+  'assign_task',
   {
-    title: "Assign Task",
-    description: "Assign a task to a specific agent",
+    title: 'Assign Task',
+    description: 'Assign a task to a specific agent',
     inputSchema: {
-      taskId: z.string().describe("Task ID to assign"),
-      agentSlug: z
-        .string()
-        .describe("Agent slug (e.g., 'claude', 'codex', 'gemini')"),
+      taskId: z.string().describe('Task ID to assign'),
+      agentSlug: z.string().describe("Agent slug (e.g., 'claude', 'codex', 'gemini')"),
     },
   },
   async ({ taskId, agentSlug }) => {
     const res = await fetch(`${AGENT_MONITOR_API}/api/tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ assignee: agentSlug }),
     });
     const task = await res.json();
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Task #${task.id} assigned to ${agentSlug}`,
         },
       ],
     };
-  }
+  },
 );
 
 // --- Tool: spawn_agent ---
 server.registerTool(
-  "spawn_agent",
+  'spawn_agent',
   {
-    title: "Spawn Agent",
-    description:
-      "Request Agent Monitor to spawn a new agent instance for a task",
+    title: 'Spawn Agent',
+    description: 'Request Agent Monitor to spawn a new agent instance for a task',
     inputSchema: {
-      taskId: z.string().describe("Task ID for the agent to work on"),
-      agentType: z
-        .enum(["claude", "codex", "gemini"])
-        .describe("Which AI agent to spawn"),
-      model: z.string().optional().describe("Specific model to use"),
+      taskId: z.string().describe('Task ID for the agent to work on'),
+      agentType: z.enum(['claude', 'codex', 'gemini']).describe('Which AI agent to spawn'),
+      model: z.string().optional().describe('Specific model to use'),
     },
   },
   async ({ taskId, agentType, model }) => {
     const res = await fetch(`${AGENT_MONITOR_API}/api/agents/spawn`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ taskId, agentType, model }),
     });
     const result = await res.json();
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Agent spawned: ${agentType} for task #${taskId} (pid: ${result.pid})`,
         },
       ],
     };
-  }
+  },
 );
 
 // --- Start server ---
@@ -525,20 +517,18 @@ await server.connect(transport);
 For remote/shared access, use Streamable HTTP transport:
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  NodeStreamableHTTPServerTransport,
-} from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { randomUUID } from "crypto";
-import express from "express";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { randomUUID } from 'crypto';
+import express from 'express';
 
 const app = express();
-const server = new McpServer({ name: "agent-monitor", version: "1.0.0" });
+const server = new McpServer({ name: 'agent-monitor', version: '1.0.0' });
 
 // Register all tools (same as above)...
 
 // Create HTTP transport
-app.use("/mcp", async (req, res) => {
+app.use('/mcp', async (req, res) => {
   const transport = new NodeStreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
   });
@@ -547,7 +537,7 @@ app.use("/mcp", async (req, res) => {
 });
 
 app.listen(4101, () => {
-  console.log("Agent Monitor MCP server on http://localhost:4101/mcp");
+  console.log('Agent Monitor MCP server on http://localhost:4101/mcp');
 });
 ```
 
@@ -556,12 +546,14 @@ app.listen(4101, () => {
 #### Claude Code
 
 **Option A: CLI command**
+
 ```bash
 claude mcp add agent-monitor --transport stdio -- \
   node /path/to/agent-monitor-mcp-server.js
 ```
 
 **Option B: `.mcp.json` in project root**
+
 ```json
 {
   "mcpServers": {
@@ -577,11 +569,13 @@ claude mcp add agent-monitor --transport stdio -- \
 ```
 
 **Option C: HTTP transport**
+
 ```bash
 claude mcp add agent-monitor --transport http http://localhost:4101/mcp
 ```
 
 **Option D: User-scope (available in all projects)**
+
 ```bash
 claude mcp add agent-monitor --scope user --transport stdio -- \
   node /path/to/agent-monitor-mcp-server.js
@@ -606,6 +600,7 @@ In `~/.gemini/settings.json`:
 ```
 
 Or for HTTP:
+
 ```json
 {
   "mcpServers": {
@@ -630,6 +625,7 @@ AGENT_MONITOR_URL = "http://localhost:4100"
 ```
 
 Or for HTTP:
+
 ```toml
 [mcp_servers.agent-monitor]
 url = "http://localhost:4101/mcp"
@@ -641,74 +637,85 @@ The Claude Agent SDK supports in-process MCP servers that do not require a
 separate process:
 
 ```typescript
-import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 
 const agentMonitorServer = createSdkMcpServer({
-  name: "agent-monitor",
-  version: "1.0.0",
+  name: 'agent-monitor',
+  version: '1.0.0',
   tools: [
     tool(
-      "create_task",
-      "Create a task on Agent Monitor",
-      { title: z.string(), priority: z.enum(["low", "medium", "high"]) },
+      'create_task',
+      'Create a task on Agent Monitor',
+      { title: z.string(), priority: z.enum(['low', 'medium', 'high']) },
       async ({ title, priority }) => {
-        const res = await fetch("http://localhost:4100/api/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, priority, status: "todo" }),
+        const res = await fetch('http://localhost:4100/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, priority, status: 'todo' }),
         });
         const task = await res.json();
         return {
-          content: [{ type: "text", text: `Task #${task.id} created` }],
+          content: [{ type: 'text', text: `Task #${task.id} created` }],
         };
-      }
+      },
     ),
     tool(
-      "update_task",
-      "Update a task on Agent Monitor",
+      'update_task',
+      'Update a task on Agent Monitor',
       {
         taskId: z.string(),
-        status: z.enum(["todo", "in_progress", "done"]),
+        status: z.enum(['todo', 'in_progress', 'done']),
       },
       async ({ taskId, status }) => {
         await fetch(`http://localhost:4100/api/tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status }),
         });
         return {
-          content: [{ type: "text", text: `Task #${taskId} => ${status}` }],
+          content: [{ type: 'text', text: `Task #${taskId} => ${status}` }],
         };
-      }
+      },
     ),
   ],
 });
 
 // Pass to every spawned agent via query()
 for await (const message of query({
-  prompt: "Build the user authentication module. Break it into subtasks.",
+  prompt: 'Build the user authentication module. Break it into subtasks.',
   options: {
     mcpServers: {
-      "agent-monitor": agentMonitorServer,
+      'agent-monitor': agentMonitorServer,
     },
     allowedTools: [
-      "Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task",
-      "mcp__agent-monitor__*",
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Grep',
+      'Glob',
+      'Task',
+      'mcp__agent-monitor__*',
     ],
     agents: {
-      "task-planner": {
-        description: "Plans work and creates subtasks on Agent Monitor",
+      'task-planner': {
+        description: 'Plans work and creates subtasks on Agent Monitor',
         prompt: `You are a task planner. When given a complex task, break it
                  into subtasks using the create_task tool. Assign each subtask
                  to the appropriate agent type.`,
-        tools: ["Read", "Grep", "Glob", "mcp__agent-monitor__create_task",
-                "mcp__agent-monitor__list_tasks"],
+        tools: [
+          'Read',
+          'Grep',
+          'Glob',
+          'mcp__agent-monitor__create_task',
+          'mcp__agent-monitor__list_tasks',
+        ],
       },
     },
   },
 })) {
-  if ("result" in message) console.log(message.result);
+  if ('result' in message) console.log(message.result);
 }
 ```
 
@@ -746,12 +753,12 @@ can spawn that agent:
 
 ```typescript
 // agent-spawner.ts
-import { spawn } from "child_process";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from 'child_process';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 interface SpawnOptions {
   taskId: string;
-  agentType: "claude" | "codex" | "gemini";
+  agentType: 'claude' | 'codex' | 'gemini';
   model?: string;
   task: { title: string; description: string };
 }
@@ -764,9 +771,7 @@ const SPAWN_DEPTH_LIMIT = 3;
 export async function spawnAgent(options: SpawnOptions): Promise<number> {
   // --- Guard: concurrency limit ---
   if (activeAgents.size >= MAX_CONCURRENT_AGENTS) {
-    throw new Error(
-      `Concurrency limit reached (${MAX_CONCURRENT_AGENTS} agents active)`
-    );
+    throw new Error(`Concurrency limit reached (${MAX_CONCURRENT_AGENTS} agents active)`);
   }
 
   // --- Guard: depth limit (prevent infinite loops) ---
@@ -774,18 +779,18 @@ export async function spawnAgent(options: SpawnOptions): Promise<number> {
   if (depth >= SPAWN_DEPTH_LIMIT) {
     throw new Error(
       `Spawn depth limit reached (${SPAWN_DEPTH_LIMIT}). ` +
-      `Task #${options.taskId} is ${depth} levels deep.`
+        `Task #${options.taskId} is ${depth} levels deep.`,
     );
   }
 
   const prompt = buildPromptForTask(options.task);
 
   switch (options.agentType) {
-    case "claude":
+    case 'claude':
       return spawnClaudeAgent(options, prompt);
-    case "codex":
+    case 'codex':
       return spawnCodexAgent(options, prompt);
-    case "gemini":
+    case 'gemini':
       return spawnGeminiAgent(options, prompt);
   }
 }
@@ -798,26 +803,23 @@ function spawnClaudeAgent(options: SpawnOptions, prompt: string): number {
       prompt,
       options: {
         mcpServers: {
-          "agent-monitor": {
-            command: "node",
-            args: ["/path/to/agent-monitor-mcp-server.js"],
-            env: { AGENT_MONITOR_URL: "http://localhost:4100" },
+          'agent-monitor': {
+            command: 'node',
+            args: ['/path/to/agent-monitor-mcp-server.js'],
+            env: { AGENT_MONITOR_URL: 'http://localhost:4100' },
           },
         },
-        allowedTools: [
-          "Read", "Write", "Edit", "Bash", "Grep", "Glob",
-          "mcp__agent-monitor__*",
-        ],
-        permissionMode: "acceptEdits",
-        model: options.model || "opus",
+        allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'mcp__agent-monitor__*'],
+        permissionMode: 'acceptEdits',
+        model: options.model || 'opus',
       },
     })) {
-      if ("result" in message) {
+      if ('result' in message) {
         // Update task status to done
         await fetch(`http://localhost:4100/api/tasks/${options.taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "done" }),
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'done' }),
         });
       }
     }
@@ -829,32 +831,34 @@ function spawnClaudeAgent(options: SpawnOptions, prompt: string): number {
 function spawnCodexAgent(options: SpawnOptions, prompt: string): number {
   // Write prompt to file (Codex requires stdin piping for long prompts)
   const promptFile = `/tmp/codex-prompt-${options.taskId}.txt`;
-  require("fs").writeFileSync(promptFile, prompt);
+  require('fs').writeFileSync(promptFile, prompt);
 
   const child = spawn(
-    "/home/ubuntu/.bun/bin/codex",
+    '/home/ubuntu/.bun/bin/codex',
     [
-      "-C", process.cwd(),
-      "--approval-mode", "auto-edit",
-      "-q",
-      "-", // Read from stdin
+      '-C',
+      process.cwd(),
+      '--approval-mode',
+      'auto-edit',
+      '-q',
+      '-', // Read from stdin
     ],
     {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
       },
-    }
+    },
   );
 
   // Pipe prompt file to stdin
-  const promptStream = require("fs").createReadStream(promptFile);
+  const promptStream = require('fs').createReadStream(promptFile);
   promptStream.pipe(child.stdin);
 
   activeAgents.set(options.taskId, { pid: child.pid!, taskId: options.taskId });
 
-  child.on("exit", () => {
+  child.on('exit', () => {
     activeAgents.delete(options.taskId);
   });
 
@@ -862,12 +866,12 @@ function spawnCodexAgent(options: SpawnOptions, prompt: string): number {
 }
 
 function spawnGeminiAgent(options: SpawnOptions, prompt: string): number {
-  const child = spawn("gemini", ["-p", prompt], {
-    stdio: ["pipe", "pipe", "pipe"],
+  const child = spawn('gemini', ['-p', prompt], {
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   activeAgents.set(options.taskId, { pid: child.pid!, taskId: options.taskId });
-  child.on("exit", () => activeAgents.delete(options.taskId));
+  child.on('exit', () => activeAgents.delete(options.taskId));
 
   return child.pid!;
 }
@@ -878,9 +882,7 @@ async function getTaskDepth(taskId: string): Promise<number> {
   let currentId: string | null = taskId;
 
   while (currentId) {
-    const res = await fetch(
-      `http://localhost:4100/api/tasks/${currentId}`
-    );
+    const res = await fetch(`http://localhost:4100/api/tasks/${currentId}`);
     const task = await res.json();
     currentId = task.parentTaskId || null;
     depth++;
@@ -914,6 +916,7 @@ IMPORTANT:
 Track parent-child task relationships. Refuse to spawn if depth exceeds limit.
 
 **Strategy 2: Budget Caps**
+
 ```typescript
 // Per-task budget
 const TASK_BUDGET_USD = 5.0;
@@ -924,11 +927,12 @@ query({
   options: {
     maxBudgetUsd: TASK_BUDGET_USD,
     maxTurns: 50,
-  }
+  },
 });
 ```
 
 **Strategy 3: Spawn Cooldown**
+
 ```typescript
 const spawnCooldown = new Map<string, number>(); // agentType -> lastSpawnTime
 const COOLDOWN_MS = 30_000; // 30 seconds
@@ -941,6 +945,7 @@ function canSpawn(agentType: string): boolean {
 
 **Strategy 4: Task Deduplication**
 Before creating a task, check if an identical or near-identical task already exists:
+
 ```typescript
 server.registerTool("create_task", { ... }, async (input) => {
   // Check for duplicate
@@ -989,6 +994,7 @@ for the same task tree.
 **Repository**: github.com/Justmalhar/AgentsBoard
 
 A Next.js Kanban board specifically designed for AI agent task management:
+
 - Users create tasks with descriptions, select AI agent, choose model
 - Task lifecycle: Todo -> In Progress -> Done
 - Uses OpenRouter API for multi-model support
@@ -1002,12 +1008,14 @@ no MCP integration. Agent Monitor adds bidirectional agent-task control.
 ### 4.2 CrewAI (Role-Based Multi-Agent)
 
 CrewAI enables building "crews" of AI agents with:
+
 - **Hierarchical delegation**: Manager agent coordinates worker agents
 - **Role-based tasks**: Each agent has a defined role and tools
 - **Task assignment**: Tasks map to agents via capabilities
 - **Tool integration**: `BaseTool` interface for external system access
 
 **Delegation model:**
+
 ```python
 # CrewAI delegation example
 from crewai import Agent, Task, Crew
@@ -1039,6 +1047,7 @@ interact with CrewAI crews via MCP protocol.
 LangGraph patterns relevant to Agent Monitor:
 
 **Supervisor Pattern:**
+
 ```
          +------------+
          | Supervisor |
@@ -1057,11 +1066,13 @@ LangGraph patterns relevant to Agent Monitor:
 - Checkpointing for persistence and recovery
 
 **Scatter-Gather Pattern:**
+
 - Distribute subtasks to multiple agents
 - Collect all results
 - Synthesize final output
 
 **Pipeline Pattern:**
+
 - Sequential agents, each processing the output of the previous
 - Dependencies between stages
 
@@ -1070,6 +1081,7 @@ LangGraph patterns relevant to Agent Monitor:
 **Repository**: github.com/ruvnet/claude-flow
 
 Community-built orchestration platform for Claude:
+
 - 87 MCP tools for AI orchestration
 - 54+ specialized agents
 - Distributed swarm intelligence
@@ -1088,14 +1100,14 @@ Agent Monitor can learn from their tool taxonomy.
 
 ### 4.6 Pattern Comparison
 
-| Pattern          | Coordination      | State Sharing    | Delegation           |
-|:---------------- |:----------------- |:---------------- |:-------------------- |
-| Claude Teams     | Task list + msgs  | File-based JSON  | Lead assigns tasks   |
-| Claude Subagents | Return values     | Context summaries| Task tool invocation  |
-| CrewAI           | Role-based        | Shared memory    | allow_delegation     |
-| LangGraph        | Graph edges       | State dict       | Supervisor routing   |
-| AutoGen          | Chat turns        | Chat history     | Speaker selection    |
-| Agent Monitor    | External board    | Database/API     | MCP tool calls       |
+| Pattern          | Coordination     | State Sharing     | Delegation           |
+| :--------------- | :--------------- | :---------------- | :------------------- |
+| Claude Teams     | Task list + msgs | File-based JSON   | Lead assigns tasks   |
+| Claude Subagents | Return values    | Context summaries | Task tool invocation |
+| CrewAI           | Role-based       | Shared memory     | allow_delegation     |
+| LangGraph        | Graph edges      | State dict        | Supervisor routing   |
+| AutoGen          | Chat turns       | Chat history      | Speaker selection    |
+| Agent Monitor    | External board   | Database/API      | MCP tool calls       |
 
 ---
 
@@ -1109,6 +1121,7 @@ has access to Agent Monitor's MCP server.
 **Method 1: `.mcp.json` in project root (recommended for all agents)**
 
 Place this file at the root of the project directory:
+
 ```json
 {
   "mcpServers": {
@@ -1139,22 +1152,22 @@ This makes agent-monitor available in ALL projects for this user.
 **Method 3: Claude Agent SDK `query()` with mcpServers**
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 for await (const message of query({
   prompt: taskPrompt,
   options: {
     mcpServers: {
-      "agent-monitor": {
-        command: "node",
-        args: ["/home/ubuntu/projects/agent-monitor/mcp-server/index.js"],
+      'agent-monitor': {
+        command: 'node',
+        args: ['/home/ubuntu/projects/agent-monitor/mcp-server/index.js'],
         env: {
-          AGENT_MONITOR_URL: "http://localhost:4100",
+          AGENT_MONITOR_URL: 'http://localhost:4100',
         },
       },
     },
-    allowedTools: ["mcp__agent-monitor__*", "Read", "Write", "Edit", "Bash"],
-    permissionMode: "acceptEdits",
+    allowedTools: ['mcp__agent-monitor__*', 'Read', 'Write', 'Edit', 'Bash'],
+    permissionMode: 'acceptEdits',
   },
 })) {
   // Process messages...
@@ -1164,6 +1177,7 @@ for await (const message of query({
 ### 5.2 MCP Server Inheritance in Teams
 
 From the official docs:
+
 > "Teammates load project context automatically, including CLAUDE.md,
 > MCP servers, and skills."
 
@@ -1177,6 +1191,7 @@ Here is a unified `.mcp.json`-compatible format that works across all
 supported CLIs:
 
 **For Claude Code** (`.mcp.json` or `~/.claude.json`):
+
 ```json
 {
   "mcpServers": {
@@ -1190,6 +1205,7 @@ supported CLIs:
 ```
 
 **For Gemini CLI** (`~/.gemini/settings.json`):
+
 ```json
 {
   "mcpServers": {
@@ -1203,6 +1219,7 @@ supported CLIs:
 ```
 
 **For Codex CLI** (`~/.codex/config.toml`):
+
 ```toml
 [mcp_servers.agent-monitor]
 command = "node"
@@ -1217,6 +1234,7 @@ AGENT_MONITOR_URL = "http://localhost:4100"
 MCP tools follow: `mcp__<server-name>__<tool-name>`
 
 For agent-monitor:
+
 - `mcp__agent-monitor__create_task`
 - `mcp__agent-monitor__update_task`
 - `mcp__agent-monitor__list_tasks`
@@ -1234,19 +1252,23 @@ Instead of MCP, agents can call Agent Monitor's REST API directly using
 the Bash tool (curl/fetch):
 
 **In CLAUDE.md or agent prompt:**
-```markdown
+
+````markdown
 ## Agent Monitor Integration
 
 To interact with the task board, use these commands:
 
 ### Create a task
+
 ```bash
 curl -s -X POST http://localhost:4100/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"title": "Task name", "status": "todo", "priority": "medium"}'
 ```
+````
 
 ### Update task status
+
 ```bash
 curl -s -X PATCH http://localhost:4100/api/tasks/TASK_ID \
   -H "Content-Type: application/json" \
@@ -1254,9 +1276,11 @@ curl -s -X PATCH http://localhost:4100/api/tasks/TASK_ID \
 ```
 
 ### List tasks
+
 ```bash
 curl -s http://localhost:4100/api/tasks?status=todo
 ```
+
 ```
 
 ### 6.2 Comparison: MCP vs REST API
@@ -1289,71 +1313,73 @@ is just a typed wrapper around the same endpoints.
 ### 7.1 Full Architecture Diagram
 
 ```
+
 +------------------------------------------------------------------+
-|                        WEB BROWSER                                |
-|                                                                   |
-|  +------------------------------------------------------------+  |
-|  |              Agent Monitor Web UI (Next.js)                 |  |
-|  |                                                             |  |
-|  |  +----------+  +----------+  +----------+  +----------+   |  |
-|  |  |  Kanban  |  |  Agent   |  |  Task    |  |  Agent   |   |  |
-|  |  |  Board   |  |  Status  |  |  Detail  |  |  Spawn   |   |  |
-|  |  +----------+  +----------+  +----------+  +----------+   |  |
-|  +----------------------------+--------------------------------+  |
-|                               |                                   |
-|                    WebSocket / REST API                            |
+| WEB BROWSER |
+| |
+| +------------------------------------------------------------+ |
+| | Agent Monitor Web UI (Next.js) | |
+| | | |
+| | +----------+ +----------+ +----------+ +----------+ | |
+| | | Kanban | | Agent | | Task | | Agent | | |
+| | | Board | | Status | | Detail | | Spawn | | |
+| | +----------+ +----------+ +----------+ +----------+ | |
+| +----------------------------+--------------------------------+ |
+| | |
+| WebSocket / REST API |
 +------------------------------------------------------------------+
-                                |
-                                v
+|
+v
 +------------------------------------------------------------------+
-|                    AGENT MONITOR BACKEND                          |
-|                    (Next.js API Routes)                           |
-|                                                                   |
-|  +----------------+  +----------------+  +-------------------+   |
-|  | Task CRUD API  |  | Agent Spawner  |  | WebSocket Server  |   |
-|  | /api/tasks/*   |  | /api/agents/*  |  | Real-time updates |   |
-|  +-------+--------+  +-------+--------+  +--------+----------+   |
-|          |                    |                     |              |
-|          v                    v                     v              |
-|  +----------------+  +----------------+  +-------------------+   |
-|  |   Database     |  | Process Mgr    |  | Event Bus         |   |
-|  |   (SQLite /    |  | (child_process |  | (task.created,    |   |
-|  |    Postgres)   |  |  or PM2)       |  |  task.updated,    |   |
-|  +----------------+  +----------------+  |  agent.spawned)   |   |
-|                                          +-------------------+   |
+| AGENT MONITOR BACKEND |
+| (Next.js API Routes) |
+| |
+| +----------------+ +----------------+ +-------------------+ |
+| | Task CRUD API | | Agent Spawner | | WebSocket Server | |
+| | /api/tasks/_ | | /api/agents/_ | | Real-time updates | |
+| +-------+--------+ +-------+--------+ +--------+----------+ |
+| | | | |
+| v v v |
+| +----------------+ +----------------+ +-------------------+ |
+| | Database | | Process Mgr | | Event Bus | |
+| | (SQLite / | | (child_process | | (task.created, | |
+| | Postgres) | | or PM2) | | task.updated, | |
+| +----------------+ +----------------+ | agent.spawned) | |
+| +-------------------+ |
 +------------------------------------------------------------------+
-           |                    |
-           |                    |    Spawns agents
-           |                    |    with MCP config
-           v                    v
+| |
+| | Spawns agents
+| | with MCP config
+v v
 +------------------------------------------------------------------+
-|                      AI AGENT LAYER                              |
-|                                                                   |
-|  +------------+    +------------+    +------------+              |
-|  | Claude     |    | Codex      |    | Gemini     |              |
-|  | Code       |    | CLI        |    | CLI        |              |
-|  |            |    |            |    |            |              |
-|  | MCP tools: |    | MCP tools: |    | MCP tools: |              |
-|  | create_task|    | create_task|    | create_task|              |
-|  | update_task|    | update_task|    | update_task|              |
-|  | list_tasks |    | list_tasks |    | list_tasks |              |
-|  +------+-----+    +------+-----+    +------+-----+              |
-|         |                 |                 |                     |
-|         +--------+--------+---------+-------+                     |
-|                  |                  |                              |
-|                  v                  v                              |
-|          +-------------+   +-------------+                        |
-|          | Agent Monitor|   | Agent Monitor|                       |
-|          | MCP Server   |   | MCP Server   |                       |
-|          | (stdio inst) |   | (stdio inst) |                       |
-|          +------+------+   +------+------+                        |
-|                 |                  |                               |
-|                 +--------+---------+                               |
-|                          |                                        |
-|                  REST API calls to                                 |
-|                  Agent Monitor Backend                             |
+| AI AGENT LAYER |
+| |
+| +------------+ +------------+ +------------+ |
+| | Claude | | Codex | | Gemini | |
+| | Code | | CLI | | CLI | |
+| | | | | | | |
+| | MCP tools: | | MCP tools: | | MCP tools: | |
+| | create_task| | create_task| | create_task| |
+| | update_task| | update_task| | update_task| |
+| | list_tasks | | list_tasks | | list_tasks | |
+| +------+-----+ +------+-----+ +------+-----+ |
+| | | | |
+| +--------+--------+---------+-------+ |
+| | | |
+| v v |
+| +-------------+ +-------------+ |
+| | Agent Monitor| | Agent Monitor| |
+| | MCP Server | | MCP Server | |
+| | (stdio inst) | | (stdio inst) | |
+| +------+------+ +------+------+ |
+| | | |
+| +--------+---------+ |
+| | |
+| REST API calls to |
+| Agent Monitor Backend |
 +------------------------------------------------------------------+
-```
+
+````
 
 ### 7.2 Data Model
 
@@ -1394,7 +1420,7 @@ interface Agent {
     cost: number;
   };
 }
-```
+````
 
 ### 7.3 Event Flow: Agent Breaks Down a Task
 
@@ -1442,12 +1468,14 @@ interface Agent {
 ### 7.4 Bidirectional Control
 
 **UI -> Agent (User controls agents):**
+
 - Create tasks in the UI, assign to agents, click "Run"
 - Pause/stop agents from the UI (send SIGINT to subprocess)
 - Reassign tasks by dragging cards to different agent columns
 - Set priority, which agents can read via list_tasks
 
 **Agent -> UI (Agents control the board):**
+
 - Create tasks/subtasks via MCP tools
 - Update task status as work progresses
 - Assign subtasks to other agent types
@@ -1457,28 +1485,28 @@ interface Agent {
 
 ```typescript
 // WebSocket server in Agent Monitor backend
-import { WebSocketServer } from "ws";
+import { WebSocketServer } from 'ws';
 
 const wss = new WebSocketServer({ port: 4101 });
 
 // Event bus that MCP tool handlers and API routes emit to
-import { EventEmitter } from "events";
+import { EventEmitter } from 'events';
 const eventBus = new EventEmitter();
 
-eventBus.on("task:created", (task) => {
-  broadcast({ type: "TASK_CREATED", payload: task });
+eventBus.on('task:created', (task) => {
+  broadcast({ type: 'TASK_CREATED', payload: task });
 });
 
-eventBus.on("task:updated", (task) => {
-  broadcast({ type: "TASK_UPDATED", payload: task });
+eventBus.on('task:updated', (task) => {
+  broadcast({ type: 'TASK_UPDATED', payload: task });
 });
 
-eventBus.on("agent:spawned", (agent) => {
-  broadcast({ type: "AGENT_SPAWNED", payload: agent });
+eventBus.on('agent:spawned', (agent) => {
+  broadcast({ type: 'AGENT_SPAWNED', payload: agent });
 });
 
-eventBus.on("agent:status", (agent) => {
-  broadcast({ type: "AGENT_STATUS", payload: agent });
+eventBus.on('agent:status', (agent) => {
+  broadcast({ type: 'AGENT_STATUS', payload: agent });
 });
 
 function broadcast(message: object) {
@@ -1582,24 +1610,25 @@ Layer 4 (Optional): Claude Hooks Bridge
 
 ### 8.3 Implementation Priority
 
-| Priority | Component                          | Effort   | Impact   |
-|:-------- |:---------------------------------- |:-------- |:-------- |
-| P0       | REST API for task CRUD             | 1 day    | Critical |
-| P0       | Web UI (Kanban board)              | 2 days   | Critical |
-| P1       | MCP Server (stdio)                 | 1 day    | High     |
-| P1       | Agent Spawner (Claude via SDK)     | 1 day    | High     |
-| P1       | WebSocket real-time updates        | 0.5 day  | High     |
-| P2       | MCP Server (HTTP transport)        | 0.5 day  | Medium   |
-| P2       | Agent Spawner (Codex, Gemini)      | 1 day    | Medium   |
-| P2       | Loop prevention & depth limits     | 0.5 day  | Medium   |
-| P3       | Claude Hooks bridge                | 1 day    | Low      |
-| P3       | Team-level orchestration UI        | 2 days   | Low      |
+| Priority | Component                      | Effort  | Impact   |
+| :------- | :----------------------------- | :------ | :------- |
+| P0       | REST API for task CRUD         | 1 day   | Critical |
+| P0       | Web UI (Kanban board)          | 2 days  | Critical |
+| P1       | MCP Server (stdio)             | 1 day   | High     |
+| P1       | Agent Spawner (Claude via SDK) | 1 day   | High     |
+| P1       | WebSocket real-time updates    | 0.5 day | High     |
+| P2       | MCP Server (HTTP transport)    | 0.5 day | Medium   |
+| P2       | Agent Spawner (Codex, Gemini)  | 1 day   | Medium   |
+| P2       | Loop prevention & depth limits | 0.5 day | Medium   |
+| P3       | Claude Hooks bridge            | 1 day   | Low      |
+| P3       | Team-level orchestration UI    | 2 days  | Low      |
 
 ---
 
 ## 9. Sources
 
 ### Claude Code Agent Teams
+
 - [Orchestrate teams of Claude Code sessions (Official Docs)](https://code.claude.com/docs/en/agent-teams)
 - [From Tasks to Swarms: Agent Teams in Claude Code](https://alexop.dev/posts/from-tasks-to-swarms-agent-teams-in-claude-code/)
 - [Claude Code Swarms - Addy Osmani](https://addyosmani.com/blog/claude-code-agent-teams/)
@@ -1610,6 +1639,7 @@ Layer 4 (Optional): Claude Hooks Bridge
 - [Claude 4.6 Agent Teams Complete Guide](https://blog.laozhang.ai/en/posts/claude-4-6-agent-teams)
 
 ### Claude Agent SDK
+
 - [Agent SDK Overview (Official)](https://platform.claude.com/docs/en/agent-sdk/overview)
 - [Subagents in the SDK (Official)](https://platform.claude.com/docs/en/agent-sdk/subagents)
 - [Connect to external tools with MCP (Official)](https://platform.claude.com/docs/en/agent-sdk/mcp)
@@ -1620,6 +1650,7 @@ Layer 4 (Optional): Claude Hooks Bridge
 - [Claude Code Custom Subagents (Official)](https://code.claude.com/docs/en/sub-agents)
 
 ### MCP Protocol & SDK
+
 - [Model Context Protocol TypeScript SDK (GitHub)](https://github.com/modelcontextprotocol/typescript-sdk)
 - [TypeScript SDK Server Documentation](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
 - [@modelcontextprotocol/sdk (npm)](https://www.npmjs.com/package/@modelcontextprotocol/sdk)
@@ -1627,20 +1658,24 @@ Layer 4 (Optional): Claude Hooks Bridge
 - [Build an MCP Server (Official Tutorial)](https://modelcontextprotocol.io/docs/develop/build-server)
 
 ### Claude Code MCP Configuration
+
 - [Connect Claude Code to tools via MCP (Official)](https://code.claude.com/docs/en/mcp)
 - [How to Setup Claude Code MCP Servers](https://claudelog.com/faqs/how-to-setup-claude-code-mcp-servers/)
 - [Configuring MCP Tools in Claude Code](https://scottspence.com/posts/configuring-mcp-tools-in-claude-code)
 
 ### Gemini CLI MCP
+
 - [MCP Servers with the Gemini CLI (Official)](https://geminicli.com/docs/tools/mcp-server/)
 - [Gemini CLI MCP Server Setup Guide](https://www.braingrid.ai/blog/gemini-mcp)
 
 ### Codex CLI MCP
+
 - [Codex CLI MCP (Official)](https://developers.openai.com/codex/mcp)
 - [Codex CLI Config Documentation (GitHub)](https://github.com/openai/codex/blob/main/docs/config.md)
 - [Codex MCP Configuration TOML Guide](https://vladimirsiedykh.com/blog/codex-mcp-config-toml-shared-configuration-cli-vscode-setup-2025)
 
 ### Multi-Agent Frameworks
+
 - [CrewAI Framework](https://www.crewai.com/)
 - [CrewAI Documentation - Agents](https://docs.crewai.com/en/concepts/agents)
 - [CrewAI Hierarchical Process](https://docs.crewai.com/how-to/hierarchical-process)
@@ -1650,17 +1685,20 @@ Layer 4 (Optional): Claude Hooks Bridge
 - [CrewAI vs LangGraph vs AutoGen (DataCamp)](https://www.datacamp.com/tutorial/crewai-vs-langgraph-vs-autogen)
 
 ### Task Management for AI Agents
+
 - [AgentsBoard (GitHub)](https://github.com/Justmalhar/AgentsBoard)
 - [Claude-Flow (GitHub)](https://github.com/ruvnet/claude-flow)
 - [Port: Automatically Resolve Tickets with Coding Agents](https://docs.port.io/guides/all/automatically-resolve-tickets-with-coding-agents/)
 
 ### Loop Prevention & Concurrency
+
 - [AI Agent Design Patterns (Microsoft)](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns)
 - [10 Multi-Agent Coordination Strategies (Galileo)](https://galileo.ai/blog/multi-agent-coordination-strategies)
 - [Preventing Infinite Loops in Autonomous Agent Deployments](https://codieshub.com/for-ai/prevent-agent-loops-costs)
 - [Concurrent Agent Orchestration (Microsoft)](https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/concurrent)
 
 ### Claude Code Hooks
+
 - [Hooks Reference (Official)](https://code.claude.com/docs/en/hooks)
 - [Claude Code Hooks (Agent SDK)](https://platform.claude.com/docs/en/agent-sdk/hooks)
 - [Claude Code Hooks Mastery (GitHub)](https://github.com/disler/claude-code-hooks-mastery)

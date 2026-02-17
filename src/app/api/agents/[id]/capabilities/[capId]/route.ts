@@ -1,22 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
-import {
-  updateCapability,
-  deleteCapability,
-} from '@/lib/services/capability-service';
+import { updateCapability, deleteCapability } from '@/lib/services/capability-service';
 
-const updateCapabilitySchema = z.object({
-  label: z.string().min(1).optional(),
-  description: z.string().nullable().optional(),
-  interactionMode: z.enum(['template', 'prompt']).optional(),
-  commandTokens: z.array(z.string()).nullable().optional(),
-  promptTemplate: z.string().nullable().optional(),
-  argsSchema: z.record(z.unknown()).optional(),
-  isEnabled: z.boolean().optional(),
-  dangerLevel: z.number().int().min(0).max(3).optional(),
-  timeoutSec: z.number().int().min(1).optional(),
-}).strict();
+const updateCapabilitySchema = z
+  .object({
+    label: z.string().min(1).optional(),
+    description: z.string().nullable().optional(),
+    interactionMode: z.enum(['template', 'prompt']).optional(),
+    commandTokens: z.array(z.string()).nullable().optional(),
+    promptTemplate: z.string().nullable().optional(),
+    argsSchema: z.record(z.unknown()).optional(),
+    isEnabled: z.boolean().optional(),
+    dangerLevel: z.number().int().min(0).max(3).optional(),
+    timeoutSec: z.number().int().min(1).optional(),
+  })
+  .strict();
 
 export const PATCH = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {

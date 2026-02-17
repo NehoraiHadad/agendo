@@ -8,8 +8,8 @@ export const TASK_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   todo: new Set(['in_progress', 'cancelled', 'blocked']),
   in_progress: new Set(['done', 'blocked', 'cancelled', 'todo']),
   blocked: new Set(['todo', 'in_progress', 'cancelled']),
-  done: new Set(['todo']),       // reopen
-  cancelled: new Set(['todo']),  // reopen
+  done: new Set(['todo']), // reopen
+  cancelled: new Set(['todo']), // reopen
 };
 
 /**
@@ -20,10 +20,10 @@ export const EXECUTION_TRANSITIONS: Record<ExecutionStatus, ReadonlySet<Executio
   queued: new Set(['running', 'cancelled']),
   running: new Set(['cancelling', 'succeeded', 'failed', 'timed_out']),
   cancelling: new Set(['cancelled', 'failed']),
-  succeeded: new Set(),    // terminal
-  failed: new Set(),       // terminal
-  cancelled: new Set(),    // terminal
-  timed_out: new Set(),    // terminal
+  succeeded: new Set(), // terminal
+  failed: new Set(), // terminal
+  cancelled: new Set(), // terminal
+  timed_out: new Set(), // terminal
 };
 
 /** Terminal statuses that cannot transition further */
@@ -31,7 +31,10 @@ export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set();
 // Note: tasks have no truly terminal states -- done and cancelled can reopen to todo
 
 export const TERMINAL_EXECUTION_STATUSES: ReadonlySet<ExecutionStatus> = new Set([
-  'succeeded', 'failed', 'cancelled', 'timed_out',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'timed_out',
 ]);
 
 /**
@@ -42,7 +45,10 @@ export function isValidTaskTransition(current: TaskStatus, next: TaskStatus): bo
   return TASK_TRANSITIONS[current].has(next);
 }
 
-export function isValidExecutionTransition(current: ExecutionStatus, next: ExecutionStatus): boolean {
+export function isValidExecutionTransition(
+  current: ExecutionStatus,
+  next: ExecutionStatus,
+): boolean {
   return EXECUTION_TRANSITIONS[current].has(next);
 }
 

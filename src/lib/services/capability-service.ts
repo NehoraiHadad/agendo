@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { db } from '@/lib/db';
 import { agentCapabilities, agents } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError, TimeoutError } from '@/lib/errors';
 import type { AgentCapability } from '@/lib/types';
 
@@ -13,7 +13,16 @@ interface CreateCapabilityInput {
   key: string;
   label: string;
   description?: string | null;
-  source?: 'manual' | 'builtin' | 'preset' | 'scan_help' | 'scan_completion' | 'scan_fig' | 'scan_mcp' | 'scan_man' | 'llm_generated';
+  source?:
+    | 'manual'
+    | 'builtin'
+    | 'preset'
+    | 'scan_help'
+    | 'scan_completion'
+    | 'scan_fig'
+    | 'scan_mcp'
+    | 'scan_man'
+    | 'llm_generated';
   interactionMode: 'template' | 'prompt';
   commandTokens?: string[] | null;
   promptTemplate?: string | null;
@@ -42,10 +51,10 @@ function validateModeConsistency(
   commandTokens: string[] | null | undefined,
 ): void {
   if (mode === 'template' && (!commandTokens || commandTokens.length === 0)) {
-    throw new ValidationError(
-      'Template mode requires non-null commandTokens',
-      { field: 'commandTokens', interactionMode: mode },
-    );
+    throw new ValidationError('Template mode requires non-null commandTokens', {
+      field: 'commandTokens',
+      interactionMode: mode,
+    });
   }
 }
 
@@ -75,10 +84,7 @@ export async function createCapability(data: CreateCapabilityInput): Promise<Age
 }
 
 export async function getCapabilitiesByAgent(agentId: string): Promise<AgentCapability[]> {
-  return db
-    .select()
-    .from(agentCapabilities)
-    .where(eq(agentCapabilities.agentId, agentId));
+  return db.select().from(agentCapabilities).where(eq(agentCapabilities.agentId, agentId));
 }
 
 export async function getCapabilityById(id: string): Promise<AgentCapability> {
@@ -138,11 +144,7 @@ export async function toggleApproval(id: string): Promise<AgentCapability> {
 export async function testCapability(id: string): Promise<{ success: boolean; output: string }> {
   const capability = await getCapabilityById(id);
 
-  const [agent] = await db
-    .select()
-    .from(agents)
-    .where(eq(agents.id, capability.agentId))
-    .limit(1);
+  const [agent] = await db.select().from(agents).where(eq(agents.id, capability.agentId)).limit(1);
 
   if (!agent) throw new NotFoundError('Agent', capability.agentId);
 

@@ -27,7 +27,9 @@ export function CapabilityRow({ capability }: CapabilityRowProps) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{capability.label}</span>
             {!capability.isEnabled && (
-              <Badge variant="secondary" className="text-xs">Disabled</Badge>
+              <Badge variant="secondary" className="text-xs">
+                Disabled
+              </Badge>
             )}
           </div>
           {capability.description && (

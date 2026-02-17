@@ -108,7 +108,7 @@ describe('withErrorBoundary', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const handler = withErrorBoundary(async () => {
-      throw 'string error'; // eslint-disable-line no-throw-literal
+      throw 'string error';
     });
 
     const res = await handler(makeRequest(), defaultContext);

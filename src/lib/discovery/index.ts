@@ -52,8 +52,12 @@ export async function runDiscovery(
   // Sort: AI agents first, then by name
   tools.sort((a, b) => {
     const typeOrder: Record<ToolType, number> = {
-      'ai-agent': 0, 'cli-tool': 1, 'admin-tool': 2,
-      'interactive-tui': 3, 'shell-util': 4, 'daemon': 5,
+      'ai-agent': 0,
+      'cli-tool': 1,
+      'admin-tool': 2,
+      'interactive-tui': 3,
+      'shell-util': 4,
+      daemon: 5,
     };
     const orderDiff = (typeOrder[a.toolType] ?? 9) - (typeOrder[b.toolType] ?? 9);
     if (orderDiff !== 0) return orderDiff;
@@ -77,9 +81,7 @@ async function processBinary(
 
   let schema: ParsedSchema | null = null;
   const shouldExtractSchema =
-    preset !== null ||
-    schemaTargets?.has(binary.name) ||
-    toolType === 'ai-agent';
+    preset !== null || schemaTargets?.has(binary.name) || toolType === 'ai-agent';
 
   if (shouldExtractSchema) {
     const helpText = await getHelpText(binary.name);

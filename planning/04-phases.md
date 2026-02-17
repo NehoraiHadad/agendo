@@ -567,6 +567,7 @@ json-schema-to-zod@2 @tanstack/react-virtual@3 @modelcontextprotocol/sdk
 ## Deferred (Later Phases)
 
 ### Advanced Discovery
+
 - LLM-assisted `--help` parsing: send help text to Claude/Gemini with structured output schema, cache result
 - Fig specs import from `withfig/autocomplete` repo (500+ tools with structured CLI schemas)
 - MCP client integration: discover tools from MCP servers via `@modelcontextprotocol/sdk`, import from MCP Registry (~2000 servers)
@@ -574,6 +575,7 @@ json-schema-to-zod@2 @tanstack/react-virtual@3 @modelcontextprotocol/sdk
 - tldr-pages as seed database for common CLI descriptions
 
 ### Advanced Agent Communication
+
 - Claude Agent SDK integration: use `@anthropic-ai/claude-agent-sdk` V2 `send()`/`stream()` for richer Claude control (tool approval via `canUseTool`, hooks for event-driven integration, model switching mid-session)
 - Codex approval flow forwarding: forward `requestApproval` JSON-RPC events to web UI for user confirmation
 - tmux control mode (`-CC`): machine-friendly tmux protocol for building custom tmux client in Node.js without node-pty
@@ -583,15 +585,18 @@ json-schema-to-zod@2 @tanstack/react-virtual@3 @modelcontextprotocol/sdk
 - Gemini native bidirectional support (when `--input-format stream-json` is added per GitHub issue #8203)
 
 ### Advanced UI
+
 - Full dependency graph visualization (DAG)
 - Mobile-responsive UI (< 1024px) with virtual d-pad controls for terminal
 - Agent performance analytics and cost dashboards
 - Multi-user concurrent terminal viewing with user cursors
 
 ### Collaboration
+
 - Team workspaces + RBAC, webhook integrations, export/import
 
 ### Infrastructure
+
 - Authentication (session token or HTTP Basic via nginx)
 - Postgres LISTEN/NOTIFY for zero-latency board SSE
 - Automatic task status transitions on execution completion

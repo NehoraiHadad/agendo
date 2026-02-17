@@ -8,6 +8,7 @@
 ## 1. Claude Code CLI
 
 ### Location & Version
+
 ```
 $ which claude
 /home/ubuntu/.local/bin/claude
@@ -17,6 +18,7 @@ $ claude --version
 ```
 
 ### Help Output (full)
+
 ```
 Usage: claude [options] [command] [prompt]
 
@@ -82,27 +84,30 @@ Commands:
 ```
 
 ### Session Management Flags
-| Flag | Behavior |
-|------|----------|
-| `-r, --resume [value]` | Resume by session UUID, or open interactive picker with search term |
-| `-c, --continue` | Continue the **most recent** conversation in the current directory |
-| `--session-id <uuid>` | Force a specific session UUID |
-| `--fork-session` | Create new session ID when resuming (use with --resume or --continue) |
-| `--from-pr [value]` | Resume session linked to a PR |
-| `--no-session-persistence` | Disable session saving (--print only) |
+
+| Flag                       | Behavior                                                              |
+| -------------------------- | --------------------------------------------------------------------- |
+| `-r, --resume [value]`     | Resume by session UUID, or open interactive picker with search term   |
+| `-c, --continue`           | Continue the **most recent** conversation in the current directory    |
+| `--session-id <uuid>`      | Force a specific session UUID                                         |
+| `--fork-session`           | Create new session ID when resuming (use with --resume or --continue) |
+| `--from-pr [value]`        | Resume session linked to a PR                                         |
+| `--no-session-persistence` | Disable session saving (--print only)                                 |
 
 ### Output Format Options
-| Flag | Values | Notes |
-|------|--------|-------|
-| `-p, --print` | N/A | Non-interactive mode, required for output-format |
-| `--output-format` | `text`, `json`, `stream-json` | Only works with `--print` |
-| `--input-format` | `text`, `stream-json` | Only works with `--print` |
-| `--include-partial-messages` | boolean | Only with `--print` + `stream-json` |
-| `--verbose` | boolean | **Required** for `--output-format=stream-json` |
+
+| Flag                         | Values                        | Notes                                            |
+| ---------------------------- | ----------------------------- | ------------------------------------------------ |
+| `-p, --print`                | N/A                           | Non-interactive mode, required for output-format |
+| `--output-format`            | `text`, `json`, `stream-json` | Only works with `--print`                        |
+| `--input-format`             | `text`, `stream-json`         | Only works with `--print`                        |
+| `--include-partial-messages` | boolean                       | Only with `--print` + `stream-json`              |
+| `--verbose`                  | boolean                       | **Required** for `--output-format=stream-json`   |
 
 ### Session ID in Output (CONFIRMED)
 
 **`--output-format json` (single result):**
+
 ```json
 {
   "type": "result",
@@ -124,6 +129,7 @@ Commands:
 
 **`--output-format stream-json --verbose` (streaming):**
 Emits multiple JSON lines:
+
 1. `{"type":"system","subtype":"init","session_id":"...","tools":[...],"model":"claude-opus-4-6",...}`
 2. `{"type":"assistant","message":{...},"session_id":"...",...}`
 3. `{"type":"result","session_id":"...",...}`
@@ -131,6 +137,7 @@ Emits multiple JSON lines:
 **Key finding:** `session_id` is a UUID v4 (e.g., `d31fb225-418f-4f94-ab24-ed95cf77a036`). It appears in every message type in stream-json, and in the final result in json mode.
 
 ### Session Storage
+
 ```
 ~/.claude/projects/-home-ubuntu-projects/<uuid>.jsonl     # per-project session transcripts
 ~/.claude/sessions/                                        # session metadata (hash-named dirs)
@@ -139,13 +146,14 @@ Emits multiple JSON lines:
 ```
 
 **Session JSONL format (per line):**
+
 ```json
 {
   "parentUuid": null,
   "sessionId": "5874974b-2b24-4b5b-bb1d-63a7abe930b7",
   "version": "2.1.29",
   "type": "user",
-  "message": {"role":"user","content":"..."},
+  "message": { "role": "user", "content": "..." },
   "uuid": "1e486904-f371-4a5b-9248-093fcbe7e2b1",
   "timestamp": "2026-01-31T23:17:43.335Z",
   "cwd": "/home/ubuntu/projects"
@@ -157,6 +165,7 @@ Emits multiple JSON lines:
 ## 2. Gemini CLI
 
 ### Location & Version
+
 ```
 $ which gemini
 /usr/bin/gemini
@@ -166,6 +175,7 @@ $ gemini --version
 ```
 
 ### Help Output (full)
+
 ```
 Usage: gemini [options] [command]
 
@@ -203,28 +213,33 @@ Options:
 ```
 
 ### Session Management Flags
-| Flag | Behavior |
-|------|----------|
-| `-r, --resume` | Resume by "latest" or by index number (e.g., `--resume 5`) |
-| `--list-sessions` | List sessions for current project, shows index + UUID |
-| `--delete-session` | Delete by index number |
+
+| Flag               | Behavior                                                   |
+| ------------------ | ---------------------------------------------------------- |
+| `-r, --resume`     | Resume by "latest" or by index number (e.g., `--resume 5`) |
+| `--list-sessions`  | List sessions for current project, shows index + UUID      |
+| `--delete-session` | Delete by index number                                     |
 
 **Note:** Gemini uses **index-based** session resume, not direct UUID. Session listing output format:
+
 ```
   1. What is 2+2? (1 day ago) [02f8fc16-5412-4cb8-9dbb-c3c4ee3facfc]
   2. What is 2+2? (1 day ago) [38232b6d-9135-4823-a237-07624c77e3e4]
   ...
 ```
+
 Format: `{index}. {title truncated} ({relative time}) [{session UUID}]`
 
 ### Output Format Options
-| Flag | Values | Notes |
-|------|--------|-------|
+
+| Flag                  | Values                        | Notes                                          |
+| --------------------- | ----------------------------- | ---------------------------------------------- |
 | `-o, --output-format` | `text`, `json`, `stream-json` | Works with positional prompt (non-interactive) |
 
 ### Session ID in Output (CONFIRMED -- ABSENT from JSON)
 
 **`-o json` output:**
+
 ```json
 {
   "response": "hello",
@@ -248,11 +263,13 @@ Format: `{index}. {title truncated} ({relative time}) [{session UUID}]`
 **Key finding:** Gemini JSON output does **NOT** include a session ID. The session is only visible via `--list-sessions` after the fact. To get a session ID, you must parse the `--list-sessions` output and correlate by timestamp/title.
 
 ### Session Storage
+
 ```
 ~/.gemini/tmp/<project-hash>/chats/session-<date>-<short-uuid>.json
 ```
 
 **Session JSON format:**
+
 ```json
 {
   "sessionId": "93b60a72-9197-4237-b861-d4f042b7216c",
@@ -270,6 +287,7 @@ Format: `{index}. {title truncated} ({relative time}) [{session UUID}]`
 ## 3. Codex CLI
 
 ### Location & Version
+
 ```
 $ ls ~/.bun/bin/codex
 /home/ubuntu/.bun/bin/codex
@@ -279,6 +297,7 @@ $ codex --version
 ```
 
 ### Help Output (full)
+
 ```
 Codex CLI
 
@@ -322,6 +341,7 @@ Options:
 ### Session Management
 
 **`codex resume --help`:**
+
 ```
 Resume a previous interactive session
 
@@ -340,16 +360,21 @@ Options:
 **`codex fork`** -- creates a branch from an existing session.
 
 ### Output Format
+
 Codex does **NOT** have `--output-format` or `--json` flags. It writes output as JSONL to session files. Non-interactive mode (`codex exec`) writes to stdout as plaintext by default.
 
 ### Session ID in Output
+
 Session ID is embedded in the JSONL session filename:
+
 ```
 ~/.codex/sessions/2026/02/17/rollout-2026-02-17T07-27-38-019c6a7f-5f3f-7551-a009-73bd70581f24.jsonl
 ```
+
 Format: `rollout-<ISO-date>-<uuid-v7>.jsonl`
 
 **Session JSONL format (first line):**
+
 ```json
 {
   "timestamp": "2026-02-17T07:27:38.338Z",
@@ -366,6 +391,7 @@ Format: `rollout-<ISO-date>-<uuid-v7>.jsonl`
 ```
 
 ### Session Storage
+
 ```
 ~/.codex/sessions/<year>/<month>/<day>/rollout-<date>-<uuid>.jsonl
 ~/.codex/history.jsonl        # global history
@@ -378,43 +404,49 @@ Format: `rollout-<ISO-date>-<uuid-v7>.jsonl`
 
 ### Summary Table
 
-| Tool | Version | Location | --help format | Structured? |
-|------|---------|----------|---------------|-------------|
-| git | 2.34.1 | /usr/bin/git | Categorized subcommands | Semi-structured (categories + descriptions) |
-| docker | 28.4.0 | /usr/bin/docker | Categorized commands | Well-structured (Common/Management/Swarm/Commands) |
-| npm | 11.7.0 | /usr/lib/node_modules/npm | Flat command list | Minimal structure |
-| node | v22.20.0 | /usr/bin/node | Flat flag list | Flag-per-line, indented descriptions |
-| python3 | 3.10.12 | /usr/bin/python3 | Flat flag list | Flag + inline description, freeform |
+| Tool    | Version  | Location                  | --help format           | Structured?                                        |
+| ------- | -------- | ------------------------- | ----------------------- | -------------------------------------------------- |
+| git     | 2.34.1   | /usr/bin/git              | Categorized subcommands | Semi-structured (categories + descriptions)        |
+| docker  | 28.4.0   | /usr/bin/docker           | Categorized commands    | Well-structured (Common/Management/Swarm/Commands) |
+| npm     | 11.7.0   | /usr/lib/node_modules/npm | Flat command list       | Minimal structure                                  |
+| node    | v22.20.0 | /usr/bin/node             | Flat flag list          | Flag-per-line, indented descriptions               |
+| python3 | 3.10.12  | /usr/bin/python3          | Flat flag list          | Flag + inline description, freeform                |
 
 ### Help Format Analysis
 
 **git:**
+
 - Usage line, then categorized sections ("start a working area", "examine the history", etc.)
 - Each command: `   command     Description` (3-space indent, variable spacing)
 - Parseable via regex: `/^\s{3}(\w+)\s{2,}(.+)$/`
 
 **docker:**
+
 - `Usage:  docker [OPTIONS] COMMAND`
 - Sections: "Common Commands:", "Management Commands:", "Swarm Commands:", "Commands:"
 - Each: `  command     Description` (2-space indent)
 - Parseable, well-structured with clear section headers
 
 **npm:**
+
 - `npm <command>` then examples
 - "All commands:" section with comma-separated list on multiple lines
 - Less parseable for descriptions (need `npm <command> -h` per command)
 
 **node:**
+
 - `Usage: node [options] [ script.js ] [arguments]`
 - Options section, each flag indented with description
 - Classic Unix-style, parseable via regex
 
 **python3:**
+
 - `usage: python3 [option] ... [-c cmd | -m mod | file | -] [arg] ...`
 - Flag + inline description, runs together
 - Less structured, harder to parse
 
 ### Consistency Analysis
+
 - All support `--version` and `--help`
 - `--version` output varies: some print just version ("2.34.1"), some add prefix ("Python 3.10.12"), some add program name
 - `--help` is universally freeform text, not machine-readable JSON/YAML
@@ -425,6 +457,7 @@ Format: `rollout-<ISO-date>-<uuid-v7>.jsonl`
 ## 5. PATH Scanning
 
 ### PATH Directories (in order)
+
 ```
 /home/ubuntu/.local/bin           (81 binaries)   -- claude, AI tools, python packages
 /home/ubuntu/.bun/bin             (3 binaries)    -- bun, bunx, codex
@@ -439,6 +472,7 @@ Format: `rollout-<ISO-date>-<uuid-v7>.jsonl`
 ```
 
 ### Notable Binaries in ~/.local/bin
+
 ```
 claude           -- Claude Code CLI
 cursor-agent     -- Cursor agent CLI
@@ -452,6 +486,7 @@ ai-designer      -- Custom AI tool
 ```
 
 ### Notable Binaries in ~/.bun/bin
+
 ```
 bun
 bunx
@@ -459,6 +494,7 @@ codex            -- Codex CLI (OpenAI)
 ```
 
 ### Auto-Discovery Strategy
+
 1. **Scan PATH dirs** in order, list all executables
 2. **Known AI CLIs** to check: `claude`, `gemini`, `codex`, `cursor-agent`, `openai`, `mcp`, `tiny-agents`, `adk` (Google ADK)
 3. **Detection method**: `which <name>` or iterate PATH dirs
@@ -470,6 +506,7 @@ codex            -- Codex CLI (OpenAI)
 ## 6. Session Behavior Deep-Dive
 
 ### Claude Code Sessions
+
 ```
 Config dir:    ~/.claude/
 Session files: ~/.claude/projects/<project-path-slug>/<uuid>.jsonl
@@ -480,18 +517,21 @@ History:       ~/.claude/history.jsonl
 **Session ID format:** UUID v4 (e.g., `5874974b-2b24-4b5b-bb1d-63a7abe930b7`)
 
 **How sessions are organized:**
+
 - Project path is slugified (e.g., `/home/ubuntu/projects` -> `-home-ubuntu-projects`)
 - Each session is a `.jsonl` file named by its UUID
 - Some sessions also have a directory (same UUID) for associated data
 - `history.jsonl` is a flat log of all sessions (3.2MB, growing)
 
 **Resume mechanics:**
+
 - `--resume <uuid>` resumes by UUID
 - `--resume` (no arg) opens interactive picker
 - `--continue` resumes most recent in current directory
 - `--session-id <uuid>` forces a specific session UUID for a new session
 
 ### Gemini Sessions
+
 ```
 Config dir:    ~/.gemini/
 Session files: ~/.gemini/tmp/<project-hash>/chats/session-<date>-<short-uuid>.json
@@ -502,11 +542,13 @@ Extensions:    ~/.gemini/extensions/
 **Session ID format:** UUID v4 (e.g., `93b60a72-9197-4237-b861-d4f042b7216c`)
 
 **How sessions are organized:**
+
 - Project hash (SHA-256 of project path) groups sessions
 - Session files are named: `session-<ISO-date-truncated>-<8char-uuid>.json`
 - Full session JSON includes: sessionId, projectHash, startTime, lastUpdated, messages[]
 
 **Resume mechanics:**
+
 - `--resume latest` resumes most recent
 - `--resume <index>` resumes by index number (from `--list-sessions`)
 - No direct UUID resume (must use index)
@@ -515,6 +557,7 @@ Extensions:    ~/.gemini/extensions/
 **Critical gap:** Gemini JSON output (`-o json`) does NOT include session ID. Session ID must be retrieved from `--list-sessions` or from the session file on disk.
 
 ### Codex Sessions
+
 ```
 Config dir:    ~/.codex/
 Session files: ~/.codex/sessions/<year>/<month>/<day>/rollout-<date>-<uuid>.jsonl
@@ -525,11 +568,13 @@ Config:        ~/.codex/config.toml
 **Session ID format:** UUID v7 / time-ordered UUID (e.g., `019c6a7f-5f3f-7551-a009-73bd70581f24`)
 
 **How sessions are organized:**
+
 - Date-based directory hierarchy: `sessions/2026/02/17/`
 - Session files named: `rollout-<ISO-datetime>-<uuid>.jsonl`
 - First line of JSONL is `session_meta` with ID, cwd, version, model_provider
 
 **Resume mechanics:**
+
 - `codex resume <SESSION_ID>` resumes by UUID or thread name
 - `codex resume --last` resumes most recent
 - `codex resume` (no arg) opens interactive picker
@@ -542,26 +587,27 @@ Config:        ~/.codex/config.toml
 
 ### Session ID Pattern Comparison
 
-| Tool | ID Format | In JSON Output? | In Session Files? | Resume by ID? | Resume by "latest"? |
-|------|-----------|-----------------|-------------------|---------------|---------------------|
-| Claude | UUID v4 | YES (`session_id` field) | YES (`sessionId` in JSONL) | YES (`--resume <uuid>`) | YES (`--continue`) |
-| Gemini | UUID v4 | **NO** | YES (`sessionId` in JSON) | NO (index only) | YES (`--resume latest`) |
-| Codex | UUID v7 | N/A (no JSON mode) | YES (`id` in session_meta) | YES (`resume <uuid>`) | YES (`resume --last`) |
+| Tool   | ID Format | In JSON Output?          | In Session Files?          | Resume by ID?           | Resume by "latest"?     |
+| ------ | --------- | ------------------------ | -------------------------- | ----------------------- | ----------------------- |
+| Claude | UUID v4   | YES (`session_id` field) | YES (`sessionId` in JSONL) | YES (`--resume <uuid>`) | YES (`--continue`)      |
+| Gemini | UUID v4   | **NO**                   | YES (`sessionId` in JSON)  | NO (index only)         | YES (`--resume latest`) |
+| Codex  | UUID v7   | N/A (no JSON mode)       | YES (`id` in session_meta) | YES (`resume <uuid>`)   | YES (`resume --last`)   |
 
 ### Help Output Parseability
 
-| Tool | Format | Machine-Parseable? | Key Pattern |
-|------|--------|--------------------|-------------|
-| Claude | Commander.js style | Moderate | `--flag <arg>  Description` with consistent indentation |
-| Gemini | Yargs style | Good | `--flag  Description  [type] [default]` |
-| Codex | Clap (Rust) style | Good | `--flag <VALUE>` then indented description block |
-| git | Custom | Moderate | Categorized sections, `command  Description` |
-| docker | Custom | Good | Sectioned (`Common Commands:`, etc.) |
-| npm | Custom | Poor | Comma-separated list, needs per-command help |
+| Tool   | Format             | Machine-Parseable? | Key Pattern                                             |
+| ------ | ------------------ | ------------------ | ------------------------------------------------------- |
+| Claude | Commander.js style | Moderate           | `--flag <arg>  Description` with consistent indentation |
+| Gemini | Yargs style        | Good               | `--flag  Description  [type] [default]`                 |
+| Codex  | Clap (Rust) style  | Good               | `--flag <VALUE>` then indented description block        |
+| git    | Custom             | Moderate           | Categorized sections, `command  Description`            |
+| docker | Custom             | Good               | Sectioned (`Common Commands:`, etc.)                    |
+| npm    | Custom             | Poor               | Comma-separated list, needs per-command help            |
 
 ### Recommended Auto-Detection Patterns
 
 **1. Discover CLI tools:**
+
 ```bash
 # Scan known names
 for tool in claude gemini codex cursor-agent openai mcp adk; do
@@ -571,6 +617,7 @@ done
 ```
 
 **2. Get version:**
+
 ```bash
 $tool --version 2>&1 | head -1
 # Claude: "2.1.44 (Claude Code)"
@@ -579,22 +626,26 @@ $tool --version 2>&1 | head -1
 ```
 
 **3. Detect session support:**
+
 ```bash
 # Check if --help mentions session-related flags
 $tool --help 2>&1 | grep -qi "resume\|session\|continue"
 ```
 
 **4. Get session ID from non-interactive run:**
+
 - **Claude:** `claude --print "prompt" --output-format json 2>&1 | jq -r '.session_id'`
 - **Gemini:** NOT available in JSON output. Must parse `gemini --list-sessions` after run.
 - **Codex:** Parse session filename from `~/.codex/sessions/` directory, or read first line of latest JSONL.
 
 **5. List sessions:**
+
 - **Claude:** `claude --resume` (interactive picker) or scan `~/.claude/projects/<slug>/*.jsonl`
 - **Gemini:** `gemini --list-sessions` (parseable: `N. Title (time) [uuid]`)
 - **Codex:** `codex resume` (interactive picker) or scan `~/.codex/sessions/**/*.jsonl`
 
 **6. Resume a session:**
+
 - **Claude:** `claude --resume <uuid>` or `claude --continue`
 - **Gemini:** `gemini --resume latest` or `gemini --resume <index>`
 - **Codex:** `codex resume <uuid>` or `codex resume --last`

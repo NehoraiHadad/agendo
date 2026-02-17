@@ -63,9 +63,7 @@ describe('reconcileZombies', () => {
 
     await reconcileZombies('worker-1');
 
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('No orphaned executions'),
-    );
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('No orphaned executions'));
     expect(mockDb.update).not.toHaveBeenCalled();
   });
 
