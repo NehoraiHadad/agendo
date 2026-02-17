@@ -3,10 +3,8 @@ import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents } from '@/lib/db/schema';
 import { isValidTaskTransition } from '@/lib/state-machines';
 import { NotFoundError, ConflictError } from '@/lib/errors';
+import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import type { Task, TaskStatus } from '@/lib/types';
-
-// --- Sparse sort_order constants ---
-const SORT_ORDER_GAP = 1000;
 
 // --- Types ---
 
@@ -57,21 +55,6 @@ async function getNextSortOrder(status: TaskStatus): Promise<number> {
     .limit(1);
 
   return last ? last.sortOrder + SORT_ORDER_GAP : SORT_ORDER_GAP;
-}
-
-/**
- * Calculate sort_order between two neighbors (for reordering).
- * Returns midpoint, or null if gap is too small (signals reindex needed).
- */
-export function calculateMidpoint(before: number | null, after: number | null): number | null {
-  const low = before ?? 0;
-  const high = after ?? low + SORT_ORDER_GAP * 2;
-  const mid = Math.floor((low + high) / 2);
-
-  if (mid === low || mid === high) {
-    return null;
-  }
-  return mid;
 }
 
 /**
@@ -250,4 +233,53 @@ export async function listSubtasks(parentTaskId: string): Promise<Task[]> {
     .from(tasks)
     .where(eq(tasks.parentTaskId, parentTaskId))
     .orderBy(asc(tasks.sortOrder));
+}
+
+export interface ReorderTaskInput {
+  status?: TaskStatus;
+  afterSortOrder: number | null;
+  beforeSortOrder: number | null;
+}
+
+export async function reorderTask(id: string, input: ReorderTaskInput): Promise<Task> {
+  const existing = await getTaskById(id);
+
+  // Validate status transition if changing columns
+  if (input.status && input.status !== existing.status) {
+    if (!isValidTaskTransition(existing.status, input.status)) {
+      throw new ConflictError(`Invalid status transition: ${existing.status} -> ${input.status}`);
+    }
+  }
+
+  const { value: sortOrder, needsReindex } = computeSortOrder(
+    input.afterSortOrder,
+    input.beforeSortOrder,
+  );
+
+  const newStatus = input.status ?? existing.status;
+
+  const [updated] = await db
+    .update(tasks)
+    .set({
+      status: newStatus,
+      sortOrder,
+      updatedAt: new Date(),
+    })
+    .where(eq(tasks.id, id))
+    .returning();
+
+  if (input.status && input.status !== existing.status) {
+    await db.insert(taskEvents).values({
+      taskId: id,
+      actorType: 'user',
+      eventType: 'status_changed',
+      payload: { from: existing.status, to: input.status },
+    });
+  }
+
+  if (needsReindex) {
+    await reindexColumn(newStatus);
+  }
+
+  return updated;
 }

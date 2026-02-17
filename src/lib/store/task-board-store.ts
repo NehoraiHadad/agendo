@@ -21,6 +21,9 @@ interface TaskBoardState {
 
   /** Currently selected task ID (for detail sheet) */
   selectedTaskId: string | null;
+
+  /** Task IDs with pending optimistic updates (skip SSE overwrite) */
+  pendingOptimistic: Set<string>;
 }
 
 interface TaskBoardActions {
@@ -53,6 +56,18 @@ interface TaskBoardActions {
 
   /** Set loading state for a column */
   setColumnLoading: (status: TaskStatus, loading: boolean) => void;
+
+  /** Optimistically reorder a task within/between columns */
+  optimisticReorder: (taskId: string, newStatus: TaskStatus, newIndex: number) => void;
+
+  /** Apply a server-sent task update (skips if task has pending optimistic) */
+  applyServerUpdate: (task: Task) => void;
+
+  /** Apply a server-sent new task creation */
+  applyServerCreate: (task: Task) => void;
+
+  /** Clear the optimistic flag for a task (after server confirms) */
+  settleOptimistic: (taskId: string) => void;
 }
 
 type TaskBoardStore = TaskBoardState & TaskBoardActions;
@@ -87,12 +102,13 @@ function createEmptyLoading(): Record<TaskStatus, boolean> {
   };
 }
 
-export const useTaskBoardStore = create<TaskBoardStore>((set) => ({
+export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   tasksById: {},
   columns: createEmptyColumns(),
   cursors: createEmptyCursors(),
   loading: createEmptyLoading(),
   selectedTaskId: null,
+  pendingOptimistic: new Set(),
 
   hydrate: (tasksByStatus, cursors) => {
     const tasksById: Record<string, Task> = {};
@@ -204,4 +220,94 @@ export const useTaskBoardStore = create<TaskBoardStore>((set) => ({
     set((state) => ({
       loading: { ...state.loading, [status]: loading },
     })),
+
+  optimisticReorder: (taskId, newStatus, newIndex) => {
+    set((state) => {
+      const task = state.tasksById[taskId];
+      if (!task) return state;
+
+      const oldStatus = task.status;
+      const newPending = new Set(state.pendingOptimistic);
+      newPending.add(taskId);
+
+      // Remove from old column
+      const oldColumn = state.columns[oldStatus].filter((id) => id !== taskId);
+
+      // Insert into new column at position
+      const targetColumn = oldStatus === newStatus ? oldColumn : [...state.columns[newStatus]];
+      const insertColumn = [...targetColumn];
+      insertColumn.splice(newIndex, 0, taskId);
+
+      return {
+        tasksById: {
+          ...state.tasksById,
+          [taskId]: { ...task, status: newStatus },
+        },
+        columns: {
+          ...state.columns,
+          [oldStatus]: oldStatus === newStatus ? insertColumn : oldColumn,
+          ...(oldStatus !== newStatus ? { [newStatus]: insertColumn } : {}),
+        },
+        pendingOptimistic: newPending,
+      };
+    });
+  },
+
+  applyServerUpdate: (task) => {
+    const state = get();
+    // Skip SSE overwrite if we have a pending optimistic update
+    if (state.pendingOptimistic.has(task.id)) return;
+
+    set((prev) => {
+      const oldTask = prev.tasksById[task.id];
+      if (!oldTask) {
+        // New task from SSE: add it
+        return {
+          tasksById: { ...prev.tasksById, [task.id]: task },
+          columns: {
+            ...prev.columns,
+            [task.status]: [...prev.columns[task.status], task.id],
+          },
+        };
+      }
+
+      const newTasksById = { ...prev.tasksById, [task.id]: task };
+
+      if (oldTask.status !== task.status) {
+        const oldColumn = prev.columns[oldTask.status].filter((id) => id !== task.id);
+        const newColumn = [...prev.columns[task.status], task.id];
+        return {
+          tasksById: newTasksById,
+          columns: {
+            ...prev.columns,
+            [oldTask.status]: oldColumn,
+            [task.status]: newColumn,
+          },
+        };
+      }
+
+      return { tasksById: newTasksById };
+    });
+  },
+
+  applyServerCreate: (task) => {
+    set((state) => {
+      if (state.tasksById[task.id]) return state;
+      return {
+        tasksById: { ...state.tasksById, [task.id]: task },
+        columns: {
+          ...state.columns,
+          [task.status]: [...state.columns[task.status], task.id],
+        },
+      };
+    });
+  },
+
+  settleOptimistic: (taskId) => {
+    set((state) => {
+      const newPending = new Set(state.pendingOptimistic);
+      newPending.delete(taskId);
+      return { pendingOptimistic: newPending };
+    });
+  },
 }));
