@@ -26,6 +26,8 @@ export async function getBoss(): Promise<PgBoss> {
   });
 
   await bossInstance.start();
+  // pg-boss v10 requires createQueue() before send() or work()
+  await bossInstance.createQueue(QUEUE_NAME);
   return bossInstance;
 }
 

@@ -13,6 +13,7 @@ const mockStart = vi.fn().mockResolvedValue(undefined);
 const mockSend = vi.fn().mockResolvedValue('job-id-123');
 const mockWork = vi.fn().mockResolvedValue(undefined);
 const mockStop = vi.fn().mockResolvedValue(undefined);
+const mockCreateQueue = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('pg-boss', () => {
   return {
@@ -21,6 +22,7 @@ vi.mock('pg-boss', () => {
       send: mockSend,
       work: mockWork,
       stop: mockStop,
+      createQueue: mockCreateQueue,
     })),
   };
 });

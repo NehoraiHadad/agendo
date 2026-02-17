@@ -100,7 +100,7 @@ export function WebTerminal({ executionId, fontSize = 14, className }: WebTermin
             : 'http://localhost:4101';
 
         socket = io(terminalServerUrl, {
-          auth: { token: tokenResult.data.token },
+          query: { token: tokenResult.data.token },
           transports: ['websocket'],
         });
 

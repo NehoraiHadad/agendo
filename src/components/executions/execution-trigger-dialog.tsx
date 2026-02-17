@@ -22,23 +22,32 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { apiFetch, type ApiResponse } from '@/lib/api-types';
-import type { AgentCapability, Execution, JsonSchemaObject } from '@/lib/types';
+import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
+import type { Agent, AgentCapability, Execution, JsonSchemaObject } from '@/lib/types';
 
 interface ExecutionTriggerDialogProps {
   taskId: string;
-  agentId: string;
+  agentId?: string;
   onExecutionCreated?: (execution: Execution) => void;
   children?: React.ReactNode;
 }
 
 export function ExecutionTriggerDialog({
   taskId,
-  agentId,
+  agentId: agentIdProp,
   onExecutionCreated,
   children,
 }: ExecutionTriggerDialogProps) {
   const [open, setOpen] = useState(false);
+
+  // Agent selection (when no agentId prop)
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(agentIdProp ?? '');
+
+  const activeAgentId = agentIdProp ?? selectedAgentId;
+
+  // Capability selection
   const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
   const [isLoadingCaps, setIsLoadingCaps] = useState(false);
   const [selectedCapId, setSelectedCapId] = useState<string>('');
@@ -51,12 +60,27 @@ export function ExecutionTriggerDialog({
   const properties = schema?.properties ?? {};
   const requiredFields = schema?.required ?? [];
 
+  // Fetch agents list when no agentId prop
+  const fetchAgents = useCallback(async () => {
+    if (agentIdProp) return;
+    setIsLoadingAgents(true);
+    try {
+      const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50');
+      setAgents(res.data.filter((a) => a.isActive));
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingAgents(false);
+    }
+  }, [agentIdProp]);
+
   const fetchCapabilities = useCallback(async () => {
+    if (!activeAgentId) return;
     setIsLoadingCaps(true);
     setError(null);
     try {
       const res = await apiFetch<ApiResponse<AgentCapability[]>>(
-        `/api/agents/${agentId}/capabilities`,
+        `/api/agents/${activeAgentId}/capabilities`,
       );
       const enabledCaps = res.data.filter((c) => c.isEnabled);
       setCapabilities(enabledCaps);
@@ -68,18 +92,27 @@ export function ExecutionTriggerDialog({
     } finally {
       setIsLoadingCaps(false);
     }
-  }, [agentId]);
+  }, [activeAgentId]);
 
   useEffect(() => {
     if (open) {
+      setSelectedAgentId(agentIdProp ?? '');
       setSelectedCapId('');
+      setCapabilities([]);
       setArgs({});
       setError(null);
+      fetchAgents();
+    }
+  }, [open, agentIdProp, fetchAgents]);
+
+  useEffect(() => {
+    if (open && activeAgentId) {
+      setSelectedCapId('');
+      setCapabilities([]);
       fetchCapabilities();
     }
-  }, [open, fetchCapabilities]);
+  }, [open, activeAgentId, fetchCapabilities]);
 
-  // Reset args when capability changes
   useEffect(() => {
     setArgs({});
   }, [selectedCapId]);
@@ -90,7 +123,7 @@ export function ExecutionTriggerDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedCapId) return;
+    if (!selectedCapId || !activeAgentId) return;
 
     setIsSubmitting(true);
     setError(null);
@@ -100,7 +133,7 @@ export function ExecutionTriggerDialog({
         method: 'POST',
         body: JSON.stringify({
           taskId,
-          agentId,
+          agentId: activeAgentId,
           capabilityId: selectedCapId,
           args,
         }),
@@ -113,6 +146,9 @@ export function ExecutionTriggerDialog({
       setIsSubmitting(false);
     }
   }
+
+  const isLoading = isLoadingAgents || isLoadingCaps;
+  const canSubmit = !!activeAgentId && !!selectedCapId && !isSubmitting && !isLoading;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -127,32 +163,57 @@ export function ExecutionTriggerDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Trigger Execution</DialogTitle>
-          <DialogDescription>Select a capability and configure arguments to run.</DialogDescription>
+          <DialogDescription>Select an agent, capability and arguments to run.</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {isLoadingCaps ? (
+          {/* Agent selector — shown only when no agentId prop */}
+          {!agentIdProp && (
             <div className="space-y-2">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="capability">Capability</Label>
-                <Select value={selectedCapId} onValueChange={setSelectedCapId}>
-                  <SelectTrigger id="capability" className="w-full">
-                    <SelectValue placeholder="Select a capability..." />
+              <Label htmlFor="agent">Agent</Label>
+              {isLoadingAgents ? (
+                <Skeleton className="h-9 w-full" />
+              ) : (
+                <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                  <SelectTrigger id="agent" className="w-full">
+                    <SelectValue placeholder="Select an agent..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {capabilities.map((cap) => (
-                      <SelectItem key={cap.id} value={cap.id}>
-                        {cap.label}
+                    {agents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              )}
+            </div>
+          )}
+
+          {/* Capability selector */}
+          {activeAgentId && (
+            <>
+              {isLoadingCaps ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="capability">Capability</Label>
+                  <Select value={selectedCapId} onValueChange={setSelectedCapId}>
+                    <SelectTrigger id="capability" className="w-full">
+                      <SelectValue placeholder="Select a capability..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {capabilities.map((cap) => (
+                        <SelectItem key={cap.id} value={cap.id}>
+                          {cap.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {selectedCap && selectedCap.dangerLevel >= 2 && (
                 <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
@@ -205,7 +266,7 @@ export function ExecutionTriggerDialog({
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
-            <Button type="submit" disabled={!selectedCapId || isSubmitting || isLoadingCaps}>
+            <Button type="submit" disabled={!canSubmit}>
               {isSubmitting ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (

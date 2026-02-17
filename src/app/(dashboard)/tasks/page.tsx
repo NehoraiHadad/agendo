@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { listTasksByStatus } from '@/lib/services/task-service';
 import { TaskBoard } from '@/components/tasks/task-board';
 import type { Task, TaskStatus } from '@/lib/types';

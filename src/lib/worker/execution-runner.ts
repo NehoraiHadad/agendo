@@ -1,6 +1,6 @@
 import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { executions } from '@/lib/db/schema';
+import { executions, tasks } from '@/lib/db/schema';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilityById } from '@/lib/services/capability-service';
 import {
@@ -59,7 +59,19 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   let resolvedArgs: string[] | undefined;
 
   if (execution.mode === 'prompt') {
-    resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', execution.args);
+    // Load task to get title/description for template interpolation
+    const [task] = await db
+      .select({ title: tasks.title, description: tasks.description })
+      .from(tasks)
+      .where(eq(tasks.id, execution.taskId))
+      .limit(1);
+
+    const interpolationContext: Record<string, unknown> = {
+      task_title: task?.title ?? '',
+      task_description: task?.description ?? '',
+      ...execution.args,
+    };
+    resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);
     await db
       .update(executions)
       .set({ prompt: resolvedPrompt })
@@ -213,9 +225,15 @@ function determineFinalStatus(
 }
 
 function interpolatePrompt(template: string, args: Record<string, unknown>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
-    const value = args[key];
-    if (value === undefined) return `{{${key}}}`;
+  return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path: string) => {
+    // Support dotted paths like {{input_context.prompt_additions}}
+    const parts = path.split('.');
+    let value: unknown = args;
+    for (const part of parts) {
+      if (value === null || value === undefined || typeof value !== 'object') return '';
+      value = (value as Record<string, unknown>)[part];
+    }
+    if (value === undefined || value === null) return '';
     return String(value);
   });
 }
