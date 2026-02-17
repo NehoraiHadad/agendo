@@ -1,0 +1,207 @@
+'use client';
+
+import { create } from 'zustand';
+import type { Task, TaskStatus } from '@/lib/types';
+
+/** All valid Kanban column statuses in display order */
+export const BOARD_COLUMNS: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
+
+interface TaskBoardState {
+  /** Normalized task lookup by ID */
+  tasksById: Record<string, Task>;
+
+  /** Ordered task IDs per status column */
+  columns: Record<TaskStatus, string[]>;
+
+  /** Cursor for pagination per column (null = no more pages) */
+  cursors: Record<TaskStatus, string | null>;
+
+  /** Loading state per column */
+  loading: Record<TaskStatus, boolean>;
+
+  /** Currently selected task ID (for detail sheet) */
+  selectedTaskId: string | null;
+}
+
+interface TaskBoardActions {
+  /** Hydrate the store from server-fetched data (called once from RSC wrapper) */
+  hydrate: (
+    tasksByStatus: Record<TaskStatus, Task[]>,
+    cursors: Record<TaskStatus, string | null>,
+  ) => void;
+
+  /** Append more tasks to a column (from "Load More" pagination) */
+  appendToColumn: (status: TaskStatus, tasks: Task[], nextCursor: string | null) => void;
+
+  /** Update a single task in the store (after server action response) */
+  updateTask: (task: Task) => void;
+
+  /** Add a new task to the appropriate column */
+  addTask: (task: Task) => void;
+
+  /** Remove a task from the store */
+  removeTask: (taskId: string) => void;
+
+  /**
+   * Move a task between columns (status change).
+   * In Phase 3, this is called AFTER the server action succeeds.
+   */
+  moveTask: (taskId: string, newStatus: TaskStatus) => void;
+
+  /** Select a task (opens detail sheet) */
+  selectTask: (taskId: string | null) => void;
+
+  /** Set loading state for a column */
+  setColumnLoading: (status: TaskStatus, loading: boolean) => void;
+}
+
+type TaskBoardStore = TaskBoardState & TaskBoardActions;
+
+function createEmptyColumns(): Record<TaskStatus, string[]> {
+  return {
+    todo: [],
+    in_progress: [],
+    blocked: [],
+    done: [],
+    cancelled: [],
+  };
+}
+
+function createEmptyCursors(): Record<TaskStatus, string | null> {
+  return {
+    todo: null,
+    in_progress: null,
+    blocked: null,
+    done: null,
+    cancelled: null,
+  };
+}
+
+function createEmptyLoading(): Record<TaskStatus, boolean> {
+  return {
+    todo: false,
+    in_progress: false,
+    blocked: false,
+    done: false,
+    cancelled: false,
+  };
+}
+
+export const useTaskBoardStore = create<TaskBoardStore>((set) => ({
+  tasksById: {},
+  columns: createEmptyColumns(),
+  cursors: createEmptyCursors(),
+  loading: createEmptyLoading(),
+  selectedTaskId: null,
+
+  hydrate: (tasksByStatus, cursors) => {
+    const tasksById: Record<string, Task> = {};
+    const columns = createEmptyColumns();
+
+    for (const status of BOARD_COLUMNS) {
+      const statusTasks = tasksByStatus[status] ?? [];
+      for (const task of statusTasks) {
+        tasksById[task.id] = task;
+        columns[status].push(task.id);
+      }
+    }
+
+    set({ tasksById, columns, cursors });
+  },
+
+  appendToColumn: (status, tasks, nextCursor) => {
+    set((state) => {
+      const newTasksById = { ...state.tasksById };
+      const newColumn = [...state.columns[status]];
+
+      for (const task of tasks) {
+        newTasksById[task.id] = task;
+        newColumn.push(task.id);
+      }
+
+      return {
+        tasksById: newTasksById,
+        columns: { ...state.columns, [status]: newColumn },
+        cursors: { ...state.cursors, [status]: nextCursor },
+      };
+    });
+  },
+
+  updateTask: (task) => {
+    set((state) => {
+      const oldTask = state.tasksById[task.id];
+      const newTasksById = { ...state.tasksById, [task.id]: task };
+
+      if (oldTask && oldTask.status !== task.status) {
+        const oldColumn = state.columns[oldTask.status].filter((id) => id !== task.id);
+        const newColumn = [...state.columns[task.status], task.id];
+
+        return {
+          tasksById: newTasksById,
+          columns: {
+            ...state.columns,
+            [oldTask.status]: oldColumn,
+            [task.status]: newColumn,
+          },
+        };
+      }
+
+      return { tasksById: newTasksById };
+    });
+  },
+
+  addTask: (task) => {
+    set((state) => ({
+      tasksById: { ...state.tasksById, [task.id]: task },
+      columns: {
+        ...state.columns,
+        [task.status]: [...state.columns[task.status], task.id],
+      },
+    }));
+  },
+
+  removeTask: (taskId) => {
+    set((state) => {
+      const task = state.tasksById[taskId];
+      if (!task) return state;
+
+      const { [taskId]: _, ...newTasksById } = state.tasksById;
+      const newColumn = state.columns[task.status].filter((id) => id !== taskId);
+
+      return {
+        tasksById: newTasksById,
+        columns: { ...state.columns, [task.status]: newColumn },
+        selectedTaskId: state.selectedTaskId === taskId ? null : state.selectedTaskId,
+      };
+    });
+  },
+
+  moveTask: (taskId, newStatus) => {
+    set((state) => {
+      const task = state.tasksById[taskId];
+      if (!task || task.status === newStatus) return state;
+
+      const oldColumn = state.columns[task.status].filter((id) => id !== taskId);
+      const newColumn = [...state.columns[newStatus], taskId];
+
+      return {
+        tasksById: {
+          ...state.tasksById,
+          [taskId]: { ...task, status: newStatus },
+        },
+        columns: {
+          ...state.columns,
+          [task.status]: oldColumn,
+          [newStatus]: newColumn,
+        },
+      };
+    });
+  },
+
+  selectTask: (taskId) => set({ selectedTaskId: taskId }),
+
+  setColumnLoading: (status, loading) =>
+    set((state) => ({
+      loading: { ...state.loading, [status]: loading },
+    })),
+}));
