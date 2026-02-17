@@ -64,6 +64,21 @@ export const GET = withErrorBoundary(
 );
 ```
 
+## TDD Workflow (Mandatory)
+
+All new features MUST follow strict Test-Driven Development:
+
+1. **Red**: Write failing tests FIRST based on planned interfaces/behavior
+2. **Verify Red**: Run tests to confirm they fail (no implementation yet)
+3. **Green**: Write minimal implementation code to make tests pass
+4. **Verify Green**: Run tests to confirm all pass
+5. **Refactor**: Clean up if needed, tests must stay green
+
+When using agent teams:
+- **tests agent runs first** — writes all failing tests, confirms red
+- **implementation agents run second** — write code to make tests pass
+- Never write tests and implementation in parallel
+
 ## PM2 Services
 
 | Service | Port | PM2 Name |
