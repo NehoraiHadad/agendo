@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "declaration": false,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "src/worker/**/*.ts",
+    "src/lib/**/*.ts"
+  ],
+  "exclude": [
+    "src/app/**",
+    "src/components/**",
+    "src/lib/hooks/**",
+    "src/lib/store/**",
+    "node_modules"
+  ]
+}
