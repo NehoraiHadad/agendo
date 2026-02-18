@@ -1,217 +1,153 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import * as tmux from '@/lib/worker/tmux-manager';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { LoggingMessageNotificationSchema, ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: number;
-  method: string;
-  params: Record<string, unknown>;
-}
-
-interface JsonRpcNotification {
-  jsonrpc: '2.0';
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-type JsonRpcMessage = JsonRpcRequest | JsonRpcNotification;
-
 export class CodexAdapter implements AgentAdapter {
-  private childProcess: ChildProcess | null = null;
-  private tmuxSessionName = '';
-  private requestId = 0;
+  private client: Client | null = null;
+  private transport: StdioClientTransport | null = null;
   private threadId: string | null = null;
-  private turnId: string | null = null;
-  private buffer = '';
+  private storedOpts: SpawnOpts | null = null;
+  private currentTurn: Promise<void> = Promise.resolve();
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
-    return this.launch(prompt, opts, false);
+    this.storedOpts = opts;
+    return this.launch(prompt, opts, null);
   }
 
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
     this.threadId = sessionRef;
-    return this.launch(prompt, opts, true);
+    this.storedOpts = opts;
+    return this.launch(prompt, opts, sessionRef);
   }
 
   extractSessionId(_output: string): string | null {
     return this.threadId;
   }
 
-  sendMessage(message: string): void {
-    if (!this.threadId) {
-      throw new Error('No active thread. Cannot send message.');
-    }
-    this.sendRequest('turn/start', {
-      threadId: this.threadId,
-      input: [{ type: 'text', text: message }],
-    });
+  async sendMessage(message: string): Promise<void> {
+    await this.currentTurn;
+    this.currentTurn = this.runTurn(message);
+    await this.currentTurn;
   }
 
   interrupt(): void {
-    if (!this.threadId || !this.turnId) return;
-    this.sendRequest('turn/interrupt', {
-      threadId: this.threadId,
-      turnId: this.turnId,
-    });
+    void this.client?.close();
   }
 
-  private launch(prompt: string, opts: SpawnOpts, isResume: boolean): ManagedProcess {
-    this.tmuxSessionName = `codex-${opts.executionId}`;
+  private launch(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
-    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
+    const transport = new StdioClientTransport({
+      command: 'codex',
+      args: ['mcp-server', ...(opts.extraArgs ?? [])],
+      env: opts.env,
+    });
+    this.transport = transport;
 
-    this.childProcess = nodeSpawn('codex', ['app-server'], {
-      cwd: opts.cwd,
-      env: opts.env as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
+    const client = new Client(
+      { name: 'agendo', version: '1.0.0' },
+      { capabilities: { elicitation: {} } },
+    );
+    this.client = client;
+
+    // Stream output via MCP logging notifications
+    client.setNotificationHandler(LoggingMessageNotificationSchema, (n) => {
+      const text =
+        typeof n.params.data === 'string' ? n.params.data : JSON.stringify(n.params.data);
+      for (const cb of dataCallbacks) cb(text + '\n');
     });
 
-    const cp = this.childProcess;
+    // Auto-approve all elicitation (permission) requests
+    client.setRequestHandler(ElicitRequestSchema, async () => ({
+      action: 'accept' as const,
+      content: {},
+    }));
 
-    cp.stdout?.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString('utf-8');
-      let newlineIdx: number;
-      while ((newlineIdx = this.buffer.indexOf('\n')) !== -1) {
-        const line = this.buffer.slice(0, newlineIdx).trim();
-        this.buffer = this.buffer.slice(newlineIdx + 1);
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line);
-          this.handleJsonRpcMessage(msg, dataCallbacks);
-        } catch {
-          for (const cb of dataCallbacks) cb(line + '\n');
-        }
-      }
-    });
+    transport.onclose = () => {
+      for (const cb of exitCallbacks) cb(0);
+    };
 
-    cp.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf-8');
-      for (const cb of dataCallbacks) cb(text);
-    });
-
-    cp.on('exit', (code) => {
-      tmux.killSession(this.tmuxSessionName);
-      for (const cb of exitCallbacks) cb(code);
-    });
-
-    this.initializeAndStart(prompt, opts, isResume);
+    // Async init chain — errors propagate via currentTurn rejection
+    this.currentTurn = this.connectAndFirstTurn(
+      client,
+      transport,
+      prompt,
+      resumeThreadId,
+      opts,
+    );
 
     return {
-      pid: cp.pid ?? 0,
-      tmuxSession: this.tmuxSessionName,
-      kill: (signal) => this.childProcess?.kill(signal),
+      pid: 0, // transport.pid available after connect() resolves
+      tmuxSession: '',
+      kill: (signal) => {
+        if (signal === 'SIGKILL' && this.transport?.pid) {
+          try {
+            process.kill(-this.transport.pid, 'SIGKILL');
+          } catch {
+            // Process group already dead
+          }
+        } else {
+          void client.close();
+        }
+      },
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };
   }
 
-  private initializeAndStart(prompt: string, opts: SpawnOpts, isResume: boolean): void {
-    this.sendRequest('initialize', {
-      protocolVersion: '1.0',
-      clientInfo: { name: 'agent-monitor', version: '1.0.0' },
-    });
-    this.sendNotification('initialized');
+  private async connectAndFirstTurn(
+    client: Client,
+    transport: StdioClientTransport,
+    prompt: string,
+    resumeThreadId: string | null,
+    opts: SpawnOpts,
+  ): Promise<void> {
+    await client.connect(transport);
+    const toolName = resumeThreadId ? 'codex-reply' : 'codex';
+    await this.runTurnWith(toolName, resumeThreadId, prompt, opts);
+  }
 
-    if (isResume && this.threadId) {
-      this.sendRequest('thread/resume', { threadId: this.threadId });
+  private async runTurnWith(
+    tool: 'codex' | 'codex-reply',
+    threadId: string | null,
+    prompt: string,
+    opts: SpawnOpts,
+  ): Promise<void> {
+    const args: Record<string, string> = { prompt };
+    if (threadId) {
+      args.threadId = threadId;
     } else {
-      this.sendRequest('thread/start', {
-        model: 'codex-mini',
-        cwd: opts.cwd,
-        approvalPolicy: 'auto-edit',
-      });
+      args.cwd = opts.cwd;
     }
 
-    setTimeout(() => {
-      if (this.threadId) {
-        this.sendRequest('turn/start', {
-          threadId: this.threadId,
-          input: [{ type: 'text', text: prompt }],
-        });
-      }
-    }, 500);
-  }
+    const result = await this.client!.callTool(
+      { name: tool, arguments: args },
+      undefined,
+      { timeout: opts.timeoutSec * 1000, resetTimeoutOnProgress: true },
+    );
 
-  private handleJsonRpcMessage(
-    msg: Record<string, unknown>,
-    dataCallbacks: Array<(chunk: string) => void>,
-  ): void {
-    if ('id' in msg && 'result' in msg) {
-      const result = msg.result as Record<string, unknown>;
-      if (result.threadId && typeof result.threadId === 'string') {
-        this.threadId = result.threadId;
-      }
-      if (result.turnId && typeof result.turnId === 'string') {
-        this.turnId = result.turnId;
-      }
-      return;
-    }
-
-    if ('method' in msg) {
-      const method = msg.method as string;
-      const params = (msg.params ?? {}) as Record<string, unknown>;
-
-      switch (method) {
-        case 'item/agentMessage/delta': {
-          const delta = params.delta as string | undefined;
-          if (delta) {
-            for (const cb of dataCallbacks) cb(delta);
+    // Extract threadId from first-turn response content
+    if (!this.threadId) {
+      const content = result.content as Array<{ type: string; text?: string }>;
+      for (const block of content) {
+        if (block.type === 'text' && block.text) {
+          try {
+            const parsed = JSON.parse(block.text) as { threadId?: string };
+            if (parsed.threadId) this.threadId = parsed.threadId;
+          } catch {
+            // Not JSON — that's fine
           }
-          break;
-        }
-        case 'item/commandExecution/outputDelta': {
-          const output = params.delta as string | undefined;
-          if (output) {
-            for (const cb of dataCallbacks) cb(output);
-          }
-          break;
-        }
-        case 'turn/completed': {
-          this.turnId = null;
-          const summary = '[codex] Turn completed\n';
-          for (const cb of dataCallbacks) cb(summary);
-          break;
-        }
-        case 'item/commandExecution/requestApproval': {
-          const approvalId = params.id as string;
-          if (approvalId) {
-            this.sendRequest('item/commandExecution/approve', { id: approvalId });
-          }
-          break;
-        }
-        default: {
-          const text = `[codex:${method}] ${JSON.stringify(params)}\n`;
-          for (const cb of dataCallbacks) cb(text);
         }
       }
     }
   }
 
-  private sendRequest(method: string, params: Record<string, unknown>): void {
-    const request: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: ++this.requestId,
-      method,
-      params,
-    };
-    this.writeMessage(request);
-  }
-
-  private sendNotification(method: string, params?: Record<string, unknown>): void {
-    const notification: JsonRpcNotification = {
-      jsonrpc: '2.0',
-      method,
-      ...(params && { params }),
-    };
-    this.writeMessage(notification);
-  }
-
-  private writeMessage(msg: JsonRpcMessage): void {
-    if (!this.childProcess?.stdin?.writable) return;
-    this.childProcess.stdin.write(JSON.stringify(msg) + '\n');
+  private async runTurn(message: string): Promise<void> {
+    if (!this.client || !this.threadId) {
+      throw new Error('No active Codex MCP session');
+    }
+    await this.runTurnWith('codex-reply', this.threadId, message, this.storedOpts!);
   }
 }

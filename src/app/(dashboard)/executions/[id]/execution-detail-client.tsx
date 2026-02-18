@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { formatDistanceStrict, format } from 'date-fns';
@@ -8,8 +7,11 @@ import { ArrowLeft, Terminal as TerminalIcon } from 'lucide-react';
 import { ExecutionStatusBadge } from '@/components/executions/execution-status-badge';
 import { ExecutionCancelButton } from '@/components/executions/execution-cancel-button';
 import { ExecutionLogViewer } from '@/components/executions/execution-log-viewer';
+import { ExecutionChatView } from '@/components/executions/execution-chat-view';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useExecutionStream } from '@/hooks/use-execution-stream';
 import type { ExecutionWithDetails } from '@/lib/services/execution-service';
 import type { ExecutionStatus } from '@/lib/types';
 
@@ -43,15 +45,16 @@ function formatTimestamp(date: Date | null): string {
 }
 
 export function ExecutionDetailClient({ execution }: ExecutionDetailClientProps) {
-  const [currentStatus, setCurrentStatus] = useState(execution.status);
+  const stream = useExecutionStream(execution.id);
+  const currentStatus = stream.status ?? execution.status;
   const isActive = ACTIVE_STATUSES.has(currentStatus);
   const showTerminal =
     execution.tmuxSessionName && (currentStatus === 'running' || currentStatus === 'cancelling');
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-4 sm:gap-6 p-3 sm:p-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-4">
         <Link href="/executions">
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-4 w-4" />
@@ -81,7 +84,9 @@ export function ExecutionDetailClient({ execution }: ExecutionDetailClientProps)
             <ExecutionCancelButton
               executionId={execution.id}
               status={currentStatus}
-              onCancelled={() => setCurrentStatus('cancelling')}
+              onCancelled={() => {
+                // Status will update via SSE stream automatically
+              }}
             />
           )}
         </div>
@@ -111,21 +116,65 @@ export function ExecutionDetailClient({ execution }: ExecutionDetailClientProps)
           <p className="text-xs text-muted-foreground">Started</p>
           <p className="mt-0.5 text-sm font-medium">{formatTimestamp(execution.startedAt)}</p>
         </div>
+        {execution.totalCostUsd != null && (
+          <div>
+            <p className="text-xs text-muted-foreground">Cost</p>
+            <p className="mt-0.5 text-sm font-medium">${Number(execution.totalCostUsd).toFixed(4)}</p>
+          </div>
+        )}
+        {execution.totalTurns != null && (
+          <div>
+            <p className="text-xs text-muted-foreground">Turns</p>
+            <p className="mt-0.5 text-sm font-medium">{execution.totalTurns}</p>
+          </div>
+        )}
       </div>
 
-      {/* Log Viewer (includes message input when status is running) */}
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Logs</h2>
-        <ExecutionLogViewer executionId={execution.id} initialStatus={currentStatus} />
-      </div>
-
-      {/* Inline Terminal for tmux sessions */}
-      {showTerminal && (
-        <div className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium">Terminal</h2>
-          <WebTerminal executionId={execution.id} className="h-[300px]" />
+      {/* Tabbed Content: Chat / Logs / Terminal */}
+      <Tabs defaultValue="chat" className="flex flex-col">
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="chat">Chat</TabsTrigger>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
+            {showTerminal && <TabsTrigger value="terminal" className="hidden sm:inline-flex">Terminal</TabsTrigger>}
+          </TabsList>
+          {showTerminal && (
+            <Link href={`/executions/${execution.id}/terminal`}>
+              <Button variant="ghost" size="sm">
+                <TerminalIcon className="mr-2 h-3.5 w-3.5" />
+                Full Terminal
+              </Button>
+            </Link>
+          )}
         </div>
-      )}
+        <TabsContent value="chat" className="mt-2">
+          <ExecutionChatView
+            executionId={execution.id}
+            stream={stream}
+            currentStatus={currentStatus}
+          />
+        </TabsContent>
+        <TabsContent value="logs" className="mt-2">
+          <ExecutionLogViewer
+            executionId={execution.id}
+            initialStatus={execution.status}
+            externalStream={stream}
+          />
+        </TabsContent>
+        {showTerminal && (
+          <TabsContent value="terminal" className="mt-2">
+            <div className="sm:hidden rounded-lg border p-4 text-center">
+              <p className="text-sm text-muted-foreground">Terminal is not available on mobile.</p>
+              <Link href={`/executions/${execution.id}/terminal`} className="text-sm text-primary underline mt-1 inline-block">
+                Open full terminal
+              </Link>
+            </div>
+            <div className="hidden sm:block">
+              <WebTerminal executionId={execution.id} className="h-[400px]" />
+            </div>
+          </TabsContent>
+        )}
+      </Tabs>
 
       {/* Session Resume */}
       {execution.sessionRef && !isActive && (

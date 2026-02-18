@@ -3,10 +3,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useExecutionStream } from '@/hooks/use-execution-stream';
+import { useExecutionStream, type UseExecutionStreamReturn } from '@/hooks/use-execution-stream';
 import { getStreamColorClass, type RenderedLine } from '@/lib/log-renderer';
 import { ExecutionLogToolbar } from './execution-log-toolbar';
-import { ExecutionMessageInput } from './execution-message-input';
 import type { ExecutionStatus } from '@/lib/types';
 
 interface ExecutionLogViewerProps {
@@ -14,6 +13,7 @@ interface ExecutionLogViewerProps {
   initialStatus?: ExecutionStatus;
   enabled?: boolean;
   onStatusChange?: (status: ExecutionStatus) => void;
+  externalStream?: UseExecutionStreamReturn;
 }
 
 const SCROLL_THRESHOLD = 50;
@@ -47,8 +47,10 @@ export function ExecutionLogViewer({
   initialStatus,
   enabled = true,
   onStatusChange,
+  externalStream,
 }: ExecutionLogViewerProps) {
-  const stream = useExecutionStream(enabled ? executionId : null);
+  const internal = useExecutionStream(externalStream ? null : (enabled ? executionId : null));
+  const stream = externalStream ?? internal;
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [wrapLines, setWrapLines] = useState(false);
@@ -184,6 +186,10 @@ export function ExecutionLogViewer({
         onWrapToggle={setWrapLines}
         autoScroll={autoScroll}
         onAutoScrollToggle={setAutoScroll}
+        onCopyAll={() => {
+          const text = stream.lines.map((l) => l.text).join('\n');
+          void navigator.clipboard.writeText(text);
+        }}
       />
 
       <div className="relative">
@@ -196,7 +202,7 @@ export function ExecutionLogViewer({
         <div
           ref={containerRef}
           onScroll={handleScroll}
-          className="h-[500px] overflow-auto border border-zinc-700 bg-[#1a1b26] font-mono text-xs leading-5"
+          className="h-[50dvh] min-h-[320px] overflow-auto border border-zinc-700 bg-[#1a1b26] font-mono text-xs leading-5"
           role="log"
           aria-live="polite"
           aria-label="Execution logs"
@@ -227,8 +233,6 @@ export function ExecutionLogViewer({
           Stream error: {stream.error}
         </div>
       )}
-
-      <ExecutionMessageInput executionId={executionId} status={currentStatus} />
     </div>
   );
 }

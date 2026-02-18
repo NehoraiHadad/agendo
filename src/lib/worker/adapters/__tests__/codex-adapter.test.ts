@@ -1,30 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventEmitter } from 'node:events';
-import { Readable, Writable } from 'node:stream';
 
-const mockStdinWrite = vi.fn((_c: string) => true);
+// Mocks must be declared before imports
+const mockConnect = vi.fn().mockResolvedValue(undefined);
+const mockCallTool = vi.fn().mockResolvedValue({ content: [] });
+const mockSetNotificationHandler = vi.fn();
+const mockSetRequestHandler = vi.fn();
+const mockClose = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('@/lib/worker/tmux-manager', () => ({
-  createSession: vi.fn(),
-  killSession: vi.fn(),
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: vi.fn().mockImplementation(() => ({
+    connect: mockConnect,
+    callTool: mockCallTool,
+    setNotificationHandler: mockSetNotificationHandler,
+    setRequestHandler: mockSetRequestHandler,
+    close: mockClose,
+  })),
 }));
 
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn(() => {
-    const proc = new EventEmitter();
-    (proc as EventEmitter & { stdin: Writable }).stdin = new Writable({
-      write(chunk: Buffer, _encoding: string, cb: () => void) {
-        mockStdinWrite(chunk.toString());
-        cb();
-      },
-    });
-    (proc as EventEmitter & { stdin: Writable & { writable: boolean } }).stdin.writable = true;
-    (proc as EventEmitter & { stdout: Readable }).stdout = new Readable({ read() {} });
-    (proc as EventEmitter & { stderr: Readable }).stderr = new Readable({ read() {} });
-    (proc as EventEmitter & { pid: number }).pid = 54321;
-    (proc as EventEmitter & { kill: ReturnType<typeof vi.fn> }).kill = vi.fn();
-    return proc;
-  }),
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  StdioClientTransport: vi.fn().mockImplementation(() => ({
+    onclose: null as (() => void) | null,
+    pid: 54321,
+  })),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
+  LoggingMessageNotificationSchema: {},
+  ElicitRequestSchema: {},
 }));
 
 import { CodexAdapter } from '@/lib/worker/adapters/codex-adapter';
@@ -41,32 +43,92 @@ const opts: SpawnOpts = {
 describe('CodexAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConnect.mockResolvedValue(undefined);
+    mockCallTool.mockResolvedValue({ content: [] });
+    mockClose.mockResolvedValue(undefined);
   });
 
-  it('sends initialize handshake on spawn', () => {
+  it('registers notification and request handlers on spawn', () => {
     const adapter = new CodexAdapter();
     adapter.spawn('test prompt', opts);
-
-    // First message should be initialize request
-    const firstCall = mockStdinWrite.mock.calls[0][0];
-    const parsed = JSON.parse(firstCall);
-    expect(parsed.method).toBe('initialize');
-    expect(parsed.jsonrpc).toBe('2.0');
+    expect(mockSetNotificationHandler).toHaveBeenCalled();
+    expect(mockSetRequestHandler).toHaveBeenCalled();
   });
 
-  it('sends initialized notification after initialize', () => {
-    const adapter = new CodexAdapter();
-    adapter.spawn('test prompt', opts);
-
-    const secondCall = mockStdinWrite.mock.calls[1][0];
-    const parsed = JSON.parse(secondCall);
-    expect(parsed.method).toBe('initialized');
-  });
-
-  it('returns managed process with correct tmux session name', () => {
+  it('returns managed process with empty tmuxSession and pid=0', () => {
     const adapter = new CodexAdapter();
     const proc = adapter.spawn('test prompt', opts);
-    expect(proc.tmuxSession).toBe('codex-test-exec');
-    expect(proc.pid).toBe(54321);
+    expect(proc.tmuxSession).toBe('');
+    expect(proc.pid).toBe(0);
+  });
+
+  it('connects to MCP server and calls codex tool on first turn', async () => {
+    const adapter = new CodexAdapter();
+    adapter.spawn('test prompt', opts);
+
+    // Let microtasks drain (connect + callTool are mocked as resolved)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockConnect).toHaveBeenCalled();
+    expect(mockCallTool).toHaveBeenCalledWith(
+      { name: 'codex', arguments: { prompt: 'test prompt', cwd: '/tmp' } },
+      undefined,
+      expect.objectContaining({ timeout: 300_000 }),
+    );
+  });
+
+  it('extracts threadId from callTool response content', async () => {
+    mockCallTool.mockResolvedValueOnce({
+      content: [{ type: 'text', text: JSON.stringify({ threadId: 'thread-abc' }) }],
+    });
+
+    const adapter = new CodexAdapter();
+    adapter.spawn('test prompt', opts);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(adapter.extractSessionId('')).toBe('thread-abc');
+  });
+
+  it('uses codex-reply tool on resume', async () => {
+    const adapter = new CodexAdapter();
+    adapter.resume('existing-thread', 'continue working', opts);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockCallTool).toHaveBeenCalledWith(
+      {
+        name: 'codex-reply',
+        arguments: { prompt: 'continue working', threadId: 'existing-thread' },
+      },
+      undefined,
+      expect.anything(),
+    );
+  });
+
+  it('sendMessage waits for initial turn then calls codex-reply', async () => {
+    mockCallTool
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: JSON.stringify({ threadId: 'thread-123' }) }],
+      })
+      .mockResolvedValueOnce({ content: [] });
+
+    const adapter = new CodexAdapter();
+    adapter.spawn('test prompt', opts);
+
+    // Wait for spawn's async chain to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await adapter.sendMessage('follow-up question');
+
+    expect(mockCallTool).toHaveBeenCalledTimes(2);
+    expect(mockCallTool).toHaveBeenLastCalledWith(
+      {
+        name: 'codex-reply',
+        arguments: { prompt: 'follow-up question', threadId: 'thread-123' },
+      },
+      undefined,
+      expect.anything(),
+    );
   });
 });

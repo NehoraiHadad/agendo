@@ -1,104 +1,197 @@
-import { execFileSync } from 'node:child_process';
-import * as tmux from '@/lib/worker/tmux-manager';
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 
-const POLL_INTERVAL_MS = 500;
+interface PendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+}
+
+interface AcpMessage {
+  jsonrpc: '2.0';
+  id?: number | string;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
 
 export class GeminiAdapter implements AgentAdapter {
-  private tmuxSessionName = '';
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private lastCaptureLength = 0;
+  private childProcess: ChildProcess | null = null;
+  private requestId = 0;
+  private pendingRequests = new Map<number | string, PendingRequest>();
+  private sessionId: string | null = null;
+  private currentTurn: Promise<void> = Promise.resolve();
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
-    return this.launch(prompt, opts, []);
+    return this.launch(prompt, opts, null);
   }
 
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
-    return this.launch(prompt, opts, ['--resume', 'latest']);
+    this.sessionId = sessionRef;
+    return this.launch(prompt, opts, sessionRef);
   }
 
   extractSessionId(_output: string): string | null {
-    return this.tmuxSessionName;
+    return this.sessionId;
   }
 
-  sendMessage(message: string): void {
-    if (!tmux.hasSession(this.tmuxSessionName)) {
-      throw new Error(`Gemini tmux session "${this.tmuxSessionName}" not found`);
-    }
-    tmux.sendInput(this.tmuxSessionName, message);
-    tmux.pressEnter(this.tmuxSessionName);
+  async sendMessage(message: string): Promise<void> {
+    if (!this.sessionId) throw new Error('No active Gemini ACP session');
+    await this.currentTurn;
+    this.currentTurn = this.sendPrompt(message);
+    await this.currentTurn;
   }
 
   interrupt(): void {
-    if (tmux.hasSession(this.tmuxSessionName)) {
-      tmux.sendInput(this.tmuxSessionName, '\x03');
-    }
+    this.childProcess?.kill('SIGINT');
   }
 
-  private launch(prompt: string, opts: SpawnOpts, extraFlags: string[]): ManagedProcess {
-    this.tmuxSessionName = `gemini-${opts.executionId}`;
+  private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
-    const geminiCmd = ['gemini', ...extraFlags, '-i', prompt].join(' ');
-
-    tmux.createSession(this.tmuxSessionName, {
+    const cp = nodeSpawn('gemini', ['--experimental-acp', ...(opts.extraArgs ?? [])], {
       cwd: opts.cwd,
-      command: geminiCmd,
+      env: opts.env as NodeJS.ProcessEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      detached: true,
+    });
+    this.childProcess = cp;
+    cp.unref();
+
+    // Parse ndJSON from stdout line by line
+    const rl = createInterface({ input: cp.stdout! });
+    rl.on('line', (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('{')) return;
+      try {
+        const msg = JSON.parse(trimmed) as AcpMessage;
+        this.handleAcpMessage(msg, dataCallbacks);
+      } catch {
+        // Skip non-JSON lines (Gemini debug output)
+      }
     });
 
-    const pipeFile = `/tmp/gemini-${opts.executionId}.pipe`;
-    tmux.pipePaneToFile(this.tmuxSessionName, pipeFile);
+    cp.stderr?.on('data', (chunk: Buffer) => {
+      for (const cb of dataCallbacks) cb(chunk.toString('utf-8'));
+    });
 
-    this.pollTimer = setInterval(() => {
-      if (!tmux.hasSession(this.tmuxSessionName)) {
-        this.stopPolling();
-        for (const cb of exitCallbacks) cb(0);
-        return;
+    cp.on('exit', (code) => {
+      // Reject all pending requests so awaiting callers unblock
+      for (const [, pending] of this.pendingRequests) {
+        pending.reject(new Error('Gemini process exited'));
       }
-      const captured = tmux.capturePane(this.tmuxSessionName);
-      if (captured.length > this.lastCaptureLength) {
-        const newContent = captured.slice(this.lastCaptureLength);
-        this.lastCaptureLength = captured.length;
-        for (const cb of dataCallbacks) cb(newContent);
-      }
-    }, POLL_INTERVAL_MS);
+      this.pendingRequests.clear();
+      for (const cb of exitCallbacks) cb(code);
+    });
 
-    let pid = 0;
-    try {
-      const pidStr = execFileSync(
-        'tmux',
-        ['display-message', '-t', this.tmuxSessionName, '-p', '#{pane_pid}'],
-        { encoding: 'utf-8' },
-      ).trim();
-      pid = parseInt(pidStr, 10) || 0;
-    } catch {
-      // Fallback: PID unknown
-    }
+    // Async init chain
+    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId);
 
     return {
-      pid,
-      tmuxSession: this.tmuxSessionName,
+      pid: cp.pid ?? 0,
+      tmuxSession: '',
       kill: (signal) => {
-        this.stopPolling();
-        if (pid > 0) {
-          try {
-            process.kill(pid, signal);
-          } catch {
-            // Process may already be dead
-          }
+        const p = this.childProcess;
+        if (!p?.pid) return;
+        try {
+          process.kill(-p.pid, signal);
+        } catch {
+          // Process group already dead
         }
-        tmux.killSession(this.tmuxSessionName);
       },
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };
   }
 
-  private stopPolling(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+  private handleAcpMessage(
+    msg: AcpMessage,
+    dataCallbacks: Array<(chunk: string) => void>,
+  ): void {
+    // Response to one of our requests (has id + result or error, no method)
+    if (msg.id !== undefined && !msg.method && ('result' in msg || 'error' in msg)) {
+      const pending = this.pendingRequests.get(msg.id);
+      if (pending) {
+        this.pendingRequests.delete(msg.id);
+        if (msg.error) {
+          pending.reject(new Error(`ACP error ${msg.error.code}: ${msg.error.message}`));
+        } else {
+          pending.resolve(msg.result);
+        }
+      }
+      return;
     }
+
+    // Server request (has id + method → needs a synchronous response)
+    if (msg.id !== undefined && msg.method) {
+      if (msg.method === 'session/request_permission') {
+        this.writeJson({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { outcome: 'selected', optionId: 'proceed_once' },
+        });
+      }
+      return;
+    }
+
+    // Notification (no id, has method)
+    if (msg.method && msg.id === undefined) {
+      if (msg.method === 'session/update') {
+        const messages =
+          (msg.params?.messages as Array<{ role: string; content: string }>) ?? [];
+        for (const m of messages) {
+          if (m.role === 'assistant' && m.content) {
+            for (const cb of dataCallbacks) cb(m.content);
+          }
+        }
+      }
+    }
+  }
+
+  private async initAndRun(
+    prompt: string,
+    opts: SpawnOpts,
+    resumeSessionId: string | null,
+  ): Promise<void> {
+    // 1. Handshake
+    await this.sendRequest('initialize', { protocolVersion: 1 });
+
+    // 2. Create session or reuse existing
+    if (!resumeSessionId) {
+      const result = await this.sendRequest<{ sessionId: string }>('newSession', {
+        cwd: opts.cwd,
+      });
+      this.sessionId = result.sessionId;
+    }
+
+    // 3. First prompt
+    await this.sendPrompt(prompt);
+  }
+
+  private async sendPrompt(text: string): Promise<void> {
+    if (!this.sessionId) throw new Error('No active session');
+    await this.sendRequest('prompt', {
+      sessionId: this.sessionId,
+      prompt: [{ type: 'text', text }],
+    });
+  }
+
+  private sendRequest<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {
+    const id = ++this.requestId;
+    return new Promise<T>((resolve, reject) => {
+      this.pendingRequests.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      });
+      this.writeJson({ jsonrpc: '2.0', id, method, params });
+    });
+  }
+
+  private writeJson(msg: Record<string, unknown>): void {
+    if (!this.childProcess?.stdin?.writable) return;
+    this.childProcess.stdin.write(JSON.stringify(msg) + '\n');
   }
 }

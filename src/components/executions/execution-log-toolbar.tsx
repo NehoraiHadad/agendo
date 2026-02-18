@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Search, ChevronUp, ChevronDown, Download, WrapText, ArrowDownToLine } from 'lucide-react';
+import { Search, ChevronUp, ChevronDown, Download, Copy, WrapText, ArrowDownToLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Toggle } from '@/components/ui/toggle';
@@ -21,6 +21,7 @@ interface ExecutionLogToolbarProps {
   onWrapToggle: (wrap: boolean) => void;
   autoScroll: boolean;
   onAutoScrollToggle: (auto: boolean) => void;
+  onCopyAll?: () => void;
 }
 
 export function ExecutionLogToolbar({
@@ -37,6 +38,7 @@ export function ExecutionLogToolbar({
   onWrapToggle,
   autoScroll,
   onAutoScrollToggle,
+  onCopyAll,
 }: ExecutionLogToolbarProps) {
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -134,6 +136,22 @@ export function ExecutionLogToolbar({
             </TooltipTrigger>
             <TooltipContent>Auto-scroll</TooltipContent>
           </Tooltip>
+
+          {onCopyAll && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={onCopyAll}
+                  aria-label="Copy all logs"
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Copy all</TooltipContent>
+            </Tooltip>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>

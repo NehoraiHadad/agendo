@@ -5,6 +5,7 @@ import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapt
 export class ClaudeAdapter implements AgentAdapter {
   private childProcess: ChildProcess | null = null;
   private tmuxSessionName = '';
+  private sessionId: string | null = null;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, []);
@@ -29,14 +30,14 @@ export class ClaudeAdapter implements AgentAdapter {
     return null;
   }
 
-  sendMessage(message: string): void {
+  async sendMessage(message: string): Promise<void> {
     if (!this.childProcess?.stdin?.writable) {
       throw new Error('Claude process stdin is not writable');
     }
     const ndjsonMessage = JSON.stringify({
       type: 'user',
       message: { role: 'user', content: message },
-      session_id: 'default',
+      session_id: this.sessionId ?? 'default',
       parent_tool_use_id: null,
     });
     this.childProcess.stdin.write(ndjsonMessage + '\n');
@@ -48,6 +49,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private launch(prompt: string, opts: SpawnOpts, extraFlags: string[]): ManagedProcess {
     this.tmuxSessionName = `claude-${opts.executionId}`;
+    this.sessionId = null;
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
@@ -61,6 +63,7 @@ export class ClaudeAdapter implements AgentAdapter {
       '--permission-mode',
       'bypassPermissions',
       ...extraFlags,
+      ...(opts.extraArgs ?? []),
     ];
 
     tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
@@ -70,9 +73,11 @@ export class ClaudeAdapter implements AgentAdapter {
       env: opts.env as NodeJS.ProcessEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      detached: true,
     });
 
     const cp = this.childProcess;
+    cp.unref();
 
     const initialMessage = JSON.stringify({
       type: 'user',
@@ -84,6 +89,9 @@ export class ClaudeAdapter implements AgentAdapter {
 
     cp.stdout?.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf-8');
+      if (!this.sessionId) {
+        this.sessionId = this.extractSessionId(text);
+      }
       for (const cb of dataCallbacks) cb(text);
     });
 
@@ -100,7 +108,15 @@ export class ClaudeAdapter implements AgentAdapter {
     return {
       pid: cp.pid ?? 0,
       tmuxSession: this.tmuxSessionName,
-      kill: (signal) => this.childProcess?.kill(signal),
+      kill: (signal) => {
+        const p = this.childProcess;
+        if (!p?.pid) return;
+        try {
+          process.kill(-p.pid, signal);
+        } catch {
+          // Process group already dead
+        }
+      },
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };

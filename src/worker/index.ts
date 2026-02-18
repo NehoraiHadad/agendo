@@ -6,6 +6,7 @@ import { type ExecuteCapabilityJobData, registerWorker, stopBoss } from '../lib/
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runExecution } from '../lib/worker/execution-runner';
+import { StaleReaper } from '../lib/worker/stale-reaper';
 
 const WORKER_ID = config.WORKER_ID;
 
@@ -60,10 +61,16 @@ async function main(): Promise<void> {
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);
   await updateHeartbeat(); // initial beat
 
+  // Stale job reaper
+  const staleReaper = new StaleReaper();
+  staleReaper.start();
+  console.log(`[worker] Stale job reaper started (threshold: ${config.STALE_JOB_THRESHOLD_MS}ms)`);
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`[worker] Received ${signal}, shutting down...`);
     clearInterval(heartbeatInterval);
+    staleReaper.stop();
     await stopBoss();
     await pool.end();
     process.exit(0);
