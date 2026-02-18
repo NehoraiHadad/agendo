@@ -8,16 +8,17 @@ interface AgentTableProps {
 
 export function AgentTable({ agents }: AgentTableProps) {
   return (
+    <div className="rounded-xl border border-white/[0.06] overflow-hidden">
     <Table>
-      <TableHeader>
+      <TableHeader className="bg-white/[0.02]">
         <TableRow>
-          <TableHead className="w-10" />
-          <TableHead>Name</TableHead>
-          <TableHead>Binary Path</TableHead>
-          <TableHead>Type</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Version</TableHead>
-          <TableHead className="w-20">Actions</TableHead>
+          <TableHead className="w-10 text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9" />
+          <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Name</TableHead>
+          <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Binary Path</TableHead>
+          <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Type</TableHead>
+          <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Status</TableHead>
+          <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Version</TableHead>
+          <TableHead className="w-20 text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -26,5 +27,6 @@ export function AgentTable({ agents }: AgentTableProps) {
         ))}
       </TableBody>
     </Table>
+    </div>
   );
 }

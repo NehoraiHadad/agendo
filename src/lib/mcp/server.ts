@@ -1,5 +1,5 @@
 /**
- * Agent Monitor MCP Server — standalone Node.js process (stdio transport).
+ * agenDo MCP Server — standalone Node.js process (stdio transport).
  * All logging goes to stderr; stdout is reserved for JSON-RPC.
  *
  * IMPORTANT: No `@/` path aliases — this file is bundled with esbuild.
@@ -9,10 +9,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const AGENT_MONITOR_URL = process.env.AGENT_MONITOR_URL ?? 'http://localhost:4100';
+const AGENDO_URL = process.env.AGENDO_URL ?? 'http://localhost:4100';
 
 function log(msg: string): void {
-  process.stderr.write(`[agent-monitor-mcp] ${msg}\n`);
+  process.stderr.write(`[agendo-mcp] ${msg}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ interface ApiCallOptions {
 }
 
 export async function apiCall(path: string, options: ApiCallOptions = {}): Promise<unknown> {
-  const url = `${AGENT_MONITOR_URL}${path}`;
+  const url = `${AGENDO_URL}${path}`;
   const { method = 'GET', body } = options;
 
   const init: RequestInit = {
@@ -193,14 +193,14 @@ export async function handleAssignTask(args: {
 
 function createServer(): McpServer {
   const server = new McpServer({
-    name: 'agent-monitor',
+    name: 'agendo',
     version: '1.0.0',
   });
 
   // -- create_task --
   server.tool(
     'create_task',
-    'Create a new task on the Agent Monitor board',
+    'Create a new task on the agenDo board',
     {
       title: z.string().describe('Task title'),
       description: z.string().optional().describe('Task description'),
@@ -392,7 +392,7 @@ function createServer(): McpServer {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  log(`Starting MCP server (API: ${AGENT_MONITOR_URL})`);
+  log(`Starting MCP server (API: ${AGENDO_URL})`);
 
   const server = createServer();
   const transport = new StdioServerTransport();

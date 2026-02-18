@@ -9,11 +9,11 @@ interface TaskDragOverlayProps {
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
-  1: 'bg-red-500/10 text-red-500',
-  2: 'bg-orange-500/10 text-orange-500',
-  3: 'bg-blue-500/10 text-blue-500',
-  4: 'bg-zinc-500/10 text-zinc-500',
-  5: 'bg-zinc-400/10 text-zinc-400',
+  1: 'bg-red-500/10 text-red-400 border-red-500/20',
+  2: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  3: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  4: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20',
+  5: 'bg-zinc-400/10 text-zinc-500 border-zinc-400/20',
 };
 
 const PRIORITY_LABELS: Record<number, string> = {
@@ -32,8 +32,8 @@ export function TaskDragOverlay({ taskId }: TaskDragOverlayProps) {
   return (
     <div
       className={cn(
-        'w-[280px] rounded-md border bg-background p-3 shadow-lg',
-        'rotate-2 opacity-90',
+        'w-[280px] rounded-lg border border-white/[0.06] bg-card p-3',
+        'glow-accent scale-[1.02] rotate-1 shadow-2xl',
       )}
     >
       <p className="text-sm font-medium leading-tight">{task.title}</p>
@@ -44,14 +44,14 @@ export function TaskDragOverlay({ taskId }: TaskDragOverlayProps) {
         </Badge>
 
         {task.assigneeAgentId && (
-          <Badge variant="secondary" className="text-xs">
+          <Badge variant="secondary" className="text-xs bg-white/[0.06] border border-white/[0.08] text-muted-foreground">
             Assigned
           </Badge>
         )}
       </div>
 
       {task.description && (
-        <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
+        <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground/60">{task.description}</p>
       )}
     </div>
   );

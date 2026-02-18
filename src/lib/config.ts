@@ -5,7 +5,7 @@ const envSchema = z.object({
   WORKER_ID: z.string().default('worker-1'),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().default(2000),
   WORKER_MAX_CONCURRENT_JOBS: z.coerce.number().default(3),
-  LOG_DIR: z.string().default('/data/agent-monitor/logs'),
+  LOG_DIR: z.string().default('/data/agendo/logs'),
   STALE_JOB_THRESHOLD_MS: z.coerce.number().default(120000),
   HEARTBEAT_INTERVAL_MS: z.coerce.number().default(30000),
   ALLOWED_WORKING_DIRS: z.string().default('/home/ubuntu/projects:/tmp'),
@@ -15,6 +15,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   MCP_SERVER_PATH: z.string().optional(),
   TERMINAL_JWT_SECRET: z.string().min(16).optional(),
+  USE_SESSION_PROCESS: z.coerce.boolean().default(false),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

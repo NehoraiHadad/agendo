@@ -5,11 +5,11 @@
 export function generateClaudeMcpConfig(serverPath: string): object {
   return {
     mcpServers: {
-      'agent-monitor': {
+      'agendo': {
         command: 'node',
         args: [serverPath],
         env: {
-          AGENT_MONITOR_URL: process.env.AGENT_MONITOR_URL ?? 'http://localhost:4100',
+          AGENDO_URL: process.env.AGENDO_URL ?? 'http://localhost:4100',
         },
       },
     },
@@ -17,24 +17,24 @@ export function generateClaudeMcpConfig(serverPath: string): object {
 }
 
 export function generateCodexMcpConfig(serverPath: string): string {
-  const url = process.env.AGENT_MONITOR_URL ?? 'http://localhost:4100';
-  return `[mcp_servers.agent-monitor]
+  const url = process.env.AGENDO_URL ?? 'http://localhost:4100';
+  return `[mcp_servers.agendo]
 command = "node"
 args = ["${serverPath}"]
 
-[mcp_servers.agent-monitor.env]
-AGENT_MONITOR_URL = "${url}"
+[mcp_servers.agendo.env]
+AGENDO_URL = "${url}"
 `;
 }
 
 export function generateGeminiMcpConfig(serverPath: string): object {
   return {
     mcpServers: {
-      'agent-monitor': {
+      'agendo': {
         command: 'node',
         args: [serverPath],
         env: {
-          AGENT_MONITOR_URL: process.env.AGENT_MONITOR_URL ?? 'http://localhost:4100',
+          AGENDO_URL: process.env.AGENDO_URL ?? 'http://localhost:4100',
         },
       },
     },
@@ -42,8 +42,8 @@ export function generateGeminiMcpConfig(serverPath: string): object {
 }
 
 export function generateGeminiRestFallbackInstructions(): string {
-  const baseUrl = process.env.AGENT_MONITOR_URL ?? 'http://localhost:4100';
-  return `# Agent Monitor REST API Instructions
+  const baseUrl = process.env.AGENDO_URL ?? 'http://localhost:4100';
+  return `# agenDo REST API Instructions
 
 When MCP is not available, use these REST endpoints directly.
 

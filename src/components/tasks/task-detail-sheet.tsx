@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { X } from 'lucide-react';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { TaskDetailHeader } from './task-detail-header';
 import { TaskMetaPanel } from './task-meta-panel';
 import { TaskSubtasksList } from './task-subtasks-list';
 import { TaskDependenciesPanel } from './task-dependencies-panel';
 import { TaskExecutionHistory } from './task-execution-history';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 
 interface TaskDetailSheetProps {
@@ -60,39 +60,61 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
     };
   }, [taskId]);
 
+  const close = () => selectTask(null);
+
   return (
-    <Sheet open onOpenChange={(open) => !open && selectTask(null)}>
-      <SheetContent side="right" className="w-full sm:w-[40vw] sm:max-w-[600px]">
-        <SheetHeader>
-          <SheetTitle className="sr-only">Task Details</SheetTitle>
-        </SheetHeader>
+    <Sheet open onOpenChange={(open) => !open && close()}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="flex flex-col w-full sm:w-[480px] sm:max-w-[52vw] p-0 gap-0 border-l border-white/[0.08]"
+      >
+        {/* Accessible title (hidden visually) */}
+        <SheetTitle className="sr-only">Task Details</SheetTitle>
+
+        {/* Sticky header */}
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3 shrink-0">
+          <p className="text-xs uppercase tracking-widest text-muted-foreground/60 font-medium">
+            Task Details
+          </p>
+          <button
+            onClick={close}
+            className="rounded-md p-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-white/[0.06] transition-colors"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
         {!details ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground">Loading...</p>
+          <div className="flex flex-1 items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <div className="h-5 w-5 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+              <p className="text-xs text-muted-foreground/50">Loading…</p>
+            </div>
           </div>
         ) : (
-          <ScrollArea className="h-full pr-4">
-            <div className="flex flex-col gap-6 pb-8">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <div className="flex flex-col gap-5 px-4 pb-8 pt-4">
               <TaskDetailHeader task={details} />
 
-              <Separator />
+              <Separator className="bg-white/[0.06]" />
 
               <TaskMetaPanel task={details} />
 
-              <Separator />
+              <Separator className="bg-white/[0.06]" />
 
               <TaskSubtasksList taskId={details.id} />
 
-              <Separator />
+              <Separator className="bg-white/[0.06]" />
 
               <TaskDependenciesPanel taskId={details.id} />
 
-              <Separator />
+              <Separator className="bg-white/[0.06]" />
 
               <TaskExecutionHistory taskId={details.id} agentId={details.assigneeAgentId} />
             </div>
-          </ScrollArea>
+          </div>
         )}
       </SheetContent>
     </Sheet>

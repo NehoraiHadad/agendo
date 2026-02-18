@@ -116,12 +116,12 @@ describe('ClaudeAdapter', () => {
       // No stdout init event — sessionId is still null
       await adapter.sendMessage('early message');
 
-      const allWrites = mockStdinWrite.mock.calls.map((c) => JSON.parse(c[0]));
+      const allWrites = mockStdinWrite.mock.calls.map((c) => JSON.parse(c[0]) as Record<string, unknown>);
       const msgWrite = allWrites.find(
-        (w: Record<string, unknown>) => w.type === 'user' && w.message?.content === 'early message',
+        (w) => w.type === 'user' && (w.message as Record<string, unknown> | undefined)?.content === 'early message',
       );
       expect(msgWrite).toBeDefined();
-      expect(msgWrite.session_id).toBe('default');
+      expect(msgWrite!.session_id).toBe('default');
     });
   });
 });

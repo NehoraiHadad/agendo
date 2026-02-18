@@ -41,14 +41,14 @@ export function TaskColumn({ status, label }: TaskColumnProps) {
   return (
     <div
       className={cn(
-        'flex min-w-[280px] flex-col rounded-lg border bg-muted/30 transition-colors',
-        isOver && 'border-primary/50 bg-muted/50',
+        'flex min-w-[280px] flex-col rounded-xl border border-white/[0.05] bg-white/[0.02] transition-colors',
+        isOver && 'border-primary/30 bg-primary/[0.03] shadow-[inset_0_0_0_1px_oklch(0.7_0.18_280/0.2)]',
       )}
     >
-      <div className="flex items-center justify-between border-b px-3 py-2">
+      <div className="flex items-center justify-between border-b border-white/[0.05] px-4 py-3">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-medium">{label}</h2>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          <span className="rounded-full bg-white/[0.06] border border-white/[0.06] px-2 py-0.5 text-xs text-muted-foreground/70">
             {taskIds.length}
           </span>
         </div>
@@ -66,7 +66,7 @@ export function TaskColumn({ status, label }: TaskColumnProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="w-full text-xs"
+              className="w-full text-xs text-muted-foreground/60 hover:text-foreground"
               onClick={loadMore}
               disabled={isLoading}
             >
@@ -75,7 +75,7 @@ export function TaskColumn({ status, label }: TaskColumnProps) {
           )}
 
           {taskIds.length === 0 && !isOver && (
-            <p className="px-2 py-8 text-center text-sm text-muted-foreground">No tasks</p>
+            <p className="px-2 py-8 text-center text-sm text-muted-foreground/40">No tasks</p>
           )}
         </div>
       </ScrollArea>

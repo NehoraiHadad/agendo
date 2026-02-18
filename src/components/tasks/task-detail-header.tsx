@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -31,6 +30,14 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+const PRIORITY_COLORS: Record<number, string> = {
+  1: 'text-red-400',
+  2: 'text-orange-400',
+  3: 'text-blue-400',
+  4: 'text-zinc-400',
+  5: 'text-zinc-500',
+};
+
 export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
   const moveTask = useTaskBoardStore((s) => s.moveTask);
   const [isPending, setIsPending] = useState(false);
@@ -47,32 +54,33 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold">{task.title}</h2>
-
-      {task.description && <p className="text-sm text-muted-foreground">{task.description}</p>}
-
-      <div className="flex items-center gap-3">
-        <Select
-          value={task.status}
-          onValueChange={(v) => handleStatusChange(v as TaskStatus)}
-          disabled={isPending}
-        >
-          <SelectTrigger className="w-[160px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {BOARD_COLUMNS.map((status) => (
-              <SelectItem key={status} value={status}>
-                {STATUS_LABELS[status]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Badge variant="outline" className="text-xs">
+      <div className="flex items-start gap-2">
+        <h2 className="flex-1 text-base font-semibold leading-snug">{task.title}</h2>
+        <span className={`shrink-0 text-xs font-mono font-medium mt-0.5 ${PRIORITY_COLORS[task.priority] ?? 'text-zinc-400'}`}>
           P{task.priority}
-        </Badge>
+        </span>
       </div>
+
+      {task.description && (
+        <p className="text-sm text-muted-foreground/70 leading-relaxed">{task.description}</p>
+      )}
+
+      <Select
+        value={task.status}
+        onValueChange={(v) => handleStatusChange(v as TaskStatus)}
+        disabled={isPending}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {BOARD_COLUMNS.map((status) => (
+            <SelectItem key={status} value={status}>
+              {STATUS_LABELS[status]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

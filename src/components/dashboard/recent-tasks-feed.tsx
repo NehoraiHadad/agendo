@@ -9,10 +9,10 @@ interface RecentTasksFeedProps {
 }
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  status_changed: 'bg-blue-100 text-blue-800',
-  execution_created: 'bg-green-100 text-green-800',
-  comment_added: 'bg-purple-100 text-purple-800',
-  default: 'bg-zinc-100 text-zinc-800',
+  status_changed: 'bg-blue-500/15 text-blue-400 border border-blue-500/25',
+  execution_created: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25',
+  comment_added: 'bg-violet-500/15 text-violet-400 border border-violet-500/25',
+  default: 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/25',
 };
 
 export function RecentTasksFeed({ events }: RecentTasksFeedProps) {
@@ -26,13 +26,14 @@ export function RecentTasksFeed({ events }: RecentTasksFeedProps) {
           {events.length === 0 ? (
             <p className="text-sm text-muted-foreground">No recent activity</p>
           ) : (
-            <div className="space-y-3">
+            <div className="relative space-y-2 pl-4 before:absolute before:left-1.5 before:top-1 before:bottom-1 before:w-px before:bg-white/[0.05]">
               {events.map((event) => (
-                <div key={event.id} className="flex items-start justify-between gap-2">
+                <div key={event.id} className="relative flex items-start justify-between gap-2 group">
+                  <span className="absolute -left-4 top-1.5 h-2 w-2 rounded-full border-2 border-background bg-muted shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <Badge
-                        className={EVENT_TYPE_COLORS[event.eventType] ?? EVENT_TYPE_COLORS.default}
+                        className={`${EVENT_TYPE_COLORS[event.eventType] ?? EVENT_TYPE_COLORS.default} text-xs px-2 py-0.5 rounded-full font-medium`}
                       >
                         {event.eventType.replace(/_/g, ' ')}
                       </Badge>

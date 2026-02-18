@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useExecutionStream, type UseExecutionStreamReturn } from '@/hooks/use-execution-stream';
 import { getStreamColorClass, type RenderedLine } from '@/lib/log-renderer';
@@ -155,7 +155,7 @@ export function ExecutionLogViewer({
           isCurrentMatch ? 'bg-amber-500/10 ring-1 ring-amber-500/30' : ''
         }`}
       >
-        <span className="select-none text-zinc-600 tabular-nums text-right min-w-[3ch]">
+        <span className="select-none text-muted-foreground/30 tabular-nums text-right min-w-[3ch]">
           {index + 1}
         </span>
         {/* Content is sanitized by DOMPurify (ALLOWED_TAGS: ['span'], ALLOWED_ATTR: ['style']) */}
@@ -194,7 +194,7 @@ export function ExecutionLogViewer({
 
       <div className="relative">
         {stream.isTruncated && (
-          <div className="border-x border-zinc-700 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
+          <div className="bg-amber-500/[0.08] border-x border-white/[0.06] px-3 py-1.5 text-xs text-amber-300">
             Output truncated to 5,000 lines. Download the full log for complete output.
           </div>
         )}
@@ -202,14 +202,15 @@ export function ExecutionLogViewer({
         <div
           ref={containerRef}
           onScroll={handleScroll}
-          className="h-[50dvh] min-h-[320px] overflow-auto border border-zinc-700 bg-[#1a1b26] font-mono text-xs leading-5"
+          className="h-[50dvh] min-h-[320px] overflow-auto border border-white/[0.07] bg-[oklch(0.07_0_0)] font-mono text-xs leading-5"
           role="log"
           aria-live="polite"
           aria-label="Execution logs"
         >
           {stream.lines.length === 0 && !stream.error && (
-            <div className="flex h-full items-center justify-center text-zinc-500">
-              {stream.isConnected ? 'Waiting for output...' : 'Connecting...'}
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
+              <Loader2 className="size-5 animate-spin" />
+              <span className="text-xs">{stream.isConnected ? 'Waiting for output…' : 'Connecting…'}</span>
             </div>
           )}
           {stream.lines.map((line, i) => renderLine(line, i))}
@@ -219,7 +220,7 @@ export function ExecutionLogViewer({
           <Button
             size="sm"
             variant="secondary"
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 shadow-lg"
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 shadow-lg glass"
             onClick={scrollToBottom}
           >
             <ArrowDown className="size-3.5" />
@@ -229,7 +230,7 @@ export function ExecutionLogViewer({
       </div>
 
       {stream.error && (
-        <div className="border-x border-b border-zinc-700 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+        <div className="bg-red-500/[0.08] border-x border-b border-white/[0.06] px-3 py-2 text-xs text-red-400">
           Stream error: {stream.error}
         </div>
       )}

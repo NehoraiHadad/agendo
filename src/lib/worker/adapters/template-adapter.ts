@@ -13,7 +13,7 @@ export class TemplateAdapter implements AgentAdapter {
 
     const tokens = commandStr.split(' ');
     const binary = tokens[0];
-    const args = tokens.slice(1);
+    const args = [...tokens.slice(1), ...(opts.extraArgs ?? [])];
 
     tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
 
@@ -44,6 +44,7 @@ export class TemplateAdapter implements AgentAdapter {
     return {
       pid: cp.pid ?? 0,
       tmuxSession: this.tmuxSessionName,
+      stdin: null,
       kill: (signal) => this.childProcess?.kill(signal),
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
@@ -57,4 +58,14 @@ export class TemplateAdapter implements AgentAdapter {
   extractSessionId(_output: string): string | null {
     return null;
   }
+
+  async sendMessage(_message: string): Promise<void> {
+    throw new Error('Template adapter does not support sending messages');
+  }
+
+  interrupt(): void {
+    this.childProcess?.kill('SIGINT');
+  }
+
+  isAlive(): boolean { return false; }
 }

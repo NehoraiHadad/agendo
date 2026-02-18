@@ -7,6 +7,7 @@ export interface ExecuteCapabilityJobData {
   capabilityId: string;
   agentId: string;
   args: Record<string, unknown>;
+  sessionId?: string;
 }
 
 const QUEUE_NAME = 'execute-capability';

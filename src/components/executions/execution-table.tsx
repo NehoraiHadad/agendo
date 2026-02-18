@@ -91,9 +91,9 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 mb-2">
         <Select value={statusFilter} onValueChange={handleStatusChange}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-[160px] border-white/[0.08] bg-white/[0.04]">
             <SelectValue placeholder="Filter by status" />
           </SelectTrigger>
           <SelectContent>
@@ -106,22 +106,22 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
           </SelectContent>
         </Select>
 
-        {isLoading && <span className="text-sm text-muted-foreground">Loading...</span>}
+        {isLoading && <span className="text-sm text-muted-foreground/60">Loading...</span>}
       </div>
 
       <div
         ref={scrollContainerRef}
-        className="rounded-md border overflow-auto"
+        className="rounded-xl border border-white/[0.06] overflow-hidden overflow-y-auto"
         style={{ maxHeight: '70vh' }}
       >
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-white/[0.02]">
             <TableRow>
-              <TableHead className="w-[100px]">ID</TableHead>
-              <TableHead className="w-[120px]">Status</TableHead>
-              <TableHead className="w-[120px]">Duration</TableHead>
-              <TableHead className="w-[80px]">Exit Code</TableHead>
-              <TableHead className="w-[80px] text-right">Actions</TableHead>
+              <TableHead className="w-[100px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">ID</TableHead>
+              <TableHead className="w-[120px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Status</TableHead>
+              <TableHead className="w-[120px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Duration</TableHead>
+              <TableHead className="w-[80px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Exit Code</TableHead>
+              <TableHead className="w-[80px] text-right text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -162,7 +162,7 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-muted-foreground/60">
           <span>
             Page {meta.page} of {totalPages} ({meta.total} total)
           </span>
@@ -170,6 +170,7 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
             <Button
               variant="outline"
               size="icon"
+              className="border-white/[0.08]"
               onClick={handlePrevPage}
               disabled={meta.page <= 1}
             >
@@ -178,6 +179,7 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
             <Button
               variant="outline"
               size="icon"
+              className="border-white/[0.08]"
               onClick={handleNextPage}
               disabled={meta.page >= totalPages}
             >

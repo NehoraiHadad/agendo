@@ -28,6 +28,7 @@ function makeAgent(binaryPath: string): Agent {
     mcpEnabled: false,
     sessionConfig: null,
     lastScannedAt: null,
+    parsedFlags: [],
     metadata: {},
     createdAt: new Date(),
     updatedAt: new Date(),
