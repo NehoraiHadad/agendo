@@ -23,7 +23,12 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 640;
+    }
+    return false;
+  });
   const [stats, setStats] = useState<SidebarStats | null>(null);
 
   useEffect(() => {
@@ -45,11 +50,11 @@ export function Sidebar() {
     <aside
       className={cn(
         'flex h-full flex-col border-r bg-muted/40 transition-all duration-200',
-        isCollapsed ? 'w-16' : 'w-56',
+        isCollapsed ? 'w-12 sm:w-16' : 'w-56',
       )}
     >
       <div className="flex h-14 items-center border-b px-4">
-        {!isCollapsed && <span className="text-sm font-semibold">Agent Monitor</span>}
+        {!isCollapsed && <span className="text-sm font-semibold">agenDo</span>}
         <Button
           variant="ghost"
           size="icon"

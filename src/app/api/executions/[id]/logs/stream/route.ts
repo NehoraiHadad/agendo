@@ -28,12 +28,16 @@ export async function GET(
   let statusTimer: ReturnType<typeof setInterval> | null = null;
   let filePollTimer: ReturnType<typeof setInterval> | null = null;
 
+  const resumeOffset = parseInt(_req.headers.get('last-event-id') ?? '0', 10) || 0;
+  fileOffset = resumeOffset;
+
   const stream = new ReadableStream({
     async start(controller) {
-      function send(event: Record<string, unknown>) {
+      function send(event: Record<string, unknown>, eventId?: number) {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          const idLine = eventId !== undefined ? `id: ${eventId}\n` : '';
+          controller.enqueue(encoder.encode(`${idLine}data: ${JSON.stringify(event)}\n\n`));
         } catch {
           closed = true;
         }
@@ -65,7 +69,7 @@ export async function GET(
       send({ type: 'status', status: execution.status });
 
       const logPath = execution.logFilePath;
-      if (logPath && existsSync(logPath)) {
+      if (resumeOffset === 0 && logPath && existsSync(logPath)) {
         const stat = statSync(logPath);
         if (stat.size > 0) {
           const fd = openSync(logPath, 'r');
@@ -73,7 +77,7 @@ export async function GET(
           readSync(fd, buf, 0, stat.size, 0);
           closeSync(fd);
           const content = buf.toString('utf-8');
-          send({ type: 'catchup', content });
+          send({ type: 'catchup', content }, stat.size);
           fileOffset = stat.size;
         }
       }
@@ -105,6 +109,15 @@ export async function GET(
               send({ type: 'log', content: match[2], stream: match[1] });
             } else {
               send({ type: 'log', content: line, stream: 'stdout' });
+            }
+          }
+
+          // Emit current byte offset as SSE event id for reconnect support
+          if (!closed) {
+            try {
+              controller.enqueue(encoder.encode(`id: ${fileOffset}\n\n`));
+            } catch {
+              closed = true;
             }
           }
         } catch {

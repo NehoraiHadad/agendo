@@ -22,6 +22,7 @@ interface StreamState {
 
 type StreamAction =
   | { type: 'APPEND_LINES'; lines: RenderedLine[] }
+  | { type: 'REPLACE_LINES'; lines: RenderedLine[] }
   | { type: 'SET_STATUS'; status: ExecutionStatus }
   | { type: 'SET_DONE'; status: ExecutionStatus; exitCode: number | null }
   | { type: 'SET_CONNECTED'; connected: boolean }
@@ -56,6 +57,10 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
     case 'APPEND_LINES': {
       const { lines, isTruncated } = appendWithWindow(state.lines, action.lines);
       return { ...state, lines, isTruncated: state.isTruncated || isTruncated };
+    }
+    case 'REPLACE_LINES': {
+      const { lines, isTruncated } = appendWithWindow([], action.lines);
+      return { ...state, lines, isTruncated };
     }
     case 'SET_STATUS':
       return { ...state, status: action.status };
@@ -121,7 +126,7 @@ export function useExecutionStream(executionId: string | null): UseExecutionStre
 
             case 'catchup': {
               const lines = renderLogChunk(parsed.content, 'stdout');
-              dispatch({ type: 'APPEND_LINES', lines });
+              dispatch({ type: 'REPLACE_LINES', lines });
               break;
             }
 

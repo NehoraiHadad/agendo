@@ -7,6 +7,7 @@ import {
   smallint,
   integer,
   bigint,
+  numeric,
   jsonb,
   timestamp,
   primaryKey,
@@ -22,6 +23,14 @@ import type {
   TaskInputContext,
   JsonSchemaObject,
 } from '../types';
+
+/** Shape of a parsed CLI flag from --help output */
+export interface ParsedFlag {
+  flags: string[];
+  description: string;
+  takesValue: boolean;
+  valueHint: string | null;
+}
 
 // ============================================================================
 // Enums
@@ -95,12 +104,13 @@ export const agents = pgTable(
     packageSection: text('package_section'), // apt section (e.g., 'vcs', 'web')
     toolType: text('tool_type'), // cli-tool | ai-agent | daemon | shell-util
     // --- MCP integration ---
-    // If true, this agent is launched with an --mcp-config pointing to the Agent Monitor MCP server.
+    // If true, this agent is launched with an --mcp-config pointing to the agenDo MCP server.
     mcpEnabled: boolean('mcp_enabled').notNull().default(false),
     // --- Session management (AI agents only) ---
     // CLI-only: Claude uses stream-json, Codex uses app-server, Gemini uses tmux send-keys.
     sessionConfig: jsonb('session_config').$type<AgentSessionConfig>(),
     lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
+    parsedFlags: jsonb('parsed_flags').$type<ParsedFlag[]>().notNull().default([]),
     metadata: jsonb('metadata').notNull().$type<AgentMetadata>().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -254,6 +264,10 @@ export const executions = pgTable(
     retryCount: integer('retry_count').notNull().default(0),
     maxRetries: integer('max_retries').notNull().default(0),
     spawnDepth: integer('spawn_depth').notNull().default(0),
+    cliFlags: jsonb('cli_flags').$type<Record<string, string | boolean>>().notNull().default({}),
+    totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
+    totalTurns: integer('total_turns'),
+    totalDurationMs: integer('total_duration_ms'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

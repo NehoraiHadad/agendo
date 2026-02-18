@@ -13,6 +13,7 @@ export interface CreateExecutionInput {
   agentId: string;
   capabilityId: string;
   args?: Record<string, unknown>;
+  cliFlags?: Record<string, string | boolean>;
   parentExecutionId?: string;
 }
 
@@ -78,6 +79,7 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
       agentId: input.agentId,
       capabilityId: input.capabilityId,
       args: input.args ?? {},
+      cliFlags: input.cliFlags ?? {},
       mode: capability.interactionMode,
       status: 'queued',
       parentExecutionId: input.parentExecutionId,

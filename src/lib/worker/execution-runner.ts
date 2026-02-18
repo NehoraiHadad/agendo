@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { executions, tasks } from '@/lib/db/schema';
@@ -21,6 +23,8 @@ import type { Execution, ExecutionStatus } from '@/lib/types';
 const SIGKILL_DELAY_MS = 5_000;
 const DEFAULT_TIMEOUT_SEC = 300;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
+const MSG_POLL_INTERVAL_MS = 500;
+const MSG_DIR_BASE = join('/tmp', 'agendo-messages');
 
 // --- Types ---
 
@@ -80,6 +84,11 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     resolvedArgs = buildCommandArgs(capability.commandTokens ?? [], execution.args);
   }
 
+  // --- 3b. Build extra CLI flags argv ---
+  const extraArgs = buildCliFlagsArgv(
+    (execution.cliFlags as Record<string, string | boolean>) ?? {},
+  );
+
   // --- 4. Set up log writer + heartbeat ---
   const logPath = resolveLogPath(executionId);
   const logWriter = new FileLogWriter(executionId, logPath);
@@ -111,6 +120,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     executionId,
     timeoutSec: capability.timeoutSec ?? DEFAULT_TIMEOUT_SEC,
     maxOutputBytes: capability.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+    extraArgs,
   };
 
   let managedProcess: ManagedProcess;
@@ -136,6 +146,37 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   // --- 6. Track output ---
   let sessionId: string | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // --- 6a. Poll for incoming user messages and forward to adapter stdin ---
+  const msgDir = join(MSG_DIR_BASE, executionId);
+  let sendingMessage = false;
+  const messagePollTimer = setInterval(() => {
+    if (!existsSync(msgDir) || sendingMessage) return;
+    let files: string[];
+    try {
+      files = readdirSync(msgDir)
+        .filter((f) => f.endsWith('.msg'))
+        .sort(); // sort by timestamp prefix so messages arrive in order
+    } catch {
+      return;
+    }
+    const file = files[0]; // process one at a time to avoid races
+    if (!file) return;
+    const filePath = join(msgDir, file);
+    try {
+      const message = readFileSync(filePath, 'utf-8');
+      unlinkSync(filePath); // delete before sending to prevent double-deliver
+      if (adapter.sendMessage) {
+        sendingMessage = true;
+        logWriter.write(message, 'user');
+        void adapter.sendMessage(message).finally(() => {
+          sendingMessage = false;
+        });
+      }
+    } catch {
+      // File already deleted by concurrent poll or other error — skip
+    }
+  }, MSG_POLL_INTERVAL_MS);
 
   managedProcess.onData((chunk) => {
     logWriter.write(chunk, 'stdout');
@@ -175,10 +216,47 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   });
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
+  clearInterval(messagePollTimer);
   heartbeat.stop();
 
   logWriter.writeSystem(`Process exited with code ${exitCode}`);
   const logStats = await logWriter.close();
+
+  // Scan log for cost/turns/duration from Claude result event
+  let totalCostUsd: string | null = null;
+  let totalTurns: number | null = null;
+  let totalDurationMs: number | null = null;
+
+  if (logPath) {
+    try {
+      const { readFileSync: readLogFile, existsSync: existsSyncLocal } = await import('node:fs');
+      if (existsSyncLocal(logPath)) {
+        const logContent = readLogFile(logPath, 'utf-8');
+        for (const rawLine of logContent.split('\n')) {
+          const line = rawLine.replace(/^\[(stdout|stderr|system)\] /, '');
+          if (!line.startsWith('{')) continue;
+          try {
+            const ev = JSON.parse(line) as {
+              type?: string;
+              subtype?: string;
+              total_cost_usd?: number;
+              num_turns?: number;
+              duration_ms?: number;
+            };
+            if (ev.type === 'result' && ev.subtype === 'success') {
+              if (ev.total_cost_usd != null) totalCostUsd = String(ev.total_cost_usd);
+              if (ev.num_turns != null) totalTurns = ev.num_turns;
+              if (ev.duration_ms != null) totalDurationMs = ev.duration_ms;
+            }
+          } catch {
+            /* not JSON */
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   // --- 9. Finalize with race guard ---
   const finalStatus = determineFinalStatus(exitCode, logStats.byteSize, capability.maxOutputBytes);
@@ -191,6 +269,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
       endedAt: new Date(),
       logByteSize: logStats.byteSize,
       logLineCount: logStats.lineCount,
+      ...(totalCostUsd !== null && { totalCostUsd }),
+      ...(totalTurns !== null && { totalTurns }),
+      ...(totalDurationMs !== null && { totalDurationMs }),
     })
     .where(and(eq(executions.id, executionId), eq(executions.status, 'running')));
 
@@ -222,6 +303,19 @@ function determineFinalStatus(
   if (exitCode === 0) return 'succeeded';
   if (exitCode === null) return 'timed_out';
   return 'failed';
+}
+
+function buildCliFlagsArgv(cliFlags: Record<string, string | boolean>): string[] {
+  const argv: string[] = [];
+  for (const [flag, value] of Object.entries(cliFlags)) {
+    if (value === false) continue;
+    if (value === true) {
+      argv.push(flag);
+    } else {
+      argv.push(flag, value);
+    }
+  }
+  return argv;
 }
 
 function interpolatePrompt(template: string, args: Record<string, unknown>): string {
