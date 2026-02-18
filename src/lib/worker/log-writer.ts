@@ -36,7 +36,7 @@ export class FileLogWriter {
     }, DB_FLUSH_INTERVAL_MS);
   }
 
-  write(chunk: string, stream: 'stdout' | 'stderr' | 'system' = 'stdout'): void {
+  write(chunk: string, stream: 'stdout' | 'stderr' | 'system' | 'user' = 'stdout'): void {
     if (this.closed || !this.stream) return;
     const prefixed = chunk
       .split('\n')
@@ -53,6 +53,16 @@ export class FileLogWriter {
 
   writeSystem(message: string): void {
     this.write(`${message}\n`, 'system');
+  }
+
+  writeEvent(event: { id: number; type: string; [key: string]: unknown }): void {
+    if (this.closed || !this.stream) return;
+    const line = `[${event.id}|${event.type}] ${JSON.stringify(event)}\n`;
+    const buf = Buffer.from(line, 'utf-8');
+    this.stream.write(buf);
+    this.byteSize += buf.byteLength;
+    this.lineCount++;
+    this.dirty = true;
   }
 
   async close(): Promise<LogWriterStats> {
@@ -94,4 +104,11 @@ export function resolveLogPath(executionId: string): string {
   const yyyy = now.getFullYear().toString();
   const mm = (now.getMonth() + 1).toString().padStart(2, '0');
   return join(config.LOG_DIR, yyyy, mm, `${executionId}.log`);
+}
+
+export function resolveSessionLogPath(sessionId: string): string {
+  const now = new Date();
+  const yyyy = now.getFullYear().toString();
+  const mm = (now.getMonth() + 1).toString().padStart(2, '0');
+  return join(config.LOG_DIR, yyyy, mm, `session-${sessionId}.log`);
 }

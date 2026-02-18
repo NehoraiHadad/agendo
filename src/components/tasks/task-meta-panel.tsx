@@ -47,13 +47,16 @@ export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">Details</h3>
+    <div className="flex flex-col gap-4">
+      <h3 className="text-xs uppercase tracking-widest text-muted-foreground/60 font-medium">
+        Details
+      </h3>
 
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">Assignee</span>
+      {/* Assignee — full width on mobile, label above */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground/60">Assignee</span>
         <Select value={task.assigneeAgentId ?? 'unassigned'} onValueChange={handleAssign}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full">
             <SelectValue placeholder="Unassigned" />
           </SelectTrigger>
           <SelectContent>
@@ -68,16 +71,18 @@ export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
       </div>
 
       {task.parentTask && (
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Parent</span>
-          <span className="text-sm">{task.parentTask.title}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground/60">Parent task</span>
+          <span className="text-sm text-foreground/80">{task.parentTask.title}</span>
         </div>
       )}
 
       {task.dueAt && (
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Due</span>
-          <span className="text-sm">{new Date(task.dueAt).toLocaleDateString()}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground/60">Due date</span>
+          <span className="text-sm font-mono text-foreground/80">
+            {new Date(task.dueAt).toLocaleDateString()}
+          </span>
         </div>
       )}
     </div>

@@ -24,6 +24,15 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, AgentCapability, Execution, JsonSchemaObject } from '@/lib/types';
+import type { ParsedFlag } from '@/lib/db/schema';
+
+const PRIORITY_FLAGS = [
+  '--dangerously-skip-permissions',
+  '--permission-mode',
+  '--model',
+];
+
+const PERMISSION_MODE_VALUES = ['acceptEdits', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
 
 interface ExecutionTriggerDialogProps {
   taskId: string;
@@ -54,6 +63,10 @@ export function ExecutionTriggerDialog({
   const [args, setArgs] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // CLI flags
+  const [parsedFlags, setParsedFlags] = useState<ParsedFlag[]>([]);
+  const [cliFlags, setCliFlags] = useState<Record<string, string | boolean>>({});
 
   const selectedCap = capabilities.find((c) => c.id === selectedCapId);
   const schema = selectedCap?.argsSchema as JsonSchemaObject | undefined;
@@ -94,12 +107,24 @@ export function ExecutionTriggerDialog({
     }
   }, [activeAgentId]);
 
+  const fetchAgentFlags = useCallback(async () => {
+    if (!activeAgentId) return;
+    try {
+      const res = await apiFetch<ApiResponse<Agent>>(`/api/agents/${activeAgentId}`);
+      setParsedFlags((res.data.parsedFlags as ParsedFlag[]) ?? []);
+    } catch {
+      /* ignore */
+    }
+  }, [activeAgentId]);
+
   useEffect(() => {
     if (open) {
       setSelectedAgentId(agentIdProp ?? '');
       setSelectedCapId('');
       setCapabilities([]);
       setArgs({});
+      setParsedFlags([]);
+      setCliFlags({});
       setError(null);
       fetchAgents();
     }
@@ -109,9 +134,11 @@ export function ExecutionTriggerDialog({
     if (open && activeAgentId) {
       setSelectedCapId('');
       setCapabilities([]);
+      setCliFlags({});
       fetchCapabilities();
+      fetchAgentFlags();
     }
-  }, [open, activeAgentId, fetchCapabilities]);
+  }, [open, activeAgentId, fetchCapabilities, fetchAgentFlags]);
 
   useEffect(() => {
     setArgs({});
@@ -120,6 +147,38 @@ export function ExecutionTriggerDialog({
   function handleArgChange(key: string, value: string) {
     setArgs((prev) => ({ ...prev, [key]: value }));
   }
+
+  function handleCliFlagToggle(flag: string, checked: boolean) {
+    setCliFlags((prev) => {
+      const next = { ...prev };
+      if (checked) {
+        next[flag] = true;
+      } else {
+        delete next[flag];
+      }
+      return next;
+    });
+  }
+
+  function handleCliFlagValue(flag: string, value: string) {
+    setCliFlags((prev) => {
+      const next = { ...prev };
+      if (value) {
+        next[flag] = value;
+      } else {
+        delete next[flag];
+      }
+      return next;
+    });
+  }
+
+  // Separate priority flags from the rest
+  const priorityFlags = parsedFlags.filter((pf) =>
+    pf.flags.some((f) => PRIORITY_FLAGS.includes(f)),
+  );
+  const nonPriorityFlags = parsedFlags.filter(
+    (pf) => !pf.flags.some((f) => PRIORITY_FLAGS.includes(f)),
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -136,6 +195,7 @@ export function ExecutionTriggerDialog({
           agentId: activeAgentId,
           capabilityId: selectedCapId,
           args,
+          cliFlags,
         }),
       });
       onExecutionCreated?.(res.data);
@@ -261,6 +321,122 @@ export function ExecutionTriggerDialog({
                 </div>
               )}
             </>
+          )}
+
+          {/* CLI Options section */}
+          {parsedFlags.length > 0 && (
+            <div className="space-y-3">
+              <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                CLI Options
+              </Label>
+              {priorityFlags.map((pf) => {
+                const mainFlag = pf.flags.find((f) => f.startsWith('--')) ?? pf.flags[0];
+                const isPermissionMode = mainFlag === '--permission-mode';
+                const isModel = mainFlag === '--model';
+
+                if (isPermissionMode) {
+                  return (
+                    <div key={mainFlag} className="space-y-1">
+                      <label className="text-sm font-medium">{mainFlag}</label>
+                      <p className="text-xs text-muted-foreground">{pf.description}</p>
+                      <Select
+                        value={(cliFlags[mainFlag] as string) ?? ''}
+                        onValueChange={(val) => handleCliFlagValue(mainFlag, val)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Default" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PERMISSION_MODE_VALUES.map((v) => (
+                            <SelectItem key={v} value={v}>
+                              {v}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                }
+
+                if (isModel || pf.takesValue) {
+                  return (
+                    <div key={mainFlag} className="space-y-1">
+                      <label className="text-sm font-medium">{mainFlag}</label>
+                      <p className="text-xs text-muted-foreground">{pf.description}</p>
+                      <Input
+                        value={(cliFlags[mainFlag] as string) ?? ''}
+                        onChange={(e) => handleCliFlagValue(mainFlag, e.target.value)}
+                        placeholder={pf.valueHint ?? undefined}
+                      />
+                    </div>
+                  );
+                }
+
+                // Boolean flag (checkbox)
+                return (
+                  <div key={mainFlag} className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      id={`cli-${mainFlag}`}
+                      checked={cliFlags[mainFlag] === true}
+                      onChange={(e) => handleCliFlagToggle(mainFlag, e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-border"
+                    />
+                    <div>
+                      <label htmlFor={`cli-${mainFlag}`} className="text-sm font-medium cursor-pointer">
+                        {mainFlag}
+                      </label>
+                      <p className="text-xs text-muted-foreground">{pf.description}</p>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {nonPriorityFlags.length > 0 && (
+                <details>
+                  <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                    Advanced options ({nonPriorityFlags.length})
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {nonPriorityFlags.map((pf) => {
+                      const mainFlag = pf.flags.find((f) => f.startsWith('--')) ?? pf.flags[0];
+
+                      if (pf.takesValue) {
+                        return (
+                          <div key={mainFlag} className="space-y-1">
+                            <label className="text-sm font-medium">{mainFlag}</label>
+                            <p className="text-xs text-muted-foreground">{pf.description}</p>
+                            <Input
+                              value={(cliFlags[mainFlag] as string) ?? ''}
+                              onChange={(e) => handleCliFlagValue(mainFlag, e.target.value)}
+                              placeholder={pf.valueHint ?? undefined}
+                            />
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={mainFlag} className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            id={`cli-${mainFlag}`}
+                            checked={cliFlags[mainFlag] === true}
+                            onChange={(e) => handleCliFlagToggle(mainFlag, e.target.checked)}
+                            className="mt-1 h-4 w-4 rounded border-border"
+                          />
+                          <div>
+                            <label htmlFor={`cli-${mainFlag}`} className="text-sm font-medium cursor-pointer">
+                              {mainFlag}
+                            </label>
+                            <p className="text-xs text-muted-foreground">{pf.description}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </div>
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}

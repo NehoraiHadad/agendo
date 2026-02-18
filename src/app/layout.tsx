@@ -1,9 +1,19 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Geist, Geist_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+const geist = Geist({
+  subsets: ['latin'],
+  variable: '--font-geist',
+  display: 'swap',
+});
+
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  variable: '--font-geist-mono',
+  display: 'swap',
+});
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -15,7 +25,7 @@ export const metadata: Metadata = {
   title: 'agenDo',
   description: 'CLI agent orchestration and task management',
   other: {
-    'theme-color': '#09090b',
+    'theme-color': '#0d0d0e',
   },
   appleWebApp: {
     capable: true,
@@ -29,8 +39,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} antialiased`}>
+    <html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
+      <body className="font-sans antialiased">
         {children}
         <Toaster richColors position="bottom-right" />
       </body>

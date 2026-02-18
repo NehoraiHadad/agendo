@@ -39,6 +39,11 @@ export async function getHelpText(toolName: string): Promise<string | null> {
           NO_COLOR: '1',
           PAGER: 'cat',
           GIT_PAGER: 'cat',
+          // Unset nested-session guards so tools like claude/codex can run --help
+          // even when launched from within an active agent session.
+          CLAUDECODE: undefined,
+          CLAUDE_SESSION_ID: undefined,
+          CODEX_SESSION_ID: undefined,
         },
       });
 

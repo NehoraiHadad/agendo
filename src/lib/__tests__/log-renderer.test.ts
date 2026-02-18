@@ -175,5 +175,28 @@ describe('log-renderer', () => {
       expect(result[1].id).toBe(2);
       expect(result[2].id).toBe(3);
     });
+
+    it('parses [stream] prefixes and overrides the default stream', () => {
+      const content = '[system] Execution started\n[stdout] {"type":"assistant"}\n[stderr] error msg';
+      const result = renderLogChunk(content, 'stdout');
+      expect(result).toHaveLength(3);
+      expect(result[0].stream).toBe('system');
+      expect(result[0].text).toBe('Execution started');
+      expect(result[1].stream).toBe('stdout');
+      expect(result[1].text).toBe('{"type":"assistant"}');
+      expect(result[2].stream).toBe('stderr');
+      expect(result[2].text).toBe('error msg');
+    });
+
+    it('falls back to defaultStream for lines without a known prefix', () => {
+      const result = renderLogChunk('plain line\n[other] not a prefix', 'stderr');
+      expect(result[0].stream).toBe('stderr');
+      expect(result[1].stream).toBe('stderr');
+    });
+
+    it('skips empty lines in the chunk', () => {
+      const result = renderLogChunk('[stdout] a\n\n[stdout] b', 'stdout');
+      expect(result).toHaveLength(2);
+    });
   });
 });

@@ -36,7 +36,7 @@ describe('StaleReaper', () => {
   });
 
   it('returns 0 when no stale rows found', async () => {
-    mockWhere.mockResolvedValue([]);
+    mockWhere.mockResolvedValue([]); // both executions and sessions return empty
 
     const reaper = new StaleReaper();
     const count = await reaper.reap();
@@ -45,10 +45,10 @@ describe('StaleReaper', () => {
   });
 
   it('marks stale rows as timed_out', async () => {
-    mockWhere.mockResolvedValue([
-      { id: 'exec-1' },
-      { id: 'exec-2' },
-    ]);
+    // First call: stale executions; second call: stale sessions (empty)
+    mockWhere
+      .mockResolvedValueOnce([{ id: 'exec-1' }, { id: 'exec-2' }])
+      .mockResolvedValueOnce([]);
 
     const reaper = new StaleReaper();
     const count = await reaper.reap();

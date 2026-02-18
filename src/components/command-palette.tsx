@@ -72,17 +72,18 @@ export function CommandPalette() {
   );
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={setOpen} className="bg-[oklch(0.10_0_0)] border border-white/[0.10] rounded-xl shadow-2xl">
       <CommandInput
         placeholder="Type a command or search..."
         value={search}
         onValueChange={setSearch}
+        className="bg-transparent border-none"
       />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Navigation">
           {NAV_ITEMS.map((item) => (
-            <CommandItem key={item.href} onSelect={() => navigate(item.href)}>
+            <CommandItem key={item.href} onSelect={() => navigate(item.href)} className="hover:bg-white/[0.05]">
               <item.icon className="mr-2 h-4 w-4" />
               {item.label}
             </CommandItem>
@@ -91,7 +92,7 @@ export function CommandPalette() {
         {tasks.length > 0 && (
           <CommandGroup heading="Tasks">
             {tasks.map((task) => (
-              <CommandItem key={task.id} onSelect={() => navigate(`/tasks/${task.id}`)}>
+              <CommandItem key={task.id} onSelect={() => navigate(`/tasks/${task.id}`)} className="hover:bg-white/[0.05]">
                 <ListTodo className="mr-2 h-4 w-4" />
                 <span className="truncate">{task.title}</span>
               </CommandItem>

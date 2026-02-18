@@ -15,7 +15,7 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/lib/db/seed.ts",
     "worker:dev": "tsx watch src/worker/index.ts",
-    "worker:build": "tsc -p tsconfig.worker.json",
+    "worker:build": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker/index.js --tsconfig=tsconfig.worker.json --external:pg-native --external:bufferutil --external:utf-8-validate --external:pino-pretty",
     "build:mcp": "tsx src/lib/mcp/build.ts",
     "test": "vitest run",
     "test:watch": "vitest",

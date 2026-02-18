@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import * as tmux from '@/lib/worker/tmux-manager';
-import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ManagedProcess, SpawnOpts, ImageContent } from '@/lib/worker/adapters/types';
 
 export class ClaudeAdapter implements AgentAdapter {
   private childProcess: ChildProcess | null = null;
@@ -30,13 +30,20 @@ export class ClaudeAdapter implements AgentAdapter {
     return null;
   }
 
-  async sendMessage(message: string): Promise<void> {
+  async sendMessage(message: string, image?: ImageContent): Promise<void> {
     if (!this.childProcess?.stdin?.writable) {
       throw new Error('Claude process stdin is not writable');
     }
+    const content: unknown[] = [{ type: 'text', text: message }];
+    if (image) {
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: image.mimeType, data: image.data },
+      });
+    }
     const ndjsonMessage = JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: message },
+      message: { role: 'user', content: content.length === 1 ? message : content },
       session_id: this.sessionId ?? 'default',
       parent_tool_use_id: null,
     });
@@ -47,6 +54,8 @@ export class ClaudeAdapter implements AgentAdapter {
     this.childProcess?.kill('SIGINT');
   }
 
+  isAlive(): boolean { return this.childProcess?.stdin?.writable ?? false; }
+
   private launch(prompt: string, opts: SpawnOpts, extraFlags: string[]): ManagedProcess {
     this.tmuxSessionName = `claude-${opts.executionId}`;
     this.sessionId = null;
@@ -54,7 +63,9 @@ export class ClaudeAdapter implements AgentAdapter {
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
     const claudeArgs = [
-      '-p',
+      // -p (print mode) exits after one response; omit it for persistent sessions
+      // so the process stays alive and can receive follow-up messages via stdin.
+      ...(opts.persistentSession ? [] : ['-p']),
       '--input-format',
       'stream-json',
       '--output-format',
@@ -108,6 +119,7 @@ export class ClaudeAdapter implements AgentAdapter {
     return {
       pid: cp.pid ?? 0,
       tmuxSession: this.tmuxSessionName,
+      stdin: cp.stdin,
       kill: (signal) => {
         const p = this.childProcess;
         if (!p?.pid) return;

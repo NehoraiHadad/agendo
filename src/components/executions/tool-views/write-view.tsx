@@ -18,17 +18,17 @@ export function WriteView({ input }: WriteViewProps) {
   const lineCount = content.split('\n').length;
 
   return (
-    <div className="rounded border border-zinc-700 overflow-hidden">
-      <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-800 border-b border-zinc-700 text-xs">
+    <div className="rounded border border-white/[0.08] overflow-hidden">
+      <div className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.03] border-b border-white/[0.06] text-xs">
         {filePath && (
-          <span className="font-mono text-zinc-300 truncate flex-1">
+          <span className="font-mono text-foreground/80 truncate flex-1">
             {filePath}
           </span>
         )}
-        <span className="text-zinc-500">{lineCount} lines</span>
+        <span className="text-muted-foreground/50">{lineCount} lines</span>
         <CopyButton text={content} />
       </div>
-      <pre className="max-h-[40dvh] overflow-auto p-2 text-xs font-mono text-zinc-300 bg-zinc-950 whitespace-pre break-all">
+      <pre className="max-h-[40dvh] overflow-auto p-2 text-xs font-mono text-foreground/80 bg-[oklch(0.07_0_0)] whitespace-pre break-all">
         {content}
       </pre>
     </div>

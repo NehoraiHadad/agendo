@@ -43,75 +43,51 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Geist font families */
+  --font-sans: var(--font-geist), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+
+  /* Custom animations */
+  --animate-pulse-violet: pulse-violet 2s ease-in-out infinite;
+  --animate-fade-in-up: fadeInUp 0.3s ease-out;
+  --animate-shimmer: shimmer 2s linear infinite;
 }
 
+/* Dark-only design system — no light theme */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --radius: 0.5rem;
+  --background:            oklch(0.08 0 0);
+  --foreground:            oklch(0.95 0 0);
+  --card:                  oklch(0.115 0 0);
+  --card-foreground:       oklch(0.95 0 0);
+  --popover:               oklch(0.115 0 0);
+  --popover-foreground:    oklch(0.95 0 0);
+  --primary:               oklch(0.7 0.18 280);
+  --primary-foreground:    oklch(0.98 0 0);
+  --secondary:             oklch(0.16 0 0);
+  --secondary-foreground:  oklch(0.95 0 0);
+  --muted:                 oklch(0.14 0 0);
+  --muted-foreground:      oklch(0.55 0 0);
+  --accent:                oklch(0.7 0.18 280);
+  --accent-foreground:     oklch(0.98 0 0);
+  --border:                oklch(1 0 0 / 0.08);
+  --input:                 oklch(1 0 0 / 0.06);
+  --ring:                  oklch(0.7 0.18 280 / 0.5);
+  --destructive:           oklch(0.62 0.22 22);
+  --chart-1:               oklch(0.488 0.243 264.376);
+  --chart-2:               oklch(0.696 0.17 162.48);
+  --chart-3:               oklch(0.769 0.188 70.08);
+  --chart-4:               oklch(0.627 0.265 303.9);
+  --chart-5:               oklch(0.645 0.246 16.439);
+  --sidebar:               oklch(0.07 0 0);
+  --sidebar-foreground:    oklch(0.95 0 0);
+  --sidebar-primary:       oklch(0.7 0.18 280);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent:        oklch(0.7 0.18 280 / 0.15);
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border:        oklch(1 0 0 / 0.06);
+  --sidebar-ring:          oklch(0.7 0.18 280 / 0.5);
 }
 
 @layer base {
@@ -119,6 +95,98 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* ─── Keyframes ───────────────────────────────────────────── */
+
+@keyframes pulse-violet {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 8px oklch(0.7 0.18 280 / 0.6);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% center;
+  }
+  to {
+    background-position: 200% center;
+  }
+}
+
+/* ─── Utility classes ─────────────────────────────────────── */
+
+@layer utilities {
+  /* Glow effects */
+  .glow-accent {
+    box-shadow: 0 0 20px oklch(0.7 0.18 280 / 0.25);
+  }
+  .glow-sm {
+    box-shadow: 0 0 10px oklch(0.7 0.18 280 / 0.15);
+  }
+  .glow-success {
+    box-shadow: 0 0 12px oklch(0.65 0.2 145 / 0.3);
+  }
+  .glow-danger {
+    box-shadow: 0 0 12px oklch(0.62 0.22 22 / 0.3);
+  }
+
+  /* Glass morphism */
+  .glass {
+    background: oklch(1 0 0 / 0.04);
+    backdrop-filter: blur(12px);
+    border: 1px solid oklch(1 0 0 / 0.08);
+  }
+
+  /* Gradient mesh background */
+  .mesh-bg {
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 0%, oklch(0.7 0.18 280 / 0.05) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, oklch(0.62 0.22 22 / 0.03) 0%, transparent 50%),
+      oklch(0.08 0 0);
+  }
+
+  /* Diff color utilities (Happy Coder style) */
+  .diff-added {
+    background: oklch(0.35 0.1 145 / 0.25);
+    color: oklch(0.75 0.15 145);
+  }
+  .diff-removed {
+    background: oklch(0.35 0.1 22 / 0.25);
+    color: oklch(0.75 0.15 22);
+  }
+  .diff-inline-added {
+    background: oklch(0.45 0.15 145 / 0.4);
+  }
+  .diff-inline-removed {
+    background: oklch(0.45 0.15 22 / 0.4);
+  }
+
+  /* Animation helpers */
+  .animate-pulse-violet {
+    animation: pulse-violet 2s ease-in-out infinite;
+  }
+  .animate-fade-in-up {
+    animation: fadeInUp 0.3s ease-out;
+  }
+  .animate-shimmer {
+    animation: shimmer 2s linear infinite;
   }
 }

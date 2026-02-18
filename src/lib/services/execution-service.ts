@@ -15,6 +15,9 @@ export interface CreateExecutionInput {
   args?: Record<string, unknown>;
   cliFlags?: Record<string, string | boolean>;
   parentExecutionId?: string;
+  sessionRef?: string;
+  promptOverride?: string;
+  sessionId?: string;
 }
 
 export interface ListExecutionsInput {
@@ -83,7 +86,10 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
       mode: capability.interactionMode,
       status: 'queued',
       parentExecutionId: input.parentExecutionId,
+      sessionRef: input.sessionRef,
+      promptOverride: input.promptOverride,
       spawnDepth,
+      sessionId: input.sessionId,
     })
     .returning();
 

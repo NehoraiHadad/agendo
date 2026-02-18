@@ -24,17 +24,17 @@ function HunkBlock({ hunk, index }: { hunk: DiffHunk; index: number }) {
             <button
               type="button"
               onClick={() => setExpanded(false)}
-              className="flex items-center gap-1 w-full px-2 py-0.5 text-xs text-zinc-500 hover:bg-white/5 transition-colors"
+              className="flex items-center gap-1 w-full px-2 py-0.5 text-xs text-muted-foreground/50 hover:bg-white/[0.04] transition-colors"
             >
               <ChevronDown className="size-3" />
               <span>Collapse {hunk.lines.length} unchanged lines</span>
             </button>
             {hunk.lines.map((line, i) => (
-              <div key={i} className="flex font-mono text-xs bg-zinc-900/50">
-                <span className="select-none w-8 shrink-0 text-right pr-2 text-zinc-600 border-r border-zinc-800 py-px">
+              <div key={i} className="flex font-mono text-xs bg-white/[0.02]">
+                <span className="select-none w-8 shrink-0 text-right pr-2 text-muted-foreground/30 border-r border-white/[0.06] py-px">
                   {i + 1}
                 </span>
-                <span className="px-2 py-px text-zinc-500 whitespace-pre">
+                <span className="px-2 py-px text-muted-foreground/50 whitespace-pre">
                   {line.content}
                 </span>
               </div>
@@ -44,7 +44,7 @@ function HunkBlock({ hunk, index }: { hunk: DiffHunk; index: number }) {
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="flex items-center gap-1 w-full px-2 py-0.5 text-xs text-zinc-500 hover:bg-white/5 transition-colors"
+            className="flex items-center gap-1 w-full px-2 py-0.5 text-xs text-muted-foreground/50 hover:bg-white/[0.04] transition-colors"
           >
             <ChevronRight className="size-3" />
             <span>{hunk.lines.length} unchanged lines</span>
@@ -61,16 +61,22 @@ function HunkBlock({ hunk, index }: { hunk: DiffHunk; index: number }) {
           line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
         const bgClass =
           line.type === 'added'
-            ? 'bg-emerald-950/60 text-emerald-200'
+            ? 'bg-[oklch(0.25_0.08_145/0.4)] text-[oklch(0.8_0.15_145)]'
             : line.type === 'removed'
-              ? 'bg-red-950/60 text-red-200'
-              : 'bg-zinc-900/50 text-zinc-400';
+              ? 'bg-[oklch(0.25_0.08_22/0.4)] text-[oklch(0.8_0.15_22)]'
+              : 'bg-white/[0.02] text-muted-foreground';
         return (
           <div
             key={`${index}-${i}`}
             className={`flex font-mono text-xs ${bgClass}`}
           >
-            <span className="select-none w-5 shrink-0 text-center border-r border-zinc-800/50 py-px opacity-60">
+            <span className={`select-none w-5 shrink-0 text-center border-r border-white/[0.06] py-px ${
+              line.type === 'added'
+                ? 'text-[oklch(0.7_0.15_145)] opacity-80'
+                : line.type === 'removed'
+                  ? 'text-[oklch(0.7_0.15_22)] opacity-80'
+                  : 'text-muted-foreground/20'
+            }`}>
               {prefix}
             </span>
             <span className="px-2 py-px whitespace-pre break-all">
@@ -102,11 +108,11 @@ export function DiffView({
     .join('\n');
 
   return (
-    <div className="rounded border border-zinc-700 overflow-hidden">
+    <div className="rounded border border-white/[0.08] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-800 border-b border-zinc-700 text-xs">
+      <div className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.03] border-b border-white/[0.06] text-xs">
         {filePath && (
-          <span className="font-mono text-zinc-300 truncate flex-1">
+          <span className="font-mono text-foreground/80 truncate flex-1">
             {filePath}
           </span>
         )}
@@ -121,7 +127,7 @@ export function DiffView({
           <HunkBlock key={i} hunk={hunk} index={i} />
         ))}
         {hunks.length === 0 && (
-          <div className="px-3 py-2 text-xs text-zinc-500">No changes</div>
+          <div className="px-3 py-2 text-xs text-muted-foreground/50">No changes</div>
         )}
       </div>
     </div>

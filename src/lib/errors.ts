@@ -50,6 +50,12 @@ export class ConflictError extends AppError {
   }
 }
 
+export class BadRequestError extends AppError {
+  constructor(message: string, context?: Record<string, unknown>) {
+    super(message, 400, 'BAD_REQUEST', context);
+  }
+}
+
 export class SafetyViolationError extends AppError {
   constructor(message: string, context?: Record<string, unknown>) {
     super(message, 403, 'SAFETY_VIOLATION', context);

@@ -47,6 +47,10 @@ export class GeminiAdapter implements AgentAdapter {
     this.childProcess?.kill('SIGINT');
   }
 
+  isAlive(): boolean {
+    return this.childProcess?.stdin?.writable ?? false;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
@@ -93,6 +97,7 @@ export class GeminiAdapter implements AgentAdapter {
     return {
       pid: cp.pid ?? 0,
       tmuxSession: '',
+      stdin: null,
       kill: (signal) => {
         const p = this.childProcess;
         if (!p?.pid) return;

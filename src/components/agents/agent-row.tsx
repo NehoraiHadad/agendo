@@ -29,7 +29,7 @@ export function AgentRow({ agent }: AgentRowProps) {
 
   return (
     <>
-      <TableRow>
+      <TableRow className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
         <TableCell>
           <Button
             variant="ghost"
@@ -41,19 +41,22 @@ export function AgentRow({ agent }: AgentRowProps) {
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
         </TableCell>
-        <TableCell className="font-medium">
-          <Link href={`/agents/${agent.id}`} className="hover:underline">
-            {agent.name}
-          </Link>
+        <TableCell className="font-medium text-foreground">
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full shrink-0 ${agent.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/30'}`} />
+            <Link href={`/agents/${agent.id}`} className="hover:text-primary transition-colors">
+              {agent.name}
+            </Link>
+          </div>
         </TableCell>
-        <TableCell className="text-muted-foreground text-xs font-mono max-w-48 truncate">
+        <TableCell className="font-mono text-xs text-muted-foreground/60 max-w-48 truncate">
           {agent.binaryPath}
         </TableCell>
-        <TableCell>{agent.toolType ?? '-'}</TableCell>
+        <TableCell className="text-xs text-muted-foreground/60">{agent.toolType ?? '-'}</TableCell>
         <TableCell>
           <AgentStatusBadge isActive={agent.isActive} />
         </TableCell>
-        <TableCell>{agent.version ?? '-'}</TableCell>
+        <TableCell className="text-xs text-muted-foreground/60">{agent.version ?? '-'}</TableCell>
         <TableCell>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" asChild>

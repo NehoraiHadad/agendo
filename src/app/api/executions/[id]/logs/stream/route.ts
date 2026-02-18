@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { executions } from '@/lib/db/schema';
+import { executions, sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import {
   openSync,
@@ -21,6 +21,7 @@ export async function GET(
   { params }: { params: Promise<Record<string, string>> },
 ) {
   const { id } = await params;
+
   const encoder = new TextEncoder();
   let closed = false;
   let fileOffset = 0;
@@ -66,9 +67,35 @@ export async function GET(
         return;
       }
 
-      send({ type: 'status', status: execution.status });
+      // Determine log path and terminal logic based on whether session-based
+      let logPath: string | null | undefined;
+      let initialStatusStr: string;
+      let isTerminalNow: boolean;
+      let sessionId: string | null = null;
 
-      const logPath = execution.logFilePath;
+      if (execution.sessionId) {
+        sessionId = execution.sessionId;
+        const [session] = await db
+          .select({ logFilePath: sessions.logFilePath, status: sessions.status })
+          .from(sessions)
+          .where(eq(sessions.id, execution.sessionId))
+          .limit(1);
+        if (!session) {
+          send({ type: 'error', message: `Session ${execution.sessionId} not found` });
+          controller.close();
+          return;
+        }
+        logPath = session.logFilePath;
+        initialStatusStr = session.status === 'ended' ? 'succeeded' : 'running';
+        isTerminalNow = session.status === 'ended';
+      } else {
+        logPath = execution.logFilePath;
+        initialStatusStr = execution.status;
+        isTerminalNow = TERMINAL_STATUSES.has(execution.status);
+      }
+
+      send({ type: 'status', status: initialStatusStr });
+
       if (resumeOffset === 0 && logPath && existsSync(logPath)) {
         const stat = statSync(logPath);
         if (stat.size > 0) {
@@ -82,8 +109,8 @@ export async function GET(
         }
       }
 
-      if (TERMINAL_STATUSES.has(execution.status)) {
-        send({ type: 'done', status: execution.status, exitCode: execution.exitCode });
+      if (isTerminalNow) {
+        send({ type: 'done', status: initialStatusStr, exitCode: execution.exitCode ?? null });
         controller.close();
         cleanup();
         return;
@@ -104,7 +131,7 @@ export async function GET(
           const lines = content.split('\n');
           for (const line of lines) {
             if (!line) continue;
-            const match = line.match(/^\[(stdout|stderr|system)\] (.*)$/);
+            const match = line.match(/^\[(stdout|stderr|system|user)\] (.*)$/);
             if (match) {
               send({ type: 'log', content: match[2], stream: match[1] });
             } else {
@@ -148,23 +175,42 @@ export async function GET(
       statusTimer = setInterval(async () => {
         if (closed) return;
         try {
-          const [current] = await db
-            .select({ status: executions.status, exitCode: executions.exitCode })
-            .from(executions)
-            .where(eq(executions.id, id))
-            .limit(1);
-          if (!current) {
-            send({ type: 'error', message: 'Execution not found' });
-            controller.close();
-            cleanup();
-            return;
-          }
-          send({ type: 'status', status: current.status });
-          if (TERMINAL_STATUSES.has(current.status)) {
-            readNewBytes();
-            send({ type: 'done', status: current.status, exitCode: current.exitCode });
-            controller.close();
-            cleanup();
+          if (sessionId) {
+            // Session-based: poll sessions table
+            const [cur] = await db
+              .select({ status: sessions.status })
+              .from(sessions)
+              .where(eq(sessions.id, sessionId))
+              .limit(1);
+            if (!cur) return;
+            const mapped = cur.status === 'ended' ? 'succeeded' : 'running';
+            send({ type: 'status', status: mapped });
+            if (cur.status === 'ended') {
+              readNewBytes();
+              send({ type: 'done', status: 'succeeded', exitCode: null });
+              controller.close();
+              cleanup();
+            }
+          } else {
+            // Legacy: poll executions table
+            const [current] = await db
+              .select({ status: executions.status, exitCode: executions.exitCode })
+              .from(executions)
+              .where(eq(executions.id, id))
+              .limit(1);
+            if (!current) {
+              send({ type: 'error', message: 'Execution not found' });
+              controller.close();
+              cleanup();
+              return;
+            }
+            send({ type: 'status', status: current.status });
+            if (TERMINAL_STATUSES.has(current.status)) {
+              readNewBytes();
+              send({ type: 'done', status: current.status, exitCode: current.exitCode });
+              controller.close();
+              cleanup();
+            }
           }
         } catch {
           // DB error -- continue polling

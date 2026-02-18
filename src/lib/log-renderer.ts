@@ -51,11 +51,22 @@ export function renderLogLine(raw: string, stream: StreamType): RenderedLine {
   };
 }
 
-export function renderLogChunk(content: string, stream: StreamType): RenderedLine[] {
+// Log lines written by FileLogWriter are prefixed with "[stream] content".
+// This regex extracts the stream type and content from such lines.
+const LOG_PREFIX_RE = /^\[(stdout|stderr|system|user)\] ([\s\S]*)$/;
+
+export function renderLogChunk(content: string, defaultStream: StreamType): RenderedLine[] {
   const lines = content.split('\n');
   // Remove trailing empty line from split
   if (lines.length > 0 && lines[lines.length - 1] === '') {
     lines.pop();
   }
-  return lines.map((line) => renderLogLine(line, stream));
+  return lines.flatMap((line) => {
+    if (!line) return [];
+    const match = LOG_PREFIX_RE.exec(line);
+    if (match) {
+      return [renderLogLine(match[2], match[1] as StreamType)];
+    }
+    return [renderLogLine(line, defaultStream)];
+  });
 }

@@ -1,6 +1,7 @@
 import { accessSync, constants } from 'node:fs';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
+import type { ParsedFlag } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { NotFoundError, ValidationError } from '@/lib/errors';
 import type { Agent, NewAgent } from '@/lib/types';
@@ -152,6 +153,14 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
     }
   }
 
+  // Persist parsed flags from --help output
+  if (tool.schema?.options.length) {
+    await db
+      .update(agents)
+      .set({ parsedFlags: tool.schema.options as ParsedFlag[] })
+      .where(eq(agents.id, agent.id));
+  }
+
   return agent;
 }
 
@@ -194,4 +203,8 @@ export async function getAgentBySlug(slug: string): Promise<Agent | null> {
 export async function getExistingSlugs(): Promise<Set<string>> {
   const rows = await db.select({ slug: agents.slug }).from(agents);
   return new Set(rows.map((r) => r.slug));
+}
+
+export async function updateAgentParsedFlags(id: string, flags: ParsedFlag[]): Promise<void> {
+  await db.update(agents).set({ parsedFlags: flags }).where(eq(agents.id, id));
 }

@@ -45,6 +45,13 @@ const { mockExecution, mockAgent, mockCapability, mockManagedProcess } = vi.hois
   return { mockExecution, mockAgent, mockCapability, mockManagedProcess };
 });
 
+vi.mock('@/lib/config', () => ({
+  config: {
+    LOG_DIR: '/tmp/logs',
+    USE_SESSION_PROCESS: false,
+  },
+}));
+
 vi.mock('@/lib/db', () => ({
   db: {
     select: vi.fn().mockReturnValue({

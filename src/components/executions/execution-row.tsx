@@ -22,11 +22,11 @@ function formatDuration(startedAt: Date | null, endedAt: Date | null): string {
 
 export function ExecutionRow({ execution, onCancelled }: ExecutionRowProps) {
   return (
-    <TableRow>
+    <TableRow className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
       <TableCell className="font-mono text-xs">
         <Link
           href={`/executions/${execution.id}`}
-          className="text-primary underline-offset-4 hover:underline"
+          className="font-mono text-xs text-muted-foreground/70 hover:text-primary transition-colors no-underline hover:no-underline"
         >
           {execution.id.slice(0, 8)}
         </Link>
@@ -34,10 +34,10 @@ export function ExecutionRow({ execution, onCancelled }: ExecutionRowProps) {
       <TableCell>
         <ExecutionStatusBadge status={execution.status} />
       </TableCell>
-      <TableCell className="text-sm text-muted-foreground">
+      <TableCell className="text-xs font-mono text-muted-foreground/70">
         {formatDuration(execution.startedAt, execution.endedAt)}
       </TableCell>
-      <TableCell className="text-sm text-muted-foreground">
+      <TableCell className="text-xs font-mono text-muted-foreground/60">
         {execution.exitCode !== null ? execution.exitCode : '-'}
       </TableCell>
       <TableCell className="text-right">

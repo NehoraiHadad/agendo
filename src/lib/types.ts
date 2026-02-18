@@ -8,11 +8,13 @@ export type Task = InferSelectModel<typeof schema.tasks>;
 export type Execution = InferSelectModel<typeof schema.executions>;
 export type TaskEvent = InferSelectModel<typeof schema.taskEvents>;
 export type WorkerHeartbeat = InferSelectModel<typeof schema.workerHeartbeats>;
+export type Session = InferSelectModel<typeof schema.sessions>;
 
 export type NewAgent = InferInsertModel<typeof schema.agents>;
 export type NewCapability = InferInsertModel<typeof schema.agentCapabilities>;
 export type NewTask = InferInsertModel<typeof schema.tasks>;
 export type NewExecution = InferInsertModel<typeof schema.executions>;
+export type NewSession = InferInsertModel<typeof schema.sessions>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];
@@ -21,6 +23,7 @@ export type InteractionMode = (typeof schema.interactionModeEnum.enumValues)[num
 export type AgentKind = (typeof schema.agentKindEnum.enumValues)[number];
 export type CapabilitySource = (typeof schema.capabilitySourceEnum.enumValues)[number];
 export type DiscoveryMethod = (typeof schema.discoveryMethodEnum.enumValues)[number];
+export type SessionStatus = (typeof schema.sessionStatusEnum.enumValues)[number];
 
 // ---- Domain types ----
 

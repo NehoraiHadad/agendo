@@ -55,6 +55,13 @@ export const executionStatusEnum = pgEnum('execution_status', [
   'timed_out',
 ]);
 
+export const sessionStatusEnum = pgEnum('session_status', [
+  'active',
+  'awaiting_input',
+  'idle',
+  'ended',
+]);
+
 // 'template' = CLI tools with command_tokens; 'prompt' = AI agents with free-form prompt.
 export const interactionModeEnum = pgEnum('interaction_mode', ['template', 'prompt']);
 
@@ -234,6 +241,8 @@ export const executions = pgTable(
     args: jsonb('args').notNull().$type<Record<string, unknown>>().default({}),
     // Resolved prompt sent to AI agent (prompt-mode only).
     prompt: text('prompt'),
+    // If set, overrides template interpolation (used for session continuation).
+    promptOverride: text('prompt_override'),
     // OS PID for SIGTERM/SIGKILL on cancel (tmux session PID or child_process PID).
     pid: integer('pid'),
     // External session ID (e.g. Claude session UUID) for session resume.
@@ -268,6 +277,8 @@ export const executions = pgTable(
     totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
     totalTurns: integer('total_turns'),
     totalDurationMs: integer('total_duration_ms'),
+    // Forward ref: sessions is defined after executions.
+    sessionId: uuid('session_id').references((): AnyPgColumn => sessions.id),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -279,6 +290,7 @@ export const executions = pgTable(
     index('idx_executions_stale').on(table.heartbeatAt),
     // Per-agent concurrency check in claim query.
     index('idx_executions_agent_active').on(table.agentId, table.status),
+    index('idx_executions_session').on(table.sessionId, table.createdAt),
   ],
 );
 
@@ -317,3 +329,36 @@ export const workerConfig = pgTable('worker_config', {
   value: jsonb('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// --- Sessions ---------------------------------------------------------------
+// A session groups one or more executions under a single long-running agent
+// process. Defined after executions so executions.sessionId can forward-ref.
+
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id').notNull().references(() => agents.id),
+    capabilityId: uuid('capability_id').notNull().references(() => agentCapabilities.id),
+    status: sessionStatusEnum('status').notNull().default('active'),
+    pid: integer('pid'),
+    workerId: text('worker_id'),
+    sessionRef: text('session_ref'),
+    eventSeq: integer('event_seq').notNull().default(0),
+    heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    lastActiveAt: timestamp('last_active_at', { withTimezone: true }),
+    idleTimeoutSec: integer('idle_timeout_sec').notNull().default(600),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    logFilePath: text('log_file_path'),
+    totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
+    totalTurns: integer('total_turns').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_sessions_task').on(table.taskId, table.createdAt),
+    index('idx_sessions_active').on(table.status, table.workerId),
+    index('idx_sessions_heartbeat').on(table.heartbeatAt),
+  ],
+);

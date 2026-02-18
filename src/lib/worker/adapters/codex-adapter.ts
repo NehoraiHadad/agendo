@@ -35,6 +35,10 @@ export class CodexAdapter implements AgentAdapter {
     void this.client?.close();
   }
 
+  isAlive(): boolean {
+    return false;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
@@ -81,6 +85,7 @@ export class CodexAdapter implements AgentAdapter {
     return {
       pid: 0, // transport.pid available after connect() resolves
       tmuxSession: '',
+      stdin: null,
       kill: (signal) => {
         if (signal === 'SIGKILL' && this.transport?.pid) {
           try {

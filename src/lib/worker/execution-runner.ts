@@ -1,5 +1,3 @@
-import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { executions, tasks } from '@/lib/db/schema';
@@ -17,14 +15,14 @@ import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import type { ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
+import { config } from '@/lib/config';
 
 // --- Constants ---
 
 const SIGKILL_DELAY_MS = 5_000;
+const RESULT_EXIT_GRACE_MS = 10_000; // max wait after result event before force-killing (GitHub #25629)
 const DEFAULT_TIMEOUT_SEC = 300;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
-const MSG_POLL_INTERVAL_MS = 500;
-const MSG_DIR_BASE = join('/tmp', 'agendo-messages');
 
 // --- Types ---
 
@@ -43,9 +41,78 @@ export interface RunExecutionInput {
  * 4. Spawn via adapter -> track output -> enforce limits
  * 5. Finalize with WHERE status='running' guard
  */
+const TERMINAL_STATUSES = new Set<string>(['succeeded', 'failed', 'cancelled', 'timed_out']);
+
 export async function runExecution({ executionId, workerId }: RunExecutionInput): Promise<void> {
   // --- 1. Load records ---
   const execution = await loadExecution(executionId);
+
+  // Guard: pg-boss may retry a job if the worker was killed before acking it.
+  // If the execution already reached a terminal state (e.g. a previous worker run
+  // completed it before dying), skip re-execution to avoid running Claude twice.
+  if (TERMINAL_STATUSES.has(execution.status)) {
+    console.log(
+      `[worker] Execution ${executionId} already in terminal state '${execution.status}' — skipping re-run.`,
+    );
+    return;
+  }
+
+  // Session-process path (new real-time channel)
+  if (config.USE_SESSION_PROCESS && execution.sessionId) {
+    const { SessionProcess } = await import('@/lib/worker/session-process');
+    const { getSession } = await import('@/lib/services/session-service');
+    const session = await getSession(execution.sessionId);
+    const agent = await getAgentById(execution.agentId);
+    const capability = await getCapabilityById(execution.capabilityId);
+    const resolvedCwd = validateWorkingDir(agent.workingDir ?? '/tmp');
+    validateBinary(agent.binaryPath);
+    const childEnv = buildChildEnv({ agentAllowlist: agent.envAllowlist ?? [] });
+
+    let resolvedPrompt = '';
+    if (execution.promptOverride) {
+      resolvedPrompt = execution.promptOverride;
+    } else if (capability.promptTemplate) {
+      const [task] = await db
+        .select({ title: tasks.title, description: tasks.description })
+        .from(tasks)
+        .where(eq(tasks.id, execution.taskId))
+        .limit(1);
+      resolvedPrompt = interpolatePrompt(capability.promptTemplate, {
+        task_title: task?.title ?? '',
+        task_description: task?.description ?? '',
+        ...execution.args,
+      });
+    }
+
+    const adapter = selectAdapter(agent, capability);
+    void childEnv; // referenced by adapter internals via spawnOpts
+
+    // Mark execution as running so the UI shows activity and concurrency checks work.
+    await db
+      .update(executions)
+      .set({ status: 'running', startedAt: new Date(), workerId })
+      .where(eq(executions.id, executionId));
+
+    const sessionProc = new SessionProcess(session, adapter, executionId, workerId);
+    await sessionProc.start(resolvedPrompt, execution.sessionRef ?? undefined, resolvedCwd);
+    const exitCode = await sessionProc.waitForExit();
+
+    // Finalize execution record. No WHERE status='running' guard here — the session
+    // path owns this execution exclusively, so a direct update is safe.
+    // For sessions: idle-timeout kill (exit 137) is normal suspension, not failure.
+    // Re-fetch session status to determine if this was a normal end.
+    const finalSession = await getSession(execution.sessionId!);
+    const sessionEndedNormally =
+      finalSession.status === 'idle' ||
+      finalSession.status === 'awaiting_input';
+    const finalStatus = exitCode === 0 || sessionEndedNormally ? 'succeeded' : 'failed';
+    await db
+      .update(executions)
+      .set({ status: finalStatus, exitCode, endedAt: new Date() })
+      .where(eq(executions.id, executionId));
+    return;
+  }
+
   const agent = await getAgentById(execution.agentId);
   const capability = await getCapabilityById(execution.capabilityId);
 
@@ -63,19 +130,24 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   let resolvedArgs: string[] | undefined;
 
   if (execution.mode === 'prompt') {
-    // Load task to get title/description for template interpolation
-    const [task] = await db
-      .select({ title: tasks.title, description: tasks.description })
-      .from(tasks)
-      .where(eq(tasks.id, execution.taskId))
-      .limit(1);
+    // If promptOverride is set, use it directly (session continuation path)
+    if (execution.promptOverride) {
+      resolvedPrompt = execution.promptOverride;
+    } else {
+      // Load task to get title/description for template interpolation
+      const [task] = await db
+        .select({ title: tasks.title, description: tasks.description })
+        .from(tasks)
+        .where(eq(tasks.id, execution.taskId))
+        .limit(1);
 
-    const interpolationContext: Record<string, unknown> = {
-      task_title: task?.title ?? '',
-      task_description: task?.description ?? '',
-      ...execution.args,
-    };
-    resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);
+      const interpolationContext: Record<string, unknown> = {
+        task_title: task?.title ?? '',
+        task_description: task?.description ?? '',
+        ...execution.args,
+      };
+      resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);
+    }
     await db
       .update(executions)
       .set({ prompt: resolvedPrompt })
@@ -146,37 +218,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   // --- 6. Track output ---
   let sessionId: string | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // --- 6a. Poll for incoming user messages and forward to adapter stdin ---
-  const msgDir = join(MSG_DIR_BASE, executionId);
-  let sendingMessage = false;
-  const messagePollTimer = setInterval(() => {
-    if (!existsSync(msgDir) || sendingMessage) return;
-    let files: string[];
-    try {
-      files = readdirSync(msgDir)
-        .filter((f) => f.endsWith('.msg'))
-        .sort(); // sort by timestamp prefix so messages arrive in order
-    } catch {
-      return;
-    }
-    const file = files[0]; // process one at a time to avoid races
-    if (!file) return;
-    const filePath = join(msgDir, file);
-    try {
-      const message = readFileSync(filePath, 'utf-8');
-      unlinkSync(filePath); // delete before sending to prevent double-deliver
-      if (adapter.sendMessage) {
-        sendingMessage = true;
-        logWriter.write(message, 'user');
-        void adapter.sendMessage(message).finally(() => {
-          sendingMessage = false;
-        });
-      }
-    } catch {
-      // File already deleted by concurrent poll or other error — skip
-    }
-  }, MSG_POLL_INTERVAL_MS);
+  let resultKillTimer: ReturnType<typeof setTimeout> | null = null;
 
   managedProcess.onData((chunk) => {
     logWriter.write(chunk, 'stdout');
@@ -194,6 +236,27 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     if (logWriter.stats.byteSize > (capability.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES)) {
       logWriter.writeSystem('Output limit exceeded. Terminating.');
       managedProcess.kill('SIGTERM');
+    }
+
+    // Workaround for GitHub #25629: Claude sometimes never closes stdout after emitting
+    // the final result event. Schedule a SIGKILL after a grace period so the execution
+    // doesn't stay stuck as 'running' for 45 minutes waiting for an exit that never comes.
+    if (!resultKillTimer) {
+      for (const line of chunk.split('\n')) {
+        if (!line.trim().startsWith('{')) continue;
+        try {
+          const ev = JSON.parse(line) as { type?: string };
+          if (ev.type === 'result') {
+            resultKillTimer = setTimeout(() => {
+              logWriter.writeSystem('Claude result event seen but process did not exit. Sending SIGKILL.');
+              managedProcess.kill('SIGKILL');
+            }, RESULT_EXIT_GRACE_MS);
+            break;
+          }
+        } catch {
+          // not JSON
+        }
+      }
     }
   });
 
@@ -216,7 +279,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   });
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
-  clearInterval(messagePollTimer);
+  if (resultKillTimer) clearTimeout(resultKillTimer);
   heartbeat.stop();
 
   logWriter.writeSystem(`Process exited with code ${exitCode}`);
@@ -269,6 +332,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
       endedAt: new Date(),
       logByteSize: logStats.byteSize,
       logLineCount: logStats.lineCount,
+      // sessionRef may not have been persisted yet if the intermediate void update
+      // was lost to a SIGINT race — include it here as a guaranteed fallback.
+      ...(sessionId !== null && { sessionRef: sessionId }),
       ...(totalCostUsd !== null && { totalCostUsd }),
       ...(totalTurns !== null && { totalTurns }),
       ...(totalDurationMs !== null && { totalDurationMs }),

@@ -16,7 +16,7 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('@/lib/config', () => ({
   config: {
-    LOG_DIR: '/data/agent-monitor/logs',
+    LOG_DIR: '/data/agendo/logs',
   },
 }));
 

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { CapabilityRow } from '@/components/agents/capability-row';
+import { RefreshFlagsButton } from '@/components/agents/refresh-flags-button';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
 
@@ -23,61 +24,61 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
         <h1 className="text-2xl font-bold">{agent.name}</h1>
       </div>
 
-      <Card>
+      <Card className="border-white/[0.06]">
         <CardHeader>
-          <CardTitle>Agent Details</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">Agent Details</CardTitle>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Name</dt>
-              <dd className="mt-1 text-sm">{agent.name}</dd>
+              <dt className="text-xs text-muted-foreground/60">Name</dt>
+              <dd className="mt-1 text-sm font-mono text-foreground/80">{agent.name}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Binary Path</dt>
-              <dd className="mt-1 text-sm font-mono">{agent.binaryPath}</dd>
+              <dt className="text-xs text-muted-foreground/60">Binary Path</dt>
+              <dd className="mt-1 font-mono text-xs text-muted-foreground/70">{agent.binaryPath}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Type</dt>
-              <dd className="mt-1 text-sm">{agent.toolType ?? '-'}</dd>
+              <dt className="text-xs text-muted-foreground/60">Type</dt>
+              <dd className="mt-1 text-sm font-mono text-foreground/80">{agent.toolType ?? '-'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Version</dt>
-              <dd className="mt-1 text-sm">{agent.version ?? '-'}</dd>
+              <dt className="text-xs text-muted-foreground/60">Version</dt>
+              <dd className="mt-1 text-sm font-mono text-foreground/80">{agent.version ?? '-'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Status</dt>
+              <dt className="text-xs text-muted-foreground/60">Status</dt>
               <dd className="mt-1">
                 <AgentStatusBadge isActive={agent.isActive} />
               </dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Kind</dt>
+              <dt className="text-xs text-muted-foreground/60">Kind</dt>
               <dd className="mt-1">
                 <Badge variant="outline">{agent.kind}</Badge>
               </dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Discovery Method</dt>
+              <dt className="text-xs text-muted-foreground/60">Discovery Method</dt>
               <dd className="mt-1">
                 <Badge variant="outline">{agent.discoveryMethod}</Badge>
               </dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-muted-foreground">Slug</dt>
-              <dd className="mt-1 text-sm font-mono">{agent.slug}</dd>
+              <dt className="text-xs text-muted-foreground/60">Slug</dt>
+              <dd className="mt-1 font-mono text-xs text-muted-foreground/70">{agent.slug}</dd>
             </div>
           </dl>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="border-white/[0.06]">
         <CardHeader>
-          <CardTitle>Capabilities ({capabilities.length})</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">Capabilities ({capabilities.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {capabilities.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No capabilities configured.</p>
+            <p className="text-xs text-muted-foreground/60">No capabilities configured.</p>
           ) : (
             <div className="space-y-2">
               {capabilities.map((cap) => (
@@ -85,6 +86,15 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/[0.06]">
+        <CardHeader>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">CLI Flags</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RefreshFlagsButton agentId={id} initialFlags={agent.parsedFlags ?? []} />
         </CardContent>
       </Card>
     </div>
