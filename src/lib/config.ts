@@ -15,7 +15,6 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   MCP_SERVER_PATH: z.string().optional(),
   TERMINAL_JWT_SECRET: z.string().min(16).optional(),
-  USE_SESSION_PROCESS: z.coerce.boolean().default(false),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -5,12 +5,13 @@ import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 
 interface WebTerminalProps {
-  executionId: string;
+  executionId?: string;
+  sessionId?: string;
   fontSize?: number;
   className?: string;
 }
 
-export function WebTerminal({ executionId, fontSize = 14, className }: WebTerminalProps) {
+export function WebTerminal({ executionId, sessionId, fontSize = 14, className }: WebTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(true);
@@ -86,9 +87,10 @@ export function WebTerminal({ executionId, fontSize = 14, className }: WebTermin
         fitAddon.fit();
 
         // Get terminal token
+        const tokenBody = sessionId ? { sessionId } : { executionId };
         const tokenResult = await apiFetch<ApiResponse<{ token: string }>>('/api/terminal/token', {
           method: 'POST',
-          body: JSON.stringify({ executionId }),
+          body: JSON.stringify(tokenBody),
         });
 
         if (disposed) return;
@@ -155,7 +157,7 @@ export function WebTerminal({ executionId, fontSize = 14, className }: WebTermin
       socket?.disconnect();
       terminal?.dispose();
     };
-  }, [executionId, fontSize]);
+  }, [executionId, sessionId, fontSize]);
 
   return (
     <div className={cn('relative overflow-hidden rounded-lg border bg-[#1a1b26]', className)}>

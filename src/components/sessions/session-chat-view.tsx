@@ -11,6 +11,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Square,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,6 +20,7 @@ import { WriteView } from '@/components/executions/tool-views/write-view';
 import { EditView } from '@/components/executions/tool-views/edit-view';
 import { MultiEditView } from '@/components/executions/tool-views/multi-edit-view';
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
+import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
 
@@ -338,7 +340,15 @@ type DisplayItem =
   | { kind: 'thinking'; id: number; text: string }
   | { kind: 'user'; id: number; text: string }
   | { kind: 'info'; id: number; text: string }
-  | { kind: 'error'; id: number; text: string };
+  | { kind: 'error'; id: number; text: string }
+  | {
+      kind: 'tool-approval';
+      id: number;
+      approvalId: string;
+      toolName: string;
+      toolInput: Record<string, unknown>;
+      dangerLevel: number;
+    };
 
 function buildToolResultMap(events: AgendoEvent[]): Map<string, ToolCallResult> {
   const map = new Map<string, ToolCallResult>();
@@ -356,6 +366,7 @@ function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, Too
   const items: DisplayItem[] = [];
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
+  let sessionInitCount = 0;
 
   for (const ev of events) {
     switch (ev.type) {
@@ -411,6 +422,18 @@ function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, Too
         break;
       }
 
+      case 'agent:tool-approval': {
+        items.push({
+          kind: 'tool-approval',
+          id: ev.id,
+          approvalId: ev.approvalId,
+          toolName: ev.toolName,
+          toolInput: ev.toolInput,
+          dangerLevel: ev.dangerLevel,
+        });
+        break;
+      }
+
       case 'agent:result': {
         const parts: string[] = ['Turn complete'];
         if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
@@ -421,7 +444,12 @@ function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, Too
       }
 
       case 'session:init': {
-        items.push({ kind: 'info', id: ev.id, text: 'Session started' });
+        sessionInitCount++;
+        items.push({
+          kind: 'info',
+          id: ev.id,
+          text: sessionInitCount === 1 ? 'Session started' : 'Session resumed',
+        });
         break;
       }
 
@@ -440,28 +468,13 @@ function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, Too
         break;
       }
 
-      // session:state is handled by the hook, not rendered here
+      // session:state and agent:activity are handled by the hook, not rendered here
       default:
         break;
     }
   }
 
   return items;
-}
-
-function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
-  switch (item.kind) {
-    case 'assistant':
-      return <AssistantBubble key={idx} parts={item.parts} />;
-    case 'thinking':
-      return <ThinkingBubble key={idx} text={item.text} />;
-    case 'user':
-      return <UserBubble key={idx} text={item.text} />;
-    case 'info':
-      return <InfoPill key={idx} text={item.text} />;
-    case 'error':
-      return <ErrorPill key={idx} text={item.text} />;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -478,10 +491,26 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
   const bottomRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<{ id: string; text: string }[]>([]);
+  const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
+  const [isInterrupting, setIsInterrupting] = useState(false);
   const msgIdRef = useRef(0);
+
+  const handleInterrupt = useCallback(async () => {
+    if (isInterrupting) return;
+    setIsInterrupting(true);
+    try {
+      await fetch(`/api/sessions/${sessionId}/interrupt`, { method: 'POST' });
+    } finally {
+      setIsInterrupting(false);
+    }
+  }, [sessionId, isInterrupting]);
 
   const handleSent = useCallback((text: string) => {
     setOptimisticMessages((prev) => [...prev, { id: String(++msgIdRef.current), text }]);
+  }, []);
+
+  const handleApprovalResolved = useCallback((approvalId: string) => {
+    setResolvedApprovals((prev) => new Set(prev).add(approvalId));
   }, []);
 
   // Clear optimistic messages once the real user:message events arrive in stream
@@ -499,13 +528,53 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
   const toolResultMap = buildToolResultMap(stream.events);
   const displayItems = buildDisplayItems(stream.events, toolResultMap);
 
-  // Extract slash commands from the most recent session:init event
-  const slashCommands = stream.events
+  // Extract slash commands and MCP servers from the most recent session:init event
+  const initEvent = stream.events
     .filter((e): e is Extract<typeof e, { type: 'session:init' }> => e.type === 'session:init')
-    .at(-1)?.slashCommands;
+    .at(-1);
+  const slashCommands = initEvent?.slashCommands;
+  const mcpServers = initEvent?.mcpServers;
 
   const isActive = currentStatus === 'active';
-  const showTyping = isActive && stream.isConnected;
+
+  // Drive typing indicator from session status OR from agent:activity thinking events.
+  // findLast is available in Node 18+ / modern browsers; fall back to reverse iteration.
+  const lastActivityEvent = [...stream.events]
+    .reverse()
+    .find((e) => e.type === 'agent:activity') as
+    | (AgendoEvent & { type: 'agent:activity' })
+    | undefined;
+  const isThinking = lastActivityEvent?.thinking ?? false;
+  const showTyping = (isActive || isThinking) && stream.isConnected;
+
+  function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
+    switch (item.kind) {
+      case 'assistant':
+        return <AssistantBubble key={idx} parts={item.parts} />;
+      case 'thinking':
+        return <ThinkingBubble key={idx} text={item.text} />;
+      case 'user':
+        return <UserBubble key={idx} text={item.text} />;
+      case 'info':
+        return <InfoPill key={idx} text={item.text} />;
+      case 'error':
+        return <ErrorPill key={idx} text={item.text} />;
+      case 'tool-approval': {
+        if (resolvedApprovals.has(item.approvalId)) return null;
+        return (
+          <ToolApprovalCard
+            key={item.id}
+            sessionId={sessionId}
+            approvalId={item.approvalId}
+            toolName={item.toolName}
+            toolInput={item.toolInput}
+            dangerLevel={item.dangerLevel}
+            onResolved={() => handleApprovalResolved(item.approvalId)}
+          />
+        );
+      }
+    }
+  }
 
   return (
     <div
@@ -560,11 +629,31 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
         <div ref={bottomRef} />
       </div>
 
+      {/* Stop button — soft interrupt, only when agent is actively running */}
+      {isActive && (
+        <div className="flex justify-center px-3 py-1.5 border-t border-white/[0.05] bg-[oklch(0.085_0_0)]">
+          <button
+            type="button"
+            onClick={() => void handleInterrupt()}
+            disabled={isInterrupting}
+            className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+            aria-label="Stop current agent action"
+          >
+            {isInterrupting
+              ? <Loader2 className="size-3 animate-spin" />
+              : <Square className="size-3 fill-current" />
+            }
+            Stop
+          </button>
+        </div>
+      )}
+
       <SessionMessageInput
         sessionId={sessionId}
         status={currentStatus as SessionStatus}
         onSent={handleSent}
         slashCommands={slashCommands}
+        mcpServers={mcpServers}
       />
     </div>
   );

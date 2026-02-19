@@ -2,10 +2,17 @@ import { type Job } from 'pg-boss';
 import { db, pool } from '../lib/db/index';
 import { workerHeartbeats } from '../lib/db/schema';
 import { config } from '../lib/config';
-import { type ExecuteCapabilityJobData, registerWorker, stopBoss } from '../lib/worker/queue';
+import {
+  type ExecuteCapabilityJobData,
+  type RunSessionJobData,
+  registerWorker,
+  registerSessionWorker,
+  stopBoss,
+} from '../lib/worker/queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runExecution } from '../lib/worker/execution-runner';
+import { runSession } from '../lib/worker/session-runner';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 
 const WORKER_ID = config.WORKER_ID;
@@ -23,6 +30,28 @@ async function handleJob(job: Job<ExecuteCapabilityJobData>): Promise<void> {
       console.log(`[worker] Execution ${executionId} completed`);
     } catch (err) {
       console.error(`[worker] Execution ${executionId} failed:`, err);
+      throw err;
+    }
+  })();
+
+  inFlightJobs.add(promise);
+  try {
+    await promise;
+  } finally {
+    inFlightJobs.delete(promise);
+  }
+}
+
+async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
+  const { sessionId, resumeRef } = job.data;
+  console.log(`[worker] Claimed session job for session ${sessionId}`);
+
+  const promise = (async () => {
+    try {
+      await runSession(sessionId, WORKER_ID, resumeRef);
+      console.log(`[worker] Session ${sessionId} completed`);
+    } catch (err) {
+      console.error(`[worker] Session ${sessionId} failed:`, err);
       throw err;
     }
   })();
@@ -63,11 +92,15 @@ async function main(): Promise<void> {
   // Pre-flight: zombie process reconciliation
   await reconcileZombies(WORKER_ID);
 
-  // Register the job handler
+  // Register execution job handler
   await registerWorker(handleJob);
   console.log(
-    `[worker] Listening for jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`,
+    `[worker] Listening for execution jobs (max ${config.WORKER_MAX_CONCURRENT_JOBS} concurrent)...`,
   );
+
+  // Register session job handler
+  await registerSessionWorker(handleSessionJob);
+  console.log(`[worker] Listening for session jobs...`);
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);

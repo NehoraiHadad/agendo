@@ -10,7 +10,14 @@ export interface ExecuteCapabilityJobData {
   sessionId?: string;
 }
 
+/** Job data shape for the run-session queue */
+export interface RunSessionJobData {
+  sessionId: string;
+  resumeRef?: string;
+}
+
 const QUEUE_NAME = 'execute-capability';
+const SESSION_QUEUE_NAME = 'run-session';
 
 let bossInstance: PgBoss | null = null;
 
@@ -29,6 +36,7 @@ export async function getBoss(): Promise<PgBoss> {
   await bossInstance.start();
   // pg-boss v10 requires createQueue() before send() or work()
   await bossInstance.createQueue(QUEUE_NAME);
+  await bossInstance.createQueue(SESSION_QUEUE_NAME);
   return bossInstance;
 }
 
@@ -42,6 +50,19 @@ export async function enqueueExecution(data: ExecuteCapabilityJobData): Promise<
     expireInMinutes: 45,
     retryLimit: 2,
     retryDelay: 30,
+  });
+}
+
+/**
+ * Enqueue a session run job.
+ * Called from API routes when creating or resuming a session.
+ */
+export async function enqueueSession(data: RunSessionJobData): Promise<string | null> {
+  const boss = await getBoss();
+  return boss.send(SESSION_QUEUE_NAME, data, {
+    expireInMinutes: 60 * 8, // Sessions can run for hours
+    retryLimit: 1,
+    retryDelay: 10,
   });
 }
 
@@ -61,6 +82,31 @@ export async function registerWorker(
       pollingIntervalSeconds: Math.ceil(config.WORKER_POLL_INTERVAL_MS / 1000),
     },
     async (jobs: Job<ExecuteCapabilityJobData>[]) => {
+      for (const job of jobs) {
+        await handler(job);
+      }
+    },
+  );
+}
+
+/**
+ * Register the worker handler for session run jobs.
+ * Called from worker/index.ts on startup.
+ */
+export async function registerSessionWorker(
+  handler: (job: Job<RunSessionJobData>) => Promise<void>,
+): Promise<void> {
+  const boss = await getBoss();
+  // teamSize: 3 = three independent polling loops running concurrently.
+  // batchSize: 1 = each loop handles one session at a time.
+  // This prevents a long-running session from blocking other sessions from starting.
+  await boss.work<RunSessionJobData>(
+    SESSION_QUEUE_NAME,
+    {
+      batchSize: 1,
+      pollingIntervalSeconds: Math.ceil(config.WORKER_POLL_INTERVAL_MS / 1000),
+    },
+    async (jobs: Job<RunSessionJobData>[]) => {
       for (const job of jobs) {
         await handler(job);
       }

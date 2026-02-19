@@ -1,3 +1,7 @@
+export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits';
+
+export type PermissionDecision = 'allow' | 'deny' | 'allow-session';
+
 export interface SpawnOpts {
   cwd: string;
   env: Record<string, string>;
@@ -7,6 +11,10 @@ export interface SpawnOpts {
   extraArgs?: string[];
   /** When true, omit -p (print mode) so the process stays alive for multi-turn sessions. */
   persistentSession?: boolean;
+  /** Controls per-tool-call gating within a running session. Default: 'default' (ask). */
+  permissionMode?: PermissionMode;
+  /** Tool name patterns already approved for this session (from session.allowedTools). */
+  allowedTools?: string[];
 }
 
 export interface ManagedProcess {
@@ -23,11 +31,16 @@ export interface ImageContent {
   data: string; // base64 encoded
 }
 
+/** Callback type injected by SessionProcess to handle per-tool approval requests. */
+export type ApprovalHandler = (approvalId: string, toolName: string, toolInput: Record<string, unknown>) => Promise<PermissionDecision>;
+
 export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
   extractSessionId(output: string): string | null;
-  sendMessage(message: string, image?: ImageContent): Promise<void>;  // Now required
-  interrupt(): void;         // Now required
-  isAlive(): boolean;        // NEW
+  sendMessage(message: string, image?: ImageContent): Promise<void>;
+  interrupt(): Promise<void>;
+  isAlive(): boolean;
+  onThinkingChange(cb: (thinking: boolean) => void): void;
+  setApprovalHandler(handler: ApprovalHandler): void;
 }

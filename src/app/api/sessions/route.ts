@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
-import { listExecutions, createExecution } from '@/lib/services/execution-service';
-import { enqueueExecution } from '@/lib/worker/queue';
+import { createSession, listSessions } from '@/lib/services/session-service';
+import { enqueueSession } from '@/lib/worker/queue';
 import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { BadRequestError } from '@/lib/errors';
-import type { ExecutionStatus } from '@/lib/types';
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
   const url = new URL(req.url);
-  const result = await listExecutions({
+  const result = await listSessions({
     taskId: url.searchParams.get('taskId') ?? undefined,
     agentId: url.searchParams.get('agentId') ?? undefined,
-    status: (url.searchParams.get('status') as ExecutionStatus) ?? undefined,
+    status: url.searchParams.get('status') ?? undefined,
     page: url.searchParams.has('page') ? Number(url.searchParams.get('page')) : undefined,
     pageSize: url.searchParams.has('pageSize')
       ? Number(url.searchParams.get('pageSize'))
@@ -30,28 +29,35 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     taskId: string;
     agentId: string;
     capabilityId: string;
-    args?: Record<string, unknown>;
-    cliFlags?: Record<string, string | boolean>;
+    initialPrompt?: string;
+    permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
+    allowedTools?: string[];
   };
 
-  // Guard: prompt-mode capabilities must use /api/sessions
+  // Validate capability is prompt-mode
   const [cap] = await db
     .select({ interactionMode: agentCapabilities.interactionMode })
     .from(agentCapabilities)
     .where(eq(agentCapabilities.id, body.capabilityId))
     .limit(1);
 
-  if (cap?.interactionMode === 'prompt') {
-    throw new BadRequestError('Use /api/sessions to run prompt-mode capabilities.');
+  if (!cap) throw new BadRequestError('Capability not found');
+  if (cap.interactionMode !== 'prompt') {
+    throw new BadRequestError(
+      'Sessions can only be created for prompt-mode capabilities. Use /api/executions for template capabilities.',
+    );
   }
 
-  const execution = await createExecution(body);
-  await enqueueExecution({
-    executionId: execution.id,
-    capabilityId: execution.capabilityId,
-    agentId: execution.agentId,
-    args: execution.args,
+  const session = await createSession({
+    taskId: body.taskId,
+    agentId: body.agentId,
+    capabilityId: body.capabilityId,
+    initialPrompt: body.initialPrompt,
+    permissionMode: body.permissionMode,
+    allowedTools: body.allowedTools,
   });
 
-  return NextResponse.json({ data: execution }, { status: 201 });
+  await enqueueSession({ sessionId: session.id });
+
+  return NextResponse.json({ data: { id: session.id } }, { status: 201 });
 });

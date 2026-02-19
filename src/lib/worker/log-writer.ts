@@ -22,7 +22,7 @@ export class FileLogWriter {
   private closed = false;
 
   constructor(
-    private readonly executionId: string,
+    private readonly executionId: string | null,
     private readonly logFilePath: string,
   ) {}
 
@@ -87,6 +87,7 @@ export class FileLogWriter {
   }
 
   private async flushToDb(): Promise<void> {
+    if (!this.executionId) return; // Sessions don't need byte/line stats in DB
     this.dirty = false;
     await db
       .update(executions)

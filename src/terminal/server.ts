@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { Server as SocketIOServer } from 'socket.io';
 import * as pty from 'node-pty';
 import { verifyTerminalToken, type TerminalTokenPayload } from './auth';
@@ -68,17 +69,43 @@ io.on('connection', (socket) => {
 
   if (!entry) {
     try {
+      const isShellMode = payload.mode === 'shell';
+      const cwd = payload.cwd ?? process.env.HOME ?? '/tmp';
+      const fullEnv = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' } as NodeJS.ProcessEnv;
+
+      if (isShellMode) {
+        // Create tmux session if it doesn't already exist (e.g. after server restart).
+        // On subsequent connections the session persists and we just re-attach.
+        const { status } = spawnSync('tmux', ['has-session', '-t', sessionName], { stdio: 'ignore' });
+        const tmuxExists = status === 0;
+        if (!tmuxExists) {
+          spawnSync('tmux', ['new-session', '-d', '-s', sessionName, '-c', cwd], {
+            env: fullEnv,
+            stdio: 'ignore',
+          });
+          if (payload.initialHint) {
+            const hint = payload.initialHint.replace(/'/g, "'\\''");
+            spawnSync(
+              'tmux',
+              ['send-keys', '-t', sessionName,
+                `echo '--- Agendo Session Terminal ---'; echo '${hint}'; echo ''`,
+                'Enter'],
+              { env: fullEnv, stdio: 'ignore' },
+            );
+          }
+          console.log(`[terminal] Created tmux session for shell mode: ${sessionName} (cwd=${cwd})`);
+        } else {
+          console.log(`[terminal] Reusing existing tmux session: ${sessionName}`);
+        }
+      }
+
+      // Both shell and attach modes connect via tmux attach-session.
       const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', sessionName], {
         name: 'xterm-256color',
         cols: 200,
         rows: 50,
-        cwd: process.env.HOME ?? '/tmp',
-        env: {
-          TERM: 'xterm-256color',
-          COLORTERM: 'truecolor',
-          HOME: process.env.HOME ?? '/tmp',
-          PATH: process.env.PATH ?? '/usr/bin:/bin',
-        },
+        cwd,
+        env: fullEnv,
       });
 
       const newEntry: SessionEntry = {
@@ -103,7 +130,7 @@ io.on('connection', (socket) => {
       });
 
       sessions.set(sessionName, newEntry);
-      console.log(`[terminal] Created PTY for tmux session: ${sessionName}`);
+      console.log(`[terminal] Attached PTY to tmux session: ${sessionName}`);
     } catch (err) {
       socket.emit('terminal:error', {
         message: `Failed to attach to session: ${(err as Error).message}`,

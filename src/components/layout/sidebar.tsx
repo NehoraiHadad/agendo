@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, ListTodo, Bot, Play, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Bot, Play, MessageSquare, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 interface SidebarStats {
   runningExecutions: number;
   todoTasks: number;
+  activeSessions: number;
 }
 
 interface SidebarProps {
@@ -22,6 +23,7 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, badgeKey: null },
   { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
   { href: '/agents', label: 'Agents', icon: Bot, badgeKey: null },
+  { href: '/sessions', label: 'Sessions', icon: MessageSquare, badgeKey: 'activeSessions' as const },
   { href: '/executions', label: 'Executions', icon: Play, badgeKey: 'runningExecutions' as const },
 ];
 
