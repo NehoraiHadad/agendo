@@ -1,42 +1,57 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Loader2, Send, Paperclip, X } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Loader2, Send, Paperclip, X, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
+import { ModelPickerPopover } from '@/components/sessions/model-picker-popover';
+import { MemoryEditorModal } from '@/components/sessions/memory-editor-modal';
 import type { ExecutionStatus, Execution } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
-// Claude Code built-in slash commands
+// Slash commands — populated live from the agent's system:init event
 // ---------------------------------------------------------------------------
 
 interface SlashCommand {
   name: string;
   description: string;
   hasArgs?: boolean;
+  /** Needs a native UI interaction; cannot be sent as raw text */
+  interactive?: boolean;
+  category?: 'skill' | 'builtin';
 }
 
-const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/compact',      description: 'Compact conversation context', hasArgs: true },
-  { name: '/clear',        description: 'Clear conversation history' },
-  { name: '/cost',         description: 'Show token usage and cost' },
-  { name: '/memory',       description: 'Open memory file editor' },
-  { name: '/mcp',          description: 'Manage MCP server connections' },
-  { name: '/permissions',  description: 'View and manage tool permissions' },
-  { name: '/status',       description: 'Show account and system status' },
-  { name: '/doctor',       description: 'Check system health' },
-  { name: '/model',        description: 'Switch the AI model', hasArgs: true },
-  { name: '/review',       description: 'Review a pull request' },
-  { name: '/init',         description: 'Initialize project — create CLAUDE.md' },
-  { name: '/bug',          description: 'Submit a bug report' },
-  { name: '/help',         description: 'Show help and all commands' },
-  { name: '/vim',          description: 'Toggle vim keybindings' },
-  { name: '/terminal',     description: 'Open a terminal session' },
-  { name: '/login',        description: 'Switch Anthropic account' },
-  { name: '/logout',       description: 'Log out of current account' },
-  { name: '/release-notes', description: 'View recent release notes' },
-  { name: '/pr_comments',  description: 'View pull request comments', hasArgs: true },
-  { name: '/exit',         description: 'Exit the current session' },
+// Commands that accept arguments (agent doesn't tell us this, so we maintain
+// a small set here just for the "+ args" label and to keep cursor after name).
+const COMMANDS_WITH_ARGS = new Set(['compact', 'model', 'pr_comments', 'review']);
+
+// Built-in Claude Code commands that are always available but NOT included in
+// the slash_commands field of the system:init event (Claude only advertises
+// skills + a subset of builtins there).
+const BUILTIN_COMMANDS: SlashCommand[] = [
+  { name: '/clear',       description: 'Clear conversation history',         category: 'builtin' },
+  { name: '/compact',     description: 'Compact context with summary',       category: 'builtin', hasArgs: true },
+  { name: '/cost',        description: 'Show token usage and cost',          category: 'builtin' },
+  { name: '/status',      description: 'Show account and system status',     category: 'builtin' },
+  { name: '/doctor',      description: 'Check system health',                category: 'builtin' },
+  { name: '/bug',         description: 'Submit a bug report',                category: 'builtin' },
+  { name: '/help',        description: 'Show help and all commands',         category: 'builtin' },
+  { name: '/vim',         description: 'Toggle vim keybindings',             category: 'builtin' },
+  { name: '/model',       description: 'Switch the AI model',                category: 'builtin', interactive: true },
+  { name: '/memory',      description: 'Edit Claude memory files',           category: 'builtin', interactive: true },
+  { name: '/exit',        description: 'Stop the current execution',         category: 'builtin', interactive: true },
+  { name: '/terminal',    description: 'Open a terminal session',            category: 'builtin', interactive: true },
+  { name: '/mcp',         description: 'List MCP server connections',        category: 'builtin' },
+  { name: '/permissions', description: 'List tool permissions',              category: 'builtin' },
+  { name: '/login',       description: 'Switch Anthropic account',           category: 'builtin', interactive: true },
+  { name: '/logout',      description: 'Log out of current account',         category: 'builtin', interactive: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -44,7 +59,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
 // ---------------------------------------------------------------------------
 
 interface SlashCommandPickerProps {
-  commands: SlashCommand[]; // already-filtered list from parent
+  commands: SlashCommand[];
   activeIdx: number;
   onSelect: (cmd: SlashCommand) => void;
   onChangeActive: (idx: number) => void;
@@ -52,6 +67,10 @@ interface SlashCommandPickerProps {
 
 function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: SlashCommandPickerProps) {
   if (commands.length === 0) return null;
+
+  const hasSkills = commands.some((c) => c.category === 'skill' || !c.category);
+  const hasBuiltins = commands.some((c) => c.category === 'builtin');
+  const showCategories = hasSkills && hasBuiltins;
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1 z-50 rounded-lg border border-white/[0.10] bg-[oklch(0.10_0_0)] shadow-2xl overflow-hidden">
@@ -61,24 +80,47 @@ function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: S
         </span>
       </div>
       <ul className="max-h-48 overflow-auto" role="listbox">
-        {commands.map((cmd, i) => (
-          <li
-            key={cmd.name}
-            role="option"
-            aria-selected={i === activeIdx}
-            className={`flex items-baseline gap-3 px-3 py-2 cursor-pointer text-xs transition-colors ${
-              i === activeIdx ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
-            }`}
-            onMouseEnter={() => onChangeActive(i)}
-            onClick={() => onSelect(cmd)}
-          >
-            <span className="font-mono text-primary shrink-0">{cmd.name}</span>
-            <span className="text-muted-foreground/60 truncate">{cmd.description}</span>
-            {cmd.hasArgs && (
-              <span className="ml-auto text-muted-foreground/40 shrink-0 italic text-[10px]">+ args</span>
-            )}
+        {showCategories && hasSkills && (
+          <li className="px-3 pt-1.5 pb-0.5" aria-hidden>
+            <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">Skills</span>
           </li>
-        ))}
+        )}
+        {commands.map((cmd, i) => {
+          const isFirstBuiltin =
+            showCategories &&
+            cmd.category === 'builtin' &&
+            (i === 0 || commands[i - 1]?.category !== 'builtin');
+
+          return (
+            <li key={`${i}-${cmd.name}`}>
+              {isFirstBuiltin && (
+                <div className="px-3 py-1 border-t border-white/[0.06] mt-0.5">
+                  <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">Commands</span>
+                </div>
+              )}
+              <div
+                role="option"
+                aria-selected={i === activeIdx}
+                className={`flex items-baseline gap-3 px-3 py-2 cursor-pointer text-xs transition-colors ${
+                  i === activeIdx ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
+                }`}
+                onMouseEnter={() => onChangeActive(i)}
+                onClick={() => onSelect(cmd)}
+              >
+                <span className="font-mono text-primary shrink-0">{cmd.name}</span>
+                <span className="text-muted-foreground/60 truncate">{cmd.description}</span>
+                <span className="ml-auto shrink-0 flex items-center gap-1">
+                  {cmd.interactive && (
+                    <ExternalLink className="size-2.5 text-muted-foreground/30" />
+                  )}
+                  {cmd.hasArgs && !cmd.interactive && (
+                    <span className="text-muted-foreground/40 italic text-[10px]">+ args</span>
+                  )}
+                </span>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -137,6 +179,13 @@ export function ExecutionMessageInput({
   const [showPicker, setShowPicker] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+
+  // Interactive command UI states
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showMemoryEditor, setShowMemoryEditor] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -144,24 +193,52 @@ export function ExecutionMessageInput({
   const isDisabled = !isRunning && !resumeContext;
   const isContinueMode = !isRunning && !!resumeContext;
 
-  const allCommands = useMemo<SlashCommand[]>(() => {
-    if (!sessionSlashCommands?.length) return SLASH_COMMANDS;
-    const hardcodedMap = new Map(SLASH_COMMANDS.map((c) => [c.name.slice(1), c]));
-    const sessionSet = new Set(sessionSlashCommands);
-    const merged: SlashCommand[] = sessionSlashCommands.map((name) => {
-      const known = hardcodedMap.get(name);
-      return known ?? { name: `/${name}`, description: name.replace(/-/g, ' ') };
-    });
-    for (const cmd of SLASH_COMMANDS) {
-      if (!sessionSet.has(cmd.name.slice(1))) merged.push(cmd);
-    }
-    return merged;
-  }, [sessionSlashCommands]);
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Live commands from the agent + always-on builtins Claude doesn't advertise.
+  // Live list takes priority; builtins fill in whatever is missing.
+  // Deduplicate live commands (Claude can report the same skill multiple times).
+  const seenLive = new Set<string>();
+  const liveCommands: SlashCommand[] = (sessionSlashCommands ?? []).flatMap((name) => {
+    const key = `/${name}`;
+    if (seenLive.has(key)) return [];
+    seenLive.add(key);
+    return [{ name: key, description: name.replace(/-/g, ' '), hasArgs: COMMANDS_WITH_ARGS.has(name), category: 'skill' as const }];
+  });
+  const liveNames = new Set(liveCommands.map((c) => c.name));
+  const allCommands: SlashCommand[] = [
+    ...liveCommands,
+    ...BUILTIN_COMMANDS.filter((c) => !liveNames.has(c.name)),
+  ];
 
   const slashQuery = showPicker ? message.slice(1) : '';
   const filteredCommands = allCommands.filter((c) =>
     c.name.toLowerCase().includes(slashQuery.toLowerCase()),
   );
+
+  function handleInteractiveCommand(name: string) {
+    switch (name) {
+      case '/model':
+        setShowModelPicker(true);
+        break;
+      case '/memory':
+        setShowMemoryEditor(true);
+        break;
+      case '/exit':
+        setShowExitConfirm(true);
+        break;
+      case '/terminal':
+        setToast('Use the Terminal tab above to open a terminal session for this execution.');
+        break;
+      default:
+        setToast(`"${name}" requires terminal interaction. Use the Terminal tab above.`);
+    }
+  }
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
@@ -169,16 +246,28 @@ export function ExecutionMessageInput({
     autoGrow(e.target);
     if (val.startsWith('/') && !isContinueMode) {
       setShowPicker(true);
+      setShowModelPicker(false);
       setActiveIdx(0);
     } else {
       setShowPicker(false);
     }
   }
 
-  const selectCommand = useCallback((cmd: SlashCommand) => {
-    const insert = cmd.hasArgs ? `${cmd.name} ` : `${cmd.name}`;
-    setMessage(insert);
+  function selectCommand(cmd: SlashCommand) {
     setShowPicker(false);
+    setMessage('');
+
+    if (cmd.interactive) {
+      handleInteractiveCommand(cmd.name);
+      return;
+    }
+
+    if (!cmd.hasArgs) {
+      void submitText(cmd.name);
+      return;
+    }
+    const insert = `${cmd.name} `;
+    setMessage(insert);
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.focus();
@@ -187,7 +276,7 @@ export function ExecutionMessageInput({
         autoGrow(textareaRef.current);
       }
     });
-  }, []);
+  }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (showPicker && filteredCommands.length > 0) {
@@ -211,6 +300,11 @@ export function ExecutionMessageInput({
       }
     }
 
+    if (e.key === 'Escape' && showModelPicker) {
+      setShowModelPicker(false);
+      return;
+    }
+
     // Enter without Shift = submit; Shift+Enter = newline (default)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -219,15 +313,16 @@ export function ExecutionMessageInput({
   }
 
   useEffect(() => {
-    if (!showPicker) return;
+    if (!showPicker && !showModelPicker) return;
     function handleClick(e: MouseEvent) {
       if (textareaRef.current && !textareaRef.current.closest('form')?.contains(e.target as Node)) {
         setShowPicker(false);
+        setShowModelPicker(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showPicker]);
+  }, [showPicker, showModelPicker]);
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -245,11 +340,10 @@ export function ExecutionMessageInput({
     e.target.value = '';
   }
 
-  async function submitMessage() {
-    const trimmed = message.trim();
-    if (!trimmed || isSending || isDisabled) return;
+  async function submitText(text: string) {
+    const trimmed = text.trim();
+    if ((!trimmed && !pendingImage) || isSending || isDisabled) return;
 
-    setShowPicker(false);
     setIsSending(true);
     try {
       if (isContinueMode && resumeContext) {
@@ -290,6 +384,11 @@ export function ExecutionMessageInput({
     }
   }
 
+  async function submitMessage() {
+    setShowPicker(false);
+    await submitText(message);
+  }
+
   function resetTextarea() {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -304,87 +403,152 @@ export function ExecutionMessageInput({
   if (isDisabled) return null;
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="relative flex flex-col gap-0 border-t border-white/[0.07] bg-[oklch(0.09_0_0)] px-3 py-2.5"
-    >
-      {showPicker && filteredCommands.length > 0 && (
-        <SlashCommandPicker
-          commands={filteredCommands}
-          activeIdx={activeIdx}
-          onSelect={selectCommand}
-          onChangeActive={setActiveIdx}
-        />
-      )}
-
-      {/* Image preview */}
-      {pendingImage && (
-        <div className="mb-2 flex items-start">
-          <div className="relative">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={pendingImage.dataUrl}
-              alt="attachment"
-              className="h-16 w-16 object-cover rounded-lg border border-white/[0.10]"
-            />
-            <button
-              type="button"
-              onClick={() => setPendingImage(null)}
-              className="absolute -top-1 -right-1 rounded-full bg-zinc-800 border border-white/20 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Remove image"
-            >
-              <X className="size-2.5" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-end gap-2">
-        {/* Image upload — only in running mode */}
-        {isRunning && (
-          <>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 flex items-center justify-center h-11 w-9 rounded-lg border border-white/[0.08] bg-white/[0.04] text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/[0.08] transition-colors disabled:opacity-30"
-              disabled={isSending}
-              aria-label="Attach image"
-            >
-              <Paperclip className="size-4" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleImageSelect}
-            />
-          </>
+    <>
+      <form
+        onSubmit={handleSubmit}
+        className="relative flex flex-col gap-0 border-t border-white/[0.07] bg-[oklch(0.09_0_0)] px-3 py-2.5"
+      >
+        {/* Slash command picker */}
+        {showPicker && filteredCommands.length > 0 && !showModelPicker && (
+          <SlashCommandPicker
+            commands={filteredCommands}
+            activeIdx={activeIdx}
+            onSelect={selectCommand}
+            onChangeActive={setActiveIdx}
+          />
         )}
 
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder={isContinueMode ? 'Continue session…' : 'Message agent… or / for commands'}
-          rows={1}
-          className="flex-1 min-h-[44px] max-h-32 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 disabled:opacity-50 transition-[border-color,box-shadow] resize-none leading-tight overflow-y-auto"
-          disabled={isSending}
-          autoComplete="off"
-          spellCheck={false}
-        />
+        {/* Model picker */}
+        {showModelPicker && (
+          <ModelPickerPopover
+            onSelect={(modelId) => {
+              void submitText(`/model ${modelId}`);
+              setShowModelPicker(false);
+            }}
+            onClose={() => setShowModelPicker(false)}
+          />
+        )}
 
-        <Button
-          type="submit"
-          size="icon"
-          className="shrink-0 h-11 w-11"
-          disabled={!message.trim() || isSending}
-          aria-label="Send message"
-        >
-          {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-        </Button>
-      </div>
-    </form>
+        {/* Toast banner */}
+        {toast && (
+          <div className="absolute bottom-full left-0 right-0 mb-1 z-50 mx-3">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-950/60 px-3 py-2 text-xs text-amber-200/80 shadow-lg">
+              <ExternalLink className="size-3.5 mt-0.5 shrink-0 text-amber-400/70" />
+              <span className="flex-1">{toast}</span>
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                className="shrink-0 text-amber-400/50 hover:text-amber-400/90"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Image preview */}
+        {pendingImage && (
+          <div className="mb-2 flex items-start">
+            <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={pendingImage.dataUrl}
+                alt="attachment"
+                className="h-16 w-16 object-cover rounded-lg border border-white/[0.10]"
+              />
+              <button
+                type="button"
+                onClick={() => setPendingImage(null)}
+                className="absolute -top-1 -right-1 rounded-full bg-zinc-800 border border-white/20 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Remove image"
+              >
+                <X className="size-2.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-end gap-2">
+          {/* Image upload — only in running mode */}
+          {isRunning && (
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="shrink-0 flex items-center justify-center h-11 w-9 rounded-lg border border-white/[0.08] bg-white/[0.04] text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/[0.08] transition-colors disabled:opacity-30"
+                disabled={isSending}
+                aria-label="Attach image"
+              >
+                <Paperclip className="size-4" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+            </>
+          )}
+
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={isContinueMode ? 'Continue session…' : 'Message agent… or / for commands'}
+            rows={1}
+            className="flex-1 min-h-[44px] max-h-32 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 disabled:opacity-50 transition-[border-color,box-shadow] resize-none leading-tight overflow-y-auto"
+            disabled={isSending}
+            autoComplete="off"
+            spellCheck={false}
+          />
+
+          <Button
+            type="submit"
+            size="icon"
+            className="shrink-0 h-11 w-11"
+            disabled={(!message.trim() && !pendingImage) || isSending}
+            aria-label="Send message"
+          >
+            {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          </Button>
+        </div>
+      </form>
+
+      {/* Memory editor — rendered outside the form so the dialog portal works */}
+      <MemoryEditorModal
+        apiPath={`/api/executions/${executionId}/memory`}
+        open={showMemoryEditor}
+        onClose={() => setShowMemoryEditor(false)}
+      />
+
+      {/* Exit/stop confirmation dialog */}
+      <Dialog open={showExitConfirm} onOpenChange={(v) => !v && setShowExitConfirm(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Stop execution?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Send <code className="bg-white/[0.08] rounded px-1 text-xs">/exit</code> to ask the
+            agent to stop. The agent may complete its current turn first.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExitConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setShowExitConfirm(false);
+                void submitText('/exit');
+              }}
+            >
+              Stop execution
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

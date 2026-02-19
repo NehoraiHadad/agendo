@@ -30,11 +30,35 @@ export class ClaudeAdapter implements AgentAdapter {
     return null;
   }
 
+  // Claude Code built-in slash commands that must be written as raw text to stdin
+  // so the readline layer intercepts them as CLI commands (not NDJSON user messages).
+  // Source: `claude --help` and Claude Code docs.
+  private static readonly KNOWN_SLASH_COMMANDS = new Set([
+    'compact', 'clear', 'cost', 'memory', 'mcp', 'permissions', 'status',
+    'doctor', 'model', 'review', 'init', 'bug', 'help', 'vim', 'terminal',
+    'login', 'logout', 'release-notes', 'pr_comments', 'exit',
+  ]);
+
   async sendMessage(message: string, image?: ImageContent): Promise<void> {
     if (!this.childProcess?.stdin?.writable) {
       throw new Error('Claude process stdin is not writable');
     }
-    const content: unknown[] = [{ type: 'text', text: message }];
+
+    // Slash commands: only route KNOWN Claude Code commands as raw readline text.
+    // Unknown /something is sent as a regular NDJSON message so Claude treats it as text.
+    if (!image && message.startsWith('/')) {
+      const cmd = message.trim().split(/\s+/)[0].slice(1); // e.g. "clear" from "/clear foo"
+      if (ClaudeAdapter.KNOWN_SLASH_COMMANDS.has(cmd)) {
+        this.childProcess.stdin.write(message.trim() + '\n');
+        return;
+      }
+    }
+
+    // Regular messages and image attachments use the NDJSON stream-json protocol.
+    const content: unknown[] = [];
+    if (message.trim()) {
+      content.push({ type: 'text', text: message });
+    }
     if (image) {
       content.push({
         type: 'image',
@@ -43,7 +67,10 @@ export class ClaudeAdapter implements AgentAdapter {
     }
     const ndjsonMessage = JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: content.length === 1 ? message : content },
+      message: {
+        role: 'user',
+        content: content.length === 1 && !image ? message : content,
+      },
       session_id: this.sessionId ?? 'default',
       parent_tool_use_id: null,
     });

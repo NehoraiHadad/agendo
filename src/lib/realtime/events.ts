@@ -18,7 +18,7 @@ export type AgendoEvent =
   | (EventBase & { type: 'agent:tool-start'; toolUseId: string; toolName: string; input: Record<string, unknown> })
   | (EventBase & { type: 'agent:tool-end'; toolUseId: string; content: unknown })
   | (EventBase & { type: 'agent:result'; costUsd: number | null; turns: number | null; durationMs: number | null })
-  | (EventBase & { type: 'session:init'; sessionRef: string })
+  | (EventBase & { type: 'session:init'; sessionRef: string; slashCommands: string[] })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
   | (EventBase & { type: 'user:message'; text: string })
   | (EventBase & { type: 'system:info'; message: string })
