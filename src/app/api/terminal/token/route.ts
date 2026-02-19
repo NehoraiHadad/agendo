@@ -2,25 +2,80 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { createTerminalToken } from '@/terminal/auth';
 import { db } from '@/lib/db';
-import { executions } from '@/lib/db/schema';
+import { executions, sessions, agents, tasks } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { terminalJwtSecret } from '@/lib/config';
 import { NotFoundError, ValidationError } from '@/lib/errors';
+import type { TaskInputContext } from '@/lib/types';
 
 /**
  * POST /api/terminal/token
  *
- * Request body: { executionId: string }
+ * Request body: { executionId: string } OR { sessionId: string }
  * Response:     { data: { token: string } }
  *
  * Issues a 5-minute JWT for connecting to the terminal WebSocket server.
+ * - executionId: attaches to an existing tmux session (attach mode)
+ * - sessionId: opens a plain bash shell in the session's working directory (shell mode)
  */
-export const POST = withErrorBoundary(async (req: NextRequest) => {
-  const body = await req.json();
-  const { executionId } = body;
 
+function buildResumeHint(agentSlug: string, sessionRef: string | null): string {
+  if (!sessionRef) return 'No session ref available — start a new session with the agent CLI.';
+  const slug = agentSlug.toLowerCase();
+  if (slug.includes('claude')) return `Resume: claude --resume ${sessionRef}`;
+  if (slug.includes('codex')) return `Resume: codex (session ID: ${sessionRef})`;
+  if (slug.includes('gemini')) return `Resume: gemini (session ref: ${sessionRef})`;
+  return `Session ref: ${sessionRef}`;
+}
+
+export const POST = withErrorBoundary(async (req: NextRequest) => {
+  const body = (await req.json()) as { executionId?: string; sessionId?: string };
+  const { executionId, sessionId } = body;
+
+  // --- Branch: session shell mode ---
+  if (sessionId) {
+    if (typeof sessionId !== 'string') {
+      throw new ValidationError('sessionId must be a string');
+    }
+
+    const [row] = await db
+      .select({
+        sessionRef: sessions.sessionRef,
+        agentSlug: agents.slug,
+        taskInputContext: tasks.inputContext,
+        status: sessions.status,
+      })
+      .from(sessions)
+      .innerJoin(agents, eq(agents.id, sessions.agentId))
+      .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    if (!row) {
+      throw new NotFoundError('Session', sessionId);
+    }
+
+    const inputContext = row.taskInputContext as TaskInputContext | null;
+    const cwd = inputContext?.workingDir ?? process.env.HOME ?? '/tmp';
+    const hint = buildResumeHint(row.agentSlug, row.sessionRef);
+
+    const token = createTerminalToken(
+      {
+        sessionName: `shell-${sessionId}`,
+        userId: '00000000-0000-0000-0000-000000000001',
+        mode: 'shell',
+        cwd,
+        initialHint: hint,
+      },
+      terminalJwtSecret,
+    );
+
+    return NextResponse.json({ data: { token } });
+  }
+
+  // --- Branch: execution tmux attach mode ---
   if (!executionId || typeof executionId !== 'string') {
-    throw new ValidationError('executionId is required');
+    throw new ValidationError('executionId or sessionId is required');
   }
 
   const [execution] = await db
@@ -48,6 +103,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     {
       sessionName: execution.tmuxSessionName,
       userId: '00000000-0000-0000-0000-000000000001',
+      mode: 'attach',
     },
     terminalJwtSecret,
   );

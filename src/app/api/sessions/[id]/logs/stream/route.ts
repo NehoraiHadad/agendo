@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { executions } from '@/lib/db/schema';
+import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import {
   openSync,
@@ -12,7 +12,7 @@ import {
   type FSWatcher,
 } from 'node:fs';
 
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
+const TERMINAL_STATUSES = new Set(['ended']);
 const STATUS_POLL_INTERVAL_MS = 1_000;
 const FILE_POLL_INTERVAL_MS = 500;
 
@@ -46,32 +46,27 @@ export async function GET(
 
       function cleanup() {
         closed = true;
-        if (watcher) {
-          watcher.close();
-          watcher = null;
-        }
-        if (statusTimer) {
-          clearInterval(statusTimer);
-          statusTimer = null;
-        }
-        if (filePollTimer) {
-          clearInterval(filePollTimer);
-          filePollTimer = null;
-        }
+        if (watcher) { watcher.close(); watcher = null; }
+        if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+        if (filePollTimer) { clearInterval(filePollTimer); filePollTimer = null; }
       }
 
-      const [execution] = await db.select().from(executions).where(eq(executions.id, id)).limit(1);
-      if (!execution) {
-        send({ type: 'error', message: `Execution ${id} not found` });
+      const [session] = await db
+        .select({ status: sessions.status, logFilePath: sessions.logFilePath })
+        .from(sessions)
+        .where(eq(sessions.id, id))
+        .limit(1);
+
+      if (!session) {
+        send({ type: 'error', message: `Session ${id} not found` });
         controller.close();
         return;
       }
 
-      const logPath = execution.logFilePath;
-      const initialStatusStr = execution.status;
-      const isTerminalNow = TERMINAL_STATUSES.has(execution.status);
+      const logPath = session.logFilePath;
+      const isTerminalNow = TERMINAL_STATUSES.has(session.status);
 
-      send({ type: 'status', status: initialStatusStr });
+      send({ type: 'status', status: session.status });
 
       if (resumeOffset === 0 && logPath && existsSync(logPath)) {
         const stat = statSync(logPath);
@@ -80,14 +75,13 @@ export async function GET(
           const buf = Buffer.alloc(stat.size);
           readSync(fd, buf, 0, stat.size, 0);
           closeSync(fd);
-          const content = buf.toString('utf-8');
-          send({ type: 'catchup', content }, stat.size);
+          send({ type: 'catchup', content: buf.toString('utf-8') }, stat.size);
           fileOffset = stat.size;
         }
       }
 
       if (isTerminalNow) {
-        send({ type: 'done', status: initialStatusStr, exitCode: execution.exitCode ?? null });
+        send({ type: 'done', status: session.status, exitCode: null });
         controller.close();
         cleanup();
         return;
@@ -104,8 +98,7 @@ export async function GET(
           readSync(fd, buf, 0, buf.length, fileOffset);
           closeSync(fd);
           fileOffset = stat.size;
-          const content = buf.toString('utf-8');
-          const lines = content.split('\n');
+          const lines = buf.toString('utf-8').split('\n');
           for (const line of lines) {
             if (!line) continue;
             const match = line.match(/^\[(stdout|stderr|system|user)\] (.*)$/);
@@ -115,36 +108,20 @@ export async function GET(
               send({ type: 'log', content: line, stream: 'stdout' });
             }
           }
-
-          // Emit current byte offset as SSE event id for reconnect support
           if (!closed) {
-            try {
-              controller.enqueue(encoder.encode(`id: ${fileOffset}\n\n`));
-            } catch {
-              closed = true;
-            }
+            try { controller.enqueue(encoder.encode(`id: ${fileOffset}\n\n`)); } catch { closed = true; }
           }
-        } catch {
-          // File may have been deleted or rotated
-        }
+        } catch { /* file may have been deleted */ }
       }
 
       if (logPath && existsSync(logPath)) {
-        try {
-          watcher = watch(logPath, () => readNewBytes());
-        } catch {
-          // fs.watch may fail on some filesystems
-        }
+        try { watcher = watch(logPath, () => readNewBytes()); } catch { /* noop */ }
       }
 
       filePollTimer = setInterval(() => {
         if (!logPath) return;
         if (!watcher && existsSync(logPath)) {
-          try {
-            watcher = watch(logPath, () => readNewBytes());
-          } catch {
-            /* noop */
-          }
+          try { watcher = watch(logPath, () => readNewBytes()); } catch { /* noop */ }
         }
         readNewBytes();
       }, FILE_POLL_INTERVAL_MS);
@@ -153,12 +130,12 @@ export async function GET(
         if (closed) return;
         try {
           const [current] = await db
-            .select({ status: executions.status, exitCode: executions.exitCode })
-            .from(executions)
-            .where(eq(executions.id, id))
+            .select({ status: sessions.status })
+            .from(sessions)
+            .where(eq(sessions.id, id))
             .limit(1);
           if (!current) {
-            send({ type: 'error', message: 'Execution not found' });
+            send({ type: 'error', message: 'Session not found' });
             controller.close();
             cleanup();
             return;
@@ -166,29 +143,18 @@ export async function GET(
           send({ type: 'status', status: current.status });
           if (TERMINAL_STATUSES.has(current.status)) {
             readNewBytes();
-            send({ type: 'done', status: current.status, exitCode: current.exitCode });
+            send({ type: 'done', status: current.status, exitCode: null });
             controller.close();
             cleanup();
           }
-        } catch {
-          // DB error -- continue polling
-        }
+        } catch { /* DB error — continue polling */ }
       }, STATUS_POLL_INTERVAL_MS);
     },
     cancel() {
       closed = true;
-      if (watcher) {
-        watcher.close();
-        watcher = null;
-      }
-      if (statusTimer) {
-        clearInterval(statusTimer);
-        statusTimer = null;
-      }
-      if (filePollTimer) {
-        clearInterval(filePollTimer);
-        filePollTimer = null;
-      }
+      if (watcher) { watcher.close(); watcher = null; }
+      if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+      if (filePollTimer) { clearInterval(filePollTimer); filePollTimer = null; }
     },
   });
 

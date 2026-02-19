@@ -1,4 +1,4 @@
-import { eq, and, inArray, desc } from 'drizzle-orm';
+import { eq, and, inArray, desc, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { NotFoundError } from '@/lib/errors';
@@ -9,6 +9,9 @@ export interface CreateSessionInput {
   agentId: string;
   capabilityId: string;
   idleTimeoutSec?: number;
+  initialPrompt?: string;
+  permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
+  allowedTools?: string[];
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -19,7 +22,10 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       agentId: input.agentId,
       capabilityId: input.capabilityId,
       idleTimeoutSec: input.idleTimeoutSec ?? 600,
-      status: 'active',
+      status: 'idle', // session starts idle, goes active when worker claims it
+      initialPrompt: input.initialPrompt,
+      permissionMode: input.permissionMode,
+      allowedTools: input.allowedTools,
     })
     .returning();
   return session;
@@ -45,6 +51,48 @@ export async function listSessionsByTask(taskId: string): Promise<Session[]> {
     .from(sessions)
     .where(eq(sessions.taskId, taskId))
     .orderBy(desc(sessions.createdAt));
+}
+
+export interface ListSessionsInput {
+  taskId?: string;
+  agentId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function listSessions(filters?: ListSessionsInput): Promise<{
+  data: Session[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const page = filters?.page ?? 1;
+  const pageSize = filters?.pageSize ?? 20;
+  const offset = (page - 1) * pageSize;
+
+  const conditions = [];
+  if (filters?.taskId) conditions.push(eq(sessions.taskId, filters.taskId));
+  if (filters?.agentId) conditions.push(eq(sessions.agentId, filters.agentId));
+  if (filters?.status)
+    conditions.push(
+      eq(sessions.status, filters.status as 'active' | 'awaiting_input' | 'idle' | 'ended'),
+    );
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [data, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(sessions)
+      .where(where)
+      .orderBy(desc(sessions.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db.select({ total: count() }).from(sessions).where(where),
+  ]);
+
+  return { data, total, page, pageSize };
 }
 
 /**

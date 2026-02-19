@@ -1,6 +1,13 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import { AsyncLock } from '@/lib/utils/async-lock';
+import type {
+  AgentAdapter,
+  ApprovalHandler,
+  ImageContent,
+  ManagedProcess,
+  SpawnOpts,
+} from '@/lib/worker/adapters/types';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -22,6 +29,9 @@ export class GeminiAdapter implements AgentAdapter {
   private pendingRequests = new Map<number | string, PendingRequest>();
   private sessionId: string | null = null;
   private currentTurn: Promise<void> = Promise.resolve();
+  private lock = new AsyncLock();
+  private thinkingCallback: ((thinking: boolean) => void) | null = null;
+  private approvalHandler: ApprovalHandler | null = null;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, null);
@@ -36,19 +46,37 @@ export class GeminiAdapter implements AgentAdapter {
     return this.sessionId;
   }
 
-  async sendMessage(message: string): Promise<void> {
+  async sendMessage(message: string, _image?: ImageContent): Promise<void> {
     if (!this.sessionId) throw new Error('No active Gemini ACP session');
     await this.currentTurn;
-    this.currentTurn = this.sendPrompt(message);
+    this.currentTurn = this.lock.acquire(() => this.sendPrompt(message));
     await this.currentTurn;
   }
 
-  interrupt(): void {
-    this.childProcess?.kill('SIGINT');
+  async interrupt(): Promise<void> {
+    for (const [id] of this.pendingRequests) {
+      this.writeJson({ jsonrpc: '2.0', method: 'cancelRequest', params: { id } });
+    }
+    await new Promise<void>((r) => setTimeout(r, 2000));
+    if (this.childProcess?.pid) {
+      try {
+        process.kill(-this.childProcess.pid, 'SIGINT');
+      } catch {
+        // Process group already dead
+      }
+    }
   }
 
   isAlive(): boolean {
     return this.childProcess?.stdin?.writable ?? false;
+  }
+
+  onThinkingChange(cb: (thinking: boolean) => void): void {
+    this.thinkingCallback = cb;
+  }
+
+  setApprovalHandler(handler: ApprovalHandler): void {
+    this.approvalHandler = handler;
   }
 
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
@@ -130,13 +158,31 @@ export class GeminiAdapter implements AgentAdapter {
       return;
     }
 
-    // Server request (has id + method → needs a synchronous response)
+    // Server request (has id + method → needs a response)
     if (msg.id !== undefined && msg.method) {
       if (msg.method === 'session/request_permission') {
-        this.writeJson({
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: { outcome: 'selected', optionId: 'proceed_once' },
+        if (!this.approvalHandler) {
+          // Auto-allow if no handler configured
+          this.writeJson({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: { outcome: 'selected', optionId: 'proceed_once' },
+          });
+          return;
+        }
+        // Async: relay to approval handler
+        const approvalId = String(msg.id);
+        const params = msg.params ?? {};
+        const toolName =
+          (params.toolName as string) ?? (params.tool as string) ?? 'unknown';
+        const toolInput = (params.input as Record<string, unknown>) ?? {};
+        void this.approvalHandler(approvalId, toolName, toolInput).then((decision) => {
+          const optionId = decision === 'deny' ? 'decline' : 'proceed_once';
+          this.writeJson({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: { outcome: 'selected', optionId },
+          });
         });
       }
       return;
@@ -178,10 +224,12 @@ export class GeminiAdapter implements AgentAdapter {
 
   private async sendPrompt(text: string): Promise<void> {
     if (!this.sessionId) throw new Error('No active session');
+    this.thinkingCallback?.(true);
     await this.sendRequest('prompt', {
       sessionId: this.sessionId,
       prompt: [{ type: 'text', text }],
     });
+    this.thinkingCallback?.(false);
   }
 
   private sendRequest<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {

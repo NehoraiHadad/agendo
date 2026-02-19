@@ -4,6 +4,9 @@ export interface TerminalTokenPayload {
   sessionName: string;
   userId: string;
   exp: number;
+  mode?: 'attach' | 'shell';
+  cwd?: string;
+  initialHint?: string;
 }
 
 export function createTerminalToken(

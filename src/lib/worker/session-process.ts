@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray, isNull, or } from 'drizzle-orm';
@@ -7,8 +8,9 @@ import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
 import { serializeEvent } from '@/lib/realtime/events';
 import type { AgendoEvent, AgendoEventPayload, AgendoControl, SessionStatus } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
-import type { AgentAdapter, SpawnOpts, ManagedProcess, ImageContent } from '@/lib/worker/adapters/types';
+import type { AgentAdapter, SpawnOpts, ManagedProcess, ImageContent, PermissionDecision } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
+import { Future } from '@/lib/utils/future';
 
 const SIGKILL_DELAY_MS = 5_000;
 
@@ -31,9 +33,12 @@ function resolveSessionLogPath(sessionId: string): string {
  *   - Parsing agent output (Claude stream-json NDJSON) into AgendoEvents
  *   - Publishing events to PG NOTIFY for SSE fan-out
  *   - Writing a structured session log file
- *   - Receiving control messages (send message, cancel, redirect) via PG NOTIFY
+ *   - Receiving control messages (send message, cancel, redirect, tool-approval) via PG NOTIFY
  *   - Idle timeout management and graceful shutdown
  *   - Heartbeat updates every 30s for stale-job detection
+ *   - Per-tool approval gating with session allowlist persistence
+ *   - Synthetic tool-end events on cancellation to prevent forever-spinners
+ *   - kill(pid, 0) liveness checks to detect silent crashes
  */
 export class SessionProcess {
   private managedProcess: ManagedProcess | null = null;
@@ -42,15 +47,18 @@ export class SessionProcess {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimeoutKilled = false;
+  private interruptInProgress = false;
+  private interruptKilled = false;
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
-  private exitResolve: ((code: number | null) => void) | null = null;
+  private exitFuture = new Future<number | null>();
+  private activeToolUseIds = new Set<string>();
+  private pendingApprovals = new Map<string, (decision: 'allow' | 'deny' | 'allow-session') => void>();
 
   constructor(
     private session: Session,
     private adapter: AgentAdapter,
-    private executionId: string,
     private workerId: string,
   ) {}
 
@@ -87,10 +95,10 @@ export class SessionProcess {
     // client never sees duplicate IDs.
     this.eventSeq = claimed.eventSeq;
 
-    // Set up log writer. FileLogWriter flushes byte/line stats to the executions
-    // table; passing executionId keeps those stats current for the owning execution.
+    // Set up log writer. Pass null for executionId since sessions track their own
+    // stats independently (no byte/line flush to the executions table).
     const logPath = resolveSessionLogPath(this.session.id);
-    this.logWriter = new FileLogWriter(this.executionId, logPath);
+    this.logWriter = new FileLogWriter(null, logPath);
     this.logWriter.open();
 
     // Persist the log file path so the frontend can fetch it later.
@@ -99,7 +107,7 @@ export class SessionProcess {
       .set({ logFilePath: logPath })
       .where(eq(sessions.id, this.session.id));
 
-    // Subscribe to control channel for inbound messages (send, cancel, redirect).
+    // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
     this.unsubscribeControl = await subscribe(
       channelName('agendo_control', this.session.id),
       (payload) => void this.onControl(payload),
@@ -118,11 +126,23 @@ export class SessionProcess {
     const spawnOpts: SpawnOpts = {
       cwd: spawnCwd ?? '/tmp',
       env: childEnv,
-      executionId: this.executionId,
+      executionId: this.session.id,
       timeoutSec: this.session.idleTimeoutSec,
       maxOutputBytes: 10 * 1024 * 1024,
       persistentSession: true, // keep process alive after result for multi-turn
+      permissionMode: this.session.permissionMode ?? 'default',
+      allowedTools: this.session.allowedTools ?? [],
     };
+
+    // Wire approval handler so adapter can request per-tool approval
+    this.adapter.setApprovalHandler((id, name, input) =>
+      this.handleApprovalRequest(id, name, input)
+    );
+
+    // Wire thinking callback for agent:activity events
+    this.adapter.onThinkingChange((thinking) => {
+      void this.emitEvent({ type: 'agent:activity', thinking });
+    });
 
     if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the
@@ -166,6 +186,14 @@ export class SessionProcess {
         for (const partial of partials) {
           const event = await this.emitEvent(partial);
 
+          // Track in-flight tool calls to enable synthetic cleanup on cancel.
+          if (event.type === 'agent:tool-start') {
+            this.activeToolUseIds.add(event.toolUseId);
+          }
+          if (event.type === 'agent:tool-end') {
+            this.activeToolUseIds.delete(event.toolUseId);
+          }
+
           // Persist sessionRef once the agent announces its session ID.
           if (event.type === 'session:init') {
             this.sessionRef = event.sessionRef;
@@ -176,7 +204,9 @@ export class SessionProcess {
           }
 
           // After the agent finishes a result, transition to awaiting_input.
-          if (event.type === 'agent:result') {
+          // Skip during an interrupt — handleInterrupt() manages the transition
+          // based on whether the process survived (warm vs cold resume).
+          if (event.type === 'agent:result' && !this.interruptInProgress) {
             await this.transitionTo('awaiting_input');
             this.resetIdleTimer();
           }
@@ -206,7 +236,10 @@ export class SessionProcess {
       const slashCommands = Array.isArray(parsed.slash_commands)
         ? (parsed.slash_commands as string[])
         : [];
-      return [{ type: 'session:init', sessionRef: parsed.session_id as string, slashCommands }];
+      const mcpServers = Array.isArray(parsed.mcp_servers)
+        ? (parsed.mcp_servers as Array<{ name: string; status?: string; tools?: string[] }>)
+        : [];
+      return [{ type: 'session:init', sessionRef: parsed.session_id as string, slashCommands, mcpServers }];
     }
 
     // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)
@@ -291,10 +324,21 @@ export class SessionProcess {
 
     if (control.type === 'cancel') {
       await this.handleCancel();
+    } else if (control.type === 'interrupt') {
+      await this.handleInterrupt();
     } else if (control.type === 'message') {
       await this.pushMessage(control.text, control.image);
     } else if (control.type === 'redirect') {
       await this.pushMessage(control.newPrompt);
+    } else if (control.type === 'tool-approval') {
+      const resolver = this.pendingApprovals.get(control.approvalId);
+      if (resolver) {
+        this.pendingApprovals.delete(control.approvalId);
+        resolver(control.decision);
+        if (control.decision === 'allow-session') {
+          await this.persistAllowedTool(control.toolName);
+        }
+      }
     }
   }
 
@@ -325,19 +369,68 @@ export class SessionProcess {
 
   private async handleCancel(): Promise<void> {
     await this.emitEvent({ type: 'system:info', message: 'Cancellation requested' });
-    this.adapter.interrupt();
+    // Emit synthetic tool-end for every in-flight tool call to prevent forever-spinners
+    for (const toolUseId of this.activeToolUseIds) {
+      await this.emitEvent({
+        type: 'agent:tool-end',
+        toolUseId,
+        content: '[Interrupted by user]',
+      });
+    }
+    this.activeToolUseIds.clear();
+    await this.adapter.interrupt();
     // Allow graceful shutdown; escalate to SIGKILL after grace period.
     setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
     }, SIGKILL_DELAY_MS);
   }
 
+  // ---------------------------------------------------------------------------
+  // Private: soft interrupt (Stop — process stays alive)
+  // ---------------------------------------------------------------------------
+
+  private async handleInterrupt(): Promise<void> {
+    this.interruptInProgress = true;
+    // Pre-set interruptKilled so that if the process dies during the interrupt,
+    // onExit transitions to 'idle' (resumable) instead of 'ended'.
+    this.interruptKilled = true;
+
+    await this.emitEvent({ type: 'system:info', message: 'Stopping...' });
+    for (const toolUseId of this.activeToolUseIds) {
+      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted]' });
+    }
+    this.activeToolUseIds.clear();
+
+    // Ask the adapter to send an interrupt signal. For Claude this writes a
+    // control_request{subtype:'interrupt'} to stdin and waits up to 3s for a
+    // 'result' event. If Claude handles it gracefully the process stays alive;
+    // if it dies or times out, adapter.isAlive() will be false afterwards.
+    await this.adapter.interrupt();
+
+    this.interruptInProgress = false;
+
+    if (this.adapter.isAlive()) {
+      // Claude stopped the current action but is still running — warm session,
+      // user can send another message immediately without a cold resume.
+      this.interruptKilled = false; // process survived, clear the pre-set flag
+      await this.transitionTo('awaiting_input');
+      this.resetIdleTimer();
+    }
+    // else: process died during interrupt — interruptKilled=true so onExit will
+    // transition to 'idle' (not 'ended'), keeping the session cold-resumable.
+  }
+
   /**
    * Externally interrupt the session (e.g. from the API cancel route).
-   * Sends SIGINT via the adapter, then escalates to SIGKILL after grace period.
+   * Emits synthetic tool-end events for in-flight tools, sends SIGINT via the
+   * adapter, then escalates to SIGKILL after grace period.
    */
-  interrupt(): void {
-    this.adapter.interrupt();
+  async interrupt(): Promise<void> {
+    for (const toolUseId of this.activeToolUseIds) {
+      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted by user]' });
+    }
+    this.activeToolUseIds.clear();
+    await this.adapter.interrupt();
     setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
     }, SIGKILL_DELAY_MS);
@@ -402,10 +495,18 @@ export class SessionProcess {
     // Clean exit (0) = agent finished normally -> idle (resumable).
     // Anything else -> ended.
     if (this.status === 'active' || this.status === 'awaiting_input') {
-      if (exitCode === 0 || this.idleTimeoutKilled) {
+      if (exitCode === 0 || this.idleTimeoutKilled || this.interruptKilled) {
         await this.transitionTo('idle');
       } else {
+        await this.emitEvent({
+          type: 'system:error',
+          message:
+            `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
+            `This may be caused by an unsupported slash command (/mcp, /permissions) or a Claude CLI crash.`,
+        });
         await this.transitionTo('ended');
+        // Kill the companion terminal tmux session — session is no longer resumable.
+        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
       }
     }
 
@@ -419,7 +520,7 @@ export class SessionProcess {
       this.logWriter = null;
     }
 
-    this.exitResolve?.(exitCode);
+    this.exitFuture.resolve(exitCode);
   }
 
   // ---------------------------------------------------------------------------
@@ -474,6 +575,18 @@ export class SessionProcess {
           .update(sessions)
           .set({ heartbeatAt: new Date() })
           .where(eq(sessions.id, this.session.id));
+        // Liveness check: kill(pid, 0) throws ESRCH if the process is already dead.
+        // This catches silent crashes where the exit handler never fired.
+        if (this.managedProcess?.pid) {
+          try {
+            process.kill(this.managedProcess.pid, 0);
+          } catch {
+            console.warn(
+              `[session-process] Session ${this.session.id}: process ${this.managedProcess.pid} died silently, recovering`,
+            );
+            void this.onExit(-1);
+          }
+        }
       } catch (err) {
         console.error(
           `[session-process] Heartbeat failed for session ${this.session.id}:`,
@@ -491,6 +604,78 @@ export class SessionProcess {
   }
 
   // ---------------------------------------------------------------------------
+  // Private: tool approval
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check whether a tool name is already on the session's persistent allowlist.
+   * Supports exact match and prefix-match patterns (e.g. "Bash(npm test)" pattern
+   * matches the tool name "Bash").
+   */
+  private isToolAllowed(toolName: string): boolean {
+    const allowed = this.session.allowedTools;
+    if (!allowed?.length) return false;
+    return allowed.some((pattern) => {
+      // exact match or prefix match (e.g. "Bash(npm test)" matches "Bash")
+      return toolName === pattern || toolName.startsWith(pattern.split('(')[0]);
+    });
+  }
+
+  /**
+   * Append a tool name to the session's allowedTools list and persist it to DB.
+   * Called when the user approves a tool with 'allow-session'.
+   */
+  private async persistAllowedTool(toolName: string): Promise<void> {
+    const allowed = this.session.allowedTools ?? [];
+    if (!allowed.includes(toolName)) {
+      const updated = [...allowed, toolName];
+      this.session.allowedTools = updated;
+      await db
+        .update(sessions)
+        .set({ allowedTools: updated })
+        .where(eq(sessions.id, this.session.id));
+    }
+  }
+
+  /**
+   * Handle a per-tool approval request from the adapter.
+   * If the tool is already on the session allowlist, returns 'allow' immediately.
+   * Otherwise, emits an agent:tool-approval event to the frontend and blocks
+   * until the user responds via the control channel.
+   */
+  private async handleApprovalRequest(
+    approvalId: string,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): Promise<PermissionDecision> {
+    // Non-interactive modes: auto-allow without prompting the user.
+    // Claude already receives --permission-mode <mode> via its CLI flag, so
+    // this guard is primarily for Codex and Gemini adapters which relay their
+    // permission requests through this handler.
+    if (this.session.permissionMode !== 'default') {
+      return 'allow';
+    }
+
+    // Check per-session allowlist — no round-trip to the user needed.
+    if (this.isToolAllowed(toolName)) {
+      return 'allow';
+    }
+
+    // Emit approval request event to frontend and block until user responds.
+    await this.emitEvent({
+      type: 'agent:tool-approval',
+      approvalId,
+      toolName,
+      toolInput,
+      dangerLevel: 0,
+    });
+
+    return new Promise((resolve) => {
+      this.pendingApprovals.set(approvalId, resolve);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Public: wait for process completion
   // ---------------------------------------------------------------------------
 
@@ -499,8 +684,6 @@ export class SessionProcess {
    * session terminates. Useful for the worker to await job completion.
    */
   waitForExit(): Promise<number | null> {
-    return new Promise((resolve) => {
-      this.exitResolve = resolve;
-    });
+    return this.exitFuture.promise;
   }
 }

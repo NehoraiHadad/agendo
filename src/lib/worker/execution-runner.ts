@@ -15,7 +15,6 @@ import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import type { ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
-import { config } from '@/lib/config';
 
 // --- Constants ---
 
@@ -54,62 +53,6 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     console.log(
       `[worker] Execution ${executionId} already in terminal state '${execution.status}' — skipping re-run.`,
     );
-    return;
-  }
-
-  // Session-process path (new real-time channel)
-  if (config.USE_SESSION_PROCESS && execution.sessionId) {
-    const { SessionProcess } = await import('@/lib/worker/session-process');
-    const { getSession } = await import('@/lib/services/session-service');
-    const session = await getSession(execution.sessionId);
-    const agent = await getAgentById(execution.agentId);
-    const capability = await getCapabilityById(execution.capabilityId);
-    const resolvedCwd = validateWorkingDir(agent.workingDir ?? '/tmp');
-    validateBinary(agent.binaryPath);
-    const childEnv = buildChildEnv({ agentAllowlist: agent.envAllowlist ?? [] });
-
-    let resolvedPrompt = '';
-    if (execution.promptOverride) {
-      resolvedPrompt = execution.promptOverride;
-    } else if (capability.promptTemplate) {
-      const [task] = await db
-        .select({ title: tasks.title, description: tasks.description })
-        .from(tasks)
-        .where(eq(tasks.id, execution.taskId))
-        .limit(1);
-      resolvedPrompt = interpolatePrompt(capability.promptTemplate, {
-        task_title: task?.title ?? '',
-        task_description: task?.description ?? '',
-        ...execution.args,
-      });
-    }
-
-    const adapter = selectAdapter(agent, capability);
-    void childEnv; // referenced by adapter internals via spawnOpts
-
-    // Mark execution as running so the UI shows activity and concurrency checks work.
-    await db
-      .update(executions)
-      .set({ status: 'running', startedAt: new Date(), workerId })
-      .where(eq(executions.id, executionId));
-
-    const sessionProc = new SessionProcess(session, adapter, executionId, workerId);
-    await sessionProc.start(resolvedPrompt, execution.sessionRef ?? undefined, resolvedCwd);
-    const exitCode = await sessionProc.waitForExit();
-
-    // Finalize execution record. No WHERE status='running' guard here — the session
-    // path owns this execution exclusively, so a direct update is safe.
-    // For sessions: idle-timeout kill (exit 137) is normal suspension, not failure.
-    // Re-fetch session status to determine if this was a normal end.
-    const finalSession = await getSession(execution.sessionId!);
-    const sessionEndedNormally =
-      finalSession.status === 'idle' ||
-      finalSession.status === 'awaiting_input';
-    const finalStatus = exitCode === 0 || sessionEndedNormally ? 'succeeded' : 'failed';
-    await db
-      .update(executions)
-      .set({ status: finalStatus, exitCode, endedAt: new Date() })
-      .where(eq(executions.id, executionId));
     return;
   }
 

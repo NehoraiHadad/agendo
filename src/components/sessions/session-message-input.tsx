@@ -25,6 +25,8 @@ interface SlashCommand {
   hasArgs?: boolean;
   /** Needs a native UI interaction; cannot be sent as raw text */
   interactive?: boolean;
+  /** Crashes Claude in stream-json mode — must be blocked at the UI layer */
+  blocked?: boolean;
   category?: 'skill' | 'builtin';
 }
 
@@ -48,8 +50,8 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/memory',      description: 'Edit Claude memory files',           category: 'builtin', interactive: true },
   { name: '/exit',        description: 'End the current session',            category: 'builtin', interactive: true },
   { name: '/terminal',    description: 'Open a terminal session',            category: 'builtin', interactive: true },
-  { name: '/mcp',         description: 'List MCP server connections',        category: 'builtin' },
-  { name: '/permissions', description: 'List tool permissions',              category: 'builtin' },
+  { name: '/mcp',         description: 'List MCP server connections',        category: 'builtin', blocked: true },
+  { name: '/permissions', description: 'List tool permissions',              category: 'builtin', blocked: true },
   { name: '/login',       description: 'Switch Anthropic account',           category: 'builtin', interactive: true },
   { name: '/logout',      description: 'Log out of current account',         category: 'builtin', interactive: true },
 ];
@@ -110,10 +112,13 @@ function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: S
                 <span className="font-mono text-primary shrink-0">{cmd.name}</span>
                 <span className="text-muted-foreground/60 truncate">{cmd.description}</span>
                 <span className="ml-auto shrink-0 flex items-center gap-1">
-                  {cmd.interactive && (
+                  {cmd.blocked && (
+                    <span className="text-amber-500/50 text-[10px] font-mono" title="Not available in stream mode">⊘</span>
+                  )}
+                  {cmd.interactive && !cmd.blocked && (
                     <ExternalLink className="size-2.5 text-muted-foreground/30" />
                   )}
-                  {cmd.hasArgs && !cmd.interactive && (
+                  {cmd.hasArgs && !cmd.interactive && !cmd.blocked && (
                     <span className="text-muted-foreground/40 italic text-[10px]">+ args</span>
                   )}
                 </span>
@@ -142,6 +147,8 @@ interface SessionMessageInputProps {
   onSent?: (text: string) => void;
   /** Live slash commands received from the agent's system:init event */
   slashCommands?: string[];
+  /** MCP servers received from the agent's system:init event */
+  mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,11 +160,27 @@ function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = Math.min(el.scrollHeight, 128) + 'px';
 }
 
+function getBlockedMessage(
+  name: string,
+  mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>,
+): string {
+  if (name === '/mcp') {
+    const names = mcpServers?.map((s) => s.name).join(', ');
+    return names
+      ? `MCP servers for this session: ${names}`
+      : 'No MCP servers configured for this session.';
+  }
+  if (name === '/permissions') {
+    return 'Session permission mode is set at launch time and cannot be changed mid-session.';
+  }
+  return `"${name}" cannot be sent in stream-json mode.`;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function SessionMessageInput({ sessionId, status, onSent, slashCommands }: SessionMessageInputProps) {
+export function SessionMessageInput({ sessionId, status, onSent, slashCommands, mcpServers }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -226,6 +249,11 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands }
     setShowPicker(false);
     setMessage('');
 
+    if (cmd.blocked) {
+      setToast(getBlockedMessage(cmd.name, mcpServers));
+      return;
+    }
+
     if (cmd.interactive) {
       handleInteractiveCommand(cmd.name);
       return;
@@ -250,6 +278,13 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands }
   async function submitText(text: string) {
     const trimmed = text.trim();
     if ((!trimmed && !pendingImage) || isSending) return;
+
+    // Guard blocked commands — they crash Claude in stream-json mode
+    const blockedCmd = allCommands.find((c) => c.blocked && trimmed.split(/\s/)[0] === c.name);
+    if (blockedCmd) {
+      setToast(getBlockedMessage(blockedCmd.name, mcpServers));
+      return;
+    }
 
     setIsSending(true);
     try {

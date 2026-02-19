@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema, ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ApprovalHandler, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 
 export class CodexAdapter implements AgentAdapter {
   private client: Client | null = null;
@@ -9,6 +9,9 @@ export class CodexAdapter implements AgentAdapter {
   private threadId: string | null = null;
   private storedOpts: SpawnOpts | null = null;
   private currentTurn: Promise<void> = Promise.resolve();
+  private turnAbortController: AbortController | null = new AbortController();
+  private thinkingCallback: ((thinking: boolean) => void) | null = null;
+  private approvalHandler: ApprovalHandler | null = null;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     this.storedOpts = opts;
@@ -31,15 +34,32 @@ export class CodexAdapter implements AgentAdapter {
     await this.currentTurn;
   }
 
-  interrupt(): void {
-    void this.client?.close();
+  async interrupt(): Promise<void> {
+    this.turnAbortController?.abort();
+    this.turnAbortController = new AbortController();
+    // Give it 3s to cleanly abort before closing client
+    await new Promise<void>((r) => setTimeout(r, 3000));
+    if (this.client) {
+      void this.client.close();
+    }
   }
 
   isAlive(): boolean {
     return false;
   }
 
+  onThinkingChange(cb: (thinking: boolean) => void): void {
+    this.thinkingCallback = cb;
+  }
+
+  setApprovalHandler(handler: ApprovalHandler): void {
+    this.approvalHandler = handler;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): ManagedProcess {
+    // Fresh AbortController for this launch
+    this.turnAbortController = new AbortController();
+
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
@@ -63,11 +83,21 @@ export class CodexAdapter implements AgentAdapter {
       for (const cb of dataCallbacks) cb(text + '\n');
     });
 
-    // Auto-approve all elicitation (permission) requests
-    client.setRequestHandler(ElicitRequestSchema, async () => ({
-      action: 'accept' as const,
-      content: {},
-    }));
+    // Relay elicitation (permission) requests to the approval handler
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      if (!this.approvalHandler) {
+        return { action: 'accept' as const, content: {} };
+      }
+      const approvalId = Math.random().toString(36).slice(2, 15);
+      const params = request.params as Record<string, unknown>;
+      const toolName = (params.message as string) ?? 'unknown';
+      const toolInput = (params.requestedSchema as Record<string, unknown>) ?? {};
+      const decision = await this.approvalHandler(approvalId, toolName, toolInput);
+      if (decision === 'deny') {
+        return { action: 'cancel' as const };
+      }
+      return { action: 'accept' as const, content: {} };
+    });
 
     transport.onclose = () => {
       for (const cb of exitCallbacks) cb(0);
@@ -120,6 +150,8 @@ export class CodexAdapter implements AgentAdapter {
     prompt: string,
     opts: SpawnOpts,
   ): Promise<void> {
+    this.thinkingCallback?.(true);
+
     const args: Record<string, string> = { prompt };
     if (threadId) {
       args.threadId = threadId;
@@ -130,8 +162,14 @@ export class CodexAdapter implements AgentAdapter {
     const result = await this.client!.callTool(
       { name: tool, arguments: args },
       undefined,
-      { timeout: opts.timeoutSec * 1000, resetTimeoutOnProgress: true },
+      {
+        timeout: opts.timeoutSec * 1000,
+        resetTimeoutOnProgress: true,
+        signal: this.turnAbortController?.signal,
+      },
     );
+
+    this.thinkingCallback?.(false);
 
     // Extract threadId from first-turn response content
     if (!this.threadId) {

@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import * as tmux from '@/lib/worker/tmux-manager';
-import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ApprovalHandler, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 
 export class TemplateAdapter implements AgentAdapter {
   private childProcess: ChildProcess | null = null;
@@ -63,9 +63,14 @@ export class TemplateAdapter implements AgentAdapter {
     throw new Error('Template adapter does not support sending messages');
   }
 
-  interrupt(): void {
+  async interrupt(): Promise<void> {
     this.childProcess?.kill('SIGINT');
   }
 
   isAlive(): boolean { return false; }
+
+  // Template adapter runs non-interactive commands; thinking and approval
+  // callbacks are no-ops since there is no interactive protocol.
+  onThinkingChange(_cb: (thinking: boolean) => void): void { /* no-op */ }
+  setApprovalHandler(_handler: ApprovalHandler): void { /* no-op */ }
 }

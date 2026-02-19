@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { AlertTriangle, Loader2, Play } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AlertTriangle, Loader2, MessageSquare, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -22,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, AgentCapability, Execution, JsonSchemaObject } from '@/lib/types';
 import type { ParsedFlag } from '@/lib/db/schema';
@@ -47,6 +49,7 @@ export function ExecutionTriggerDialog({
   onExecutionCreated,
   children,
 }: ExecutionTriggerDialogProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   // Agent selection (when no agentId prop)
@@ -61,6 +64,7 @@ export function ExecutionTriggerDialog({
   const [isLoadingCaps, setIsLoadingCaps] = useState(false);
   const [selectedCapId, setSelectedCapId] = useState<string>('');
   const [args, setArgs] = useState<Record<string, string>>({});
+  const [promptText, setPromptText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,7 +146,8 @@ export function ExecutionTriggerDialog({
 
   useEffect(() => {
     setArgs({});
-  }, [selectedCapId]);
+    setPromptText(selectedCap?.promptTemplate ?? '');
+  }, [selectedCapId, selectedCap?.promptTemplate]);
 
   function handleArgChange(key: string, value: string) {
     setArgs((prev) => ({ ...prev, [key]: value }));
@@ -188,18 +193,32 @@ export function ExecutionTriggerDialog({
     setError(null);
 
     try {
-      const res = await apiFetch<ApiResponse<Execution>>('/api/executions', {
-        method: 'POST',
-        body: JSON.stringify({
-          taskId,
-          agentId: activeAgentId,
-          capabilityId: selectedCapId,
-          args,
-          cliFlags,
-        }),
-      });
-      onExecutionCreated?.(res.data);
-      setOpen(false);
+      if (selectedCap?.interactionMode === 'prompt') {
+        const res = await apiFetch<ApiResponse<{ id: string }>>('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({
+            taskId,
+            agentId: activeAgentId,
+            capabilityId: selectedCapId,
+            initialPrompt: promptText,
+          }),
+        });
+        setOpen(false);
+        router.push(`/sessions/${res.data.id}`);
+      } else {
+        const res = await apiFetch<ApiResponse<Execution>>('/api/executions', {
+          method: 'POST',
+          body: JSON.stringify({
+            taskId,
+            agentId: activeAgentId,
+            capabilityId: selectedCapId,
+            args,
+            cliFlags,
+          }),
+        });
+        onExecutionCreated?.(res.data);
+        setOpen(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create execution');
     } finally {
@@ -222,7 +241,9 @@ export function ExecutionTriggerDialog({
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Trigger Execution</DialogTitle>
+          <DialogTitle>
+            {selectedCap?.interactionMode === 'prompt' ? 'Start Session' : 'Trigger Execution'}
+          </DialogTitle>
           <DialogDescription>Select an agent, capability and arguments to run.</DialogDescription>
         </DialogHeader>
 
@@ -287,7 +308,20 @@ export function ExecutionTriggerDialog({
                 </div>
               )}
 
-              {selectedCapId && Object.keys(properties).length > 0 && (
+              {selectedCapId && selectedCap?.interactionMode === 'prompt' && (
+                <div className="space-y-2">
+                  <Label htmlFor="initial-prompt">Initial Prompt</Label>
+                  <Textarea
+                    id="initial-prompt"
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    placeholder="Describe what you want the agent to do..."
+                    className="min-h-[120px] resize-y"
+                  />
+                </div>
+              )}
+
+              {selectedCapId && selectedCap?.interactionMode !== 'prompt' && Object.keys(properties).length > 0 && (
                 <div className="space-y-3">
                   <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
                     Arguments
@@ -323,8 +357,8 @@ export function ExecutionTriggerDialog({
             </>
           )}
 
-          {/* CLI Options section */}
-          {parsedFlags.length > 0 && (
+          {/* CLI Options section — only for template-mode */}
+          {selectedCap?.interactionMode !== 'prompt' && parsedFlags.length > 0 && (
             <div className="space-y-3">
               <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
                 CLI Options
@@ -445,10 +479,12 @@ export function ExecutionTriggerDialog({
             <Button type="submit" disabled={!canSubmit}>
               {isSubmitting ? (
                 <Loader2 className="size-4 animate-spin" />
+              ) : selectedCap?.interactionMode === 'prompt' ? (
+                <MessageSquare className="size-4" />
               ) : (
                 <Play className="size-4" />
               )}
-              Execute
+              {selectedCap?.interactionMode === 'prompt' ? 'Start Session' : 'Execute'}
             </Button>
           </DialogFooter>
         </form>

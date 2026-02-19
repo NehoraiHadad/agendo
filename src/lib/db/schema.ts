@@ -354,6 +354,21 @@ export const sessions = pgTable(
     logFilePath: text('log_file_path'),
     totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
     totalTurns: integer('total_turns').notNull().default(0),
+    // Tool permission mode for this session.
+    // 'bypassPermissions' = auto-allow all tools (default — safe for trusted local use).
+    // 'default' = ask user before each tool call (Claude emits control_request).
+    // 'acceptEdits' = auto-allow file edits, ask for bash.
+    permissionMode: text('permission_mode', {
+      enum: ['default', 'bypassPermissions', 'acceptEdits'],
+    })
+      .notNull()
+      .default('bypassPermissions'),
+    // Tool names/patterns that have been "always allow"d during this session.
+    // Persisted so approval survives process restarts.
+    allowedTools: jsonb('allowed_tools').notNull().$type<string[]>().default([]),
+    initialPrompt: text('initial_prompt'),
+    totalDurationMs: integer('total_duration_ms'),
+    tmuxSessionName: text('tmux_session_name'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
