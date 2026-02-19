@@ -15,7 +15,7 @@ describe('serializeEvent / deserializeEvent round-trip', () => {
     { ...baseEvent, id: 3, type: 'agent:tool-start', toolUseId: 'tu_1', toolName: 'read_file', input: { path: '/foo' } },
     { ...baseEvent, id: 4, type: 'agent:tool-end', toolUseId: 'tu_1', content: 'file contents' },
     { ...baseEvent, id: 5, type: 'agent:result', costUsd: 0.001, turns: 3, durationMs: 1500 },
-    { ...baseEvent, id: 6, type: 'session:init', sessionRef: 'sess_abc123' },
+    { ...baseEvent, id: 6, type: 'session:init', sessionRef: 'sess_abc123', slashCommands: [] },
     { ...baseEvent, id: 7, type: 'session:state', status: 'awaiting_input' },
     { ...baseEvent, id: 8, type: 'user:message', text: 'User message' },
     { ...baseEvent, id: 9, type: 'system:info', message: 'Process started' },

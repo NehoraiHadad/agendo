@@ -75,12 +75,17 @@ export class SessionProcess {
           or(isNull(sessions.workerId), eq(sessions.workerId, this.workerId)),
         ),
       )
-      .returning({ id: sessions.id });
+      .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
 
     if (!claimed) {
       console.log(`[session-process] Session ${this.session.id} already claimed — skipping`);
       return;
     }
+
+    // Continue seq from wherever the previous session run left off so that
+    // event IDs remain monotonically increasing across resumes and the SSE
+    // client never sees duplicate IDs.
+    this.eventSeq = claimed.eventSeq;
 
     // Set up log writer. FileLogWriter flushes byte/line stats to the executions
     // table; passing executionId keeps those stats current for the owning execution.
@@ -196,9 +201,12 @@ export class SessionProcess {
   ): AgendoEventPayload[] {
     const type = parsed.type as string | undefined;
 
-    // Claude CLI system/init — announces the session ID
+    // Claude CLI system/init — announces the session ID and available slash commands
     if (type === 'system' && parsed.subtype === 'init' && parsed.session_id) {
-      return [{ type: 'session:init', sessionRef: parsed.session_id as string }];
+      const slashCommands = Array.isArray(parsed.slash_commands)
+        ? (parsed.slash_commands as string[])
+        : [];
+      return [{ type: 'session:init', sessionRef: parsed.session_id as string, slashCommands }];
     }
 
     // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)

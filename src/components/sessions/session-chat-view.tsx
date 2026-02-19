@@ -449,18 +449,18 @@ function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, Too
   return items;
 }
 
-function renderDisplayItem(item: DisplayItem): React.ReactNode {
+function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
   switch (item.kind) {
     case 'assistant':
-      return <AssistantBubble key={item.id} parts={item.parts} />;
+      return <AssistantBubble key={idx} parts={item.parts} />;
     case 'thinking':
-      return <ThinkingBubble key={item.id} text={item.text} />;
+      return <ThinkingBubble key={idx} text={item.text} />;
     case 'user':
-      return <UserBubble key={item.id} text={item.text} />;
+      return <UserBubble key={idx} text={item.text} />;
     case 'info':
-      return <InfoPill key={item.id} text={item.text} />;
+      return <InfoPill key={idx} text={item.text} />;
     case 'error':
-      return <ErrorPill key={item.id} text={item.text} />;
+      return <ErrorPill key={idx} text={item.text} />;
   }
 }
 
@@ -498,6 +498,11 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
 
   const toolResultMap = buildToolResultMap(stream.events);
   const displayItems = buildDisplayItems(stream.events, toolResultMap);
+
+  // Extract slash commands from the most recent session:init event
+  const slashCommands = stream.events
+    .filter((e): e is Extract<typeof e, { type: 'session:init' }> => e.type === 'session:init')
+    .at(-1)?.slashCommands;
 
   const isActive = currentStatus === 'active';
   const showTyping = isActive && stream.isConnected;
@@ -541,7 +546,7 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
           </div>
         )}
 
-        {displayItems.map((item) => renderDisplayItem(item))}
+        {displayItems.map((item, i) => renderDisplayItem(item, i))}
 
         {/* Optimistic user messages shown while real event is in-flight */}
         {optimisticMessages.map((msg) => (
@@ -559,6 +564,7 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
         sessionId={sessionId}
         status={currentStatus as SessionStatus}
         onSent={handleSent}
+        slashCommands={slashCommands}
       />
     </div>
   );
