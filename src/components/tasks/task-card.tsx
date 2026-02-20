@@ -100,12 +100,15 @@ export function TaskCard({ taskId }: TaskCardProps) {
           onClick={() => selectTask(taskId)}
         >
           {parentTask && (
-            <button
-              className="block text-[10px] text-muted-foreground/40 hover:text-muted-foreground/70 truncate max-w-[160px] mb-0.5 text-left"
+            <span
+              role="button"
+              tabIndex={0}
+              className="block text-[10px] text-muted-foreground/40 hover:text-muted-foreground/70 truncate max-w-[160px] mb-0.5 text-left cursor-pointer"
               onClick={(e) => { e.stopPropagation(); selectTask(parentTask.id); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); selectTask(parentTask.id); } }}
             >
               ↳ {parentTask.title}
-            </button>
+            </span>
           )}
 
           <div className="flex items-center gap-2">

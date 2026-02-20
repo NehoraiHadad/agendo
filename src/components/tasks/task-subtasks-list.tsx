@@ -18,6 +18,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const removeTask = useTaskBoardStore((s) => s.removeTask);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
   const updateTask = useTaskBoardStore((s) => s.updateTask);
+  const parentTask = useTaskBoardStore((s) => s.tasksById[taskId]);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -35,6 +36,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
     const result = await createTaskAction({
       title: newTitle.trim(),
       parentTaskId: taskId,
+      projectId: parentTask?.projectId ?? undefined,
     });
 
     if (result.success) {
