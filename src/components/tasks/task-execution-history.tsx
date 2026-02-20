@@ -8,6 +8,7 @@ import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { ExecutionStatusBadge } from '@/components/executions/execution-status-badge';
 import { SessionStatusBadge } from '@/components/sessions/session-table';
 import { ExecutionTriggerDialog } from '@/components/executions/execution-trigger-dialog';
+import { StartSessionDialog } from '@/components/sessions/start-session-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Execution, Session } from '@/lib/types';
 
@@ -64,7 +65,7 @@ export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryPr
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">Agent Sessions</h3>
-          <ExecutionTriggerDialog
+          <StartSessionDialog
             taskId={taskId}
             agentId={agentId ?? undefined}
           />

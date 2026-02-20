@@ -10,7 +10,8 @@ import {
 } from '@/components/ui/select';
 import { assignAgentAction } from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
-import type { Task } from '@/lib/types';
+import { apiFetch, type ApiResponse } from '@/lib/api-types';
+import type { Agent, Task } from '@/lib/types';
 
 interface TaskMetaPanelProps {
   task: {
@@ -21,20 +22,13 @@ interface TaskMetaPanelProps {
   };
 }
 
-interface AgentOption {
-  id: string;
-  name: string;
-  slug: string;
-}
-
 export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
   const updateTask = useTaskBoardStore((s) => s.updateTask);
-  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
-    fetch('/api/agents')
-      .then((res) => res.json())
-      .then((json) => setAgents(json.data ?? []))
+    apiFetch<ApiResponse<Agent[]>>('/api/agents')
+      .then((res) => setAgents(res.data.filter((a) => a.isActive && a.toolType === 'ai-agent')))
       .catch(() => {});
   }, []);
 
