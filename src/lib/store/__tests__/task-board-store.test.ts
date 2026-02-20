@@ -7,6 +7,7 @@ function createMockTask(overrides: Partial<Task> & { id: string; status: TaskSta
     ownerId: '00000000-0000-0000-0000-000000000001',
     workspaceId: '00000000-0000-0000-0000-000000000001',
     parentTaskId: null,
+    projectId: null,
     title: `Task ${overrides.id}`,
     description: null,
     priority: 3,

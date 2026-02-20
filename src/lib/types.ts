@@ -9,12 +9,14 @@ export type Execution = InferSelectModel<typeof schema.executions>;
 export type TaskEvent = InferSelectModel<typeof schema.taskEvents>;
 export type WorkerHeartbeat = InferSelectModel<typeof schema.workerHeartbeats>;
 export type Session = InferSelectModel<typeof schema.sessions>;
+export type Project = InferSelectModel<typeof schema.projects>;
 
 export type NewAgent = InferInsertModel<typeof schema.agents>;
 export type NewCapability = InferInsertModel<typeof schema.agentCapabilities>;
 export type NewTask = InferInsertModel<typeof schema.tasks>;
 export type NewExecution = InferInsertModel<typeof schema.executions>;
 export type NewSession = InferInsertModel<typeof schema.sessions>;
+export type NewProject = InferInsertModel<typeof schema.projects>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];

@@ -14,10 +14,12 @@ import type { TaskStatus } from '@/lib/types';
 interface TaskColumnProps {
   status: TaskStatus;
   label: string;
+  filteredTaskIds?: string[];
 }
 
-export function TaskColumn({ status, label }: TaskColumnProps) {
-  const taskIds = useTaskBoardStore((s) => s.columns[status]);
+export function TaskColumn({ status, label, filteredTaskIds }: TaskColumnProps) {
+  const allTaskIds = useTaskBoardStore((s) => s.columns[status]);
+  const taskIds = filteredTaskIds ?? allTaskIds;
   const cursor = useTaskBoardStore((s) => s.cursors[status]);
   const isLoading = useTaskBoardStore((s) => s.loading[status]);
   const appendToColumn = useTaskBoardStore((s) => s.appendToColumn);
@@ -56,7 +58,8 @@ export function TaskColumn({ status, label }: TaskColumnProps) {
 
       <ScrollArea className="flex-1 p-2">
         <div ref={setNodeRef} className="flex min-h-[40px] flex-col gap-2">
-          <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+          {/* SortableContext uses allTaskIds so DnD works across the full column */}
+          <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
             {taskIds.map((id) => (
               <TaskCard key={id} taskId={id} />
             ))}

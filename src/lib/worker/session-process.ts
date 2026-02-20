@@ -69,8 +69,9 @@ export class SessionProcess {
    * @param prompt - The initial prompt to pass to the agent
    * @param resumeRef - If provided, the adapter resumes an existing session
    * @param spawnCwd - Working directory for the spawned process
+   * @param envOverrides - Additional env vars to merge into the child environment
    */
-  async start(prompt: string, resumeRef?: string, spawnCwd?: string): Promise<void> {
+  async start(prompt: string, resumeRef?: string, spawnCwd?: string, envOverrides?: Record<string, string>): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim if status is idle/active and no other worker owns it.
     const [claimed] = await db
@@ -120,6 +121,12 @@ export class SessionProcess {
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
         childEnv[key] = value;
+      }
+    }
+    // Apply project/task env overrides on top of the base env.
+    if (envOverrides) {
+      for (const [k, v] of Object.entries(envOverrides)) {
+        childEnv[k] = v;
       }
     }
 

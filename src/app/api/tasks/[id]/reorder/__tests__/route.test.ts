@@ -16,6 +16,7 @@ const mockTask = {
   ownerId: '00000000-0000-0000-0000-000000000001',
   workspaceId: '00000000-0000-0000-0000-000000000001',
   parentTaskId: null,
+  projectId: null,
   title: 'Test Task',
   description: null,
   status: 'todo' as const,

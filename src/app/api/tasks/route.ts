@@ -36,6 +36,7 @@ const createSchema = z.object({
   parentTaskId: z.string().uuid().optional(),
   assigneeAgentId: z.string().uuid().optional(),
   dueAt: z.coerce.date().optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 export const POST = withErrorBoundary(async (req: NextRequest) => {
