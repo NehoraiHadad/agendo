@@ -32,6 +32,7 @@ export interface DiscoveredTool {
 export async function runDiscovery(
   schemaTargets?: Set<string>,
   existingSlugs?: Set<string>,
+  existingBinaryPaths?: Set<string>,
 ): Promise<DiscoveredTool[]> {
   console.log('[discovery] Stage 1: Scanning PATH...');
   const binaries = await scanPATH();
@@ -50,7 +51,7 @@ export async function runDiscovery(
 
   await Promise.all(
     entries.map(async (binary) => {
-      const result = await processBinary(binary, schemaTargets, existingSlugs);
+      const result = await processBinary(binary, schemaTargets, existingSlugs, existingBinaryPaths);
       tools.push(result);
     }),
   );
@@ -77,6 +78,7 @@ async function processBinary(
   binary: ScannedBinary,
   schemaTargets?: Set<string>,
   existingSlugs?: Set<string>,
+  existingBinaryPaths?: Set<string>,
 ): Promise<DiscoveredTool> {
   const identity = await identifyBinary(binary.name, binary.path);
   const toolType = await classifyBinary({
@@ -97,6 +99,10 @@ async function processBinary(
   }
 
   const slug = binary.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const isConfirmed =
+    (existingSlugs?.has(slug) ?? false) ||
+    (existingBinaryPaths?.has(binary.path) ?? false) ||
+    (existingBinaryPaths?.has(binary.realPath) ?? false);
 
   return {
     name: binary.name,
@@ -111,6 +117,6 @@ async function processBinary(
     fileType: identity.fileType,
     schema,
     preset,
-    isConfirmed: existingSlugs?.has(slug) ?? false,
+    isConfirmed,
   };
 }
