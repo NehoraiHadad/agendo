@@ -5,8 +5,10 @@ import { config } from '../lib/config';
 import {
   type ExecuteCapabilityJobData,
   type RunSessionJobData,
+  type AnalyzeAgentJobData,
   registerWorker,
   registerSessionWorker,
+  registerAnalysisWorker,
   stopBoss,
 } from '../lib/worker/queue';
 import { checkDiskSpace } from './disk-check';
@@ -14,6 +16,8 @@ import { reconcileZombies } from './zombie-reconciler';
 import { runExecution } from '../lib/worker/execution-runner';
 import { runSession } from '../lib/worker/session-runner';
 import { StaleReaper } from '../lib/worker/stale-reaper';
+import { queryAI } from '../lib/services/ai-query-service';
+import { getHelpText } from '../lib/discovery/schema-extractor';
 
 const WORKER_ID = config.WORKER_ID;
 
@@ -64,6 +68,76 @@ async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
   }
 }
 
+function buildAnalysisPrompt(toolName: string, helpText: string | null): string {
+  const helpSection = helpText
+    ? `\nHere is the tool's --help output for reference:\n---\n${helpText.slice(0, 3000)}\n---\n`
+    : '';
+  return `Suggest the 5 most useful everyday CLI capabilities for the "${toolName}" tool in a developer task management system.${helpSection}
+Return ONLY a valid JSON array — no markdown fences, no explanation, no other text.
+Each item must have this exact shape:
+
+[
+  {
+    "key": "commit",
+    "label": "Commit",
+    "description": "Record staged changes with a message",
+    "commandTokens": ["${toolName}", "commit", "-m", "{{message}}"],
+    "argsSchema": {
+      "properties": {
+        "message": { "type": "string", "description": "Commit message" }
+      },
+      "required": ["message"]
+    },
+    "dangerLevel": 1
+  }
+]
+
+Rules:
+- Use {{argName}} as a whole token when a value must be supplied by the user
+- dangerLevel: 0 = read-only, 1 = modifies local state, 2 = affects remote/shared, 3 = destructive/irreversible
+- argsSchema.properties keys must exactly match the {{placeholders}} used in commandTokens
+- Commands with no user-provided args use argsSchema: {}
+- Return ONLY the JSON array`;
+}
+
+function extractJsonArray(raw: string): unknown[] {
+  // Unwrap AI JSON wrappers: { result: "..." } or { response: "..." }
+  try {
+    const wrapper = JSON.parse(raw) as { result?: string; response?: string };
+    const inner = wrapper.result ?? wrapper.response;
+    if (typeof inner === 'string') return extractJsonArray(inner);
+  } catch { /* not a JSON wrapper */ }
+
+  const stripped = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed)) return parsed as unknown[];
+  } catch { /* fall through */ }
+
+  const match = stripped.match(/\[[\s\S]*\]/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed)) return parsed as unknown[];
+    } catch { /* not valid JSON */ }
+  }
+
+  throw new Error('No JSON array found in AI response');
+}
+
+async function handleAnalysisJob(job: Job<AnalyzeAgentJobData>): Promise<{ suggestions: unknown[] }> {
+  const { agentId, binaryPath, toolName } = job.data;
+  console.log(`[worker] Analysis job for agent ${agentId} (${toolName})`);
+  const helpText = await getHelpText(binaryPath).catch(() => null);
+  const prompt = buildAnalysisPrompt(toolName, helpText);
+  const { text, providerName } = await queryAI({ prompt, timeoutMs: 45_000, preferredSlug: 'gemini-cli-1' });
+  console.log(`[worker] Analysis got response from ${providerName}`);
+  const suggestions = extractJsonArray(text);
+  console.log(`[worker] Analysis parsed ${suggestions.length} suggestions`);
+  return { suggestions };
+}
+
 async function updateHeartbeat(): Promise<void> {
   await db
     .insert(workerHeartbeats)
@@ -101,6 +175,10 @@ async function main(): Promise<void> {
   // Register session job handler
   await registerSessionWorker(handleSessionJob);
   console.log(`[worker] Listening for session jobs...`);
+
+  // Register analysis job handler
+  await registerAnalysisWorker(handleAnalysisJob);
+  console.log(`[worker] Listening for analysis jobs...`);
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);

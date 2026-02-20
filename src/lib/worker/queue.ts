@@ -16,8 +16,16 @@ export interface RunSessionJobData {
   resumeRef?: string;
 }
 
+/** Job data shape for the analyze-agent queue */
+export interface AnalyzeAgentJobData {
+  agentId: string;
+  binaryPath: string;
+  toolName: string;
+}
+
 const QUEUE_NAME = 'execute-capability';
 const SESSION_QUEUE_NAME = 'run-session';
+const ANALYZE_QUEUE_NAME = 'analyze-agent';
 
 let bossInstance: PgBoss | null = null;
 
@@ -37,6 +45,7 @@ export async function getBoss(): Promise<PgBoss> {
   // pg-boss v10 requires createQueue() before send() or work()
   await bossInstance.createQueue(QUEUE_NAME);
   await bossInstance.createQueue(SESSION_QUEUE_NAME);
+  await bossInstance.createQueue(ANALYZE_QUEUE_NAME);
   return bossInstance;
 }
 
@@ -111,6 +120,50 @@ export async function registerSessionWorker(
         await handler(job);
       }
     },
+  );
+}
+
+/**
+ * Enqueue an agent analysis job.
+ * Called from the analyze API route.
+ */
+export async function enqueueAnalysis(data: AnalyzeAgentJobData): Promise<string> {
+  const boss = await getBoss();
+  const id = await boss.send(ANALYZE_QUEUE_NAME, data, {
+    expireInMinutes: 5,
+    retryLimit: 0,
+  });
+  if (!id) throw new Error('Failed to enqueue analysis job');
+  return id;
+}
+
+/**
+ * Get the current state of an analysis job by ID.
+ * Returns the job object (with state, output, data) or null if not found.
+ */
+export async function getAnalysisJob(
+  jobId: string,
+): Promise<{ state: string; output?: unknown } | null> {
+  const boss = await getBoss();
+  // pg-boss v10: getJobById(queue, id)
+  const job = await boss.getJobById(ANALYZE_QUEUE_NAME, jobId);
+  if (!job) return null;
+  return { state: job.state, output: job.output };
+}
+
+/**
+ * Register the worker handler for agent analysis jobs.
+ * Called from worker/index.ts on startup.
+ */
+export async function registerAnalysisWorker(
+  handler: (job: Job<AnalyzeAgentJobData>) => Promise<unknown>,
+): Promise<void> {
+  const boss = await getBoss();
+  // batchSize: 1 — pg-boss uses the callback return value as job output (manager.js:217)
+  await boss.work<AnalyzeAgentJobData>(
+    ANALYZE_QUEUE_NAME,
+    { batchSize: 1, pollingIntervalSeconds: 3 },
+    (jobs) => handler(jobs[0]),
   );
 }
 
