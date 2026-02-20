@@ -1,4 +1,4 @@
-import { eq, and, sql, desc, asc } from 'drizzle-orm';
+import { eq, and, sql, desc, asc, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents } from '@/lib/db/schema';
 import { isValidTaskTransition } from '@/lib/state-machines';
@@ -45,6 +45,7 @@ export interface ListTasksOptions {
   limit?: number;
   parentTaskId?: string;
   projectId?: string;
+  q?: string;
 }
 
 // --- Implementation ---
@@ -218,6 +219,9 @@ export async function listTasksByStatus(
   }
   if (options.projectId) {
     conditions.push(eq(tasks.projectId, options.projectId));
+  }
+  if (options.q) {
+    conditions.push(ilike(tasks.title, `%${options.q}%`));
   }
 
   const result = await db

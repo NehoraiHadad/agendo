@@ -5,12 +5,14 @@ import {
   addDependency,
   removeDependency,
   listDependencies,
+  listDependents,
 } from '@/lib/services/dependency-service';
 
 export const GET = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
+  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
-    const deps = await listDependencies(id);
+    const direction = new URL(req.url).searchParams.get('direction');
+    const deps = direction === 'dependents' ? await listDependents(id) : await listDependencies(id);
     return NextResponse.json({ data: deps });
   },
 );
