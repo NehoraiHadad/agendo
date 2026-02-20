@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { AlertTriangle, Loader2, MessageSquare, Play } from 'lucide-react';
+import { AlertTriangle, Loader2, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,18 +22,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, AgentCapability, Execution, JsonSchemaObject } from '@/lib/types';
-import type { ParsedFlag } from '@/lib/db/schema';
-
-const PRIORITY_FLAGS = [
-  '--dangerously-skip-permissions',
-  '--permission-mode',
-  '--model',
-];
-
-const PERMISSION_MODE_VALUES = ['acceptEdits', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
 
 interface ExecutionTriggerDialogProps {
   taskId: string;
@@ -49,7 +38,6 @@ export function ExecutionTriggerDialog({
   onExecutionCreated,
   children,
 }: ExecutionTriggerDialogProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   // Agent selection (when no agentId prop)
@@ -64,25 +52,19 @@ export function ExecutionTriggerDialog({
   const [isLoadingCaps, setIsLoadingCaps] = useState(false);
   const [selectedCapId, setSelectedCapId] = useState<string>('');
   const [args, setArgs] = useState<Record<string, string>>({});
-  const [promptText, setPromptText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // CLI flags
-  const [parsedFlags, setParsedFlags] = useState<ParsedFlag[]>([]);
-  const [cliFlags, setCliFlags] = useState<Record<string, string | boolean>>({});
 
   const selectedCap = capabilities.find((c) => c.id === selectedCapId);
   const schema = selectedCap?.argsSchema as JsonSchemaObject | undefined;
   const properties = schema?.properties ?? {};
   const requiredFields = schema?.required ?? [];
 
-  // Fetch agents list when no agentId prop
   const fetchAgents = useCallback(async () => {
     if (agentIdProp) return;
     setIsLoadingAgents(true);
     try {
-      const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50');
+      const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50&group=tools');
       setAgents(res.data.filter((a) => a.isActive));
     } catch {
       // ignore
@@ -99,25 +81,16 @@ export function ExecutionTriggerDialog({
       const res = await apiFetch<ApiResponse<AgentCapability[]>>(
         `/api/agents/${activeAgentId}/capabilities`,
       );
-      const enabledCaps = res.data.filter((c) => c.isEnabled);
-      setCapabilities(enabledCaps);
-      if (enabledCaps.length === 1) {
-        setSelectedCapId(enabledCaps[0].id);
+      // Only template-mode capabilities
+      const templateCaps = res.data.filter((c) => c.isEnabled && c.interactionMode === 'template');
+      setCapabilities(templateCaps);
+      if (templateCaps.length === 1) {
+        setSelectedCapId(templateCaps[0].id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load capabilities');
     } finally {
       setIsLoadingCaps(false);
-    }
-  }, [activeAgentId]);
-
-  const fetchAgentFlags = useCallback(async () => {
-    if (!activeAgentId) return;
-    try {
-      const res = await apiFetch<ApiResponse<Agent>>(`/api/agents/${activeAgentId}`);
-      setParsedFlags((res.data.parsedFlags as ParsedFlag[]) ?? []);
-    } catch {
-      /* ignore */
     }
   }, [activeAgentId]);
 
@@ -127,8 +100,6 @@ export function ExecutionTriggerDialog({
       setSelectedCapId('');
       setCapabilities([]);
       setArgs({});
-      setParsedFlags([]);
-      setCliFlags({});
       setError(null);
       fetchAgents();
     }
@@ -138,52 +109,17 @@ export function ExecutionTriggerDialog({
     if (open && activeAgentId) {
       setSelectedCapId('');
       setCapabilities([]);
-      setCliFlags({});
       fetchCapabilities();
-      fetchAgentFlags();
     }
-  }, [open, activeAgentId, fetchCapabilities, fetchAgentFlags]);
+  }, [open, activeAgentId, fetchCapabilities]);
 
   useEffect(() => {
     setArgs({});
-    setPromptText(selectedCap?.promptTemplate ?? '');
-  }, [selectedCapId, selectedCap?.promptTemplate]);
+  }, [selectedCapId]);
 
   function handleArgChange(key: string, value: string) {
     setArgs((prev) => ({ ...prev, [key]: value }));
   }
-
-  function handleCliFlagToggle(flag: string, checked: boolean) {
-    setCliFlags((prev) => {
-      const next = { ...prev };
-      if (checked) {
-        next[flag] = true;
-      } else {
-        delete next[flag];
-      }
-      return next;
-    });
-  }
-
-  function handleCliFlagValue(flag: string, value: string) {
-    setCliFlags((prev) => {
-      const next = { ...prev };
-      if (value) {
-        next[flag] = value;
-      } else {
-        delete next[flag];
-      }
-      return next;
-    });
-  }
-
-  // Separate priority flags from the rest
-  const priorityFlags = parsedFlags.filter((pf) =>
-    pf.flags.some((f) => PRIORITY_FLAGS.includes(f)),
-  );
-  const nonPriorityFlags = parsedFlags.filter(
-    (pf) => !pf.flags.some((f) => PRIORITY_FLAGS.includes(f)),
-  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -193,34 +129,19 @@ export function ExecutionTriggerDialog({
     setError(null);
 
     try {
-      if (selectedCap?.interactionMode === 'prompt') {
-        const res = await apiFetch<ApiResponse<{ id: string }>>('/api/sessions', {
-          method: 'POST',
-          body: JSON.stringify({
-            taskId,
-            agentId: activeAgentId,
-            capabilityId: selectedCapId,
-            initialPrompt: promptText,
-          }),
-        });
-        setOpen(false);
-        router.push(`/sessions/${res.data.id}`);
-      } else {
-        const res = await apiFetch<ApiResponse<Execution>>('/api/executions', {
-          method: 'POST',
-          body: JSON.stringify({
-            taskId,
-            agentId: activeAgentId,
-            capabilityId: selectedCapId,
-            args,
-            cliFlags,
-          }),
-        });
-        onExecutionCreated?.(res.data);
-        setOpen(false);
-      }
+      const res = await apiFetch<ApiResponse<Execution>>('/api/executions', {
+        method: 'POST',
+        body: JSON.stringify({
+          taskId,
+          agentId: activeAgentId,
+          capabilityId: selectedCapId,
+          args,
+        }),
+      });
+      onExecutionCreated?.(res.data);
+      setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create execution');
+      setError(err instanceof Error ? err.message : 'Failed to run command');
     } finally {
       setIsSubmitting(false);
     }
@@ -233,258 +154,133 @@ export function ExecutionTriggerDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {children ?? (
-          <Button size="sm">
-            <Play className="size-4" />
-            Run
+          <Button size="sm" variant="outline">
+            <Terminal className="size-4" />
+            Run Command
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            {selectedCap?.interactionMode === 'prompt' ? 'Start Session' : 'Trigger Execution'}
-          </DialogTitle>
-          <DialogDescription>Select an agent, capability and arguments to run.</DialogDescription>
+      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-md">
+        <DialogHeader className="shrink-0">
+          <DialogTitle>Run Command</DialogTitle>
+          <DialogDescription>Select a command to execute for this task.</DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Agent selector — shown only when no agentId prop */}
-          {!agentIdProp && (
-            <div className="space-y-2">
-              <Label htmlFor="agent">Agent</Label>
-              {isLoadingAgents ? (
-                <Skeleton className="h-9 w-full" />
-              ) : (
-                <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-                  <SelectTrigger id="agent" className="w-full">
-                    <SelectValue placeholder="Select an agent..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agents.map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-          )}
-
-          {/* Capability selector */}
-          {activeAgentId && (
-            <>
-              {isLoadingCaps ? (
-                <div className="space-y-2">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+            {/* Agent selector — shown only when no agentId prop */}
+            {!agentIdProp && (
+              <div className="space-y-2">
+                <Label htmlFor="exec-agent">Tool</Label>
+                {isLoadingAgents ? (
                   <Skeleton className="h-9 w-full" />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label htmlFor="capability">Capability</Label>
-                  <Select value={selectedCapId} onValueChange={setSelectedCapId}>
-                    <SelectTrigger id="capability" className="w-full">
-                      <SelectValue placeholder="Select a capability..." />
+                ) : (
+                  <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                    <SelectTrigger id="exec-agent" className="w-full">
+                      <SelectValue placeholder="Select a tool..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {capabilities.map((cap) => (
-                        <SelectItem key={cap.id} value={cap.id}>
-                          {cap.label}
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
-              {selectedCap && selectedCap.dangerLevel >= 2 && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-                  <span>
-                    This capability has danger level {selectedCap.dangerLevel}.
-                    {selectedCap.dangerLevel >= 3
-                      ? ' It may perform destructive operations.'
-                      : ' Proceed with caution.'}
-                  </span>
-                </div>
-              )}
-
-              {selectedCapId && selectedCap?.interactionMode === 'prompt' && (
-                <div className="space-y-2">
-                  <Label htmlFor="initial-prompt">Initial Prompt</Label>
-                  <Textarea
-                    id="initial-prompt"
-                    value={promptText}
-                    onChange={(e) => setPromptText(e.target.value)}
-                    placeholder="Describe what you want the agent to do..."
-                    className="min-h-[120px] resize-y"
-                  />
-                </div>
-              )}
-
-              {selectedCapId && selectedCap?.interactionMode !== 'prompt' && Object.keys(properties).length > 0 && (
-                <div className="space-y-3">
-                  <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                    Arguments
-                  </Label>
-                  {Object.entries(properties).map(([key, schemaProp]) => {
-                    const prop = schemaProp as Record<string, string | undefined>;
-                    const isRequired = requiredFields.includes(key);
-                    const description = prop.description;
-                    const defaultValue = prop.default;
-                    return (
-                      <div key={key} className="space-y-1">
-                        <Label htmlFor={`arg-${key}`}>
-                          {key}
-                          {isRequired && <span className="text-destructive ml-1">*</span>}
-                        </Label>
-                        {description && (
-                          <p className="text-xs text-muted-foreground">{description}</p>
-                        )}
-                        <Input
-                          id={`arg-${key}`}
-                          value={args[key] ?? ''}
-                          onChange={(e) => handleArgChange(key, e.target.value)}
-                          placeholder={
-                            defaultValue !== undefined ? String(defaultValue) : undefined
-                          }
-                          required={isRequired}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* CLI Options section — only for template-mode */}
-          {selectedCap?.interactionMode !== 'prompt' && parsedFlags.length > 0 && (
-            <div className="space-y-3">
-              <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                CLI Options
-              </Label>
-              {priorityFlags.map((pf) => {
-                const mainFlag = pf.flags.find((f) => f.startsWith('--')) ?? pf.flags[0];
-                const isPermissionMode = mainFlag === '--permission-mode';
-                const isModel = mainFlag === '--model';
-
-                if (isPermissionMode) {
-                  return (
-                    <div key={mainFlag} className="space-y-1">
-                      <label className="text-sm font-medium">{mainFlag}</label>
-                      <p className="text-xs text-muted-foreground">{pf.description}</p>
-                      <Select
-                        value={(cliFlags[mainFlag] as string) ?? ''}
-                        onValueChange={(val) => handleCliFlagValue(mainFlag, val)}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Default" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PERMISSION_MODE_VALUES.map((v) => (
-                            <SelectItem key={v} value={v}>
-                              {v}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  );
-                }
-
-                if (isModel || pf.takesValue) {
-                  return (
-                    <div key={mainFlag} className="space-y-1">
-                      <label className="text-sm font-medium">{mainFlag}</label>
-                      <p className="text-xs text-muted-foreground">{pf.description}</p>
-                      <Input
-                        value={(cliFlags[mainFlag] as string) ?? ''}
-                        onChange={(e) => handleCliFlagValue(mainFlag, e.target.value)}
-                        placeholder={pf.valueHint ?? undefined}
-                      />
-                    </div>
-                  );
-                }
-
-                // Boolean flag (checkbox)
-                return (
-                  <div key={mainFlag} className="flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      id={`cli-${mainFlag}`}
-                      checked={cliFlags[mainFlag] === true}
-                      onChange={(e) => handleCliFlagToggle(mainFlag, e.target.checked)}
-                      className="mt-1 h-4 w-4 rounded border-border"
-                    />
-                    <div>
-                      <label htmlFor={`cli-${mainFlag}`} className="text-sm font-medium cursor-pointer">
-                        {mainFlag}
-                      </label>
-                      <p className="text-xs text-muted-foreground">{pf.description}</p>
-                    </div>
+            {/* Capability selector */}
+            {activeAgentId && (
+              <>
+                {isLoadingCaps ? (
+                  <Skeleton className="h-9 w-full" />
+                ) : capabilities.length === 0 ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    <p className="font-medium">No commands configured</p>
+                    <p className="mt-1 text-xs">
+                      Add template capabilities to this agent in{' '}
+                      <span className="font-mono">Agent → Capabilities</span>.
+                    </p>
                   </div>
-                );
-              })}
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="capability">Command</Label>
+                    <Select value={selectedCapId} onValueChange={setSelectedCapId}>
+                      <SelectTrigger id="capability" className="w-full">
+                        <SelectValue placeholder="Select a command..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {capabilities.map((cap) => (
+                          <SelectItem key={cap.id} value={cap.id}>
+                            {cap.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
-              {nonPriorityFlags.length > 0 && (
-                <details>
-                  <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
-                    Advanced options ({nonPriorityFlags.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {nonPriorityFlags.map((pf) => {
-                      const mainFlag = pf.flags.find((f) => f.startsWith('--')) ?? pf.flags[0];
+                {selectedCap && selectedCap.dangerLevel >= 2 && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                    <span>
+                      Danger level {selectedCap.dangerLevel}.
+                      {selectedCap.dangerLevel >= 3
+                        ? ' May perform destructive operations.'
+                        : ' Proceed with caution.'}
+                    </span>
+                  </div>
+                )}
 
-                      if (pf.takesValue) {
-                        return (
-                          <div key={mainFlag} className="space-y-1">
-                            <label className="text-sm font-medium">{mainFlag}</label>
-                            <p className="text-xs text-muted-foreground">{pf.description}</p>
-                            <Input
-                              value={(cliFlags[mainFlag] as string) ?? ''}
-                              onChange={(e) => handleCliFlagValue(mainFlag, e.target.value)}
-                              placeholder={pf.valueHint ?? undefined}
-                            />
-                          </div>
-                        );
-                      }
-
+                {selectedCapId && Object.keys(properties).length > 0 && (
+                  <div className="space-y-3">
+                    <Label className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                      Arguments
+                    </Label>
+                    {Object.entries(properties).map(([key, schemaProp]) => {
+                      const prop = schemaProp as Record<string, string | undefined>;
+                      const isRequired = requiredFields.includes(key);
+                      const description = prop.description;
+                      const defaultValue = prop.default;
                       return (
-                        <div key={mainFlag} className="flex items-start gap-2">
-                          <input
-                            type="checkbox"
-                            id={`cli-${mainFlag}`}
-                            checked={cliFlags[mainFlag] === true}
-                            onChange={(e) => handleCliFlagToggle(mainFlag, e.target.checked)}
-                            className="mt-1 h-4 w-4 rounded border-border"
+                        <div key={key} className="space-y-1">
+                          <Label htmlFor={`arg-${key}`}>
+                            {key}
+                            {isRequired && <span className="text-destructive ml-1">*</span>}
+                          </Label>
+                          {description && (
+                            <p className="text-xs text-muted-foreground">{description}</p>
+                          )}
+                          <Input
+                            id={`arg-${key}`}
+                            value={args[key] ?? ''}
+                            onChange={(e) => handleArgChange(key, e.target.value)}
+                            placeholder={
+                              defaultValue !== undefined ? String(defaultValue) : undefined
+                            }
+                            required={isRequired}
                           />
-                          <div>
-                            <label htmlFor={`cli-${mainFlag}`} className="text-sm font-medium cursor-pointer">
-                              {mainFlag}
-                            </label>
-                            <p className="text-xs text-muted-foreground">{pf.description}</p>
-                          </div>
                         </div>
                       );
                     })}
                   </div>
-                </details>
-              )}
-            </div>
-          )}
+                )}
+              </>
+            )}
+          </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="shrink-0 text-sm text-destructive">{error}</p>}
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button type="submit" disabled={!canSubmit}>
               {isSubmitting ? (
                 <Loader2 className="size-4 animate-spin" />
-              ) : selectedCap?.interactionMode === 'prompt' ? (
-                <MessageSquare className="size-4" />
               ) : (
-                <Play className="size-4" />
+                <Terminal className="size-4" />
               )}
-              {selectedCap?.interactionMode === 'prompt' ? 'Start Session' : 'Execute'}
+              Run Command
             </Button>
           </DialogFooter>
         </form>
