@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
-import { CapabilityRow } from '@/components/agents/capability-row';
+import { CapabilityList } from '@/components/agents/capability-list';
 import { RefreshFlagsButton } from '@/components/agents/refresh-flags-button';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
@@ -15,11 +15,14 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
   const agent = await getAgentById(id).catch(() => notFound());
   const capabilities = await getCapabilitiesByAgent(id);
 
+  const backHref = agent.toolType === 'ai-agent' ? '/agents' : '/tools';
+  const backLabel = agent.toolType === 'ai-agent' ? 'Back to AI Agents' : 'Back to Tools';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
-          <Link href="/agents">Back to Agents</Link>
+          <Link href={backHref}>{backLabel}</Link>
         </Button>
         <h1 className="text-2xl font-bold">{agent.name}</h1>
       </div>
@@ -77,15 +80,7 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
           <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">Capabilities ({capabilities.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          {capabilities.length === 0 ? (
-            <p className="text-xs text-muted-foreground/60">No capabilities configured.</p>
-          ) : (
-            <div className="space-y-2">
-              {capabilities.map((cap) => (
-                <CapabilityRow key={cap.id} capability={cap} />
-              ))}
-            </div>
-          )}
+          <CapabilityList agentId={id} initialCapabilities={capabilities} />
         </CardContent>
       </Card>
 

@@ -6,12 +6,12 @@ import { AgentTable } from '@/components/agents/agent-table';
 import { listAgents } from '@/lib/services/agent-service';
 
 export default async function AgentsPage() {
-  const agents = await listAgents();
+  const agents = await listAgents({ group: 'ai' });
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Agents</h1>
+        <h1 className="text-2xl font-bold">AI Agents</h1>
         <Button asChild>
           <Link href="/agents/discovery">Discover</Link>
         </Button>
@@ -20,7 +20,7 @@ export default async function AgentsPage() {
       {agents.length === 0 ? (
         <div className="rounded-lg border border-dashed p-12 text-center">
           <p className="text-muted-foreground">
-            No agents registered. Run a discovery scan to find CLI tools.
+            No AI agents registered. Run a discovery scan to find Claude, Codex, and other AI agents.
           </p>
         </div>
       ) : (

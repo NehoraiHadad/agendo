@@ -2,10 +2,11 @@ import { accessSync, constants } from 'node:fs';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import type { ParsedFlag } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, ne, desc } from 'drizzle-orm';
 import { NotFoundError, ValidationError } from '@/lib/errors';
 import type { Agent, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
+import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
 
 interface CreateAgentInput {
   name: string;
@@ -101,6 +102,14 @@ export async function createAgent(data: CreateAgentInput): Promise<Agent> {
 }
 
 export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> {
+  // Idempotency: return existing agent if binary path already registered
+  const [existing] = await db
+    .select()
+    .from(agents)
+    .where(eq(agents.binaryPath, tool.path))
+    .limit(1);
+  if (existing) return existing;
+
   const preset = tool.preset;
 
   const agent = await createAgent({
@@ -136,20 +145,34 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
       });
     }
   }
-  // Create capabilities from parsed schema subcommands (non-preset tools)
-  else if (tool.schema?.subcommands.length) {
-    for (const subcmd of tool.schema.subcommands) {
-      await db.insert(agentCapabilities).values({
-        agentId: agent.id,
-        key: subcmd.name,
-        label: subcmd.name,
-        description: subcmd.description,
-        source: 'scan_help',
-        interactionMode: 'template',
-        commandTokens: [tool.name, subcmd.name],
-        dangerLevel: 0,
-        isEnabled: false,
-      });
+  // Create capabilities from parsed schema subcommands (non-preset tools).
+  // If schema wasn't extracted during the scan, extract it now at confirmation time.
+  else {
+    let schema = tool.schema;
+    if (!schema) {
+      const helpText = await getHelpText(tool.path);
+      if (helpText) schema = quickParseHelp(helpText);
+    }
+
+    if (schema?.subcommands.length) {
+      for (const subcmd of schema.subcommands) {
+        await db.insert(agentCapabilities).values({
+          agentId: agent.id,
+          key: subcmd.name,
+          label: subcmd.name,
+          description: subcmd.description,
+          source: 'scan_help',
+          interactionMode: 'template',
+          commandTokens: [tool.name, subcmd.name],
+          dangerLevel: 0,
+          isEnabled: true,
+        });
+      }
+    }
+
+    // Update schema reference so flags are persisted below
+    if (schema && !tool.schema) {
+      (tool as { schema: typeof schema }).schema = schema;
     }
   }
 
@@ -171,8 +194,19 @@ export async function getAgentById(id: string): Promise<Agent> {
   return agent;
 }
 
-export async function listAgents(): Promise<Agent[]> {
-  return db.select().from(agents).orderBy(desc(agents.createdAt));
+interface ListAgentsOptions {
+  group?: 'ai' | 'tools';
+}
+
+export async function listAgents(options?: ListAgentsOptions): Promise<Agent[]> {
+  const query = db.select().from(agents);
+  if (options?.group === 'ai') {
+    return query.where(eq(agents.toolType, 'ai-agent')).orderBy(desc(agents.createdAt));
+  }
+  if (options?.group === 'tools') {
+    return query.where(ne(agents.toolType, 'ai-agent')).orderBy(desc(agents.createdAt));
+  }
+  return query.orderBy(desc(agents.createdAt));
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {
@@ -203,6 +237,11 @@ export async function getAgentBySlug(slug: string): Promise<Agent | null> {
 export async function getExistingSlugs(): Promise<Set<string>> {
   const rows = await db.select({ slug: agents.slug }).from(agents);
   return new Set(rows.map((r) => r.slug));
+}
+
+export async function getExistingBinaryPaths(): Promise<Set<string>> {
+  const rows = await db.select({ binaryPath: agents.binaryPath }).from(agents);
+  return new Set(rows.map((r) => r.binaryPath));
 }
 
 export async function updateAgentParsedFlags(id: string, flags: ParsedFlag[]): Promise<void> {

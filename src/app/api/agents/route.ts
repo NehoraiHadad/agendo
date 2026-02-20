@@ -20,7 +20,10 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     return NextResponse.json({ data: agent ? [agent] : [] });
   }
 
-  const data = await listAgents();
+  const group = url.searchParams.get('group');
+  const groupOption =
+    group === 'ai' ? { group: 'ai' as const } : group === 'tools' ? { group: 'tools' as const } : undefined;
+  const data = await listAgents(groupOption);
   return NextResponse.json({ data });
 });
 
