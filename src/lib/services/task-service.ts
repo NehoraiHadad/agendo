@@ -8,6 +8,11 @@ import type { Task, TaskStatus } from '@/lib/types';
 
 // --- Types ---
 
+export interface TaskBoardItem extends Task {
+  subtaskTotal: number;
+  subtaskDone: number;
+}
+
 export interface CreateTaskInput {
   title: string;
   description?: string;
@@ -29,10 +34,12 @@ export interface UpdateTaskInput {
   projectId?: string | null;
   inputContext?: Record<string, unknown>;
   dueAt?: Date | null;
+  parentTaskId?: string | null;
 }
 
 export interface TaskWithDetails extends Task {
   subtaskCount: number;
+  completedSubtaskCount: number;
   dependencyCount: number;
   blockedByCount: number;
   assignee: { id: string; name: string; slug: string } | null;
@@ -79,6 +86,71 @@ export async function reindexColumn(status: TaskStatus): Promise<void> {
   }
 }
 
+/**
+ * Touch a task's updatedAt so SSE poll picks it up (used for parent propagation).
+ */
+async function touchTask(id: string): Promise<void> {
+  await db.update(tasks).set({ updatedAt: new Date() }).where(eq(tasks.id, id));
+}
+
+/**
+ * Run a LEFT JOIN subquery to attach subtaskTotal and subtaskDone counts to each task row.
+ */
+export async function listTasksBoardItems(
+  conditions: ReturnType<typeof and>[],
+  options: { limit?: number } = {},
+): Promise<TaskBoardItem[]> {
+  const limit = options.limit;
+
+  // Build WHERE clause
+  const whereClause = conditions.length > 0 ? and(...(conditions as Parameters<typeof and>)) : undefined;
+
+  // Use raw SQL for the LEFT JOIN aggregation
+  const query = sql`
+    SELECT tasks.*,
+      COALESCE(sub.total, 0)::int AS subtask_total,
+      COALESCE(sub.done,  0)::int AS subtask_done
+    FROM tasks
+    LEFT JOIN (
+      SELECT parent_task_id,
+        COUNT(*)                                       AS total,
+        COUNT(*) FILTER (WHERE status = 'done')        AS done
+      FROM tasks child
+      WHERE child.parent_task_id IS NOT NULL
+      GROUP BY child.parent_task_id
+    ) sub ON sub.parent_task_id = tasks.id
+    ${whereClause ? sql`WHERE ${whereClause}` : sql``}
+    ORDER BY tasks.sort_order ASC
+    ${limit !== undefined ? sql`LIMIT ${limit}` : sql``}
+  `;
+
+  const result = await db.execute(query);
+  // node-postgres returns QueryResult with .rows; drizzle may or may not unwrap it
+  const rows: Array<Record<string, unknown>> =
+    Array.isArray(result) ? (result as unknown as Array<Record<string, unknown>>) :
+    (result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+
+  return rows.map((row) => ({
+    id: row.id as string,
+    ownerId: row.owner_id as string,
+    workspaceId: row.workspace_id as string,
+    title: row.title as string,
+    description: (row.description as string | null) ?? null,
+    status: row.status as TaskStatus,
+    priority: row.priority as number,
+    sortOrder: row.sort_order as number,
+    parentTaskId: (row.parent_task_id as string | null) ?? null,
+    assigneeAgentId: (row.assignee_agent_id as string | null) ?? null,
+    projectId: (row.project_id as string | null) ?? null,
+    inputContext: (row.input_context as Record<string, unknown>) ?? {},
+    dueAt: row.due_at != null ? new Date(row.due_at as string) : null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+    subtaskTotal: row.subtask_total as number,
+    subtaskDone: row.subtask_done as number,
+  }));
+}
+
 export async function createTask(input: CreateTaskInput): Promise<Task> {
   const sortOrder = await getNextSortOrder(input.status ?? 'todo');
 
@@ -104,6 +176,10 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     eventType: 'task_created',
     payload: { title: task.title, status: task.status },
   });
+
+  if (input.parentTaskId) {
+    await touchTask(input.parentTaskId);
+  }
 
   return task;
 }
@@ -144,12 +220,29 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
     });
   }
 
+  // Touch parent(s) so SSE poll propagates progress updates
+  if (existing.parentTaskId) {
+    await touchTask(existing.parentTaskId);
+  }
+  if (
+    input.parentTaskId !== undefined &&
+    input.parentTaskId !== existing.parentTaskId &&
+    input.parentTaskId
+  ) {
+    await touchTask(input.parentTaskId);
+  }
+
   return updated;
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await getTaskById(id);
-  await db.delete(tasks).where(eq(tasks.id, id));
+  const task = await getTaskById(id);
+  if (task.parentTaskId) {
+    await db.delete(tasks).where(eq(tasks.id, id));
+    await touchTask(task.parentTaskId);
+  } else {
+    await db.delete(tasks).where(eq(tasks.id, id));
+  }
 }
 
 export async function getTaskById(id: string): Promise<Task> {
@@ -162,12 +255,16 @@ export async function getTaskById(id: string): Promise<Task> {
 export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
   const task = await getTaskById(id);
 
-  const [subtaskResult, depResult, blockedByResult, assigneeResult, parentResult] =
+  const [subtaskResult, completedSubtaskResult, depResult, blockedByResult, assigneeResult, parentResult] =
     await Promise.all([
       db
         .select({ count: sql<number>`count(*)::int` })
         .from(tasks)
         .where(eq(tasks.parentTaskId, id)),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(tasks)
+        .where(and(eq(tasks.parentTaskId, id), eq(tasks.status, 'done'))),
       db
         .select({ count: sql<number>`count(*)::int` })
         .from(taskDependencies)
@@ -195,6 +292,7 @@ export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
   return {
     ...task,
     subtaskCount: subtaskResult[0]?.count ?? 0,
+    completedSubtaskCount: completedSubtaskResult[0]?.count ?? 0,
     dependencyCount: depResult[0]?.count ?? 0,
     blockedByCount: blockedByResult[0]?.count ?? 0,
     assignee: assigneeResult[0] ?? null,
@@ -204,7 +302,7 @@ export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
 
 export async function listTasksByStatus(
   options: ListTasksOptions,
-): Promise<{ tasks: Task[]; nextCursor: string | null }> {
+): Promise<{ tasks: TaskBoardItem[]; nextCursor: string | null }> {
   const limit = options.limit ?? 50;
 
   const conditions = [];
@@ -224,12 +322,7 @@ export async function listTasksByStatus(
     conditions.push(ilike(tasks.title, `%${options.q}%`));
   }
 
-  const result = await db
-    .select()
-    .from(tasks)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(asc(tasks.sortOrder))
-    .limit(limit + 1);
+  const result = await listTasksBoardItems(conditions, { limit: limit + 1 });
 
   const hasMore = result.length > limit;
   const page = hasMore ? result.slice(0, limit) : result;
@@ -290,6 +383,11 @@ export async function reorderTask(id: string, input: ReorderTaskInput): Promise<
 
   if (needsReindex) {
     await reindexColumn(newStatus);
+  }
+
+  // Touch parent for SSE propagation
+  if (existing.parentTaskId) {
+    await touchTask(existing.parentTaskId);
   }
 
   return updated;

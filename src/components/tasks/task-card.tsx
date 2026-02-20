@@ -47,6 +47,9 @@ export function TaskCard({ taskId }: TaskCardProps) {
   const project = useTaskBoardStore((s) =>
     task?.projectId ? s.projectsById[task.projectId] : undefined,
   );
+  const parentTask = useTaskBoardStore((s) =>
+    task?.parentTaskId ? s.tasksById[task.parentTaskId] : undefined,
+  );
   const activeExec = useExecutionStore((s) => s.getActiveExecution(taskId));
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -96,6 +99,15 @@ export function TaskCard({ taskId }: TaskCardProps) {
           className="flex-1 text-left focus-visible:outline-none"
           onClick={() => selectTask(taskId)}
         >
+          {parentTask && (
+            <button
+              className="block text-[10px] text-muted-foreground/40 hover:text-muted-foreground/70 truncate max-w-[160px] mb-0.5 text-left"
+              onClick={(e) => { e.stopPropagation(); selectTask(parentTask.id); }}
+            >
+              ↳ {parentTask.title}
+            </button>
+          )}
+
           <div className="flex items-center gap-2">
             <p className="flex-1 text-sm font-medium leading-tight">{task.title}</p>
             {activeExec && (
@@ -124,6 +136,24 @@ export function TaskCard({ taskId }: TaskCardProps) {
               <span className="text-[10px] text-muted-foreground/50">{project.name}</span>
             )}
           </div>
+
+          {task.subtaskTotal > 0 && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className={cn('text-[10px] tabular-nums',
+                task.subtaskDone === task.subtaskTotal ? 'text-emerald-400' : 'text-muted-foreground/50'
+              )}>
+                {task.subtaskDone}/{task.subtaskTotal}
+              </span>
+              <span className="inline-block h-1 flex-1 rounded-full bg-white/[0.08] overflow-hidden">
+                <span
+                  className={cn('block h-full rounded-full transition-all',
+                    task.subtaskDone === task.subtaskTotal ? 'bg-emerald-400/70' : 'bg-blue-400/60'
+                  )}
+                  style={{ width: `${Math.round((task.subtaskDone / task.subtaskTotal) * 100)}%` }}
+                />
+              </span>
+            </div>
+          )}
 
           {task.description && (
             <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground/60">{task.description}</p>

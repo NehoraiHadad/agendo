@@ -1,9 +1,10 @@
 export const dynamic = 'force-dynamic';
 
 import { listTasksByStatus } from '@/lib/services/task-service';
+import type { TaskBoardItem } from '@/lib/services/task-service';
 import { listProjects } from '@/lib/services/project-service';
 import { TaskBoard } from '@/components/tasks/task-board';
-import type { Task, TaskStatus } from '@/lib/types';
+import type { TaskStatus } from '@/lib/types';
 
 const BOARD_STATUSES: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 
@@ -13,7 +14,7 @@ export default async function TasksPage() {
     listProjects(true),
   ]);
 
-  const tasksByStatus: Record<TaskStatus, Task[]> = {
+  const tasksByStatus: Record<TaskStatus, TaskBoardItem[]> = {
     todo: [],
     in_progress: [],
     blocked: [],

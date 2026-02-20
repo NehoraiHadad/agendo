@@ -20,10 +20,11 @@ import { TaskCreateDialog } from './task-create-dialog';
 import { TaskDragOverlay } from './task-drag-overlay';
 import { useBoardSse } from '@/hooks/use-board-sse';
 import { toast } from 'sonner';
-import type { Task, TaskStatus, Project } from '@/lib/types';
+import type { TaskStatus, Project } from '@/lib/types';
+import type { TaskBoardItem } from '@/lib/services/task-service';
 
 interface TaskBoardProps {
-  initialData: Record<TaskStatus, Task[]>;
+  initialData: Record<TaskStatus, TaskBoardItem[]>;
   initialCursors: Record<TaskStatus, string | null>;
   initialProjects: Project[];
 }
@@ -37,7 +38,7 @@ const COLUMN_LABELS: Record<TaskStatus, string> = {
 };
 
 /** Extract column status from a droppable id like "column-todo" or a task id */
-function resolveColumnStatus(overId: string, tasksById: Record<string, Task>): TaskStatus | null {
+function resolveColumnStatus(overId: string, tasksById: Record<string, TaskBoardItem>): TaskStatus | null {
   if (overId.startsWith('column-')) {
     return overId.replace('column-', '') as TaskStatus;
   }
