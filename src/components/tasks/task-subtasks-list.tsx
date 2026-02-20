@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { createTaskAction } from '@/lib/actions/task-actions';
+import { createTaskAction, deleteTaskAction } from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
+import { X as XIcon } from 'lucide-react';
 import type { Task } from '@/lib/types';
 
 interface TaskSubtasksListProps {
@@ -14,12 +15,14 @@ interface TaskSubtasksListProps {
 
 export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const addTask = useTaskBoardStore((s) => s.addTask);
+  const removeTask = useTaskBoardStore((s) => s.removeTask);
+  const selectTask = useTaskBoardStore((s) => s.selectTask);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
 
   useEffect(() => {
-    fetch(`/api/tasks?parentTaskId=${taskId}`)
+    fetch(`/api/tasks/${taskId}/subtasks`)
       .then((res) => res.json())
       .then((json) => setSubtasks(json.data ?? []))
       .catch(() => {});
@@ -42,6 +45,14 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
     }
   };
 
+  const handleDelete = async (subId: string) => {
+    const result = await deleteTaskAction(subId);
+    if (result.success) {
+      setSubtasks((prev) => prev.filter((s) => s.id !== subId));
+      removeTask(subId);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -53,10 +64,25 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
 
       {subtasks.map((sub) => (
         <div key={sub.id} className="flex items-center justify-between rounded border px-3 py-2">
-          <span className="text-sm">{sub.title}</span>
-          <Badge variant="outline" className="text-xs">
-            {sub.status}
-          </Badge>
+          <button
+            className="flex-1 text-left text-sm hover:underline"
+            onClick={() => selectTask(sub.id)}
+          >
+            {sub.title}
+          </button>
+          <div className="flex items-center gap-1">
+            <Badge variant="outline" className="text-xs">
+              {sub.status}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => handleDelete(sub.id)}
+            >
+              <XIcon className="h-3 w-3" />
+            </Button>
+          </div>
         </div>
       ))}
 
