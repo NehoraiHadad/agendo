@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { createTaskAction, deleteTaskAction } from '@/lib/actions/task-actions';
+import { createTaskAction, deleteTaskAction, updateTaskStatusAction } from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { X as XIcon } from 'lucide-react';
 import type { Task } from '@/lib/types';
@@ -17,6 +17,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const addTask = useTaskBoardStore((s) => s.addTask);
   const removeTask = useTaskBoardStore((s) => s.removeTask);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
+  const updateTask = useTaskBoardStore((s) => s.updateTask);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -52,6 +53,10 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
       removeTask(subId);
     }
   };
+
+  const allDone =
+    subtasks.length > 0 &&
+    subtasks.every((s) => s.status === 'done' || s.status === 'cancelled');
 
   return (
     <div className="flex flex-col gap-2">
@@ -104,6 +109,23 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
           />
           <Button size="sm" onClick={handleAdd}>
             Add
+          </Button>
+        </div>
+      )}
+
+      {allDone && (
+        <div className="flex items-center justify-between rounded border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+          <span className="text-xs text-emerald-400/80">All subtasks complete</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 text-xs text-emerald-400 hover:text-emerald-300"
+            onClick={async () => {
+              const r = await updateTaskStatusAction(taskId, 'done');
+              if (r.success) updateTask(r.data as Task);
+            }}
+          >
+            Mark parent done
           </Button>
         </div>
       )}

@@ -2,13 +2,24 @@
 
 import { create } from 'zustand';
 import type { Task, TaskStatus, Project } from '@/lib/types';
+import type { TaskBoardItem } from '@/lib/services/task-service';
+
+/** Coerce a plain Task (from a server action) to TaskBoardItem, preserving existing subtask counts. */
+function toTaskBoardItem(task: Task, existing?: TaskBoardItem): TaskBoardItem {
+  const t = task as Partial<TaskBoardItem>;
+  return {
+    ...task,
+    subtaskTotal: t.subtaskTotal ?? existing?.subtaskTotal ?? 0,
+    subtaskDone: t.subtaskDone ?? existing?.subtaskDone ?? 0,
+  };
+}
 
 /** All valid Kanban column statuses in display order */
 export const BOARD_COLUMNS: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 
 interface TaskBoardState {
   /** Normalized task lookup by ID */
-  tasksById: Record<string, Task>;
+  tasksById: Record<string, TaskBoardItem>;
 
   /** Ordered task IDs per status column */
   columns: Record<TaskStatus, string[]>;
@@ -125,13 +136,13 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   selectedProjectIds: [],
 
   hydrate: (tasksByStatus, cursors) => {
-    const tasksById: Record<string, Task> = {};
+    const tasksById: Record<string, TaskBoardItem> = {};
     const columns = createEmptyColumns();
 
     for (const status of BOARD_COLUMNS) {
       const statusTasks = tasksByStatus[status] ?? [];
       for (const task of statusTasks) {
-        tasksById[task.id] = task;
+        tasksById[task.id] = toTaskBoardItem(task);
         columns[status].push(task.id);
       }
     }
@@ -145,7 +156,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       const newColumn = [...state.columns[status]];
 
       for (const task of tasks) {
-        newTasksById[task.id] = task;
+        newTasksById[task.id] = toTaskBoardItem(task, state.tasksById[task.id]);
         newColumn.push(task.id);
       }
 
@@ -160,7 +171,8 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   updateTask: (task) => {
     set((state) => {
       const oldTask = state.tasksById[task.id];
-      const newTasksById = { ...state.tasksById, [task.id]: task };
+      const merged = toTaskBoardItem(task, oldTask);
+      const newTasksById = { ...state.tasksById, [task.id]: merged };
 
       if (oldTask && oldTask.status !== task.status) {
         const oldColumn = state.columns[oldTask.status].filter((id) => id !== task.id);
@@ -182,7 +194,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
   addTask: (task) => {
     set((state) => ({
-      tasksById: { ...state.tasksById, [task.id]: task },
+      tasksById: { ...state.tasksById, [task.id]: toTaskBoardItem(task, state.tasksById[task.id]) },
       columns: {
         ...state.columns,
         [task.status]: [...state.columns[task.status], task.id],
@@ -217,7 +229,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       return {
         tasksById: {
           ...state.tasksById,
-          [taskId]: { ...task, status: newStatus },
+          [taskId]: toTaskBoardItem({ ...task, status: newStatus }, task),
         },
         columns: {
           ...state.columns,
@@ -255,7 +267,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       return {
         tasksById: {
           ...state.tasksById,
-          [taskId]: { ...task, status: newStatus },
+          [taskId]: toTaskBoardItem({ ...task, status: newStatus }, task),
         },
         columns: {
           ...state.columns,
@@ -274,10 +286,12 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
     set((prev) => {
       const oldTask = prev.tasksById[task.id];
+      const merged = toTaskBoardItem(task, oldTask);
+
       if (!oldTask) {
         // New task from SSE: add it
         return {
-          tasksById: { ...prev.tasksById, [task.id]: task },
+          tasksById: { ...prev.tasksById, [task.id]: merged },
           columns: {
             ...prev.columns,
             [task.status]: [...prev.columns[task.status], task.id],
@@ -285,7 +299,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
         };
       }
 
-      const newTasksById = { ...prev.tasksById, [task.id]: task };
+      const newTasksById = { ...prev.tasksById, [task.id]: merged };
 
       if (oldTask.status !== task.status) {
         const oldColumn = prev.columns[oldTask.status].filter((id) => id !== task.id);
@@ -308,7 +322,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
     set((state) => {
       if (state.tasksById[task.id]) return state;
       return {
-        tasksById: { ...state.tasksById, [task.id]: task },
+        tasksById: { ...state.tasksById, [task.id]: toTaskBoardItem(task) },
         columns: {
           ...state.columns,
           [task.status]: [...state.columns[task.status], task.id],

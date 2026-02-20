@@ -42,6 +42,7 @@ interface TaskWithDetails {
   createdAt: string;
   updatedAt: string;
   subtaskCount: number;
+  completedSubtaskCount: number;
   dependencyCount: number;
   blockedByCount: number;
   assignee: { id: string; name: string; slug: string } | null;

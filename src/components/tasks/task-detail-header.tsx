@@ -6,6 +6,16 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { updateTaskStatusAction, updateTaskAction } from '@/lib/actions/task-actions';
 import { useTaskBoardStore, BOARD_COLUMNS } from '@/lib/store/task-board-store';
 import { toast } from 'sonner';
@@ -19,6 +29,8 @@ interface TaskDetailHeaderProps {
     description: string | null;
     status: string;
     priority: number;
+    subtaskCount?: number;
+    completedSubtaskCount?: number;
   };
 }
 
@@ -57,13 +69,28 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(task.description ?? '');
 
-  const handleStatusChange = async (newStatus: TaskStatus) => {
+  const [warnOpen, setWarnOpen] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+
+  const openSubtasks = (task.subtaskCount ?? 0) - (task.completedSubtaskCount ?? 0);
+
+  const doStatusChange = async (newStatus: string) => {
     setIsPending(true);
     const result = await updateTaskStatusAction(task.id, newStatus);
     if (result.success) {
-      moveTask(task.id, newStatus);
+      moveTask(task.id, newStatus as TaskStatus);
     }
     setIsPending(false);
+  };
+
+  const handleStatusChange = async (newStatus: string) => {
+    const isClosing = newStatus === 'done' || newStatus === 'cancelled';
+    if (isClosing && openSubtasks > 0) {
+      setPendingStatus(newStatus);
+      setWarnOpen(true);
+      return;
+    }
+    await doStatusChange(newStatus);
   };
 
   const saveTitle = async () => {
@@ -95,6 +122,7 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
   };
 
   return (
+    <>
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-2">
         {editingTitle ? (
@@ -168,7 +196,7 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
 
       <Select
         value={task.status}
-        onValueChange={(v) => handleStatusChange(v as TaskStatus)}
+        onValueChange={handleStatusChange}
         disabled={isPending}
       >
         <SelectTrigger className="w-full">
@@ -183,5 +211,30 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
         </SelectContent>
       </Select>
     </div>
+
+    <AlertDialog open={warnOpen} onOpenChange={setWarnOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Open subtasks remaining</AlertDialogTitle>
+          <AlertDialogDescription>
+            {openSubtasks} subtask{openSubtasks !== 1 ? 's' : ''} still open. Mark this task as{' '}
+            {pendingStatus} anyway?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setPendingStatus(null)}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={async () => {
+              setWarnOpen(false);
+              if (pendingStatus) await doStatusChange(pendingStatus);
+              setPendingStatus(null);
+            }}
+          >
+            Mark as {pendingStatus}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

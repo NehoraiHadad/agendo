@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { tasks, executions } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
+import { listTasksBoardItems } from '@/lib/services/task-service';
 
 const POLL_INTERVAL_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -27,9 +28,9 @@ export async function GET(_req: NextRequest) {
         }
       }
 
-      // Send initial snapshot
+      // Send initial snapshot with subtask counts
       try {
-        const allTasks = await db.select().from(tasks).orderBy(tasks.sortOrder);
+        const allTasks = await listTasksBoardItems([]);
         send('snapshot', { tasks: allTasks });
       } catch (err) {
         console.error('SSE snapshot error:', err);
@@ -44,10 +45,9 @@ export async function GET(_req: NextRequest) {
         }
 
         try {
-          const updatedTasks = await db
-            .select()
-            .from(tasks)
-            .where(sql`${tasks.updatedAt} > ${lastPoll}`);
+          const updatedTasks = await listTasksBoardItems([
+            sql`${tasks.updatedAt} > ${lastPoll}`,
+          ]);
 
           for (const task of updatedTasks) {
             send('task_updated', task);
