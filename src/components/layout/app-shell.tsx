@@ -1,11 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Menu } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './sidebar';
-import { CommandPalette } from '@/components/command-palette';
 import { cn } from '@/lib/utils';
+
+const CommandPalette = dynamic(
+  () => import('@/components/command-palette').then((m) => ({ default: m.CommandPalette })),
+  { ssr: false },
+);
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
