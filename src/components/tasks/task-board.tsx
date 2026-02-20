@@ -20,11 +20,12 @@ import { TaskCreateDialog } from './task-create-dialog';
 import { TaskDragOverlay } from './task-drag-overlay';
 import { useBoardSse } from '@/hooks/use-board-sse';
 import { toast } from 'sonner';
-import type { Task, TaskStatus } from '@/lib/types';
+import type { Task, TaskStatus, Project } from '@/lib/types';
 
 interface TaskBoardProps {
   initialData: Record<TaskStatus, Task[]>;
   initialCursors: Record<TaskStatus, string | null>;
+  initialProjects: Project[];
 }
 
 const COLUMN_LABELS: Record<TaskStatus, string> = {
@@ -44,13 +45,17 @@ function resolveColumnStatus(overId: string, tasksById: Record<string, Task>): T
   return task ? task.status : null;
 }
 
-export function TaskBoard({ initialData, initialCursors }: TaskBoardProps) {
+export function TaskBoard({ initialData, initialCursors, initialProjects }: TaskBoardProps) {
   const hydrate = useTaskBoardStore((s) => s.hydrate);
+  const hydrateProjects = useTaskBoardStore((s) => s.hydrateProjects);
   const selectedTaskId = useTaskBoardStore((s) => s.selectedTaskId);
   const tasksById = useTaskBoardStore((s) => s.tasksById);
   const columns = useTaskBoardStore((s) => s.columns);
   const optimisticReorder = useTaskBoardStore((s) => s.optimisticReorder);
   const settleOptimistic = useTaskBoardStore((s) => s.settleOptimistic);
+  const projectsById = useTaskBoardStore((s) => s.projectsById);
+  const selectedProjectIds = useTaskBoardStore((s) => s.selectedProjectIds);
+  const setProjectFilter = useTaskBoardStore((s) => s.setProjectFilter);
   const hydrated = useRef(false);
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -61,9 +66,21 @@ export function TaskBoard({ initialData, initialCursors }: TaskBoardProps) {
   useEffect(() => {
     if (!hydrated.current) {
       hydrate(initialData, initialCursors);
+      hydrateProjects(initialProjects);
       hydrated.current = true;
     }
-  }, [initialData, initialCursors, hydrate]);
+  }, [initialData, initialCursors, initialProjects, hydrate, hydrateProjects]);
+
+  const toggleProjectFilter = useCallback(
+    (projectId: string) => {
+      if (selectedProjectIds.includes(projectId)) {
+        setProjectFilter(selectedProjectIds.filter((id) => id !== projectId));
+      } else {
+        setProjectFilter([...selectedProjectIds, projectId]);
+      }
+    },
+    [selectedProjectIds, setProjectFilter],
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -158,12 +175,50 @@ export function TaskBoard({ initialData, initialCursors }: TaskBoardProps) {
     [tasksById, columns, optimisticReorder, settleOptimistic],
   );
 
+  const projects = Object.values(projectsById);
+  const hasProjects = projects.length > 0;
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-6 py-4">
         <h1 className="text-2xl font-semibold">Tasks</h1>
         <TaskCreateDialog />
       </div>
+
+      {hasProjects && (
+        <div className="flex items-center gap-2 border-b border-white/[0.05] px-6 py-2">
+          <button
+            onClick={() => setProjectFilter([])}
+            className={`rounded-full border px-3 py-0.5 text-xs transition-colors ${
+              selectedProjectIds.length === 0
+                ? 'border-white/20 bg-white/10 text-foreground'
+                : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'
+            }`}
+          >
+            All Projects
+          </button>
+          {projects.map((project) => {
+            const isSelected = selectedProjectIds.includes(project.id);
+            return (
+              <button
+                key={project.id}
+                onClick={() => toggleProjectFilter(project.id)}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-xs transition-colors ${
+                  isSelected
+                    ? 'border-white/20 bg-white/10 text-foreground'
+                    : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'
+                }`}
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: project.color ?? '#6366f1' }}
+                />
+                {project.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}
@@ -173,9 +228,24 @@ export function TaskBoard({ initialData, initialCursors }: TaskBoardProps) {
         onDragEnd={handleDragEnd}
       >
         <div className="flex flex-1 gap-4 overflow-x-auto p-4">
-          {BOARD_COLUMNS.map((status) => (
-            <TaskColumn key={status} status={status} label={COLUMN_LABELS[status]} />
-          ))}
+          {BOARD_COLUMNS.map((status) => {
+            const filteredTaskIds =
+              selectedProjectIds.length === 0
+                ? undefined
+                : columns[status].filter(
+                    (id) =>
+                      tasksById[id]?.projectId != null &&
+                      selectedProjectIds.includes(tasksById[id].projectId as string),
+                  );
+            return (
+              <TaskColumn
+                key={status}
+                status={status}
+                label={COLUMN_LABELS[status]}
+                filteredTaskIds={filteredTaskIds}
+              />
+            );
+          })}
         </div>
 
         <DragOverlay dropAnimation={null}>

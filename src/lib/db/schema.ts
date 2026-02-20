@@ -3,6 +3,7 @@ import {
   pgEnum,
   uuid,
   text,
+  varchar,
   boolean,
   smallint,
   integer,
@@ -166,6 +167,24 @@ export const agentCapabilities = pgTable(
   ],
 );
 
+// --- Projects ---------------------------------------------------------------
+// A project groups tasks under a shared working directory and env configuration.
+
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  // Unique: prevents duplicate projects for the same directory.
+  rootPath: text('root_path').notNull().unique(),
+  envOverrides: jsonb('env_overrides').$type<Record<string, string>>().notNull().default({}),
+  // Hex color for UI color-coding (e.g. '#6366f1').
+  color: varchar('color', { length: 7 }).notNull().default('#6366f1'),
+  icon: varchar('icon', { length: 50 }),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // --- Tasks ------------------------------------------------------------------
 
 export const tasks = pgTable(
@@ -177,6 +196,7 @@ export const tasks = pgTable(
     parentTaskId: uuid('parent_task_id').references((): AnyPgColumn => tasks.id, {
       onDelete: 'set null',
     }),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     description: text('description'),
     status: taskStatusEnum('status').notNull().default('todo'),
@@ -194,6 +214,7 @@ export const tasks = pgTable(
   (table) => [
     index('idx_tasks_board').on(table.workspaceId, table.status, table.sortOrder),
     index('idx_tasks_parent').on(table.parentTaskId),
+    index('idx_tasks_project_id').on(table.projectId),
   ],
 );
 

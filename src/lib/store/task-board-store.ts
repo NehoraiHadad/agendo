@@ -1,7 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
-import type { Task, TaskStatus } from '@/lib/types';
+import type { Task, TaskStatus, Project } from '@/lib/types';
 
 /** All valid Kanban column statuses in display order */
 export const BOARD_COLUMNS: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
@@ -24,6 +24,12 @@ interface TaskBoardState {
 
   /** Task IDs with pending optimistic updates (skip SSE overwrite) */
   pendingOptimistic: Set<string>;
+
+  /** Project lookup by ID */
+  projectsById: Record<string, Project>;
+
+  /** Project IDs to show (empty = show all) */
+  selectedProjectIds: string[];
 }
 
 interface TaskBoardActions {
@@ -68,6 +74,12 @@ interface TaskBoardActions {
 
   /** Clear the optimistic flag for a task (after server confirms) */
   settleOptimistic: (taskId: string) => void;
+
+  /** Populate the projects lookup from an array */
+  hydrateProjects: (projects: Project[]) => void;
+
+  /** Set which project IDs are selected for filtering (empty = all) */
+  setProjectFilter: (projectIds: string[]) => void;
 }
 
 type TaskBoardStore = TaskBoardState & TaskBoardActions;
@@ -109,6 +121,8 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   loading: createEmptyLoading(),
   selectedTaskId: null,
   pendingOptimistic: new Set(),
+  projectsById: {},
+  selectedProjectIds: [],
 
   hydrate: (tasksByStatus, cursors) => {
     const tasksById: Record<string, Task> = {};
@@ -309,5 +323,17 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       newPending.delete(taskId);
       return { pendingOptimistic: newPending };
     });
+  },
+
+  hydrateProjects: (projectList) => {
+    const projectsById: Record<string, Project> = {};
+    for (const project of projectList) {
+      projectsById[project.id] = project;
+    }
+    set({ projectsById });
+  },
+
+  setProjectFilter: (projectIds) => {
+    set({ selectedProjectIds: projectIds });
   },
 }));

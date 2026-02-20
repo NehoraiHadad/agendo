@@ -44,15 +44,21 @@ const EXECUTION_STATUS_COLORS: Record<string, string> = {
 export function TaskCard({ taskId }: TaskCardProps) {
   const task = useTaskBoardStore((s) => s.tasksById[taskId]);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
+  const project = useTaskBoardStore((s) =>
+    task?.projectId ? s.projectsById[task.projectId] : undefined,
+  );
   const activeExec = useExecutionStore((s) => s.getActiveExecution(taskId));
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: taskId,
   });
 
+  const projectColor = project?.color ?? null;
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    ...(projectColor ? { borderLeftColor: projectColor } : {}),
   };
 
   if (!task) return null;
@@ -65,7 +71,7 @@ export function TaskCard({ taskId }: TaskCardProps) {
         'w-full rounded-lg border border-white/[0.06] bg-card p-3 text-left',
         'transition-all duration-200 hover:border-white/[0.12]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        PRIORITY_LEFT_BORDER[task.priority] ?? '',
+        project ? 'border-l-4' : (PRIORITY_LEFT_BORDER[task.priority] ?? ''),
         isDragging && 'opacity-20 scale-[0.98]',
       )}
     >
@@ -112,6 +118,10 @@ export function TaskCard({ taskId }: TaskCardProps) {
               <Badge variant="secondary" className="text-xs bg-white/[0.06] border border-white/[0.08] text-muted-foreground">
                 Assigned
               </Badge>
+            )}
+
+            {project && (
+              <span className="text-[10px] text-muted-foreground/50">{project.name}</span>
             )}
           </div>
 

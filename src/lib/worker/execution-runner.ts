@@ -1,6 +1,6 @@
 import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { executions, tasks } from '@/lib/db/schema';
+import { executions, tasks, projects } from '@/lib/db/schema';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilityById } from '@/lib/services/capability-service';
 import {
@@ -59,14 +59,53 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   const agent = await getAgentById(execution.agentId);
   const capability = await getCapabilityById(execution.capabilityId);
 
-  // --- 2. Safety checks ---
-  const resolvedCwd = validateWorkingDir(agent.workingDir ?? '/tmp');
+  // --- 2. Load task + project (needed for workingDir + env overrides for all modes) ---
+  const [taskRow] = await db
+    .select({
+      projectId: tasks.projectId,
+      title: tasks.title,
+      description: tasks.description,
+      inputContext: tasks.inputContext,
+    })
+    .from(tasks)
+    .where(eq(tasks.id, execution.taskId))
+    .limit(1);
+
+  const project = taskRow?.projectId
+    ? await db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, taskRow.projectId))
+        .limit(1)
+        .then((r) => r[0] ?? null)
+    : null;
+
+  // --- 3. Safety checks ---
+  // WorkingDir priority: task.inputContext.workingDir > project.rootPath > agent.workingDir > /tmp
+  const taskWorkingDir = (taskRow?.inputContext as { workingDir?: string } | null)?.workingDir;
+  const rawCwd = taskWorkingDir ?? project?.rootPath ?? agent.workingDir ?? '/tmp';
+  const resolvedCwd = await validateWorkingDir(rawCwd);
   validateBinary(agent.binaryPath);
   validateArgs(capability.argsSchema, execution.args);
 
   const childEnv = buildChildEnv({
     agentAllowlist: agent.envAllowlist ?? [],
   });
+
+  // Apply env overrides: project (less specific) then task (more specific)
+  if (project?.envOverrides) {
+    for (const [k, v] of Object.entries(project.envOverrides)) {
+      childEnv[k] = v;
+    }
+  }
+  const taskEnv = (taskRow?.inputContext as { envOverrides?: Record<string, string> } | null)?.envOverrides;
+  if (taskEnv) {
+    for (const [k, v] of Object.entries(taskEnv)) {
+      childEnv[k] = v;
+    }
+  }
+  delete childEnv['CLAUDECODE'];
+  delete childEnv['CLAUDE_CODE_ENTRYPOINT'];
 
   // --- 3. Resolve prompt or command args ---
   let resolvedPrompt: string | undefined;
@@ -77,16 +116,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     if (execution.promptOverride) {
       resolvedPrompt = execution.promptOverride;
     } else {
-      // Load task to get title/description for template interpolation
-      const [task] = await db
-        .select({ title: tasks.title, description: tasks.description })
-        .from(tasks)
-        .where(eq(tasks.id, execution.taskId))
-        .limit(1);
-
       const interpolationContext: Record<string, unknown> = {
-        task_title: task?.title ?? '',
-        task_description: task?.description ?? '',
+        task_title: taskRow?.title ?? '',
+        task_description: taskRow?.description ?? '',
         ...execution.args,
       };
       resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);

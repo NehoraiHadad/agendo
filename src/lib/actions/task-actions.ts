@@ -15,6 +15,7 @@ const createTaskSchema = z.object({
   parentTaskId: z.string().uuid().optional(),
   assigneeAgentId: z.string().uuid().optional(),
   dueAt: z.coerce.date().optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -24,6 +25,7 @@ const updateTaskSchema = z.object({
   priority: z.number().int().min(1).max(5).optional(),
   assigneeAgentId: z.string().uuid().nullable().optional(),
   dueAt: z.coerce.date().nullable().optional(),
+  projectId: z.string().uuid().nullable().optional(),
 });
 
 const dependencySchema = z.object({

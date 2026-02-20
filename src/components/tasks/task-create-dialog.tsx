@@ -25,12 +25,16 @@ import type { Task } from '@/lib/types';
 
 export function TaskCreateDialog() {
   const addTask = useTaskBoardStore((s) => s.addTask);
+  const projectsById = useTaskBoardStore((s) => s.projectsById);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('3');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('none');
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const projects = Object.values(projectsById);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +47,7 @@ export function TaskCreateDialog() {
       title: title.trim(),
       description: description.trim() || undefined,
       priority: parseInt(priority, 10),
+      projectId: selectedProjectId !== 'none' ? selectedProjectId : undefined,
     });
 
     if (result.success) {
@@ -50,6 +55,7 @@ export function TaskCreateDialog() {
       setTitle('');
       setDescription('');
       setPriority('3');
+      setSelectedProjectId('none');
       setOpen(false);
     } else {
       setError(result.error);
@@ -99,6 +105,22 @@ export function TaskCreateDialog() {
               <SelectItem value="5">Lowest</SelectItem>
             </SelectContent>
           </Select>
+
+          {projects.length > 0 && (
+            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+              <SelectTrigger>
+                <SelectValue placeholder="No project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No project</SelectItem>
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 

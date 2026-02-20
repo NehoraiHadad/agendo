@@ -15,6 +15,7 @@ export interface CreateTaskInput {
   priority?: number;
   parentTaskId?: string;
   assigneeAgentId?: string;
+  projectId?: string;
   inputContext?: Record<string, unknown>;
   dueAt?: Date;
 }
@@ -25,6 +26,7 @@ export interface UpdateTaskInput {
   status?: TaskStatus;
   priority?: number;
   assigneeAgentId?: string | null;
+  projectId?: string | null;
   inputContext?: Record<string, unknown>;
   dueAt?: Date | null;
 }
@@ -42,6 +44,7 @@ export interface ListTasksOptions {
   cursor?: string;
   limit?: number;
   parentTaskId?: string;
+  projectId?: string;
 }
 
 // --- Implementation ---
@@ -88,6 +91,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       sortOrder,
       parentTaskId: input.parentTaskId,
       assigneeAgentId: input.assigneeAgentId,
+      projectId: input.projectId,
       inputContext: input.inputContext ?? {},
       dueAt: input.dueAt,
     })
@@ -211,6 +215,9 @@ export async function listTasksByStatus(
   }
   if (options.parentTaskId) {
     conditions.push(eq(tasks.parentTaskId, options.parentTaskId));
+  }
+  if (options.projectId) {
+    conditions.push(eq(tasks.projectId, options.projectId));
   }
 
   const result = await db

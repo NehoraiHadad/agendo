@@ -1,9 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
+import { deleteTaskAction } from '@/lib/actions/task-actions';
 import { TaskDetailHeader } from './task-detail-header';
 import { TaskMetaPanel } from './task-meta-panel';
 import { TaskSubtasksList } from './task-subtasks-list';
@@ -24,6 +36,7 @@ interface TaskWithDetails {
   sortOrder: number;
   parentTaskId: string | null;
   assigneeAgentId: string | null;
+  projectId: string | null;
   inputContext: Record<string, unknown>;
   dueAt: string | null;
   createdAt: string;
@@ -41,7 +54,10 @@ interface TaskWithDetails {
  */
 export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
   const selectTask = useTaskBoardStore((s) => s.selectTask);
+  const removeTask = useTaskBoardStore((s) => s.removeTask);
+  const tasksById = useTaskBoardStore((s) => s.tasksById);
   const [details, setDetails] = useState<TaskWithDetails | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,9 +76,47 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
     };
   }, [taskId]);
 
+  // Sync editable fields from the store whenever a server action updates the task.
+  // The store is updated by updateTask() calls in child components; details is not,
+  // causing controlled Select/input values to revert without this sync.
+  useEffect(() => {
+    const storeTask = tasksById[taskId];
+    if (!storeTask) return;
+    setDetails((prev) => {
+      if (!prev) return prev;
+      const rawDue = storeTask.dueAt;
+      const dueAt = rawDue == null ? null : rawDue instanceof Date ? rawDue.toISOString() : String(rawDue);
+      return {
+        ...prev,
+        title: storeTask.title,
+        description: storeTask.description,
+        status: storeTask.status,
+        priority: storeTask.priority,
+        sortOrder: storeTask.sortOrder,
+        parentTaskId: storeTask.parentTaskId,
+        assigneeAgentId: storeTask.assigneeAgentId,
+        projectId: storeTask.projectId ?? null,
+        dueAt,
+      };
+    });
+  }, [tasksById, taskId]);
+
   const close = () => selectTask(null);
 
+  const handleDelete = async () => {
+    const result = await deleteTaskAction(taskId);
+    if (result.success) {
+      removeTask(taskId);
+      close();
+      toast.success('Task deleted');
+    } else {
+      toast.error(result.error);
+    }
+    setDeleteOpen(false);
+  };
+
   return (
+    <>
     <Sheet open onOpenChange={(open) => !open && close()}>
       <SheetContent
         side="right"
@@ -77,13 +131,22 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
           <p className="text-xs uppercase tracking-widest text-muted-foreground/60 font-medium">
             Task Details
           </p>
-          <button
-            onClick={close}
-            className="rounded-md p-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-white/[0.06] transition-colors"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setDeleteOpen(true)}
+              className="rounded-md p-1.5 text-muted-foreground/60 hover:text-destructive hover:bg-white/[0.06] transition-colors"
+              aria-label="Delete task"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={close}
+              className="rounded-md p-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-white/[0.06] transition-colors"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {!details ? (
@@ -118,5 +181,26 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
         )}
       </SheetContent>
     </Sheet>
+
+    <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this task?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will permanently remove the task and all its executions.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
