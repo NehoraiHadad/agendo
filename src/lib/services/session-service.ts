@@ -1,6 +1,6 @@
-import { eq, and, inArray, desc, count } from 'drizzle-orm';
+import { eq, and, inArray, desc, count, getTableColumns } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { sessions } from '@/lib/db/schema';
+import { sessions, agents, tasks } from '@/lib/db/schema';
 import { NotFoundError } from '@/lib/errors';
 import type { Session } from '@/lib/types';
 
@@ -83,8 +83,14 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
 
   const [data, [{ total }]] = await Promise.all([
     db
-      .select()
+      .select({
+        ...getTableColumns(sessions),
+        agentName: agents.name,
+        taskTitle: tasks.title,
+      })
       .from(sessions)
+      .leftJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(tasks, eq(sessions.taskId, tasks.id))
       .where(where)
       .orderBy(desc(sessions.createdAt))
       .limit(pageSize)
