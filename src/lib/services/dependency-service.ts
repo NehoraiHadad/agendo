@@ -12,7 +12,7 @@ interface Dependency {
 /**
  * Add a dependency: taskId depends on dependsOnTaskId.
  *
- * Uses transactional DFS with SELECT FOR UPDATE row locking to prevent
+ * Uses transactional DFS within a serializable transaction to prevent
  * concurrent operations from creating cycles.
  */
 export async function addDependency(taskId: string, dependsOnTaskId: string): Promise<Dependency> {
@@ -46,7 +46,7 @@ export async function addDependency(taskId: string, dependsOnTaskId: string): Pr
       return existing;
     }
 
-    // Lock ALL dependency edges reachable from dependsOnTaskId
+    // Fetch all dependency edges reachable from dependsOnTaskId
     const reachableEdges = await tx.execute(sql`
       WITH RECURSIVE dep_chain AS (
         SELECT task_id, depends_on_task_id
@@ -60,7 +60,6 @@ export async function addDependency(taskId: string, dependsOnTaskId: string): Pr
         INNER JOIN dep_chain dc ON td.task_id = dc.depends_on_task_id
       )
       SELECT task_id, depends_on_task_id FROM dep_chain
-      FOR UPDATE OF task_dependencies
     `);
 
     // DFS cycle check: does dependsOnTaskId transitively depend on taskId?

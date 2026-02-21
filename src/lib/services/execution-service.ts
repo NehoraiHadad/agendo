@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, count } from 'drizzle-orm';
+import { eq, and, desc, sql, count, getTableColumns } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { executions, tasks, agents, agentCapabilities, taskEvents } from '@/lib/db/schema';
 import { isValidExecutionTransition } from '@/lib/state-machines';
@@ -166,7 +166,7 @@ export async function getExecutionById(executionId: string): Promise<ExecutionWi
 }
 
 export async function listExecutions(input: ListExecutionsInput = {}): Promise<{
-  data: Execution[];
+  data: (Execution & { agentName: string | null; capLabel: string | null })[];
   total: number;
   page: number;
   pageSize: number;
@@ -182,8 +182,14 @@ export async function listExecutions(input: ListExecutionsInput = {}): Promise<{
 
   const [data, [{ total }]] = await Promise.all([
     db
-      .select()
+      .select({
+        ...getTableColumns(executions),
+        agentName: agents.name,
+        capLabel: agentCapabilities.label,
+      })
       .from(executions)
+      .leftJoin(agents, eq(executions.agentId, agents.id))
+      .leftJoin(agentCapabilities, eq(executions.capabilityId, agentCapabilities.id))
       .where(where)
       .orderBy(desc(executions.createdAt))
       .limit(pageSize)
