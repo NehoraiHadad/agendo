@@ -8,6 +8,9 @@ import {
   handleListTasks,
   handleCreateSubtask,
   handleAssignTask,
+  handleGetMyTask,
+  handleGetTask,
+  handleAddProgressNote,
 } from '../server';
 
 // Mock fetch globally
@@ -380,5 +383,242 @@ describe('error handling', () => {
     await expect(handleUpdateTask({ taskId: 'missing', title: 'Updated' })).rejects.toThrow(
       'Task not found',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleCreateTask — implicit env context (B4)
+// ---------------------------------------------------------------------------
+
+describe('handleCreateTask — implicit env context', () => {
+  it('injects AGENDO_PROJECT_ID when set', async () => {
+    process.env.AGENDO_PROJECT_ID = 'proj-env-uuid';
+    mockApiResponse({ id: 'task-1' });
+
+    await handleCreateTask({ title: 'Task with project' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.projectId).toBe('proj-env-uuid');
+
+    delete process.env.AGENDO_PROJECT_ID;
+  });
+
+  it('does not inject projectId when AGENDO_PROJECT_ID is unset', async () => {
+    delete process.env.AGENDO_PROJECT_ID;
+    mockApiResponse({ id: 'task-1' });
+
+    await handleCreateTask({ title: 'Task without project' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.projectId).toBeUndefined();
+  });
+
+  it('auto-assigns AGENDO_AGENT_ID when no explicit assignee is given', async () => {
+    process.env.AGENDO_AGENT_ID = 'session-agent-uuid';
+    mockApiResponse({ id: 'task-1' });
+
+    await handleCreateTask({ title: 'Auto-assigned task' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.assigneeAgentId).toBe('session-agent-uuid');
+
+    delete process.env.AGENDO_AGENT_ID;
+  });
+
+  it('explicit assignee slug takes precedence over AGENDO_AGENT_ID', async () => {
+    process.env.AGENDO_AGENT_ID = 'session-agent-uuid';
+    // First call: resolve slug
+    mockApiResponse([{ id: 'resolved-agent-uuid' }]);
+    // Second call: create task
+    mockApiResponse({ id: 'task-1' });
+
+    await handleCreateTask({ title: 'Task', assignee: 'claude-code' });
+
+    const createBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(createBody.assigneeAgentId).toBe('resolved-agent-uuid');
+
+    delete process.env.AGENDO_AGENT_ID;
+  });
+
+  it('does not set assigneeAgentId when both assignee and AGENDO_AGENT_ID are absent', async () => {
+    delete process.env.AGENDO_AGENT_ID;
+    mockApiResponse({ id: 'task-1' });
+
+    await handleCreateTask({ title: 'Unassigned task' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.assigneeAgentId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleCreateSubtask — implicit env context (B4)
+// ---------------------------------------------------------------------------
+
+describe('handleCreateSubtask — implicit env context', () => {
+  it('injects AGENDO_PROJECT_ID when set', async () => {
+    process.env.AGENDO_PROJECT_ID = 'proj-env-uuid';
+    mockApiResponse({ id: 'subtask-1' });
+
+    await handleCreateSubtask({ parentTaskId: 'parent-uuid', title: 'Sub with project' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.projectId).toBe('proj-env-uuid');
+
+    delete process.env.AGENDO_PROJECT_ID;
+  });
+
+  it('auto-assigns AGENDO_AGENT_ID when no explicit assignee is given', async () => {
+    process.env.AGENDO_AGENT_ID = 'session-agent-uuid';
+    mockApiResponse({ id: 'subtask-1' });
+
+    await handleCreateSubtask({ parentTaskId: 'parent-uuid', title: 'Auto-assigned sub' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.assigneeAgentId).toBe('session-agent-uuid');
+
+    delete process.env.AGENDO_AGENT_ID;
+  });
+
+  it('explicit assignee slug takes precedence over AGENDO_AGENT_ID', async () => {
+    process.env.AGENDO_AGENT_ID = 'session-agent-uuid';
+    mockApiResponse([{ id: 'resolved-agent-uuid' }]);
+    mockApiResponse({ id: 'subtask-1' });
+
+    await handleCreateSubtask({ parentTaskId: 'parent-uuid', title: 'Sub', assignee: 'codex' });
+
+    const createBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(createBody.assigneeAgentId).toBe('resolved-agent-uuid');
+
+    delete process.env.AGENDO_AGENT_ID;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleGetMyTask (B1)
+// ---------------------------------------------------------------------------
+
+describe('handleGetMyTask', () => {
+  it('throws when AGENDO_TASK_ID is not set', async () => {
+    delete process.env.AGENDO_TASK_ID;
+
+    await expect(handleGetMyTask()).rejects.toThrow(
+      'No task assigned to this session (AGENDO_TASK_ID not set)',
+    );
+  });
+
+  it('calls GET /api/tasks/:id using AGENDO_TASK_ID', async () => {
+    process.env.AGENDO_TASK_ID = 'my-task-uuid';
+    mockApiResponse({ id: 'my-task-uuid', title: 'My task' });
+
+    const result = await handleGetMyTask();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/tasks/my-task-uuid'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(result).toEqual({ id: 'my-task-uuid', title: 'My task' });
+
+    delete process.env.AGENDO_TASK_ID;
+  });
+
+  it('propagates API errors', async () => {
+    process.env.AGENDO_TASK_ID = 'missing-uuid';
+    mockApiError('Task not found', 404);
+
+    await expect(handleGetMyTask()).rejects.toThrow('Task not found');
+
+    delete process.env.AGENDO_TASK_ID;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleGetTask (B3)
+// ---------------------------------------------------------------------------
+
+describe('handleGetTask', () => {
+  it('calls GET /api/tasks/:id with the provided taskId', async () => {
+    mockApiResponse({ id: 'task-abc', title: 'Some task' });
+
+    const result = await handleGetTask({ taskId: 'task-abc' });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/tasks/task-abc'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(result).toEqual({ id: 'task-abc', title: 'Some task' });
+  });
+
+  it('propagates API errors', async () => {
+    mockApiError('Task not found', 404);
+
+    await expect(handleGetTask({ taskId: 'ghost-uuid' })).rejects.toThrow('Task not found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleAddProgressNote (B2)
+// ---------------------------------------------------------------------------
+
+describe('handleAddProgressNote', () => {
+  it('throws when no taskId and AGENDO_TASK_ID is unset', async () => {
+    delete process.env.AGENDO_TASK_ID;
+
+    await expect(handleAddProgressNote({ note: 'Hello' })).rejects.toThrow(
+      'No taskId provided and AGENDO_TASK_ID not set',
+    );
+  });
+
+  it('posts event using AGENDO_TASK_ID when no taskId arg provided', async () => {
+    process.env.AGENDO_TASK_ID = 'my-task-uuid';
+    mockApiResponse({ id: 'event-1' });
+
+    await handleAddProgressNote({ note: 'Halfway done' });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/tasks/my-task-uuid/events'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body).toEqual({ eventType: 'agent_note', payload: { note: 'Halfway done' } });
+
+    delete process.env.AGENDO_TASK_ID;
+  });
+
+  it('posts event using explicit taskId when provided', async () => {
+    delete process.env.AGENDO_TASK_ID;
+    mockApiResponse({ id: 'event-2' });
+
+    await handleAddProgressNote({ note: 'Done!', taskId: 'explicit-task-uuid' });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/tasks/explicit-task-uuid/events'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body).toEqual({ eventType: 'agent_note', payload: { note: 'Done!' } });
+  });
+
+  it('explicit taskId takes precedence over AGENDO_TASK_ID', async () => {
+    process.env.AGENDO_TASK_ID = 'env-task-uuid';
+    mockApiResponse({ id: 'event-3' });
+
+    await handleAddProgressNote({ note: 'Override', taskId: 'explicit-uuid' });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/tasks/explicit-uuid/events'),
+      expect.anything(),
+    );
+
+    delete process.env.AGENDO_TASK_ID;
+  });
+
+  it('propagates API errors', async () => {
+    process.env.AGENDO_TASK_ID = 'task-uuid';
+    mockApiError('Event creation failed');
+
+    await expect(handleAddProgressNote({ note: 'Note' })).rejects.toThrow('Event creation failed');
+
+    delete process.env.AGENDO_TASK_ID;
   });
 });

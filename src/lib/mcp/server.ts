@@ -102,8 +102,16 @@ export async function handleCreateTask(args: {
   if (args.status) body.status = args.status;
   if (args.dueAt) body.dueAt = args.dueAt;
 
+  // Implicit context from session env vars
+  const projectId = process.env.AGENDO_PROJECT_ID;
+  if (projectId) body.projectId = projectId;
+
   if (args.assignee) {
     body.assigneeAgentId = await resolveAgentSlug(args.assignee);
+  } else {
+    // Auto-assign to the session agent if no explicit assignee
+    const agentId = process.env.AGENDO_AGENT_ID;
+    if (agentId) body.assigneeAgentId = agentId;
   }
 
   return apiCall('/api/tasks', { method: 'POST', body });
@@ -169,11 +177,45 @@ export async function handleCreateSubtask(args: {
   if (args.description) body.description = args.description;
   if (args.priority !== undefined) body.priority = parsePriority(args.priority);
 
+  // Implicit context from session env vars
+  const projectId = process.env.AGENDO_PROJECT_ID;
+  if (projectId) body.projectId = projectId;
+
   if (args.assignee) {
     body.assigneeAgentId = await resolveAgentSlug(args.assignee);
+  } else {
+    // Auto-assign to the session agent if no explicit assignee
+    const agentId = process.env.AGENDO_AGENT_ID;
+    if (agentId) body.assigneeAgentId = agentId;
   }
 
   return apiCall('/api/tasks', { method: 'POST', body });
+}
+
+export async function handleGetMyTask(): Promise<unknown> {
+  const taskId = process.env.AGENDO_TASK_ID;
+  if (!taskId) {
+    throw new Error('No task assigned to this session (AGENDO_TASK_ID not set)');
+  }
+  return apiCall(`/api/tasks/${taskId}`);
+}
+
+export async function handleGetTask(args: { taskId: string }): Promise<unknown> {
+  return apiCall(`/api/tasks/${args.taskId}`);
+}
+
+export async function handleAddProgressNote(args: {
+  note: string;
+  taskId?: string;
+}): Promise<unknown> {
+  const taskId = args.taskId ?? process.env.AGENDO_TASK_ID;
+  if (!taskId) {
+    throw new Error('No taskId provided and AGENDO_TASK_ID not set');
+  }
+  return apiCall(`/api/tasks/${taskId}/events`, {
+    method: 'POST',
+    body: { eventType: 'agent_note', payload: { note: args.note } },
+  });
 }
 
 export async function handleAssignTask(args: {
@@ -337,6 +379,83 @@ function createServer(): McpServer {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- get_my_task --
+  server.tool(
+    'get_my_task',
+    'Get the full details of the task assigned to this session, including title, description, status, subtasks, and progress notes',
+    {}, // no args - reads AGENDO_TASK_ID from env
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    async () => {
+      try {
+        const result = await handleGetMyTask();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- get_task --
+  server.tool(
+    'get_task',
+    'Get the full details of any task by its ID',
+    {
+      taskId: z.string().describe('UUID of the task to retrieve'),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    async (args) => {
+      try {
+        const result = await handleGetTask(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- add_progress_note --
+  server.tool(
+    'add_progress_note',
+    'Add a progress note to the current task. Use this to report milestones, blockers, or intermediate results.',
+    {
+      note: z.string().describe('The progress note to add'),
+      taskId: z.string().optional().describe('Task ID (defaults to the session task)'),
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    async (args) => {
+      try {
+        const result = await handleAddProgressNote(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
           content: [

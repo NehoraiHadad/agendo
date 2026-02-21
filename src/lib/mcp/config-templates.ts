@@ -2,6 +2,37 @@
  * MCP config generators for various AI agents.
  */
 
+export interface SessionIdentity {
+  sessionId: string;
+  taskId: string | null;
+  agentId: string;
+  projectId: string | null;
+}
+
+/**
+ * Generate an MCP config object that includes session identity env vars so the
+ * MCP server can associate incoming tool calls with the correct session, task,
+ * agent, and project without needing a separate auth mechanism.
+ */
+export function generateSessionMcpConfig(serverPath: string, identity: SessionIdentity): object {
+  const agendoUrl = process.env.AGENDO_URL ?? 'http://localhost:4100';
+  return {
+    mcpServers: {
+      agendo: {
+        command: 'node',
+        args: [serverPath],
+        env: {
+          AGENDO_URL: agendoUrl,
+          AGENDO_SESSION_ID: identity.sessionId,
+          AGENDO_TASK_ID: identity.taskId ?? '',
+          AGENDO_AGENT_ID: identity.agentId,
+          AGENDO_PROJECT_ID: identity.projectId ?? '',
+        },
+      },
+    },
+  };
+}
+
 export function generateClaudeMcpConfig(serverPath: string): object {
   return {
     mcpServers: {
@@ -35,6 +66,29 @@ export function generateGeminiMcpConfig(serverPath: string): object {
         args: [serverPath],
         env: {
           AGENDO_URL: process.env.AGENDO_URL ?? 'http://localhost:4100',
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Generates .mcp.json content for a project root.
+ * Used by "agendo init" so any Claude Code session in the project
+ * automatically has Agendo tools — even when run manually outside Agendo.
+ *
+ * In Mode 2 (external agent), no session identity is available,
+ * so tools work with explicit IDs passed by the agent.
+ */
+export function generateProjectMcpJson(serverPath: string, agendoUrl?: string): object {
+  const url = agendoUrl ?? process.env.AGENDO_URL ?? 'http://localhost:4100';
+  return {
+    mcpServers: {
+      agendo: {
+        command: 'node',
+        args: [serverPath],
+        env: {
+          AGENDO_URL: url,
         },
       },
     },

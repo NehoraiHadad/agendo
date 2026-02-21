@@ -1,11 +1,12 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { existsSync, readFileSync } from 'node:fs';
-import { subscribe, channelName } from '@/lib/realtime/pg-notify';
+import { subscribe, channelName, publish } from '@/lib/realtime/pg-notify';
 import { readEventsFromLog } from '@/lib/realtime/events';
-import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
+import { withErrorBoundary } from '@/lib/api-handler';
 
 function makeSessionStateEvent(session: { id: string; status: string; eventSeq: number }): AgendoEvent {
   return {
@@ -97,3 +98,41 @@ export async function GET(
     },
   });
 }
+
+/**
+ * POST /api/sessions/:id/events
+ *
+ * Accepts an event payload from an external hook (e.g. Claude Code post-tool-use
+ * or stop hook) and broadcasts it to all SSE subscribers via PG NOTIFY.
+ * Used by the Claude Code hook scripts generated in agendo-hooks.ts.
+ */
+export const POST = withErrorBoundary(
+  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
+    const { id } = await params;
+
+    // Verify session exists
+    const [session] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.id, id))
+      .limit(1);
+
+    if (!session) {
+      return new NextResponse('Session not found', { status: 404 });
+    }
+
+    const body = (await req.json()) as Record<string, unknown>;
+
+    // Publish to the session's PG NOTIFY channel so all SSE subscribers receive it
+    const event: AgendoEvent = {
+      id: 0, // synthetic — not counted in sequence
+      sessionId: id,
+      ts: Date.now(),
+      ...(body as AgendoEventPayload),
+    };
+
+    await publish(channelName('agendo_events', id), event);
+
+    return new NextResponse(null, { status: 204 });
+  },
+);
