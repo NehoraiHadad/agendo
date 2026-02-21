@@ -6,6 +6,16 @@ import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { BadRequestError } from '@/lib/errors';
+import { z } from 'zod';
+
+const createSessionSchema = z.object({
+  taskId: z.string().uuid(),
+  agentId: z.string().uuid(),
+  capabilityId: z.string().uuid(),
+  initialPrompt: z.string().optional(),
+  permissionMode: z.enum(['default', 'bypassPermissions', 'acceptEdits']).optional(),
+  allowedTools: z.array(z.string()).optional(),
+});
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
   const url = new URL(req.url);
@@ -25,14 +35,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
 });
 
 export const POST = withErrorBoundary(async (req: NextRequest) => {
-  const body = (await req.json()) as {
-    taskId: string;
-    agentId: string;
-    capabilityId: string;
-    initialPrompt?: string;
-    permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
-    allowedTools?: string[];
-  };
+  const body = createSessionSchema.parse(await req.json());
 
   // Validate capability is prompt-mode
   const [cap] = await db

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getProject, updateProject, deleteProject } from '@/lib/services/project-service';
 import { ValidationError } from '@/lib/errors';
 
@@ -17,6 +17,7 @@ const patchSchema = z.object({
 export const GET = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Project');
     const project = await getProject(id);
     return NextResponse.json({ data: project });
   },
@@ -25,6 +26,7 @@ export const GET = withErrorBoundary(
 export const PATCH = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Project');
     const body = await req.json();
     const validated = patchSchema.parse(body);
 
@@ -43,6 +45,7 @@ export const PATCH = withErrorBoundary(
 export const DELETE = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Project');
     await deleteProject(id);
     return new NextResponse(null, { status: 204 });
   },
