@@ -70,8 +70,10 @@ export class SessionProcess {
    * @param resumeRef - If provided, the adapter resumes an existing session
    * @param spawnCwd - Working directory for the spawned process
    * @param envOverrides - Additional env vars to merge into the child environment
+   * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
+   *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
    */
-  async start(prompt: string, resumeRef?: string, spawnCwd?: string, envOverrides?: Record<string, string>): Promise<void> {
+  async start(prompt: string, resumeRef?: string, spawnCwd?: string, envOverrides?: Record<string, string>, mcpConfigPath?: string): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim if status is idle/active and no other worker owns it.
     const [claimed] = await db
@@ -130,6 +132,15 @@ export class SessionProcess {
       }
     }
 
+    // Session identity vars — available to hooks and sub-processes via env.
+    // These are already baked into the MCP config file; setting them in the
+    // child env as well lets hooks (pre/post tool) read them without parsing JSON.
+    childEnv['AGENDO_SESSION_ID'] = this.session.id;
+    childEnv['AGENDO_AGENT_ID'] = this.session.agentId;
+    if (this.session.taskId) {
+      childEnv['AGENDO_TASK_ID'] = this.session.taskId;
+    }
+
     const spawnOpts: SpawnOpts = {
       cwd: spawnCwd ?? '/tmp',
       env: childEnv,
@@ -139,6 +150,7 @@ export class SessionProcess {
       persistentSession: true, // keep process alive after result for multi-turn
       permissionMode: this.session.permissionMode ?? 'default',
       allowedTools: this.session.allowedTools ?? [],
+      ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval
