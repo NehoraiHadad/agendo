@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -8,6 +8,7 @@ import { NotFoundError } from '@/lib/errors';
 export const GET = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
 
     const [row] = await db
       .select({

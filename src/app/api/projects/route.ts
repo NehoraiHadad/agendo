@@ -17,9 +17,9 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const url = new URL(req.url);
   const isActiveParam = url.searchParams.get('isActive');
 
-  let isActive: boolean | undefined;
-  if (isActiveParam === 'true') isActive = true;
-  else if (isActiveParam === 'false') isActive = false;
+  let isActive: boolean | undefined = true;  // default: active only
+  if (isActiveParam === 'false') isActive = false;
+  else if (isActiveParam === 'all') isActive = undefined;
 
   const data = await listProjects(isActive);
   return NextResponse.json({ data });

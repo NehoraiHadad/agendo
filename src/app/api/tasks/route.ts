@@ -15,6 +15,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const limit = limitParam ? parseInt(limitParam, 10) : 50;
   const parentTaskId = url.searchParams.get('parentTaskId') ?? undefined;
   const q = url.searchParams.get('q') ?? undefined;
+  const projectId = url.searchParams.get('projectId') ?? undefined;
 
   const result = await listTasksByStatus({
     status: status ?? undefined,
@@ -22,6 +23,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     limit,
     parentTaskId,
     q,
+    projectId,
   });
 
   return NextResponse.json({

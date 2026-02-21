@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ZodError } from 'zod';
-import { AppError } from './errors';
+import { z, ZodError } from 'zod';
+import { AppError, NotFoundError } from './errors';
 
 type RouteHandler = (
   request: NextRequest,
@@ -13,6 +13,12 @@ type RouteHandler = (
  * - ZodError returns 422 with field-level details
  * - Unknown errors return 500 with no internal details exposed
  */
+export function assertUUID(id: string, resource: string): void {
+  if (!z.string().uuid().safeParse(id).success) {
+    throw new NotFoundError(resource, id);
+  }
+}
+
 export function withErrorBoundary(handler: RouteHandler): RouteHandler {
   return async (request, context) => {
     try {
