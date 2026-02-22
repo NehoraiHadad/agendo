@@ -1,1 +1,128 @@
-pnpm lint-staged
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+FAILED=0
+step_start() { echo ""; echo "── $1 ──"; }
+step_ok()    { echo "✓ $1  (${2}s)"; }
+step_fail()  { echo "✗ $1  (${2}s)"; FAILED=$((FAILED + 1)); }
+step_skip()  { echo "⏭  $1"; }
+elapsed()    { echo $(( $(date +%s) - $1 )); }
+
+STAGED=$(git diff --cached --name-only 2>/dev/null || true)
+
+# ── 1. Secrets Scan ───────────────────────────────────────────────────────────
+step_start "Secrets scan"
+if [[ "${CI:-}" == "true" || "${SKIP_SECRETS:-}" == "1" ]]; then
+  step_skip "Secrets scan (skipped)"
+else
+  t=$(date +%s)
+  SECRETS_FOUND=0
+  PATTERNS=(
+    'sk-[a-zA-Z0-9]{20,}'
+    'AKIA[0-9A-Z]{16}'
+    'password\s*=\s*["\x27][^"\x27]+'
+    '-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----'
+  )
+  while IFS= read -r file; do
+    [[ -f "$file" ]] || continue
+    if file "$file" | grep -qE 'binary|executable|image|ELF'; then continue; fi
+    for pat in "${PATTERNS[@]}"; do
+      if grep -nEP "$pat" "$file" 2>/dev/null; then
+        echo "  ^ found in: $file"
+        SECRETS_FOUND=1
+      fi
+    done
+  done <<< "$STAGED"
+
+  if [[ $SECRETS_FOUND -eq 1 ]]; then
+    step_fail "Secrets scan" "$(elapsed $t)"
+    echo ""
+    echo "  Potential secret detected in staged files. Remove it before committing."
+    echo "  To bypass (emergency): SKIP_SECRETS=1 git commit"
+    exit 1
+  else
+    step_ok "Secrets scan" "$(elapsed $t)"
+  fi
+fi
+
+# ── 2. lint-staged (ESLint + Prettier) ───────────────────────────────────────
+step_start "lint-staged"
+t=$(date +%s)
+if pnpm lint-staged; then
+  step_ok "lint-staged" "$(elapsed $t)"
+else
+  step_fail "lint-staged" "$(elapsed $t)"
+fi
+
+# ── 3. TypeScript typecheck ───────────────────────────────────────────────────
+step_start "TypeScript typecheck"
+if [[ "${SKIP_TYPECHECK:-}" == "1" ]]; then
+  step_skip "TypeScript typecheck (skipped)"
+else
+  t=$(date +%s)
+  if pnpm typecheck; then
+    step_ok "TypeScript typecheck" "$(elapsed $t)"
+  else
+    step_fail "TypeScript typecheck" "$(elapsed $t)"
+  fi
+fi
+
+# ── 4. Conditional tests ──────────────────────────────────────────────────────
+step_start "Tests"
+if [[ "${SKIP_TESTS:-}" == "1" ]]; then
+  step_skip "Tests (skipped)"
+else
+  RUN_TESTS=0
+  while IFS= read -r file; do
+    case "$file" in
+      *.test.ts|*.spec.ts) RUN_TESTS=1; break ;;
+      src/lib/services/*) RUN_TESTS=1; break ;;
+      src/lib/state-machines*) RUN_TESTS=1; break ;;
+      src/worker/*) RUN_TESTS=1; break ;;
+    esac
+  done <<< "$STAGED"
+
+  if [[ $RUN_TESTS -eq 1 ]]; then
+    t=$(date +%s)
+    if pnpm test; then
+      step_ok "Tests" "$(elapsed $t)"
+    else
+      step_fail "Tests" "$(elapsed $t)"
+    fi
+  else
+    step_skip "Tests"
+  fi
+fi
+
+# ── 5. Drizzle migration drift check ─────────────────────────────────────────
+step_start "Drizzle migration drift"
+if [[ "${SKIP_MIGRATIONS:-}" == "1" ]]; then
+  step_skip "Drizzle migration drift (skipped)"
+elif echo "$STAGED" | grep -q "src/lib/db/schema.ts"; then
+  t=$(date +%s)
+  if pnpm db:generate --check 2>/dev/null; then
+    step_ok "Drizzle migration drift" "$(elapsed $t)"
+  else
+    EXIT_CODE=$?
+    if [[ $EXIT_CODE -eq 127 ]]; then
+      echo "  ⚠  drizzle-kit --check not supported, skipping"
+      step_skip "Drizzle migration drift (flag unsupported)"
+    else
+      step_fail "Drizzle migration drift" "$(elapsed $t)"
+      echo "  schema.ts has changes not reflected in migrations."
+      echo "  Run: pnpm db:generate"
+    fi
+  fi
+else
+  step_skip "Drizzle migration drift"
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo ""
+if [[ $FAILED -eq 0 ]]; then
+  echo "✓ All checks passed"
+else
+  echo "✗ ${FAILED} check(s) failed — commit aborted"
+  exit 1
+fi

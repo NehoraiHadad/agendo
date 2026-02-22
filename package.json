@@ -87,13 +87,8 @@
     "vitest": "^3"
   },
   "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix --max-warnings 0",
-      "bash -c 'pnpm tsc --noEmit'"
-    ],
-    "*.{ts,tsx,js,jsx,json,md}": [
-      "prettier --write"
-    ]
+    "*.{ts,tsx}": ["eslint --fix --max-warnings 0"],
+    "*.{ts,tsx,js,jsx,json,md}": ["prettier --write"]
   },
   "pnpm": {
     "onlyBuiltDependencies": [
