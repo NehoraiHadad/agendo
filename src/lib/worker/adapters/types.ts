@@ -2,12 +2,14 @@ export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits';
 
 export type PermissionDecision = 'allow' | 'deny' | 'allow-session';
 
-/** MCP server descriptor for the ACP session/new protocol (used by Gemini). */
+/** MCP server descriptor for the ACP session/new protocol (used by Gemini).
+ *  Note: env is an array of {name, value} pairs, NOT a Record — this matches
+ *  Gemini CLI's envVariableSchema in its zod schema. */
 export interface AcpMcpServer {
   name: string;
   command: string;
   args: string[];
-  env?: Record<string, string>;
+  env: Array<{ name: string; value: string }>;
 }
 
 export interface SpawnOpts {

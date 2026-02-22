@@ -185,7 +185,8 @@ export class GeminiAdapter implements AgentAdapter {
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
-            result: { outcome: 'selected', optionId: allowOption?.optionId ?? 'allow_once' },
+            // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
+            result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
           });
           return;
         }
@@ -199,7 +200,8 @@ export class GeminiAdapter implements AgentAdapter {
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
-            result: { outcome: 'selected', optionId: chosenOption?.optionId ?? 'allow_once' },
+            // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
+            result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
           });
         });
       }
