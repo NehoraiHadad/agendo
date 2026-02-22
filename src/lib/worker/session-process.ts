@@ -508,6 +508,7 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   private async transitionTo(status: SessionStatus): Promise<void> {
+    if (this.status === status) return; // already in this state, skip duplicate transition
     this.status = status;
     await db
       .update(sessions)
