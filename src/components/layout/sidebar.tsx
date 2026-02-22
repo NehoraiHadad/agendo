@@ -3,10 +3,21 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, ListTodo, Bot, Play, MessageSquare, ChevronLeft, ChevronRight, X, Wrench, FolderOpen } from 'lucide-react';
+import {
+  LayoutDashboard,
+  ListTodo,
+  Bot,
+  Play,
+  MessageSquare,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Wrench,
+  FolderOpen,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface SidebarStats {
@@ -25,7 +36,12 @@ const navItems = [
   { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
   { href: '/agents', label: 'AI Agents', icon: Bot, badgeKey: null },
   { href: '/tools', label: 'Tools', icon: Wrench, badgeKey: null },
-  { href: '/sessions', label: 'Sessions', icon: MessageSquare, badgeKey: 'activeSessions' as const },
+  {
+    href: '/sessions',
+    label: 'Sessions',
+    icon: MessageSquare,
+    badgeKey: 'activeSessions' as const,
+  },
   { href: '/executions', label: 'Executions', icon: Play, badgeKey: 'runningExecutions' as const },
 ];
 
@@ -61,11 +77,22 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
 
       {/* Header */}
       <div className="relative flex h-14 items-center border-b border-white/[0.06] px-4 gap-2">
-        {!isCollapsed && (
-          <span className="flex-1 text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-            agenDo
-          </span>
-        )}
+        <Link href="/" className="flex items-center gap-2 flex-1 overflow-hidden">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 glow-sm overflow-hidden">
+            <Image
+              src="/logo.png"
+              alt="agendo"
+              width={32}
+              height={32}
+              className="h-full w-full object-cover mix-blend-screen scale-110"
+            />
+          </div>
+          {!isCollapsed && (
+            <span className="text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent truncate">
+              agenDo
+            </span>
+          )}
+        </Link>
 
         {/* Mobile close button (only shown when used as overlay) */}
         {onMobileClose && (
@@ -84,10 +111,7 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
         <Button
           variant="ghost"
           size="icon"
-          className={cn(
-            'h-8 w-8 hover:bg-white/[0.05] hidden sm:flex',
-            isCollapsed && 'mx-auto',
-          )}
+          className={cn('h-8 w-8 hover:bg-white/[0.05] hidden sm:flex', isCollapsed && 'mx-auto')}
           onClick={() => setIsCollapsed(!isCollapsed)}
         >
           {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}

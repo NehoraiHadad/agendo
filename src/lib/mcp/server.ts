@@ -95,6 +95,7 @@ export async function handleCreateTask(args: {
   status?: string;
   assignee?: string;
   dueAt?: string;
+  projectId?: string;
 }): Promise<unknown> {
   const body: Record<string, unknown> = { title: args.title };
   if (args.description) body.description = args.description;
@@ -102,8 +103,8 @@ export async function handleCreateTask(args: {
   if (args.status) body.status = args.status;
   if (args.dueAt) body.dueAt = args.dueAt;
 
-  // Implicit context from session env vars
-  const projectId = process.env.AGENDO_PROJECT_ID;
+  // Explicit projectId takes precedence over env var
+  const projectId = args.projectId ?? process.env.AGENDO_PROJECT_ID;
   if (projectId) body.projectId = projectId;
 
   if (args.assignee) {
@@ -229,6 +230,19 @@ export async function handleAssignTask(args: {
   });
 }
 
+export async function handleListProjects(args: { isActive?: boolean }): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (args.isActive === false) params.set('isActive', 'false');
+  else if (args.isActive === undefined) params.set('isActive', 'all');
+  // default: isActive=true (omit param)
+  const qs = params.toString();
+  return apiCall(`/api/projects${qs ? `?${qs}` : ''}`);
+}
+
+export async function handleGetProject(args: { projectId: string }): Promise<unknown> {
+  return apiCall(`/api/projects/${args.projectId}`);
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server setup
 // ---------------------------------------------------------------------------
@@ -253,6 +267,10 @@ function createServer(): McpServer {
       status: z.string().optional().describe('Task status (e.g., todo, in_progress, review, done)'),
       assignee: z.string().optional().describe('Agent slug to assign the task to'),
       dueAt: z.string().optional().describe('Due date in ISO 8601 format'),
+      projectId: z
+        .string()
+        .optional()
+        .describe('Project UUID to create the task in (overrides session default)'),
     },
     {
       readOnlyHint: false,
@@ -489,6 +507,63 @@ function createServer(): McpServer {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- list_projects --
+  server.tool(
+    'list_projects',
+    'List all projects. By default returns only active projects.',
+    {
+      isActive: z
+        .boolean()
+        .optional()
+        .describe(
+          'Filter by active status. Omit for active only, false for archived, undefined for all.',
+        ),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    async (args) => {
+      try {
+        const result = await handleListProjects(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- get_project --
+  server.tool(
+    'get_project',
+    'Get the full details of a project by its UUID',
+    {
+      projectId: z.string().describe('UUID of the project to retrieve'),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    async (args) => {
+      try {
+        const result = await handleGetProject(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
           content: [
