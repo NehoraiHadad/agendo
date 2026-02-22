@@ -2,6 +2,14 @@ export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits';
 
 export type PermissionDecision = 'allow' | 'deny' | 'allow-session';
 
+/** MCP server descriptor for the ACP session/new protocol (used by Gemini). */
+export interface AcpMcpServer {
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
 export interface SpawnOpts {
   cwd: string;
   env: Record<string, string>;
@@ -15,6 +23,8 @@ export interface SpawnOpts {
   permissionMode?: PermissionMode;
   /** Tool name patterns already approved for this session (from session.allowedTools). */
   allowedTools?: string[];
+  /** MCP servers to inject via ACP session/new (Gemini only). */
+  mcpServers?: AcpMcpServer[];
 }
 
 export interface ManagedProcess {

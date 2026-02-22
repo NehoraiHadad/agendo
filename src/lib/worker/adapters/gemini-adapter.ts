@@ -273,7 +273,7 @@ export class GeminiAdapter implements AgentAdapter {
     if (!resumeSessionId) {
       const result = await this.sendRequest<{ sessionId: string }>('session/new', {
         cwd: opts.cwd,
-        mcpServers: [],
+        mcpServers: opts.mcpServers ?? [],
       });
       this.sessionId = result.sessionId;
       this.sessionRefCallback?.(this.sessionId);
