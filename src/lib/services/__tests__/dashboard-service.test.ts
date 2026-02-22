@@ -122,11 +122,13 @@ function orderByLimitChain(result: unknown) {
   };
 }
 
-/** select → from → orderBy (resolves) */
-function orderByChain(result: unknown) {
+/** select → from → where → orderBy (resolves) */
+function whereOrderByChain(result: unknown) {
   return {
     from: vi.fn().mockReturnValue({
-      orderBy: vi.fn().mockResolvedValue(result),
+      where: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockResolvedValue(result),
+      }),
     }),
   };
 }
@@ -232,7 +234,7 @@ describe('dashboard-service', () => {
       () => whereGroupByChain(overrides?.activeExecCounts ?? mockActiveExecCounts),
       () => whereTerminalChain(overrides?.failedRow ?? mockFailedRow),
       () => orderByLimitChain(overrides?.recentEvents ?? mockRecentEvents),
-      () => orderByChain(overrides?.agentRows ?? mockAgentRows),
+      () => whereOrderByChain(overrides?.agentRows ?? mockAgentRows),
       () => orderByLimitChain(overrides?.workerRow ?? [recentWorkerHeartbeat]),
     ]);
   }

@@ -73,6 +73,7 @@ vi.mock('@/lib/db', () => {
           returning: vi.fn().mockResolvedValue([{ id: '00000000-0000-0000-0000-000000000001' }]),
         }),
       }),
+      execute: vi.fn().mockImplementation(() => Promise.resolve(mockState.selectResult)),
     },
   };
 });
@@ -153,10 +154,12 @@ describe('task-service', () => {
 
     it('detects hasMore - returns nextCursor when more than limit exist', async () => {
       // Create limit + 1 tasks to trigger hasMore detection
+      // listTasksBoardItems uses db.execute() which returns raw snake_case column names
       const tasksArray = Array.from({ length: 3 }, (_, i) => ({
         ...mockTaskBase,
         id: `task-${i}`,
         sortOrder: (i + 1) * 1000,
+        sort_order: (i + 1) * 1000, // snake_case for the raw SQL mapper in listTasksBoardItems
       }));
       mockState.selectResult = tasksArray;
 
