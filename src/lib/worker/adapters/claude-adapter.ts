@@ -1,6 +1,13 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import * as tmux from '@/lib/worker/tmux-manager';
-import type { AgentAdapter, ManagedProcess, SpawnOpts, ImageContent, ApprovalHandler, PermissionDecision } from '@/lib/worker/adapters/types';
+import type {
+  AgentAdapter,
+  ManagedProcess,
+  SpawnOpts,
+  ImageContent,
+  ApprovalHandler,
+  PermissionDecision,
+} from '@/lib/worker/adapters/types';
 import { AsyncLock } from '@/lib/utils/async-lock';
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -47,9 +54,26 @@ export class ClaudeAdapter implements AgentAdapter {
   // so the readline layer intercepts them as CLI commands (not NDJSON user messages).
   // Source: `claude --help` and Claude Code docs.
   private static readonly KNOWN_SLASH_COMMANDS = new Set([
-    'compact', 'clear', 'cost', 'memory', 'mcp', 'permissions', 'status',
-    'doctor', 'model', 'review', 'init', 'bug', 'help', 'vim', 'terminal',
-    'login', 'logout', 'release-notes', 'pr_comments', 'exit',
+    'compact',
+    'clear',
+    'cost',
+    'memory',
+    'mcp',
+    'permissions',
+    'status',
+    'doctor',
+    'model',
+    'review',
+    'init',
+    'bug',
+    'help',
+    'vim',
+    'terminal',
+    'login',
+    'logout',
+    'release-notes',
+    'pr_comments',
+    'exit',
   ]);
 
   async sendMessage(message: string, image?: ImageContent): Promise<void> {
@@ -63,7 +87,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
       // Slash commands: only route KNOWN Claude Code commands as raw readline text.
       // Unknown /something is sent as a regular NDJSON message so Claude treats it as text.
-      if (!image && message.startsWith('/')) {
+      if (!image && message?.startsWith('/')) {
         const cmd = message.trim().split(/\s+/)[0].slice(1); // e.g. "clear" from "/clear foo"
         if (ClaudeAdapter.KNOWN_SLASH_COMMANDS.has(cmd)) {
           this.childProcess.stdin.write(message.trim() + '\n');
@@ -99,11 +123,13 @@ export class ClaudeAdapter implements AgentAdapter {
     const stdin = this.childProcess?.stdin;
     if (stdin?.writable) {
       const requestId = Math.random().toString(36).slice(2, 15);
-      stdin.write(JSON.stringify({
-        request_id: requestId,
-        type: 'control_request',
-        request: { subtype: 'interrupt' },
-      }) + '\n');
+      stdin.write(
+        JSON.stringify({
+          request_id: requestId,
+          type: 'control_request',
+          request: { subtype: 'interrupt' },
+        }) + '\n',
+      );
 
       const acked = await Promise.race([
         this.waitForResult(),
@@ -115,7 +141,12 @@ export class ClaudeAdapter implements AgentAdapter {
 
     if (this.childProcess?.pid) {
       let sent = false;
-      try { process.kill(-this.childProcess.pid, 'SIGTERM'); sent = true; } catch { /* dead */ }
+      try {
+        process.kill(-this.childProcess.pid, 'SIGTERM');
+        sent = true;
+      } catch {
+        /* dead */
+      }
       // Only wait for the process to die if SIGTERM was actually delivered.
       if (sent) {
         await new Promise<void>((r) => setTimeout(r, 3000));
@@ -123,7 +154,9 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
-  isAlive(): boolean { return this.childProcess?.stdin?.writable ?? false; }
+  isAlive(): boolean {
+    return this.childProcess?.stdin?.writable ?? false;
+  }
 
   private waitForResult(): Promise<boolean> {
     return new Promise((resolve) => {
@@ -139,7 +172,9 @@ export class ClaudeAdapter implements AgentAdapter {
           try {
             const parsed = JSON.parse(line.trim()) as Record<string, unknown>;
             if (parsed.type === 'result') finish(true);
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
       };
       this.childProcess?.stdout?.on('data', onData);
@@ -163,11 +198,13 @@ export class ClaudeAdapter implements AgentAdapter {
     const outcome = decision === 'deny' ? 'deny' : 'allow';
     const stdin = this.childProcess?.stdin;
     if (stdin?.writable) {
-      stdin.write(JSON.stringify({
-        request_id: requestId,
-        type: 'control_response',
-        response: { subtype: outcome },
-      }) + '\n');
+      stdin.write(
+        JSON.stringify({
+          request_id: requestId,
+          type: 'control_response',
+          response: { subtype: outcome },
+        }) + '\n',
+      );
     }
   }
 
@@ -245,7 +282,9 @@ export class ClaudeAdapter implements AgentAdapter {
           ) {
             void this.handleToolApprovalRequest(msg);
           }
-        } catch { /* skip non-JSON lines */ }
+        } catch {
+          /* skip non-JSON lines */
+        }
       }
 
       for (const cb of dataCallbacks) cb(text);

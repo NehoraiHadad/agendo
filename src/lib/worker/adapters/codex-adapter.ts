@@ -1,7 +1,15 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { LoggingMessageNotificationSchema, ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { AgentAdapter, ApprovalHandler, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import {
+  LoggingMessageNotificationSchema,
+  ElicitRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import type {
+  AgentAdapter,
+  ApprovalHandler,
+  ManagedProcess,
+  SpawnOpts,
+} from '@/lib/worker/adapters/types';
 
 export class CodexAdapter implements AgentAdapter {
   private client: Client | null = null;
@@ -12,6 +20,8 @@ export class CodexAdapter implements AgentAdapter {
   private turnAbortController: AbortController | null = new AbortController();
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private approvalHandler: ApprovalHandler | null = null;
+  private sessionRefCallback: ((ref: string) => void) | null = null;
+  private dataCallbacks: Array<(chunk: string) => void> = [];
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     this.storedOpts = opts;
@@ -56,11 +66,15 @@ export class CodexAdapter implements AgentAdapter {
     this.approvalHandler = handler;
   }
 
+  onSessionRef(cb: (ref: string) => void): void {
+    this.sessionRefCallback = cb;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): ManagedProcess {
     // Fresh AbortController for this launch
     this.turnAbortController = new AbortController();
 
-    const dataCallbacks: Array<(chunk: string) => void> = [];
+    this.dataCallbacks = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
     const transport = new StdioClientTransport({
@@ -76,11 +90,11 @@ export class CodexAdapter implements AgentAdapter {
     );
     this.client = client;
 
-    // Stream output via MCP logging notifications
+    // Stream output via MCP logging notifications (debug/streaming output from Codex)
     client.setNotificationHandler(LoggingMessageNotificationSchema, (n) => {
       const text =
         typeof n.params.data === 'string' ? n.params.data : JSON.stringify(n.params.data);
-      for (const cb of dataCallbacks) cb(text + '\n');
+      for (const cb of this.dataCallbacks) cb(text + '\n');
     });
 
     // Relay elicitation (permission) requests to the approval handler
@@ -103,14 +117,19 @@ export class CodexAdapter implements AgentAdapter {
       for (const cb of exitCallbacks) cb(0);
     };
 
-    // Async init chain — errors propagate via currentTurn rejection
+    // Async init chain — catch rejections to prevent unhandled promise crashes.
+    // On failure, fire exitCallbacks(1) so session-process transitions to 'ended'.
     this.currentTurn = this.connectAndFirstTurn(
       client,
       transport,
       prompt,
       resumeThreadId,
       opts,
-    );
+    ).catch((err: Error) => {
+      console.error('[CodexAdapter] init failed:', err.message);
+      for (const cb of exitCallbacks) cb(1);
+      void client.close();
+    });
 
     return {
       pid: 0, // transport.pid available after connect() resolves
@@ -127,7 +146,7 @@ export class CodexAdapter implements AgentAdapter {
           void client.close();
         }
       },
-      onData: (cb) => dataCallbacks.push(cb),
+      onData: (cb) => this.dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };
   }
@@ -159,29 +178,37 @@ export class CodexAdapter implements AgentAdapter {
       args.cwd = opts.cwd;
     }
 
-    const result = await this.client!.callTool(
-      { name: tool, arguments: args },
-      undefined,
-      {
-        timeout: opts.timeoutSec * 1000,
-        resetTimeoutOnProgress: true,
-        signal: this.turnAbortController?.signal,
-      },
-    );
+    if (!this.client) throw new Error('No active MCP client');
+    const result = await this.client.callTool({ name: tool, arguments: args }, undefined, {
+      timeout: opts.timeoutSec * 1000,
+      resetTimeoutOnProgress: true,
+      signal: this.turnAbortController?.signal,
+    });
 
     this.thinkingCallback?.(false);
 
-    // Extract threadId from first-turn response content
-    if (!this.threadId) {
-      const content = result.content as Array<{ type: string; text?: string }>;
-      for (const block of content) {
-        if (block.type === 'text' && block.text) {
+    // Emit the full response text to dataCallbacks so session-process can display it.
+    // Also scan for a JSON-encoded threadId on the first turn.
+    const content = result.content as Array<{ type: string; text?: string }>;
+    for (const block of content) {
+      if (block.type === 'text' && block.text) {
+        // Try to extract threadId (Codex embeds it as JSON on first turn)
+        if (!this.threadId) {
           try {
-            const parsed = JSON.parse(block.text) as { threadId?: string };
-            if (parsed.threadId) this.threadId = parsed.threadId;
+            const parsed = JSON.parse(block.text) as { threadId?: string; response?: string };
+            if (parsed.threadId) {
+              this.threadId = parsed.threadId;
+              this.sessionRefCallback?.(this.threadId);
+            }
+            // If the JSON has a separate response field, emit that; otherwise emit the raw text
+            const displayText = parsed.response ?? block.text;
+            for (const cb of this.dataCallbacks) cb(displayText + '\n');
           } catch {
-            // Not JSON — that's fine
+            // Plain text response — emit as-is
+            for (const cb of this.dataCallbacks) cb(block.text + '\n');
           }
+        } else {
+          for (const cb of this.dataCallbacks) cb(block.text + '\n');
         }
       }
     }
@@ -191,6 +218,7 @@ export class CodexAdapter implements AgentAdapter {
     if (!this.client || !this.threadId) {
       throw new Error('No active Codex MCP session');
     }
-    await this.runTurnWith('codex-reply', this.threadId, message, this.storedOpts!);
+    if (!this.storedOpts) throw new Error('No stored opts for Codex session');
+    await this.runTurnWith('codex-reply', this.threadId, message, this.storedOpts);
   }
 }
