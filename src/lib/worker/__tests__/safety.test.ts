@@ -14,6 +14,17 @@ vi.mock('node:fs', () => ({
   constants: { X_OK: 1 },
 }));
 
+// Mock db — validateWorkingDir falls back to DB when path not in static allowlist
+vi.mock('@/lib/db', () => ({
+  db: {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    }),
+  },
+}));
+
 import { realpathSync, accessSync, existsSync } from 'node:fs';
 import {
   validateWorkingDir,
@@ -31,32 +42,36 @@ describe('safety', () => {
   });
 
   describe('validateWorkingDir', () => {
-    it('accepts directory in allowlist', () => {
-      const result = validateWorkingDir('/home/ubuntu/projects/my-app');
-      expect(result).toBe('/home/ubuntu/projects/my-app');
+    it('accepts directory in allowlist', async () => {
+      await expect(validateWorkingDir('/home/ubuntu/projects/my-app')).resolves.toBe(
+        '/home/ubuntu/projects/my-app',
+      );
     });
 
-    it('accepts exact allowlist match', () => {
-      const result = validateWorkingDir('/tmp');
-      expect(result).toBe('/tmp');
+    it('accepts exact allowlist match', async () => {
+      await expect(validateWorkingDir('/tmp')).resolves.toBe('/tmp');
     });
 
-    it('rejects relative paths', () => {
-      expect(() => validateWorkingDir('relative/path')).toThrow('must be absolute');
+    it('rejects relative paths', async () => {
+      await expect(validateWorkingDir('relative/path')).rejects.toThrow('must be absolute');
     });
 
-    it('rejects non-existent directories', () => {
+    it('rejects non-existent directories', async () => {
       vi.mocked(existsSync).mockReturnValue(false);
-      expect(() => validateWorkingDir('/home/ubuntu/projects/nope')).toThrow('does not exist');
+      await expect(validateWorkingDir('/home/ubuntu/projects/nope')).rejects.toThrow(
+        'does not exist',
+      );
     });
 
-    it('rejects directory outside allowlist', () => {
-      expect(() => validateWorkingDir('/etc/secret')).toThrow('not in allowlist');
+    it('rejects directory outside allowlist', async () => {
+      await expect(validateWorkingDir('/etc/secret')).rejects.toThrow('not in allowlist');
     });
 
-    it('prevents symlink traversal by resolving before allowlist check', () => {
+    it('prevents symlink traversal by resolving before allowlist check', async () => {
       vi.mocked(realpathSync).mockReturnValue('/etc/secret');
-      expect(() => validateWorkingDir('/home/ubuntu/projects/symlink')).toThrow('not in allowlist');
+      await expect(validateWorkingDir('/home/ubuntu/projects/symlink')).rejects.toThrow(
+        'not in allowlist',
+      );
     });
   });
 

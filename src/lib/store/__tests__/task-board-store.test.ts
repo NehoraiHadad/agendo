@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Task, TaskStatus } from '@/lib/types';
+import type { TaskBoardItem } from '@/lib/services/task-service';
 
-// Create a mock task factory
-function createMockTask(overrides: Partial<Task> & { id: string; status: TaskStatus }): Task {
+// Create a mock task factory — returns TaskBoardItem (store always enriches with subtask counts)
+function createMockTask(
+  overrides: Partial<Task> & { id: string; status: TaskStatus },
+): TaskBoardItem {
   return {
     ownerId: '00000000-0000-0000-0000-000000000001',
     workspaceId: '00000000-0000-0000-0000-000000000001',
@@ -17,6 +20,8 @@ function createMockTask(overrides: Partial<Task> & { id: string; status: TaskSta
     dueAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    subtaskTotal: 0,
+    subtaskDone: 0,
     ...overrides,
   };
 }

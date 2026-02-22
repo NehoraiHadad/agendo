@@ -101,12 +101,15 @@ describe('GeminiAdapter', () => {
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    // Simulate the server sending a session/update notification
+    // Simulate the server sending a session/update notification (ACP v0.20 format)
     const notification = JSON.stringify({
       jsonrpc: '2.0',
       method: 'session/update',
       params: {
-        messages: [{ role: 'assistant', content: 'Hello from Gemini!' }],
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Hello from Gemini!' },
+        },
       },
     });
     mockReadlineEmitter.emit('line', notification);
@@ -128,12 +131,17 @@ describe('GeminiAdapter', () => {
     mockReadlineEmitter.emit('line', serverRequest);
 
     // Adapter should have written a response back
-    const writes = mockStdinWrite.mock.calls.map((c) => JSON.parse(c[0]) as Record<string, unknown>);
-    const response = writes.find(
-      (w) => w.id === 'srv-req-1' && w.result !== undefined,
+    const writes = mockStdinWrite.mock.calls.map(
+      (c) => JSON.parse(c[0]) as Record<string, unknown>,
     );
+    const response = writes.find((w) => w.id === 'srv-req-1' && w.result !== undefined);
     expect(response).toBeDefined();
-    expect((response!.result as Record<string, unknown>).outcome).toBe('selected');
+    // ACP v0.20: result = { outcome: { outcome: 'selected', optionId } }
+    const outcome = (response!.result as Record<string, unknown>).outcome as Record<
+      string,
+      unknown
+    >;
+    expect(outcome.outcome).toBe('selected');
   });
 
   it('ignores non-JSON stdout lines', () => {

@@ -71,6 +71,7 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/db/schema', () => ({
   executions: { id: 'id', status: 'status' },
+  tasks: { projectId: 'project_id', title: 'title', description: 'description' },
 }));
 
 vi.mock('drizzle-orm', () => ({

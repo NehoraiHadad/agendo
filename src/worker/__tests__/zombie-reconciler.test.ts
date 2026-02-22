@@ -23,6 +23,19 @@ vi.mock('../../lib/db/schema', () => ({
     status: 'status',
     workerId: 'worker_id',
   },
+  sessions: {
+    id: 'id',
+    pid: 'pid',
+    status: 'status',
+    workerId: 'worker_id',
+    sessionRef: 'session_ref',
+    lastActiveAt: 'last_active_at',
+  },
+}));
+
+// Mock queue to prevent config/DATABASE_URL loading in tests
+vi.mock('../../lib/worker/queue', () => ({
+  enqueueSession: vi.fn().mockResolvedValue(null),
 }));
 
 // Mock drizzle-orm operators
@@ -43,10 +56,15 @@ beforeEach(() => {
 });
 
 // Helper to set up select query result
+// First call = executions query (returns given rows), subsequent calls = sessions query (returns [])
 function mockSelectResult(rows: Array<{ id: string; pid: number | null }>) {
-  const mockWhere = vi.fn().mockResolvedValue(rows);
-  const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
-  mockDb.select.mockReturnValue({ from: mockFrom } as never);
+  const execMockWhere = vi.fn().mockResolvedValue(rows);
+  const execMockFrom = vi.fn().mockReturnValue({ where: execMockWhere });
+  const sessMockWhere = vi.fn().mockResolvedValue([]);
+  const sessMockFrom = vi.fn().mockReturnValue({ where: sessMockWhere });
+  mockDb.select
+    .mockReturnValueOnce({ from: execMockFrom } as never)
+    .mockReturnValue({ from: sessMockFrom } as never);
 }
 
 // Helper to set up update chain
