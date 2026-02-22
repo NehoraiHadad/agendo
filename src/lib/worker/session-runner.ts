@@ -145,8 +145,11 @@ export async function runSession(
     const projectName = project?.name ?? 'unknown';
     const preamble =
       `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
-      `Agendo MCP tools are available. See your task with get_my_task. Report all progress.\n` +
-      `If you find that an MCP tool you need does not exist, create a new Agendo task describing the missing capability so it can be built.\n` +
+      `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
+      `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
+      `  - A clear title: "Add MCP tool: <tool_name>"\n` +
+      `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
+      `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
       `---\n`;
     prompt = preamble + prompt;
   }
