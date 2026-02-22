@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
@@ -11,7 +11,6 @@ import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { generateSessionMcpConfig } from '@/lib/mcp/config-templates';
-import { generatePostToolUseHook, generateStopHook } from '@/lib/worker/hooks/agendo-hooks';
 import { listTaskEvents } from '@/lib/services/task-event-service';
 
 function interpolatePrompt(template: string, args: Record<string, unknown>): string {
@@ -110,41 +109,6 @@ export async function runSession(
     const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity);
     mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-  }
-
-  // Phase D2: Write .claude/settings.local.json with hook scripts when MCP is
-  // enabled. Per the Claude Code docs, "command" should be a path to a script
-  // file (or short inline command), not a multi-line string. We write each
-  // script to its own .sh file and reference it.
-  if (agent.mcpEnabled) {
-    const claudeDir = join(resolvedCwd, '.claude');
-    const hooksDir = join(claudeDir, 'hooks');
-    mkdirSync(hooksDir, { recursive: true });
-
-    const agendoUrl = process.env.AGENDO_URL ?? 'http://localhost:4100';
-
-    // Write hook scripts to files
-    const postToolScript = join(hooksDir, `agendo-post-tool-${sessionId}.sh`);
-    const stopScript = join(hooksDir, `agendo-stop-${sessionId}.sh`);
-    writeFileSync(postToolScript, generatePostToolUseHook(agendoUrl, sessionId), { mode: 0o755 });
-    writeFileSync(stopScript, generateStopHook(agendoUrl, sessionId, session.taskId), { mode: 0o755 });
-
-    const hooksConfig = {
-      hooks: {
-        PostToolUse: [
-          {
-            matcher: 'Write|Edit|Bash',
-            hooks: [{ type: 'command', command: postToolScript }],
-          },
-        ],
-        Stop: [
-          {
-            hooks: [{ type: 'command', command: stopScript }],
-          },
-        ],
-      },
-    };
-    writeFileSync(join(claudeDir, 'settings.local.json'), JSON.stringify(hooksConfig, null, 2));
   }
 
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
