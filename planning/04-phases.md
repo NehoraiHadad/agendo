@@ -1,4 +1,4 @@
-# Agent Monitor - Implementation Phases
+# agendo - Implementation Phases
 
 > Updated: 2026-02-17
 

@@ -1,11 +1,12 @@
 import { db } from '../lib/db/index';
-import { executions } from '../lib/db/schema';
+import { executions, sessions } from '../lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
+import { enqueueSession } from '../lib/worker/queue';
 
 /**
  * On cold start: find executions that were 'running' or 'cancelling'
  * for this worker, check if their PIDs are still alive, and mark
- * dead ones as failed.
+ * dead ones as failed. Also recovers orphaned sessions.
  */
 export async function reconcileZombies(workerId: string): Promise<void> {
   const orphaned = await db
@@ -17,32 +18,79 @@ export async function reconcileZombies(workerId: string): Promise<void> {
 
   if (orphaned.length === 0) {
     console.log('[worker] No orphaned executions found.');
-    return;
+  } else {
+    console.log(`[worker] Found ${orphaned.length} orphaned execution(s). Reconciling...`);
+
+    for (const exec of orphaned) {
+      const isAlive = exec.pid ? isPidAlive(exec.pid) : false;
+
+      if (!isAlive) {
+        await db
+          .update(executions)
+          .set({
+            status: 'failed',
+            endedAt: new Date(),
+            error: 'Worker restarted, execution orphaned',
+          })
+          .where(eq(executions.id, exec.id));
+        console.log(`[worker] Marked execution ${exec.id} as failed (orphaned).`);
+      } else {
+        // Rare: PID still alive after restart. Send SIGTERM, handle normally.
+        console.log(`[worker] Execution ${exec.id} PID ${exec.pid} still alive. Sending SIGTERM.`);
+        try {
+          process.kill(exec.pid as number, 'SIGTERM');
+        } catch {
+          // PID may have died between check and kill -- that's fine
+        }
+      }
+    }
   }
 
-  console.log(`[worker] Found ${orphaned.length} orphaned execution(s). Reconciling...`);
+  await reconcileOrphanedSessions(workerId);
+}
 
-  for (const exec of orphaned) {
-    const isAlive = exec.pid ? isPidAlive(exec.pid) : false;
+async function reconcileOrphanedSessions(workerId: string): Promise<void> {
+  const orphaned = await db
+    .select({
+      id: sessions.id,
+      pid: sessions.pid,
+      status: sessions.status,
+      sessionRef: sessions.sessionRef,
+    })
+    .from(sessions)
+    .where(
+      and(eq(sessions.workerId, workerId), inArray(sessions.status, ['active', 'awaiting_input'])),
+    );
 
-    if (!isAlive) {
+  if (orphaned.length === 0) return;
+
+  console.log(`[zombie] Found ${orphaned.length} orphaned session(s). Reconciling...`);
+
+  for (const session of orphaned) {
+    if (session.pid != null && isPidAlive(session.pid)) {
+      console.log(`[zombie] Session ${session.id} PID ${session.pid} still alive, skipping`);
+      continue;
+    }
+
+    await db
+      .update(sessions)
+      .set({ status: 'idle', workerId: null, lastActiveAt: new Date() })
+      .where(
+        and(eq(sessions.id, session.id), inArray(sessions.status, ['active', 'awaiting_input'])),
+      );
+
+    console.log(
+      `[zombie] Session ${session.id} (was ${session.status}) marked idle — worker restarted`,
+    );
+
+    if (session.status === 'active' && session.sessionRef != null) {
       await db
-        .update(executions)
-        .set({
-          status: 'failed',
-          endedAt: new Date(),
-          error: 'Worker restarted, execution orphaned',
-        })
-        .where(eq(executions.id, exec.id));
-      console.log(`[worker] Marked execution ${exec.id} as failed (orphaned).`);
-    } else {
-      // Rare: PID still alive after restart. Send SIGTERM, handle normally.
-      console.log(`[worker] Execution ${exec.id} PID ${exec.pid} still alive. Sending SIGTERM.`);
-      try {
-        process.kill(exec.pid as number, 'SIGTERM');
-      } catch {
-        // PID may have died between check and kill -- that's fine
-      }
+        .update(sessions)
+        .set({ initialPrompt: 'The worker restarted. Please continue where you left off.' })
+        .where(eq(sessions.id, session.id));
+
+      await enqueueSession({ sessionId: session.id, resumeRef: session.sessionRef });
+      console.log(`[zombie] Session ${session.id} re-enqueued for auto-recovery`);
     }
   }
 }

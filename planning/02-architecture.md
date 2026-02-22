@@ -1,4 +1,4 @@
-# Agent Monitor - Architecture
+# agendo - Architecture
 
 > Last updated: 2026-02-17
 > Stack: Next.js 16 (React 19.2) + Drizzle ORM + Postgres + pg-boss
@@ -46,7 +46,7 @@
 └────────────────────────┬──────────────────────────┘
                          │ MCP Protocol (stdio / HTTP)
 ┌────────────────────────▼──────────────────────────┐
-│          Agent Monitor MCP Server                  │
+│          agendo MCP Server                         │
 │  Tools: create_task, update_task, list_tasks,      │
 │  create_subtask, assign_task, spawn_agent          │
 │  Agents connect via --mcp-config / .mcp.json       │
