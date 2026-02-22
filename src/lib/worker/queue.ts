@@ -101,26 +101,29 @@ export async function registerWorker(
 /**
  * Register the worker handler for session run jobs.
  * Called from worker/index.ts on startup.
+ *
+ * pg-boss v10 removed the `teamSize` option. To achieve N concurrent session
+ * slots, call boss.work() N times — each call creates an independent polling
+ * loop. batchSize:1 ensures each loop handles exactly one session at a time,
+ * so a long-running session never blocks other sessions from starting.
  */
 export async function registerSessionWorker(
   handler: (job: Job<RunSessionJobData>) => Promise<void>,
 ): Promise<void> {
   const boss = await getBoss();
-  // teamSize: 3 = three independent polling loops running concurrently.
-  // batchSize: 1 = each loop handles one session at a time.
-  // This prevents a long-running session from blocking other sessions from starting.
-  await boss.work<RunSessionJobData>(
-    SESSION_QUEUE_NAME,
-    {
-      batchSize: 1,
-      pollingIntervalSeconds: Math.ceil(config.WORKER_POLL_INTERVAL_MS / 1000),
-    },
-    async (jobs: Job<RunSessionJobData>[]) => {
-      for (const job of jobs) {
-        await handler(job);
-      }
-    },
-  );
+  const workerOptions = {
+    batchSize: 1,
+    pollingIntervalSeconds: Math.ceil(config.WORKER_POLL_INTERVAL_MS / 1000),
+  };
+  const jobHandler = async (jobs: Job<RunSessionJobData>[]) => {
+    for (const job of jobs) {
+      await handler(job);
+    }
+  };
+  // Register 3 independent polling loops to allow up to 3 concurrent sessions.
+  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
+  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
+  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
 }
 
 /**
