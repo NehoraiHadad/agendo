@@ -1,8 +1,16 @@
 import { notFound } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { SessionDetailClient } from './session-detail-client';
+
+// Skip SSR entirely — this is a fully interactive real-time component.
+// Radix UI generates sequential IDs that diverge between server and client
+// when the component tree differs, causing hydration mismatches.
+const SessionDetailClient = dynamic(
+  () => import('./session-detail-client').then((m) => m.SessionDetailClient),
+  { ssr: false },
+);
 
 export default async function SessionDetailPage({
   params,
