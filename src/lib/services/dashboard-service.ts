@@ -98,6 +98,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
           )`,
         })
         .from(agents)
+        .where(eq(agents.toolType, 'ai-agent'))
         .orderBy(agents.name),
 
       // Worker status (latest heartbeat)
