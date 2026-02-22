@@ -1,4 +1,4 @@
-# Architecture Brainstorm Synthesis (v3 — Final)
+# agendo — Architecture Brainstorm Synthesis (v3 — Final)
 
 > Date: 2026-02-17
 > Brainstorm rounds:

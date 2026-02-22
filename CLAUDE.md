@@ -1,8 +1,8 @@
-# Agent Monitor — Project Instructions
+# agendo — Project Instructions
 
 ## Project Overview
 
-Agent Monitor is a Next.js 16 application for managing AI coding agents (Claude, Codex, Gemini). It provides agent discovery, task management (Kanban), execution orchestration with bidirectional communication, live log streaming, and an MCP server for agent-initiated tasks.
+agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex, Gemini). It provides agent discovery, task management (Kanban), execution orchestration with bidirectional communication, live log streaming, and an MCP server for agent-initiated tasks.
 
 ## Source of Truth
 
