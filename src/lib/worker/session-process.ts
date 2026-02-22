@@ -64,6 +64,7 @@ export class SessionProcess {
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
   private exitFuture = new Future<number | null>();
+  private exitHandled = false;
   private activeToolUseIds = new Set<string>();
   private pendingApprovals = new Map<
     string,
@@ -110,6 +111,8 @@ export class SessionProcess {
 
     if (!claimed) {
       console.log(`[session-process] Session ${this.session.id} already claimed — skipping`);
+      // Resolve exitFuture so waitForExit() doesn't hang indefinitely.
+      this.exitFuture.resolve(null);
       return;
     }
 
@@ -535,13 +538,21 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   private async onExit(exitCode: number | null): Promise<void> {
+    // Guard against double-invocation: the heartbeat liveness check and the
+    // real process exit handler can both call onExit. The second call must be
+    // a no-op to prevent double-releasing the PG pool client.
+    if (this.exitHandled) return;
+    this.exitHandled = true;
+
     this.stopHeartbeat();
     if (this.idleTimer !== null) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
     // Unsubscribe from the control channel to release the pg pool connection.
+    // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
+    this.unsubscribeControl = null;
 
     // Determine final session status based on exit code.
     // SIGINT (130) = user-requested cancel -> ended.
