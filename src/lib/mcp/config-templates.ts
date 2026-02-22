@@ -69,18 +69,19 @@ export function generateGeminiAcpMcpServers(
   serverPath: string,
   identity: SessionIdentity,
 ): AcpMcpServer[] {
+  // Gemini ACP envVariableSchema: array of {name, value} — NOT a dict.
   return [
     {
       name: 'agendo',
       command: 'node',
       args: [serverPath],
-      env: {
-        AGENDO_URL: process.env.AGENDO_URL ?? 'http://localhost:4100',
-        AGENDO_SESSION_ID: identity.sessionId,
-        AGENDO_TASK_ID: identity.taskId ?? '',
-        AGENDO_AGENT_ID: identity.agentId,
-        AGENDO_PROJECT_ID: identity.projectId ?? '',
-      },
+      env: [
+        { name: 'AGENDO_URL', value: process.env.AGENDO_URL ?? 'http://localhost:4100' },
+        { name: 'AGENDO_SESSION_ID', value: identity.sessionId },
+        { name: 'AGENDO_TASK_ID', value: identity.taskId ?? '' },
+        { name: 'AGENDO_AGENT_ID', value: identity.agentId },
+        { name: 'AGENDO_PROJECT_ID', value: identity.projectId ?? '' },
+      ],
     },
   ];
 }
