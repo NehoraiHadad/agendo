@@ -4,9 +4,11 @@ import { useState } from 'react';
 import { Folder, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Sheet,
@@ -52,6 +54,8 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<'archive' | 'purge'>('archive');
+  const [deleteTasks, setDeleteTasks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [suggestions, setSuggestions] = useState<DiscoveredProject[]>([]);
@@ -80,6 +84,8 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     setIcon(project.icon ?? '');
     setError(null);
     setConfirmDelete(false);
+    setDeleteMode('archive');
+    setDeleteTasks(false);
   }
 
   async function handleUpdate(e: React.FormEvent) {
@@ -119,7 +125,14 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     setError(null);
 
     try {
-      await apiFetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+      if (deleteMode === 'purge') {
+        const url = deleteTasks
+          ? `/api/projects/${project.id}/purge?withTasks=true`
+          : `/api/projects/${project.id}/purge`;
+        await apiFetch(url, { method: 'DELETE' });
+      } else {
+        await apiFetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+      }
       onDeleted(project.id);
       setOpen(false);
     } catch (err) {
@@ -274,24 +287,87 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
               Update Project
             </Button>
 
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={isSubmitting || isDeleting}
-              onClick={handleDelete}
-              className="w-full"
-            >
-              {isDeleting ? (
-                <Loader2 className="size-4 mr-2 animate-spin" />
-              ) : (
+            {confirmDelete ? (
+              <div className="w-full space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-sm font-medium">
+                  Delete &ldquo;{project.name}&rdquo;?
+                </p>
+                <RadioGroup
+                  value={deleteMode}
+                  onValueChange={(v) => setDeleteMode(v as 'archive' | 'purge')}
+                  className="gap-2"
+                >
+                  <div className="flex items-start gap-2">
+                    <RadioGroupItem value="archive" id="delete-mode-archive" className="mt-0.5" />
+                    <Label htmlFor="delete-mode-archive" className="cursor-pointer space-y-0.5">
+                      <span className="text-sm font-medium">Archive (recoverable)</span>
+                      <p className="text-xs text-muted-foreground font-normal">
+                        Tasks will be hidden but preserved.
+                      </p>
+                    </Label>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <RadioGroupItem value="purge" id="delete-mode-purge" className="mt-0.5" />
+                    <Label htmlFor="delete-mode-purge" className="cursor-pointer space-y-0.5">
+                      <span className="text-sm font-medium">Delete permanently</span>
+                      <p className="text-xs text-muted-foreground font-normal">
+                        Cannot be undone.
+                      </p>
+                    </Label>
+                  </div>
+                </RadioGroup>
+                {deleteMode === 'purge' && (
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="delete-tasks-sheet"
+                      checked={deleteTasks}
+                      onCheckedChange={(checked) => setDeleteTasks(checked === true)}
+                      disabled={isDeleting}
+                    />
+                    <Label htmlFor="delete-tasks-sheet" className="text-xs cursor-pointer">
+                      Also delete all linked tasks
+                    </Label>
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={isDeleting}
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      setDeleteMode('archive');
+                      setDeleteTasks(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="flex-1"
+                    disabled={isDeleting}
+                    onClick={handleDelete}
+                  >
+                    {isDeleting && <Loader2 className="size-4 mr-1.5 animate-spin" />}
+                    Confirm
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isSubmitting || isDeleting}
+                onClick={handleDelete}
+                className="w-full"
+              >
                 <Trash2 className="size-4 mr-2" />
-              )}
-              {confirmDelete ? 'Confirm Delete' : 'Delete Project'}
-            </Button>
-            {confirmDelete && (
-              <p className="text-xs text-muted-foreground text-center">
-                Click again to confirm. This cannot be undone.
-              </p>
+                Delete Project
+              </Button>
             )}
           </SheetFooter>
         </form>

@@ -4,6 +4,9 @@ import { listProjects } from '@/lib/services/project-service';
 import { ProjectsClient } from '@/components/projects/projects-client';
 
 export default async function ProjectsPage() {
-  const projects = await listProjects();
-  return <ProjectsClient initialProjects={projects} />;
+  const [projects, deletedProjects] = await Promise.all([
+    listProjects(true),
+    listProjects(false),
+  ]);
+  return <ProjectsClient initialProjects={projects} initialDeletedProjects={deletedProjects} />;
 }

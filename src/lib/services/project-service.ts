@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { access } from 'node:fs/promises';
 import { db } from '@/lib/db';
-import { projects } from '@/lib/db/schema';
+import { projects, tasks } from '@/lib/db/schema';
 import { NotFoundError } from '@/lib/errors';
 import type { Project } from '@/lib/types';
 
@@ -91,7 +91,34 @@ export async function updateProject(id: string, input: UpdateProjectInput): Prom
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  // Soft-delete: tasks with this projectId will have it set to NULL (SET NULL FK).
-  await getProject(id);
+  // Soft-delete: Tasks retain their projectId. They are hidden from the board via a JOIN filter on
+  // projects.is_active. SET NULL FK cascade fires only on hard-delete (purge).
+  // Do NOT use getProject() here — it rejects inactive projects, causing 404 on double-delete.
+  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Project', id);
   await db.update(projects).set({ isActive: false, updatedAt: new Date() }).where(eq(projects.id, id));
+}
+
+export async function restoreProject(id: string): Promise<Project> {
+  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Project', id);
+  const [restored] = await db
+    .update(projects)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(eq(projects.id, id))
+    .returning();
+  return restored;
+}
+
+export interface PurgeProjectOptions {
+  withTasks?: boolean;
+}
+
+export async function purgeProject(id: string, options: PurgeProjectOptions = {}): Promise<void> {
+  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Project', id);
+  if (options.withTasks) {
+    await db.delete(tasks).where(eq(tasks.projectId, id));
+  }
+  await db.delete(projects).where(eq(projects.id, id));
 }
