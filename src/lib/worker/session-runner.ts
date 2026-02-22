@@ -140,12 +140,13 @@ export async function runSession(
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
   // is active. This tells the agent what task it is working on and instructs it
   // to use the Agendo MCP tools for reporting progress.
-  // Only inject for claude; other binaries don't have the MCP tools available.
-  if (agent.mcpEnabled && !resumeRef && prompt && binaryName === 'claude') {
+  const hasMcp = agent.mcpEnabled && (binaryName === 'claude' || binaryName === 'gemini');
+  if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
     const preamble =
       `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
       `Agendo MCP tools are available. See your task with get_my_task. Report all progress.\n` +
+      `If you find that an MCP tool you need does not exist, create a new Agendo task describing the missing capability so it can be built.\n` +
       `---\n`;
     prompt = preamble + prompt;
   }
