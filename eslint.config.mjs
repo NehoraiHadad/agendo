@@ -17,6 +17,7 @@ const eslintConfig = defineConfig([
     'next-env.d.ts',
     '*.config.*',
     'coverage/**',
+    'scripts/**',
   ]),
 
   // Next.js recommended rules (core web vitals + typescript)
