@@ -1,4 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# husky v9 runs hooks with sh — re-exec with bash for pipefail + arrays
+[ -z "${BASH_VERSION:-}" ] && exec bash "$0" "$@"
 set -euo pipefail
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
