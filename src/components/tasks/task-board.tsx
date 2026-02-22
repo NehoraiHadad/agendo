@@ -60,6 +60,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const hydrated = useRef(false);
 
   const [activeId, setActiveId] = useState<string | null>(null);
+  const originalStatusRef = useRef<TaskStatus | null>(null);
 
   // Initialize SSE connection
   useBoardSse();
@@ -89,7 +90,11 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveId(String(event.active.id));
+    const taskId = String(event.active.id);
+    setActiveId(taskId);
+    // Capture original status before any optimistic updates
+    const task = useTaskBoardStore.getState().tasksById[taskId];
+    originalStatusRef.current = task?.status ?? null;
   }, []);
 
   const handleDragOver = useCallback(
@@ -130,6 +135,10 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       const task = tasksById[taskId];
       if (!task) return;
 
+      // Use the status captured at drag start (before optimistic updates modified tasksById)
+      const originalStatus = originalStatusRef.current;
+      originalStatusRef.current = null;
+
       const overStatus = resolveColumnStatus(String(over.id), tasksById);
       if (!overStatus) return;
 
@@ -156,7 +165,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            status: overStatus !== task.status ? overStatus : undefined,
+            status: overStatus !== originalStatus ? overStatus : undefined,
             afterSortOrder,
             beforeSortOrder,
           }),

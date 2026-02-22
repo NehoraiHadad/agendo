@@ -1,6 +1,6 @@
 import { withErrorBoundary } from '@/lib/api-handler';
 import { BadRequestError } from '@/lib/errors';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   generateClaudeMcpConfig,
   generateCodexMcpConfig,
@@ -42,8 +42,8 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     if (!VALID_TOOLS.includes(tool as ToolName)) {
       throw new BadRequestError(`Unknown tool '${tool}'. Valid values: ${VALID_TOOLS.join(', ')}`);
     }
-    return Response.json({ data: { [tool]: configs[tool as ToolName] } });
+    return NextResponse.json({ data: { [tool]: configs[tool as ToolName] } });
   }
 
-  return Response.json({ data: configs });
+  return NextResponse.json({ data: configs });
 });
