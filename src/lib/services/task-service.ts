@@ -1,6 +1,6 @@
 import { eq, and, sql, desc, asc, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { tasks, taskDependencies, taskEvents, agents } from '@/lib/db/schema';
+import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/schema';
 import { isValidTaskTransition } from '@/lib/state-machines';
 import { NotFoundError, ConflictError } from '@/lib/errors';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
@@ -102,8 +102,11 @@ export async function listTasksBoardItems(
 ): Promise<TaskBoardItem[]> {
   const limit = options.limit;
 
-  // Build WHERE clause
-  const whereClause = conditions.length > 0 ? and(...(conditions as Parameters<typeof and>)) : undefined;
+  // Filter out tasks belonging to soft-deleted projects
+  const activeProjectFilter = sql`(${tasks.projectId} IS NULL OR ${projects.isActive} = true)`;
+  const allConditions = conditions.length > 0
+    ? and(...(conditions as Parameters<typeof and>), activeProjectFilter)
+    : activeProjectFilter;
 
   // Use raw SQL for the LEFT JOIN aggregation
   const query = sql`
@@ -111,6 +114,7 @@ export async function listTasksBoardItems(
       COALESCE(sub.total, 0)::int AS subtask_total,
       COALESCE(sub.done,  0)::int AS subtask_done
     FROM tasks
+    LEFT JOIN ${projects} ON ${projects.id} = ${tasks.projectId}
     LEFT JOIN (
       SELECT parent_task_id,
         COUNT(*)                                       AS total,
@@ -119,7 +123,7 @@ export async function listTasksBoardItems(
       WHERE child.parent_task_id IS NOT NULL
       GROUP BY child.parent_task_id
     ) sub ON sub.parent_task_id = tasks.id
-    ${whereClause ? sql`WHERE ${whereClause}` : sql``}
+    WHERE ${allConditions}
     ORDER BY tasks.sort_order ASC
     ${limit !== undefined ? sql`LIMIT ${limit}` : sql``}
   `;
