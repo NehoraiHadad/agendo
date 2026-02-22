@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { CapabilityList } from '@/components/agents/capability-list';
 import { RefreshFlagsButton } from '@/components/agents/refresh-flags-button';
+import { McpConfigCard } from '@/components/agents/mcp-config-card';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
 
@@ -92,6 +93,19 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
           <RefreshFlagsButton agentId={id} initialFlags={agent.parsedFlags ?? []} />
         </CardContent>
       </Card>
+
+      {agent.toolType === 'ai-agent' && (
+        <Card className="border-white/[0.06]">
+          <CardHeader>
+            <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
+              MCP Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <McpConfigCard agent={{ id: agent.id, mcpEnabled: agent.mcpEnabled ?? false }} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
