@@ -2,6 +2,8 @@
  * MCP config generators for various AI agents.
  */
 
+import type { AcpMcpServer } from '@/lib/worker/adapters/types';
+
 export interface SessionIdentity {
   sessionId: string;
   taskId: string | null;
@@ -36,7 +38,7 @@ export function generateSessionMcpConfig(serverPath: string, identity: SessionId
 export function generateClaudeMcpConfig(serverPath: string): object {
   return {
     mcpServers: {
-      'agendo': {
+      agendo: {
         command: 'node',
         args: [serverPath],
         env: {
@@ -58,10 +60,35 @@ AGENDO_URL = "${url}"
 `;
 }
 
+/**
+ * Generate the ACP mcpServers array for a Gemini session/new request.
+ * Embeds session identity so the MCP server can associate tool calls with
+ * the correct session without a separate auth mechanism.
+ */
+export function generateGeminiAcpMcpServers(
+  serverPath: string,
+  identity: SessionIdentity,
+): AcpMcpServer[] {
+  return [
+    {
+      name: 'agendo',
+      command: 'node',
+      args: [serverPath],
+      env: {
+        AGENDO_URL: process.env.AGENDO_URL ?? 'http://localhost:4100',
+        AGENDO_SESSION_ID: identity.sessionId,
+        AGENDO_TASK_ID: identity.taskId ?? '',
+        AGENDO_AGENT_ID: identity.agentId,
+        AGENDO_PROJECT_ID: identity.projectId ?? '',
+      },
+    },
+  ];
+}
+
 export function generateGeminiMcpConfig(serverPath: string): object {
   return {
     mcpServers: {
-      'agendo': {
+      agendo: {
         command: 'node',
         args: [serverPath],
         env: {

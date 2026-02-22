@@ -19,6 +19,7 @@ import type {
   ManagedProcess,
   ImageContent,
   PermissionDecision,
+  AcpMcpServer,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
@@ -64,7 +65,11 @@ export class SessionProcess {
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
   private exitFuture = new Future<number | null>();
+  /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
+   *  transition or on process exit — whichever comes first. */
+  private slotReleaseFuture = new Future<void>();
   private exitHandled = false;
+  private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
   private pendingApprovals = new Map<
     string,
@@ -87,6 +92,7 @@ export class SessionProcess {
    * @param envOverrides - Additional env vars to merge into the child environment
    * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
    *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
+   * @param mcpServers - Optional MCP server list for ACP session/new (Gemini).
    */
   async start(
     prompt: string,
@@ -94,6 +100,7 @@ export class SessionProcess {
     spawnCwd?: string,
     envOverrides?: Record<string, string>,
     mcpConfigPath?: string,
+    mcpServers?: AcpMcpServer[],
   ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim if status is idle/active and no other worker owns it.
@@ -111,10 +118,13 @@ export class SessionProcess {
 
     if (!claimed) {
       console.log(`[session-process] Session ${this.session.id} already claimed — skipping`);
-      // Resolve exitFuture so waitForExit() doesn't hang indefinitely.
+      // Resolve futures so callers don't hang indefinitely.
+      this.slotReleaseFuture.resolve();
       this.exitFuture.resolve(null);
       return;
     }
+
+    console.log(`[session-process] claimed session ${this.session.id} workerId=${this.workerId}`);
 
     // Continue seq from wherever the previous session run left off so that
     // event IDs remain monotonically increasing across resumes and the SSE
@@ -171,6 +181,7 @@ export class SessionProcess {
       permissionMode: this.session.permissionMode ?? 'default',
       allowedTools: this.session.allowedTools ?? [],
       ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
+      ...(mcpServers ? { mcpServers } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval
@@ -503,6 +514,16 @@ export class SessionProcess {
       .set({ status, lastActiveAt: new Date() })
       .where(eq(sessions.id, this.session.id));
     await this.emitEvent({ type: 'session:state', status });
+
+    if (status === 'awaiting_input') {
+      const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
+      console.log(
+        `[session-process] awaiting_input session ${this.session.id} elapsed=${elapsedSec}s — slot released`,
+      );
+      // Resolve the slot future so the pg-boss slot frees while the process
+      // stays alive in-memory awaiting the next user message.
+      this.slotReleaseFuture.resolve();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -543,6 +564,14 @@ export class SessionProcess {
     // a no-op to prevent double-releasing the PG pool client.
     if (this.exitHandled) return;
     this.exitHandled = true;
+
+    const totalSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
+    console.log(
+      `[session-process] exited session ${this.session.id} code=${exitCode ?? 'null'} status=${this.status} total=${totalSec}s`,
+    );
+    // Resolve the slot future in case the process exits before ever reaching
+    // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
+    this.slotReleaseFuture.resolve();
 
     this.stopHeartbeat();
     if (this.idleTimer !== null) {
@@ -738,5 +767,26 @@ export class SessionProcess {
    */
   waitForExit(): Promise<number | null> {
     return this.exitFuture.promise;
+  }
+
+  /**
+   * Returns a promise that resolves when the pg-boss slot should be freed.
+   * Resolves on the first `awaiting_input` transition (process stays alive in
+   * memory) or on process exit — whichever comes first.
+   *
+   * The session-runner uses this instead of waitForExit() so that the pg-boss
+   * slot is released immediately once the agent is idle, preventing slot drain
+   * from sessions stuck in awaiting_input.
+   */
+  waitForSlotRelease(): Promise<void> {
+    return this.slotReleaseFuture.promise;
+  }
+
+  /**
+   * Send SIGTERM to the underlying agent process for graceful shutdown.
+   * Used during worker shutdown to terminate live sessions that are awaiting input.
+   */
+  terminate(): void {
+    this.managedProcess?.kill('SIGTERM');
   }
 }

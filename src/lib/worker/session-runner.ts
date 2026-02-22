@@ -9,8 +9,16 @@ import { getCapabilityById } from '@/lib/services/capability-service';
 import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
-import { generateSessionMcpConfig } from '@/lib/mcp/config-templates';
+import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
 import { listTaskEvents } from '@/lib/services/task-event-service';
+import type { AcpMcpServer } from '@/lib/worker/adapters/types';
+
+/**
+ * Live session processes that have released their pg-boss slot (reached
+ * awaiting_input) but whose underlying agent process is still running.
+ * Keyed by sessionId. Used by shutdown to gracefully terminate them.
+ */
+export const liveSessionProcs = new Map<string, SessionProcess>();
 
 function interpolatePrompt(template: string, args: Record<string, unknown>): string {
   return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path: string) => {
@@ -113,6 +121,20 @@ export async function runSession(
     const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity);
     mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    console.log(`[session-runner] Claude MCP config written for session ${sessionId}`);
+  }
+
+  // Phase A2: For Gemini, inject MCP servers via the ACP session/new request.
+  let mcpServers: AcpMcpServer[] | undefined;
+  if (agent.mcpEnabled && config.MCP_SERVER_PATH && binaryName === 'gemini') {
+    const identity = {
+      sessionId,
+      taskId: session.taskId,
+      agentId: session.agentId,
+      projectId: task?.projectId ?? null,
+    };
+    mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity);
+    console.log(`[session-runner] Gemini MCP injected for session ${sessionId}`);
   }
 
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
@@ -167,6 +189,25 @@ export async function runSession(
     resolvedCwd,
     envOverrides,
     mcpConfigPath,
+    mcpServers,
   );
-  await sessionProc.waitForExit();
+
+  // Wait until the session releases its pg-boss slot (first awaiting_input or
+  // process exit). This frees the slot for the next queued session while the
+  // agent process stays alive in liveSessionProcs for subsequent messages.
+  await sessionProc.waitForSlotRelease();
+
+  // Register the live session so the shutdown handler can terminate it gracefully.
+  liveSessionProcs.set(sessionId, sessionProc);
+  console.log(
+    `[session-runner] slot released for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
+  );
+
+  // Wire exit cleanup: remove from live map when the process actually exits.
+  void sessionProc.waitForExit().then(() => {
+    liveSessionProcs.delete(sessionId);
+    console.log(
+      `[session-runner] session ${sessionId} removed from live map — ${liveSessionProcs.size} live session(s) remaining`,
+    );
+  });
 }

@@ -14,7 +14,7 @@ import {
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runExecution } from '../lib/worker/execution-runner';
-import { runSession } from '../lib/worker/session-runner';
+import { runSession, liveSessionProcs } from '../lib/worker/session-runner';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { queryAI } from '../lib/services/ai-query-service';
 import { getHelpText } from '../lib/discovery/schema-extractor';
@@ -48,12 +48,16 @@ async function handleJob(job: Job<ExecuteCapabilityJobData>): Promise<void> {
 
 async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
   const { sessionId, resumeRef } = job.data;
-  console.log(`[worker] Claimed session job for session ${sessionId}`);
+  console.log(
+    `[worker] slot claimed for session ${sessionId} — ${inFlightJobs.size + 1} slot(s) in use`,
+  );
 
   const promise = (async () => {
     try {
       await runSession(sessionId, WORKER_ID, resumeRef);
-      console.log(`[worker] Session ${sessionId} completed`);
+      console.log(
+        `[worker] slot freed for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
+      );
     } catch (err) {
       console.error(`[worker] Session ${sessionId} failed:`, err);
       throw err;
@@ -106,32 +110,44 @@ function extractJsonArray(raw: string): unknown[] {
     const wrapper = JSON.parse(raw) as { result?: string; response?: string };
     const inner = wrapper.result ?? wrapper.response;
     if (typeof inner === 'string') return extractJsonArray(inner);
-  } catch { /* not a JSON wrapper */ }
+  } catch {
+    /* not a JSON wrapper */
+  }
 
   const stripped = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
 
   try {
     const parsed = JSON.parse(stripped);
     if (Array.isArray(parsed)) return parsed as unknown[];
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
 
   const match = stripped.match(/\[[\s\S]*\]/);
   if (match) {
     try {
       const parsed = JSON.parse(match[0]);
       if (Array.isArray(parsed)) return parsed as unknown[];
-    } catch { /* not valid JSON */ }
+    } catch {
+      /* not valid JSON */
+    }
   }
 
   throw new Error('No JSON array found in AI response');
 }
 
-async function handleAnalysisJob(job: Job<AnalyzeAgentJobData>): Promise<{ suggestions: unknown[] }> {
+async function handleAnalysisJob(
+  job: Job<AnalyzeAgentJobData>,
+): Promise<{ suggestions: unknown[] }> {
   const { agentId, binaryPath, toolName } = job.data;
   console.log(`[worker] Analysis job for agent ${agentId} (${toolName})`);
   const helpText = await getHelpText(binaryPath).catch(() => null);
   const prompt = buildAnalysisPrompt(toolName, helpText);
-  const { text, providerName } = await queryAI({ prompt, timeoutMs: 45_000, preferredSlug: 'gemini-cli-1' });
+  const { text, providerName } = await queryAI({
+    prompt,
+    timeoutMs: 45_000,
+    preferredSlug: 'gemini-cli-1',
+  });
   console.log(`[worker] Analysis got response from ${providerName}`);
   const suggestions = extractJsonArray(text);
   console.log(`[worker] Analysis parsed ${suggestions.length} suggestions`);
@@ -199,11 +215,23 @@ async function main(): Promise<void> {
     staleReaper.stop();
     // Stop pg-boss from delivering new jobs (short timeout since we manage our own wait below)
     await stopBoss();
-    // Wait for in-flight executions to complete their final DB update
+    // Wait for in-flight slot-holding jobs (sessions not yet at awaiting_input, executions)
     if (inFlightJobs.size > 0) {
-      console.log(`[worker] Waiting for ${inFlightJobs.size} in-flight execution(s) to finish...`);
+      console.log(`[worker] Waiting for ${inFlightJobs.size} in-flight job(s) to release slots...`);
       await Promise.race([
         Promise.allSettled([...inFlightJobs]),
+        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
+      ]);
+    }
+    // Terminate live sessions (awaiting_input sessions whose process is still running)
+    if (liveSessionProcs.size > 0) {
+      console.log(`[worker] Terminating ${liveSessionProcs.size} live session(s)...`);
+      const exitPromises = [...liveSessionProcs.values()].map((proc) => {
+        proc.terminate();
+        return proc.waitForExit();
+      });
+      await Promise.race([
+        Promise.allSettled(exitPromises),
         new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
       ]);
     }
