@@ -24,7 +24,17 @@ export function createSession(
   if (opts.command) {
     args.push(opts.command);
   }
-  execFileSync('tmux', args, { stdio: 'ignore' });
+  try {
+    execFileSync('tmux', args, { stdio: 'ignore' });
+  } catch {
+    // Session may already exist (e.g. worker crashed and is resuming) — kill it and retry
+    try {
+      execFileSync('tmux', ['kill-session', '-t', name], { stdio: 'ignore' });
+    } catch {
+      // Ignore if it doesn't exist
+    }
+    execFileSync('tmux', args, { stdio: 'ignore' });
+  }
 }
 
 export function sendInput(name: string, text: string): void {

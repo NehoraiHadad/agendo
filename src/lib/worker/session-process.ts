@@ -6,9 +6,20 @@ import { eq, and, inArray, isNull, or } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
 import { serializeEvent } from '@/lib/realtime/events';
-import type { AgendoEvent, AgendoEventPayload, AgendoControl, SessionStatus } from '@/lib/realtime/events';
+import type {
+  AgendoEvent,
+  AgendoEventPayload,
+  AgendoControl,
+  SessionStatus,
+} from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
-import type { AgentAdapter, SpawnOpts, ManagedProcess, ImageContent, PermissionDecision } from '@/lib/worker/adapters/types';
+import type {
+  AgentAdapter,
+  SpawnOpts,
+  ManagedProcess,
+  ImageContent,
+  PermissionDecision,
+} from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
 
@@ -54,7 +65,10 @@ export class SessionProcess {
   private sessionRef: string | null = null;
   private exitFuture = new Future<number | null>();
   private activeToolUseIds = new Set<string>();
-  private pendingApprovals = new Map<string, (decision: 'allow' | 'deny' | 'allow-session') => void>();
+  private pendingApprovals = new Map<
+    string,
+    (decision: 'allow' | 'deny' | 'allow-session') => void
+  >();
 
   constructor(
     private session: Session,
@@ -73,7 +87,13 @@ export class SessionProcess {
    * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
    *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
    */
-  async start(prompt: string, resumeRef?: string, spawnCwd?: string, envOverrides?: Record<string, string>, mcpConfigPath?: string): Promise<void> {
+  async start(
+    prompt: string,
+    resumeRef?: string,
+    spawnCwd?: string,
+    envOverrides?: Record<string, string>,
+    mcpConfigPath?: string,
+  ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim if status is idle/active and no other worker owns it.
     const [claimed] = await db
@@ -105,10 +125,7 @@ export class SessionProcess {
     this.logWriter.open();
 
     // Persist the log file path so the frontend can fetch it later.
-    await db
-      .update(sessions)
-      .set({ logFilePath: logPath })
-      .where(eq(sessions.id, this.session.id));
+    await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
 
     // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
     this.unsubscribeControl = await subscribe(
@@ -155,12 +172,24 @@ export class SessionProcess {
 
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((id, name, input) =>
-      this.handleApprovalRequest(id, name, input)
+      this.handleApprovalRequest(id, name, input),
     );
+
+    // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
+    // (Claude handles this via the session:init NDJSON event)
+    this.adapter.onSessionRef?.((ref) => {
+      this.sessionRef = ref;
+      void db.update(sessions).set({ sessionRef: ref }).where(eq(sessions.id, this.session.id));
+    });
 
     // Wire thinking callback for agent:activity events
     this.adapter.onThinkingChange((thinking) => {
       void this.emitEvent({ type: 'agent:activity', thinking });
+      // When thinking stops, transition to awaiting_input (works for all adapters:
+      // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
+      if (!thinking && !this.interruptInProgress) {
+        void this.transitionTo('awaiting_input').then(() => this.resetIdleTimer());
+      }
     });
 
     if (resumeRef) {
@@ -196,7 +225,11 @@ export class SessionProcess {
     // Parse each NDJSON line and map to a structured AgendoEvent.
     for (const line of chunk.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('{')) continue;
+      if (!trimmed) continue;
+      if (!trimmed.startsWith('{')) {
+        await this.emitEvent({ type: 'agent:text', text: trimmed });
+        continue;
+      }
 
       try {
         const parsed = JSON.parse(trimmed) as Record<string, unknown>;
@@ -245,9 +278,7 @@ export class SessionProcess {
    * top-level types. Each call may return multiple events (e.g. one assistant
    * message containing both a text block and a tool_use block).
    */
-  private mapClaudeJsonToEvents(
-    parsed: Record<string, unknown>,
-  ): AgendoEventPayload[] {
+  private mapClaudeJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
     const type = parsed.type as string | undefined;
 
     // Claude CLI system/init — announces the session ID and available slash commands
@@ -258,14 +289,19 @@ export class SessionProcess {
       const mcpServers = Array.isArray(parsed.mcp_servers)
         ? (parsed.mcp_servers as Array<{ name: string; status?: string; tools?: string[] }>)
         : [];
-      return [{ type: 'session:init', sessionRef: parsed.session_id as string, slashCommands, mcpServers }];
+      return [
+        {
+          type: 'session:init',
+          sessionRef: parsed.session_id as string,
+          slashCommands,
+          mcpServers,
+        },
+      ];
     }
 
     // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)
     if (type === 'assistant') {
-      const message = parsed.message as
-        | { content?: Array<Record<string, unknown>> }
-        | undefined;
+      const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
       const events: AgendoEventPayload[] = [];
       for (const block of message?.content ?? []) {
         if (block.type === 'text' && typeof block.text === 'string') {
@@ -286,9 +322,7 @@ export class SessionProcess {
 
     // User turn: content is an array of blocks (tool_result, etc.)
     if (type === 'user') {
-      const message = parsed.message as
-        | { content?: Array<Record<string, unknown>> }
-        | undefined;
+      const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
       const events: AgendoEventPayload[] = [];
       for (const block of message?.content ?? []) {
         if (block.type === 'tool_result') {
@@ -529,10 +563,7 @@ export class SessionProcess {
       }
     }
 
-    await db
-      .update(sessions)
-      .set({ endedAt: new Date() })
-      .where(eq(sessions.id, this.session.id));
+    await db.update(sessions).set({ endedAt: new Date() }).where(eq(sessions.id, this.session.id));
 
     if (this.logWriter) {
       await this.logWriter.close();
@@ -552,17 +583,12 @@ export class SessionProcess {
    *
    * Returns the fully constructed AgendoEvent for downstream use.
    */
-  private async emitEvent(
-    partial: AgendoEventPayload,
-  ): Promise<AgendoEvent> {
+  private async emitEvent(partial: AgendoEventPayload): Promise<AgendoEvent> {
     const seq = ++this.eventSeq;
 
     // Keep eventSeq in sync on the session row so SSE reconnects know
     // how many events have been emitted without reading the log file.
-    await db
-      .update(sessions)
-      .set({ eventSeq: seq })
-      .where(eq(sessions.id, this.session.id));
+    await db.update(sessions).set({ eventSeq: seq }).where(eq(sessions.id, this.session.id));
 
     const event = {
       id: seq,
@@ -607,10 +633,7 @@ export class SessionProcess {
           }
         }
       } catch (err) {
-        console.error(
-          `[session-process] Heartbeat failed for session ${this.session.id}:`,
-          err,
-        );
+        console.error(`[session-process] Heartbeat failed for session ${this.session.id}:`, err);
       }
     }, 30_000);
   }

@@ -1,5 +1,4 @@
 import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, tasks, projects } from '@/lib/db/schema';
@@ -71,7 +70,8 @@ export async function runSession(
       envOverrides[k] = v;
     }
   }
-  const taskEnv = (task?.inputContext as { envOverrides?: Record<string, string> } | null)?.envOverrides;
+  const taskEnv = (task?.inputContext as { envOverrides?: Record<string, string> } | null)
+    ?.envOverrides;
   if (taskEnv) {
     for (const [k, v] of Object.entries(taskEnv)) {
       envOverrides[k] = v;
@@ -95,11 +95,15 @@ export async function runSession(
     }
   }
 
+  // Determine the binary basename so we can gate claude-only features below.
+  const binaryName = agent.binaryPath.split('/').pop()?.toLowerCase() ?? '';
+
   // Phase A: Generate a session-scoped MCP config file when the agent has MCP
   // enabled and a server path is configured. The file embeds the session
   // identity so the MCP server can associate tool calls with this session/task.
+  // Only claude supports --mcp-config; skip for codex, gemini, etc.
   let mcpConfigPath: string | undefined;
-  if (agent.mcpEnabled && config.MCP_SERVER_PATH) {
+  if (agent.mcpEnabled && config.MCP_SERVER_PATH && binaryName === 'claude') {
     const identity = {
       sessionId,
       taskId: session.taskId,
@@ -114,7 +118,8 @@ export async function runSession(
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
   // is active. This tells the agent what task it is working on and instructs it
   // to use the Agendo MCP tools for reporting progress.
-  if (agent.mcpEnabled && !resumeRef && prompt) {
+  // Only inject for claude; other binaries don't have the MCP tools available.
+  if (agent.mcpEnabled && !resumeRef && prompt && binaryName === 'claude') {
     const projectName = project?.name ?? 'unknown';
     const preamble =
       `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
@@ -127,9 +132,7 @@ export async function runSession(
   // the agent has context about what was accomplished before the session ended.
   if (resumeRef && session.taskId && task) {
     const recentEvents = await listTaskEvents(session.taskId, 10);
-    const progressNotes = recentEvents
-      .filter((e) => e.eventType === 'agent_note')
-      .slice(0, 5);
+    const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
 
     if (progressNotes.length > 0 || task) {
       const notesText =
@@ -158,6 +161,12 @@ export async function runSession(
 
   const adapter = selectAdapter(agent, capability);
   const sessionProc = new SessionProcess(session, adapter, workerId);
-  await sessionProc.start(prompt, resumeRef ?? session.sessionRef ?? undefined, resolvedCwd, envOverrides, mcpConfigPath);
+  await sessionProc.start(
+    prompt,
+    resumeRef ?? session.sessionRef ?? undefined,
+    resolvedCwd,
+    envOverrides,
+    mcpConfigPath,
+  );
   await sessionProc.waitForExit();
 }

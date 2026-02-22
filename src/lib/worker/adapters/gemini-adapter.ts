@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { AsyncLock } from '@/lib/utils/async-lock';
 import type {
@@ -32,6 +33,7 @@ export class GeminiAdapter implements AgentAdapter {
   private lock = new AsyncLock();
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private approvalHandler: ApprovalHandler | null = null;
+  private sessionRefCallback: ((ref: string) => void) | null = null;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, null);
@@ -79,6 +81,10 @@ export class GeminiAdapter implements AgentAdapter {
     this.approvalHandler = handler;
   }
 
+  onSessionRef(cb: (ref: string) => void): void {
+    this.sessionRefCallback = cb;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
@@ -94,7 +100,7 @@ export class GeminiAdapter implements AgentAdapter {
     cp.unref();
 
     // Parse ndJSON from stdout line by line
-    const rl = createInterface({ input: cp.stdout! });
+    const rl = createInterface({ input: cp.stdout ?? process.stdin });
     rl.on('line', (line: string) => {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.startsWith('{')) return;
@@ -119,8 +125,13 @@ export class GeminiAdapter implements AgentAdapter {
       for (const cb of exitCallbacks) cb(code);
     });
 
-    // Async init chain
-    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId);
+    // Async init chain — catch rejections to prevent unhandled promise crashes.
+    // On failure, fire exitCallbacks(1) so session-process transitions to 'ended'.
+    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
+      console.error('[GeminiAdapter] init failed:', err.message);
+      for (const cb of exitCallbacks) cb(1);
+      cp.kill();
+    });
 
     return {
       pid: cp.pid ?? 0,
@@ -140,10 +151,7 @@ export class GeminiAdapter implements AgentAdapter {
     };
   }
 
-  private handleAcpMessage(
-    msg: AcpMessage,
-    dataCallbacks: Array<(chunk: string) => void>,
-  ): void {
+  private handleAcpMessage(msg: AcpMessage, dataCallbacks: Array<(chunk: string) => void>): void {
     // Response to one of our requests (has id + result or error, no method)
     if (msg.id !== undefined && !msg.method && ('result' in msg || 'error' in msg)) {
       const pending = this.pendingRequests.get(msg.id);
@@ -161,41 +169,87 @@ export class GeminiAdapter implements AgentAdapter {
     // Server request (has id + method → needs a response)
     if (msg.id !== undefined && msg.method) {
       if (msg.method === 'session/request_permission') {
+        // ACP v0.20 schema: params = { sessionId, toolCall, options: [{ kind, name, optionId }] }
+        // "allow_once" kind → first option with kind=allow_once, "reject_once" → reject
+        const params = msg.params ?? {};
+        const toolCall = params.toolCall as Record<string, unknown> | undefined;
+        const options =
+          (params.options as Array<{ kind: string; optionId: string; name: string }>) ?? [];
+
+        const toolName = (toolCall?.title as string | undefined) ?? 'unknown';
+        const toolInput = (toolCall?.rawInput as Record<string, unknown>) ?? {};
+
         if (!this.approvalHandler) {
-          // Auto-allow if no handler configured
+          // Auto-allow: pick the first allow_once option
+          const allowOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
-            result: { outcome: 'selected', optionId: 'proceed_once' },
+            result: { outcome: 'selected', optionId: allowOption?.optionId ?? 'allow_once' },
           });
           return;
         }
-        // Async: relay to approval handler
+
         const approvalId = String(msg.id);
-        const params = msg.params ?? {};
-        const toolName =
-          (params.toolName as string) ?? (params.tool as string) ?? 'unknown';
-        const toolInput = (params.input as Record<string, unknown>) ?? {};
         void this.approvalHandler(approvalId, toolName, toolInput).then((decision) => {
-          const optionId = decision === 'deny' ? 'decline' : 'proceed_once';
+          const chosenOption =
+            decision === 'deny'
+              ? (options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1])
+              : (options.find((o) => o.kind === 'allow_once') ?? options[0]);
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
-            result: { outcome: 'selected', optionId },
+            result: { outcome: 'selected', optionId: chosenOption?.optionId ?? 'allow_once' },
           });
         });
+      }
+      // Handle fs/read_text_file and fs/write_text_file client requests from Gemini
+      else if (msg.method === 'fs/read_text_file') {
+        const {
+          path: filePath,
+          line,
+          limit,
+        } = msg.params as { path: string; line?: number; limit?: number };
+        try {
+          let content = readFileSync(filePath, 'utf-8');
+          if (line !== undefined && line !== null) {
+            const lines = content.split('\n');
+            const start = Math.max(0, line - 1);
+            const end = limit ? start + limit : lines.length;
+            content = lines.slice(start, end).join('\n');
+          }
+          this.writeJson({ jsonrpc: '2.0', id: msg.id, result: { content } });
+        } catch {
+          this.writeJson({ jsonrpc: '2.0', id: msg.id, result: { content: '' } });
+        }
+      } else if (msg.method === 'fs/write_text_file') {
+        const { path: filePath, content } = msg.params as { path: string; content: string };
+        try {
+          writeFileSync(filePath, content, 'utf-8');
+        } catch {
+          /* ignore write errors */
+        }
+        this.writeJson({ jsonrpc: '2.0', id: msg.id, result: null });
       }
       return;
     }
 
     // Notification (no id, has method)
+    // ACP v0.20: session/update params = { sessionId, update: { sessionUpdate, content, ... } }
     if (msg.method && msg.id === undefined) {
       if (msg.method === 'session/update') {
-        const messages =
-          (msg.params?.messages as Array<{ role: string; content: string }>) ?? [];
-        for (const m of messages) {
-          if (m.role === 'assistant' && m.content) {
-            for (const cb of dataCallbacks) cb(m.content);
+        const update = msg.params?.update as Record<string, unknown> | undefined;
+        const sessionUpdate = update?.sessionUpdate as string | undefined;
+        if (sessionUpdate === 'agent_message_chunk') {
+          const content = update?.content as Record<string, unknown> | undefined;
+          if (content?.type === 'text' && typeof content.text === 'string') {
+            for (const cb of dataCallbacks) cb(content.text);
+          }
+        } else if (sessionUpdate === 'agent_thought_chunk') {
+          // Thinking output — emit as-is so session-process can display it
+          const content = update?.content as Record<string, unknown> | undefined;
+          if (content?.type === 'text' && typeof content.text === 'string') {
+            for (const cb of dataCallbacks) cb(content.text);
           }
         }
       }
@@ -207,15 +261,22 @@ export class GeminiAdapter implements AgentAdapter {
     opts: SpawnOpts,
     resumeSessionId: string | null,
   ): Promise<void> {
-    // 1. Handshake
-    await this.sendRequest('initialize', { protocolVersion: 1 });
+    // 1. Handshake — ACP v0.20+ requires clientCapabilities.fs
+    await this.sendRequest('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
+    });
 
     // 2. Create session or reuse existing
+    // Note: ACP v0.20 renamed newSession → session/new and requires mcpServers:[].
+    // loadSession (resume) is only supported when agentCapabilities.loadSession=true.
     if (!resumeSessionId) {
-      const result = await this.sendRequest<{ sessionId: string }>('newSession', {
+      const result = await this.sendRequest<{ sessionId: string }>('session/new', {
         cwd: opts.cwd,
+        mcpServers: [],
       });
       this.sessionId = result.sessionId;
+      this.sessionRefCallback?.(this.sessionId);
     }
 
     // 3. First prompt
@@ -225,7 +286,8 @@ export class GeminiAdapter implements AgentAdapter {
   private async sendPrompt(text: string): Promise<void> {
     if (!this.sessionId) throw new Error('No active session');
     this.thinkingCallback?.(true);
-    await this.sendRequest('prompt', {
+    // ACP v0.20 renamed prompt → session/prompt
+    await this.sendRequest('session/prompt', {
       sessionId: this.sessionId,
       prompt: [{ type: 'text', text }],
     });
