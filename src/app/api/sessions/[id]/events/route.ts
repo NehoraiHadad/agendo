@@ -102,9 +102,7 @@ export async function GET(
 /**
  * POST /api/sessions/:id/events
  *
- * Accepts an event payload from an external hook (e.g. Claude Code post-tool-use
- * or stop hook) and broadcasts it to all SSE subscribers via PG NOTIFY.
- * Used by the Claude Code hook scripts generated in agendo-hooks.ts.
+ * Accepts an event payload and broadcasts it to all SSE subscribers via PG NOTIFY.
  */
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
