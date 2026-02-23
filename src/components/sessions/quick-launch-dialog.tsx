@@ -2,13 +2,38 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, MessageSquare, Terminal } from 'lucide-react';
+import {
+  Loader2,
+  MessageSquare,
+  Terminal,
+  Sparkles,
+  Brain,
+  Code,
+  Bot,
+  type LucideIcon,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent } from '@/lib/types';
+
+const LUCIDE_ICONS: Record<string, LucideIcon> = {
+  sparkles: Sparkles,
+  brain: Brain,
+  code: Code,
+  bot: Bot,
+};
+
+function getAgentIcon(agent: Agent): React.ReactNode {
+  const meta = agent.metadata as { icon?: string; color?: string } | null;
+  const iconName = meta?.icon?.toLowerCase();
+  const color = meta?.color;
+  const Icon = iconName ? LUCIDE_ICONS[iconName] : undefined;
+  if (Icon) return <Icon className="size-4" style={color ? { color } : undefined} />;
+  return <Bot className="size-4 text-muted-foreground" />;
+}
 
 interface QuickLaunchDialogProps {
   projectId: string;
@@ -70,11 +95,6 @@ export function QuickLaunchDialog({
     }
   }
 
-  function getAgentIcon(agent: Agent): string {
-    const meta = agent.metadata as { icon?: string } | null;
-    return meta?.icon ?? '🤖';
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -98,7 +118,7 @@ export function QuickLaunchDialog({
                       : 'border-white/[0.08] bg-card hover:border-white/[0.16] text-foreground'
                   }`}
                 >
-                  <span className="text-base leading-none">{getAgentIcon(agent)}</span>
+                  {getAgentIcon(agent)}
                   {agent.name}
                 </button>
               ))}
