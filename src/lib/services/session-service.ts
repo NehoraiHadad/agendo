@@ -32,11 +32,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 }
 
 export async function getSession(id: string): Promise<Session> {
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.id, id))
-    .limit(1);
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
   if (!session) throw new NotFoundError('Session', id);
   return session;
 }
@@ -51,6 +47,30 @@ export async function listSessionsByTask(taskId: string): Promise<Session[]> {
     .from(sessions)
     .where(eq(sessions.taskId, taskId))
     .orderBy(desc(sessions.createdAt));
+}
+
+export interface SessionWithAgent extends Session {
+  agentName: string;
+  taskTitle: string;
+}
+
+export async function listSessionsByProject(
+  projectId: string,
+  limit = 10,
+): Promise<SessionWithAgent[]> {
+  const rows = await db
+    .select({
+      ...getTableColumns(sessions),
+      agentName: agents.name,
+      taskTitle: tasks.title,
+    })
+    .from(sessions)
+    .innerJoin(tasks, eq(sessions.taskId, tasks.id))
+    .innerJoin(agents, eq(sessions.agentId, agents.id))
+    .where(eq(tasks.projectId, projectId))
+    .orderBy(desc(sessions.createdAt))
+    .limit(limit);
+  return rows as SessionWithAgent[];
 }
 
 export interface ListSessionsInput {
@@ -105,19 +125,11 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
  * Atomically claim a session for a worker.
  * Returns the claimed session or null if already claimed by another worker.
  */
-export async function claimSession(
-  sessionId: string,
-  workerId: string,
-): Promise<Session | null> {
+export async function claimSession(sessionId: string, workerId: string): Promise<Session | null> {
   const [claimed] = await db
     .update(sessions)
     .set({ workerId, status: 'active', startedAt: new Date() })
-    .where(
-      and(
-        eq(sessions.id, sessionId),
-        inArray(sessions.status, ['idle', 'active']),
-      ),
-    )
+    .where(and(eq(sessions.id, sessionId), inArray(sessions.status, ['idle', 'active'])))
     .returning();
   return claimed ?? null;
 }
@@ -126,10 +138,7 @@ export async function claimSession(
  * Get the active/awaiting_input/idle session for a task+agent combination.
  * Used to check for existing sessions before creating new ones.
  */
-export async function getActiveSession(
-  taskId: string,
-  agentId: string,
-): Promise<Session | null> {
+export async function getActiveSession(taskId: string, agentId: string): Promise<Session | null> {
   const [session] = await db
     .select()
     .from(sessions)

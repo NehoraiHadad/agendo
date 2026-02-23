@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Circle, Loader2, PowerOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -68,6 +69,8 @@ export function SessionDetailClient({
   capLabel,
   taskTitle,
 }: SessionDetailClientProps) {
+  const searchParams = useSearchParams();
+  const defaultTab = searchParams.get('tab') ?? 'chat';
   const stream = useSessionStream(session.id);
   const currentStatus = stream.sessionStatus ?? session.status;
   const logStream = useSessionLogStream(session.id);
@@ -124,23 +127,17 @@ export function SessionDetailClient({
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="chat" className="flex flex-col">
+      <Tabs defaultValue={defaultTab} className="flex flex-col">
         <TabsList>
           <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="terminal">
-            Terminal
-          </TabsTrigger>
+          <TabsTrigger value="terminal">Terminal</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat" forceMount className="mt-4 data-[state=inactive]:hidden">
-          <SessionChatView
-            sessionId={session.id}
-            stream={stream}
-            currentStatus={currentStatus}
-          />
+          <SessionChatView sessionId={session.id} stream={stream} currentStatus={currentStatus} />
         </TabsContent>
 
         <TabsContent value="terminal" className="mt-4">
@@ -148,10 +145,7 @@ export function SessionDetailClient({
         </TabsContent>
 
         <TabsContent value="logs" className="mt-4">
-          <ExecutionLogViewer
-            executionId={session.id}
-            externalStream={logStream}
-          />
+          <ExecutionLogViewer executionId={session.id} externalStream={logStream} />
         </TabsContent>
 
         <TabsContent value="events" className="mt-4">
