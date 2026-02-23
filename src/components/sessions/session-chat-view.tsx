@@ -29,15 +29,27 @@ import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
 // ---------------------------------------------------------------------------
 
 const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
-  p: ({ children }) => <p className="mb-1 last:mb-0 leading-relaxed">{children}</p>,
+  p: ({ children }) => (
+    <p dir="auto" className="mb-1 last:mb-0 leading-relaxed">
+      {children}
+    </p>
+  ),
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic text-foreground/80">{children}</em>,
   h1: ({ children }) => (
-    <h1 className="text-base font-bold text-foreground mb-1 mt-2">{children}</h1>
+    <h1 dir="auto" className="text-base font-bold text-foreground mb-1 mt-2">
+      {children}
+    </h1>
   ),
-  h2: ({ children }) => <h2 className="text-sm font-bold text-foreground mb-1 mt-2">{children}</h2>,
+  h2: ({ children }) => (
+    <h2 dir="auto" className="text-sm font-bold text-foreground mb-1 mt-2">
+      {children}
+    </h2>
+  ),
   h3: ({ children }) => (
-    <h3 className="text-sm font-semibold text-foreground/90 mb-1 mt-1">{children}</h3>
+    <h3 dir="auto" className="text-sm font-semibold text-foreground/90 mb-1 mt-1">
+      {children}
+    </h3>
   ),
   ul: ({ children }) => (
     <ul className="list-disc list-inside space-y-0.5 my-1 text-foreground/80">{children}</ul>
@@ -45,7 +57,11 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
   ol: ({ children }) => (
     <ol className="list-decimal list-inside space-y-0.5 my-1 text-foreground/80">{children}</ol>
   ),
-  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  li: ({ children }) => (
+    <li dir="auto" className="leading-relaxed">
+      {children}
+    </li>
+  ),
   code: ({ children, className }) => {
     const isBlock = className?.startsWith('language-');
     const text = typeof children === 'string' ? children : String(children ?? '');
@@ -68,6 +84,20 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
     </blockquote>
   ),
   hr: () => <hr className="border-white/[0.08] my-2" />,
+  table: ({ children }) => (
+    <div className="overflow-x-auto my-1 max-w-full">
+      <table className="text-xs border-collapse w-full">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="border-b border-white/[0.10]">{children}</thead>,
+  tbody: ({ children }) => <tbody>{children}</tbody>,
+  tr: ({ children }) => <tr className="border-b border-white/[0.05] last:border-0">{children}</tr>,
+  th: ({ children }) => (
+    <th className="px-2 py-1 text-left font-semibold text-foreground/80 whitespace-nowrap">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => <td className="px-2 py-1 text-foreground/70 break-words">{children}</td>,
   a: ({ href, children }) => (
     <a
       href={href}
@@ -264,17 +294,16 @@ function ErrorPill({ text }: { text: string }) {
 
 function AssistantBubble({ parts }: { parts: AssistantPart[] }) {
   return (
-    <div className="flex gap-2 items-start max-w-[85%]">
+    <div className="flex gap-2 items-start w-full">
       <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
         <Bot className="size-3.5 text-muted-foreground" />
       </div>
-      <div className="space-y-1.5 min-w-0 w-full">
+      <div className="space-y-1.5 min-w-0 flex-1">
         {parts.map((part, i) =>
           part.kind === 'text' ? (
             <div
               key={i}
-              dir="auto"
-              className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words leading-relaxed"
+              className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words overflow-x-auto leading-relaxed"
             >
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {part.text}
@@ -292,7 +321,7 @@ function AssistantBubble({ parts }: { parts: AssistantPart[] }) {
 function ThinkingBubble({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex gap-2 items-start max-w-[85%]">
+    <div className="flex gap-2 items-start w-full">
       <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
         <Bot className="size-3.5 text-muted-foreground/50" />
       </div>
@@ -624,8 +653,8 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
       <div
         className={
           fullscreen
-            ? 'flex-1 overflow-auto bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
-            : 'h-[55dvh] min-h-[280px] sm:h-[50dvh] sm:min-h-[320px] overflow-auto bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+            ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+            : 'h-[55dvh] min-h-[280px] sm:h-[50dvh] sm:min-h-[320px] overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
         }
         role="log"
         aria-live="polite"

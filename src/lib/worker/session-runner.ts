@@ -1,4 +1,5 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, tasks, projects } from '@/lib/db/schema';
@@ -11,7 +12,7 @@ import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
 import { listTaskEvents } from '@/lib/services/task-event-service';
-import type { AcpMcpServer } from '@/lib/worker/adapters/types';
+import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
 
 /**
  * Live session processes that have released their pg-boss slot (reached
@@ -179,6 +180,39 @@ export async function runSession(
     }
   }
 
+  // Check for a pending resume image saved by the message API (cold resume with attachment).
+  let initialImage: ImageContent | undefined;
+  if (resumeRef ?? session.sessionRef) {
+    const pendingMetaPath = join(config.LOG_DIR, 'attachments', sessionId, 'resume-pending.json');
+    if (existsSync(pendingMetaPath)) {
+      try {
+        const meta = JSON.parse(readFileSync(pendingMetaPath, 'utf-8')) as {
+          path: string;
+          mimeType: string;
+        };
+        const data = readFileSync(meta.path).toString('base64');
+        initialImage = { mimeType: meta.mimeType, data };
+        // Clean up after reading (best-effort)
+        try {
+          unlinkSync(meta.path);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(pendingMetaPath);
+        } catch {
+          /* ignore */
+        }
+        console.log(`[session-runner] Loaded pending resume image for session ${sessionId}`);
+      } catch (err) {
+        console.warn(
+          `[session-runner] Failed to read pending resume image for session ${sessionId}:`,
+          err,
+        );
+      }
+    }
+  }
+
   // Mark session as active (before starting so concurrency checks work)
   await db
     .update(sessions)
@@ -194,6 +228,7 @@ export async function runSession(
     envOverrides,
     mcpConfigPath,
     mcpServers,
+    initialImage,
   );
 
   // Wait until the session releases its pg-boss slot (first awaiting_input or

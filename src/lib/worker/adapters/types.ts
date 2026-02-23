@@ -27,6 +27,8 @@ export interface SpawnOpts {
   allowedTools?: string[];
   /** MCP servers to inject via ACP session/new (Gemini only). */
   mcpServers?: AcpMcpServer[];
+  /** Initial image to attach to the first user message (for cold resumes with image attachments). */
+  initialImage?: ImageContent;
 }
 
 export interface ManagedProcess {

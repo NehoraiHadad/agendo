@@ -243,9 +243,23 @@ export class ClaudeAdapter implements AgentAdapter {
     const cp = this.childProcess;
     cp.unref();
 
+    // Build initial message: include an image content block when provided (cold resume with attachment).
+    const initialContent: unknown = opts.initialImage
+      ? [
+          { type: 'text', text: prompt },
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: opts.initialImage.mimeType,
+              data: opts.initialImage.data,
+            },
+          },
+        ]
+      : prompt;
     const initialMessage = JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: prompt },
+      message: { role: 'user', content: initialContent },
       session_id: 'default',
       parent_tool_use_id: null,
     });
