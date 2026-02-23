@@ -38,22 +38,52 @@ const COMMANDS_WITH_ARGS = new Set(['compact', 'model', 'pr_comments', 'review']
 // the slash_commands field of the system:init event (Claude only advertises
 // skills + a subset of builtins there).
 const BUILTIN_COMMANDS: SlashCommand[] = [
-  { name: '/clear',       description: 'Clear conversation history',         category: 'builtin' },
-  { name: '/compact',     description: 'Compact context with summary',       category: 'builtin', hasArgs: true },
-  { name: '/cost',        description: 'Show token usage and cost',          category: 'builtin' },
-  { name: '/status',      description: 'Show account and system status',     category: 'builtin' },
-  { name: '/doctor',      description: 'Check system health',                category: 'builtin' },
-  { name: '/bug',         description: 'Submit a bug report',                category: 'builtin' },
-  { name: '/help',        description: 'Show help and all commands',         category: 'builtin' },
-  { name: '/vim',         description: 'Toggle vim keybindings',             category: 'builtin' },
-  { name: '/model',       description: 'Switch the AI model',                category: 'builtin', interactive: true },
-  { name: '/memory',      description: 'Edit Claude memory files',           category: 'builtin', interactive: true },
-  { name: '/exit',        description: 'End the current session',            category: 'builtin', interactive: true },
-  { name: '/terminal',    description: 'Open a terminal session',            category: 'builtin', interactive: true },
-  { name: '/mcp',         description: 'List MCP server connections',        category: 'builtin', blocked: true },
-  { name: '/permissions', description: 'List tool permissions',              category: 'builtin', blocked: true },
-  { name: '/login',       description: 'Switch Anthropic account',           category: 'builtin', interactive: true },
-  { name: '/logout',      description: 'Log out of current account',         category: 'builtin', interactive: true },
+  { name: '/clear', description: 'Clear conversation history', category: 'builtin' },
+  {
+    name: '/compact',
+    description: 'Compact context with summary',
+    category: 'builtin',
+    hasArgs: true,
+  },
+  { name: '/cost', description: 'Show token usage and cost', category: 'builtin' },
+  { name: '/status', description: 'Show account and system status', category: 'builtin' },
+  { name: '/doctor', description: 'Check system health', category: 'builtin' },
+  { name: '/bug', description: 'Submit a bug report', category: 'builtin' },
+  { name: '/help', description: 'Show help and all commands', category: 'builtin' },
+  { name: '/vim', description: 'Toggle vim keybindings', category: 'builtin' },
+  { name: '/model', description: 'Switch the AI model', category: 'builtin', interactive: true },
+  {
+    name: '/memory',
+    description: 'Edit Claude memory files',
+    category: 'builtin',
+    interactive: true,
+  },
+  { name: '/exit', description: 'End the current session', category: 'builtin', interactive: true },
+  {
+    name: '/terminal',
+    description: 'Open a terminal session',
+    category: 'builtin',
+    interactive: true,
+  },
+  { name: '/mcp', description: 'List MCP server connections', category: 'builtin', blocked: true },
+  {
+    name: '/permissions',
+    description: 'List tool permissions',
+    category: 'builtin',
+    blocked: true,
+  },
+  {
+    name: '/login',
+    description: 'Switch Anthropic account',
+    category: 'builtin',
+    interactive: true,
+  },
+  {
+    name: '/logout',
+    description: 'Log out of current account',
+    category: 'builtin',
+    interactive: true,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -67,7 +97,12 @@ interface SlashCommandPickerProps {
   onChangeActive: (idx: number) => void;
 }
 
-function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: SlashCommandPickerProps) {
+function SlashCommandPicker({
+  commands,
+  activeIdx,
+  onSelect,
+  onChangeActive,
+}: SlashCommandPickerProps) {
   if (commands.length === 0) return null;
 
   const hasSkills = commands.some((c) => c.category === 'skill' || !c.category);
@@ -84,7 +119,9 @@ function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: S
       <ul className="max-h-48 overflow-auto" role="listbox">
         {showCategories && hasSkills && (
           <li className="px-3 pt-1.5 pb-0.5" aria-hidden>
-            <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">Skills</span>
+            <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">
+              Skills
+            </span>
           </li>
         )}
         {commands.map((cmd, i) => {
@@ -97,7 +134,9 @@ function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: S
             <li key={`${i}-${cmd.name}`}>
               {isFirstBuiltin && (
                 <div className="px-3 py-1 border-t border-white/[0.06] mt-0.5">
-                  <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">Commands</span>
+                  <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">
+                    Commands
+                  </span>
                 </div>
               )}
               <div
@@ -113,7 +152,12 @@ function SlashCommandPicker({ commands, activeIdx, onSelect, onChangeActive }: S
                 <span className="text-muted-foreground/60 truncate">{cmd.description}</span>
                 <span className="ml-auto shrink-0 flex items-center gap-1">
                   {cmd.blocked && (
-                    <span className="text-amber-500/50 text-[10px] font-mono" title="Not available in stream mode">⊘</span>
+                    <span
+                      className="text-amber-500/50 text-[10px] font-mono"
+                      title="Not available in stream mode"
+                    >
+                      ⊘
+                    </span>
                   )}
                   {cmd.interactive && !cmd.blocked && (
                     <ExternalLink className="size-2.5 text-muted-foreground/30" />
@@ -180,7 +224,13 @@ function getBlockedMessage(
 // Main component
 // ---------------------------------------------------------------------------
 
-export function SessionMessageInput({ sessionId, status, onSent, slashCommands, mcpServers }: SessionMessageInputProps) {
+export function SessionMessageInput({
+  sessionId,
+  status,
+  onSent,
+  slashCommands,
+  mcpServers,
+}: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -196,7 +246,8 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands, 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isAccepting = status === 'active' || status === 'awaiting_input' || status === 'idle' || status === 'ended';
+  const isAccepting =
+    status === 'active' || status === 'awaiting_input' || status === 'idle' || status === 'ended';
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -213,7 +264,14 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands, 
     const key = `/${name}`;
     if (seenLive.has(key)) return [];
     seenLive.add(key);
-    return [{ name: key, description: name.replace(/-/g, ' '), hasArgs: COMMANDS_WITH_ARGS.has(name), category: 'skill' as const }];
+    return [
+      {
+        name: key,
+        description: name.replace(/-/g, ' '),
+        hasArgs: COMMANDS_WITH_ARGS.has(name),
+        category: 'skill' as const,
+      },
+    ];
   });
   const liveNames = new Set(liveCommands.map((c) => c.name));
   const allCommands: SlashCommand[] = [
@@ -238,10 +296,14 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands, 
         setShowExitConfirm(true);
         break;
       case '/terminal':
-        setToast('Terminal is available in the execution view. Open an execution and use the Terminal tab.');
+        setToast(
+          'Terminal is available in the execution view. Open an execution and use the Terminal tab.',
+        );
         break;
       default:
-        setToast(`"${name}" requires terminal interaction. Use the Terminal tab in an execution view.`);
+        setToast(
+          `"${name}" requires terminal interaction. Use the Terminal tab in an execution view.`,
+        );
     }
   }
 
@@ -491,6 +553,7 @@ export function SessionMessageInput({ sessionId, status, onSent, slashCommands, 
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             rows={1}
+            dir="auto"
             className="flex-1 min-h-[44px] max-h-32 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 disabled:opacity-50 transition-[border-color,box-shadow] resize-none leading-tight overflow-y-auto"
             disabled={isSending}
             autoComplete="off"

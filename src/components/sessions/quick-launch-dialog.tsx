@@ -149,6 +149,7 @@ export function QuickLaunchDialog({
             </Label>
             <Textarea
               id="ql-prompt"
+              dir="auto"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="What do you want to work on?"

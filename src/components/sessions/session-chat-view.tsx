@@ -32,11 +32,19 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
   p: ({ children }) => <p className="mb-1 last:mb-0 leading-relaxed">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic text-foreground/80">{children}</em>,
-  h1: ({ children }) => <h1 className="text-base font-bold text-foreground mb-1 mt-2">{children}</h1>,
+  h1: ({ children }) => (
+    <h1 className="text-base font-bold text-foreground mb-1 mt-2">{children}</h1>
+  ),
   h2: ({ children }) => <h2 className="text-sm font-bold text-foreground mb-1 mt-2">{children}</h2>,
-  h3: ({ children }) => <h3 className="text-sm font-semibold text-foreground/90 mb-1 mt-1">{children}</h3>,
-  ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1 text-foreground/80">{children}</ul>,
-  ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1 text-foreground/80">{children}</ol>,
+  h3: ({ children }) => (
+    <h3 className="text-sm font-semibold text-foreground/90 mb-1 mt-1">{children}</h3>
+  ),
+  ul: ({ children }) => (
+    <ul className="list-disc list-inside space-y-0.5 my-1 text-foreground/80">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal list-inside space-y-0.5 my-1 text-foreground/80">{children}</ol>
+  ),
   li: ({ children }) => <li className="leading-relaxed">{children}</li>,
   code: ({ children, className }) => {
     const isBlock = className?.startsWith('language-');
@@ -49,15 +57,24 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
         <CopyButton text={text} className="absolute top-1 right-1" />
       </div>
     ) : (
-      <code className="bg-white/[0.08] rounded px-1 text-xs font-mono text-foreground/90">{children}</code>
+      <code className="bg-white/[0.08] rounded px-1 text-xs font-mono text-foreground/90">
+        {children}
+      </code>
     );
   },
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-primary/40 pl-3 my-1 text-muted-foreground italic">{children}</blockquote>
+    <blockquote className="border-l-2 border-primary/40 pl-3 my-1 text-muted-foreground italic">
+      {children}
+    </blockquote>
   ),
   hr: () => <hr className="border-white/[0.08] my-2" />,
   a: ({ href, children }) => (
-    <a href={href} className="text-primary underline hover:text-primary/80" target="_blank" rel="noopener noreferrer">
+    <a
+      href={href}
+      className="text-primary underline hover:text-primary/80"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
       {children}
     </a>
   ),
@@ -77,7 +94,8 @@ function ToolOutput({ name, result }: { name: string; result: ToolCallResult }) 
   if (!content) return null;
 
   const truncated = content.length > 800 ? content.slice(0, 800) + '\n…(truncated)' : content;
-  const baseClass = 'text-xs font-mono whitespace-pre-wrap break-all overflow-auto rounded p-2 mt-1 pr-8';
+  const baseClass =
+    'text-xs font-mono whitespace-pre-wrap break-all overflow-auto rounded p-2 mt-1 pr-8';
 
   let colorClass: string;
   if (isError) {
@@ -121,13 +139,10 @@ interface ToolState {
 function ToolCard({ tool }: { tool: ToolState }) {
   const hasResult = tool.result !== undefined;
   const isError = tool.result?.isError ?? false;
-  const [open, setOpen] = useState(!hasResult || isError);
-
-  useEffect(() => {
-    if (hasResult && !isError) {
-      setOpen(false);
-    }
-  }, [hasResult, isError]);
+  // Derive open state: auto-open while pending or on error, auto-close on success.
+  // manualOpen overrides auto-behavior once the user explicitly toggles.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen !== null ? manualOpen : !hasResult || isError;
 
   const statusIcon = !hasResult ? (
     <Loader2 className="size-3 text-zinc-400 animate-spin" />
@@ -148,7 +163,7 @@ function ToolCard({ tool }: { tool: ToolState }) {
       <button
         type="button"
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/5 rounded-md transition-colors"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setManualOpen((v) => (v !== null ? !v : !open))}
         aria-expanded={open}
       >
         <Wrench className="size-3 shrink-0 text-muted-foreground/50" />
@@ -256,14 +271,18 @@ function AssistantBubble({ parts }: { parts: AssistantPart[] }) {
       <div className="space-y-1.5 min-w-0 w-full">
         {parts.map((part, i) =>
           part.kind === 'text' ? (
-            <div key={i} className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words leading-relaxed">
+            <div
+              key={i}
+              dir="auto"
+              className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words leading-relaxed"
+            >
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {part.text}
               </ReactMarkdown>
             </div>
           ) : (
             <ToolCard key={part.tool.toolUseId} tool={part.tool} />
-          )
+          ),
         )}
       </div>
     </div>
@@ -302,7 +321,10 @@ function ThinkingBubble({ text }: { text: string }) {
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex gap-2 items-start justify-end">
-      <div className="rounded-2xl rounded-tr-sm bg-primary/15 border border-primary/20 text-foreground ml-auto px-4 py-2 text-sm max-w-[85%] whitespace-pre-wrap break-words">
+      <div
+        dir="auto"
+        className="rounded-2xl rounded-tr-sm bg-primary/15 border border-primary/20 text-foreground ml-auto px-4 py-2 text-sm max-w-[85%] whitespace-pre-wrap break-words"
+      >
         {text}
       </div>
       <div className="mt-1 flex-shrink-0 rounded-full bg-primary/10 border border-primary/20 p-1.5">
@@ -331,9 +353,7 @@ function TypingIndicator() {
 // Display item types and build logic
 // ---------------------------------------------------------------------------
 
-type AssistantPart =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; tool: ToolState };
+type AssistantPart = { kind: 'text'; text: string } | { kind: 'tool'; tool: ToolState };
 
 type DisplayItem =
   | { kind: 'assistant'; id: number; parts: AssistantPart[] }
@@ -362,7 +382,10 @@ function buildToolResultMap(events: AgendoEvent[]): Map<string, ToolCallResult> 
   return map;
 }
 
-function buildDisplayItems(events: AgendoEvent[], toolResultMap: Map<string, ToolCallResult>): DisplayItem[] {
+function buildDisplayItems(
+  events: AgendoEvent[],
+  toolResultMap: Map<string, ToolCallResult>,
+): DisplayItem[] {
   const items: DisplayItem[] = [];
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
@@ -611,7 +634,9 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
         {stream.events.length === 0 && !stream.error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
             <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs">{stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}</span>
+            <span className="text-xs">
+              {stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}
+            </span>
           </div>
         )}
 
@@ -639,10 +664,11 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
             className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
             aria-label="Stop current agent action"
           >
-            {isInterrupting
-              ? <Loader2 className="size-3 animate-spin" />
-              : <Square className="size-3 fill-current" />
-            }
+            {isInterrupting ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Square className="size-3 fill-current" />
+            )}
             Stop
           </button>
         </div>
