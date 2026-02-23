@@ -44,9 +44,9 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Geist font families */
-  --font-sans: var(--font-geist), system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), monospace;
+  /* Outfit + JetBrains Mono */
+  --font-sans: var(--font-outfit), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), 'Cascadia Code', monospace;
 
   /* Custom animations */
   --animate-pulse-violet: pulse-violet 2s ease-in-out infinite;

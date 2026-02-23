@@ -11,6 +11,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Paperclip,
   Square,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -21,6 +22,7 @@ import { EditView } from '@/components/executions/tool-views/edit-view';
 import { MultiEditView } from '@/components/executions/tool-views/multi-edit-view';
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
+import { AskUserQuestionCard } from '@/components/sessions/ask-user-question-card';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
 
@@ -166,12 +168,29 @@ interface ToolState {
   result?: ToolCallResult;
 }
 
-function ToolCard({ tool }: { tool: ToolState }) {
-  const hasResult = tool.result !== undefined;
-  const isError = tool.result?.isError ?? false;
+function ToolCard({ tool, sessionId }: { tool: ToolState; sessionId: string }) {
   // Derive open state: auto-open while pending or on error, auto-close on success.
   // manualOpen overrides auto-behavior once the user explicitly toggles.
+  // Must be declared before any early return to satisfy Rules of Hooks.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+
+  // AskUserQuestion gets a dedicated interactive card instead of the generic JSON view.
+  if (tool.toolName === 'AskUserQuestion') {
+    const questions = Array.isArray(tool.input.questions)
+      ? (tool.input.questions as Parameters<typeof AskUserQuestionCard>[0]['questions'])
+      : [];
+    return (
+      <AskUserQuestionCard
+        sessionId={sessionId}
+        toolUseId={tool.toolUseId}
+        questions={questions}
+        isAnswered={tool.result !== undefined}
+      />
+    );
+  }
+
+  const hasResult = tool.result !== undefined;
+  const isError = tool.result?.isError ?? false;
   const open = manualOpen !== null ? manualOpen : !hasResult || isError;
 
   const statusIcon = !hasResult ? (
@@ -335,7 +354,7 @@ function ErrorPill({ text }: { text: string }) {
   );
 }
 
-function AssistantBubble({ parts }: { parts: AssistantPart[] }) {
+function AssistantBubble({ parts, sessionId }: { parts: AssistantPart[]; sessionId: string }) {
   return (
     <div className="flex gap-2 items-start w-full">
       <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
@@ -353,7 +372,7 @@ function AssistantBubble({ parts }: { parts: AssistantPart[] }) {
               </ReactMarkdown>
             </div>
           ) : (
-            <ToolCard key={part.tool.toolUseId} tool={part.tool} />
+            <ToolCard key={part.tool.toolUseId} tool={part.tool} sessionId={sessionId} />
           ),
         )}
       </div>
@@ -390,14 +409,35 @@ function ThinkingBubble({ text }: { text: string }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+function UserBubble({
+  text,
+  hasImage,
+  imageDataUrl,
+}: {
+  text: string;
+  hasImage?: boolean;
+  imageDataUrl?: string;
+}) {
   return (
     <div className="flex gap-2 items-start justify-end">
       <div
         dir="auto"
-        className="rounded-2xl rounded-tr-sm bg-primary/15 border border-primary/20 text-foreground ml-auto px-4 py-2 text-sm max-w-[85%] whitespace-pre-wrap break-words"
+        className="rounded-2xl rounded-tr-sm bg-primary/15 border border-primary/20 text-foreground ml-auto px-3 py-2 text-sm max-w-[85%] space-y-2"
       >
-        {text}
+        {imageDataUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imageDataUrl}
+            alt="attachment"
+            className="max-h-48 max-w-full rounded-lg object-contain"
+          />
+        ) : hasImage ? (
+          <div className="flex items-center gap-1.5 text-xs text-primary/70">
+            <Paperclip className="size-3 shrink-0" />
+            <span>Image attached</span>
+          </div>
+        ) : null}
+        {text && <span className="whitespace-pre-wrap break-words block">{text}</span>}
       </div>
       <div className="mt-1 flex-shrink-0 rounded-full bg-primary/10 border border-primary/20 p-1.5">
         <User className="size-3.5 text-primary" />
@@ -437,7 +477,7 @@ type DisplayItem =
       sessionCostUsd: number | null;
     }
   | { kind: 'thinking'; id: number; text: string }
-  | { kind: 'user'; id: number; text: string }
+  | { kind: 'user'; id: number; text: string; hasImage?: boolean }
   | { kind: 'info'; id: number; text: string }
   | { kind: 'error'; id: number; text: string }
   | {
@@ -572,7 +612,7 @@ function buildDisplayItems(
       }
 
       case 'user:message': {
-        items.push({ kind: 'user', id: ev.id, text: ev.text });
+        items.push({ kind: 'user', id: ev.id, text: ev.text, hasImage: ev.hasImage });
         break;
       }
 
@@ -608,7 +648,9 @@ interface SessionChatViewProps {
 export function SessionChatView({ sessionId, stream, currentStatus }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const [optimisticMessages, setOptimisticMessages] = useState<{ id: string; text: string }[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<
+    { id: string; text: string; imageDataUrl?: string }[]
+  >([]);
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
   const msgIdRef = useRef(0);
@@ -623,8 +665,11 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
     }
   }, [sessionId, isInterrupting]);
 
-  const handleSent = useCallback((text: string) => {
-    setOptimisticMessages((prev) => [...prev, { id: String(++msgIdRef.current), text }]);
+  const handleSent = useCallback((text: string, imageDataUrl?: string) => {
+    setOptimisticMessages((prev) => [
+      ...prev,
+      { id: String(++msgIdRef.current), text, imageDataUrl },
+    ]);
   }, []);
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
@@ -668,11 +713,11 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
   function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
     switch (item.kind) {
       case 'assistant':
-        return <AssistantBubble key={idx} parts={item.parts} />;
+        return <AssistantBubble key={idx} parts={item.parts} sessionId={sessionId} />;
       case 'thinking':
         return <ThinkingBubble key={idx} text={item.text} />;
       case 'user':
-        return <UserBubble key={idx} text={item.text} />;
+        return <UserBubble key={idx} text={item.text} hasImage={item.hasImage} />;
       case 'turn-complete':
         return (
           <TurnCompletePill
@@ -748,7 +793,7 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
 
         {/* Optimistic user messages shown while real event is in-flight */}
         {optimisticMessages.map((msg) => (
-          <UserBubble key={`opt-${msg.id}`} text={msg.text} />
+          <UserBubble key={`opt-${msg.id}`} text={msg.text} imageDataUrl={msg.imageDataUrl} />
         ))}
 
         {showTyping && <TypingIndicator />}

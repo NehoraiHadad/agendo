@@ -68,8 +68,20 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
 
   for (const session of orphaned) {
     if (session.pid != null && isPidAlive(session.pid)) {
-      console.log(`[zombie] Session ${session.id} PID ${session.pid} still alive, skipping`);
-      continue;
+      // Process is still alive but the worker that owned it died — kill the orphan.
+      // Without a managing SessionProcess, Claude's output is unread and no onExit
+      // callback will update the DB. Kill it now so it can be cleanly recovered.
+      console.log(
+        `[zombie] Session ${session.id} PID ${session.pid} still alive but orphaned — killing`,
+      );
+      try {
+        // Kill the entire process group (negative PID = process group leader)
+        process.kill(-session.pid, 'SIGTERM');
+      } catch {
+        // Already dead between check and kill — fine, fall through
+      }
+      // Brief pause so the process can die before we update the DB
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     await db

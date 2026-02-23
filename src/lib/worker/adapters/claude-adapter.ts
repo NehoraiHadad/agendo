@@ -119,6 +119,25 @@ export class ClaudeAdapter implements AgentAdapter {
     });
   }
 
+  async sendToolResult(toolUseId: string, content: string): Promise<void> {
+    return this.lock.acquire(async () => {
+      if (!this.childProcess?.stdin?.writable) {
+        throw new Error('Claude process stdin is not writable');
+      }
+      this.hasEmittedThinking = false;
+      const ndjsonMessage = JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+        },
+        session_id: this.sessionId ?? 'default',
+        parent_tool_use_id: null,
+      });
+      this.childProcess.stdin.write(ndjsonMessage + '\n');
+    });
+  }
+
   async interrupt(): Promise<void> {
     const stdin = this.childProcess?.stdin;
     if (stdin?.writable) {
@@ -167,8 +186,9 @@ export class ClaudeAdapter implements AgentAdapter {
         this.childProcess?.stdout?.off('data', onData);
         resolve(result);
       };
-      const onData = (chunk: string) => {
-        for (const line of chunk.split('\n')) {
+      const onData = (chunk: Buffer | string) => {
+        const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
+        for (const line of text.split('\n')) {
           try {
             const parsed = JSON.parse(line.trim()) as Record<string, unknown>;
             if (parsed.type === 'result') finish(true);

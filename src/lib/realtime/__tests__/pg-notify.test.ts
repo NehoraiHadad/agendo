@@ -10,7 +10,7 @@ vi.mock('@/lib/db', () => ({
 vi.mock('drizzle-orm', () => ({
   sql: Object.assign(
     (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
-    { raw: (s: string) => s }
+    { raw: (s: string) => s },
   ),
 }));
 
@@ -27,6 +27,7 @@ vi.mock('pg', () => ({
       query: vi.fn().mockResolvedValue(undefined),
       release: vi.fn(),
       on: vi.fn(),
+      off: vi.fn(),
     }),
   })),
 }));

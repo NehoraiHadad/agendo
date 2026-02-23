@@ -57,6 +57,8 @@ export interface AgentAdapter {
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
   extractSessionId(output: string): string | null;
   sendMessage(message: string, image?: ImageContent): Promise<void>;
+  /** Send a tool_result NDJSON message for a pending tool_use (e.g. AskUserQuestion). Optional — only Claude supports this. */
+  sendToolResult?(toolUseId: string, content: string): Promise<void>;
   interrupt(): Promise<void>;
   isAlive(): boolean;
   onThinkingChange(cb: (thinking: boolean) => void): void;

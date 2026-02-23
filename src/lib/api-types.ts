@@ -35,6 +35,11 @@ export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T
     ...options,
   });
 
+  // 204 No Content has no body — skip JSON parse
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   const body = await response.json();
 
   if (!response.ok) {

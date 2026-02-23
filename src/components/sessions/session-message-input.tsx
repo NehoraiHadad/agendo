@@ -188,7 +188,7 @@ interface PendingImage {
 interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
-  onSent?: (text: string) => void;
+  onSent?: (text: string, imageDataUrl?: string) => void;
   /** Live slash commands received from the agent's system:init event */
   slashCommands?: string[];
   /** MCP servers received from the agent's system:init event */
@@ -363,7 +363,7 @@ export function SessionMessageInput({
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
-      onSent?.(trimmed);
+      onSent?.(trimmed, pendingImage?.dataUrl);
     } catch {
       // transient error — user can retry
     } finally {
@@ -433,6 +433,8 @@ export function SessionMessageInput({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showPicker, showModelPicker]);
 
+  const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -441,9 +443,30 @@ export function SessionMessageInput({
       const dataUrl = reader.result as string;
       const commaIdx = dataUrl.indexOf(',');
       const meta = dataUrl.slice(0, commaIdx);
-      const data = dataUrl.slice(commaIdx + 1);
-      const mimeType = meta.match(/:(.*?);/)?.[1] ?? 'image/png';
-      setPendingImage({ dataUrl, mimeType, data });
+      const rawData = dataUrl.slice(commaIdx + 1);
+      // Normalize: image/jpg → image/jpeg
+      let mimeType = (meta.match(/:(.*?);/)?.[1] ?? 'image/png').toLowerCase();
+      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
+
+      if (SUPPORTED_IMAGE_TYPES.has(mimeType)) {
+        setPendingImage({ dataUrl, mimeType, data: rawData });
+        return;
+      }
+
+      // Unsupported format — convert to JPEG via canvas
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0);
+        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const jpegData = jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1);
+        setPendingImage({ dataUrl: jpegDataUrl, mimeType: 'image/jpeg', data: jpegData });
+      };
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
     e.target.value = '';

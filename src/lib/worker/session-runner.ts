@@ -2,7 +2,7 @@ import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { sessions, tasks, projects } from '@/lib/db/schema';
+import { tasks, projects } from '@/lib/db/schema';
 import { config } from '@/lib/config';
 import { getSession } from '@/lib/services/session-service';
 import { getAgentById } from '@/lib/services/agent-service';
@@ -157,6 +157,9 @@ export async function runSession(
 
   // Phase F: On cold resume, prepend a summary of recent task progress notes so
   // the agent has context about what was accomplished before the session ended.
+  // Save the user's display text BEFORE prepending the context so the chat view
+  // shows only what the user actually typed (not the system preamble).
+  const userResumeText = resumeRef ? prompt : undefined;
   if (resumeRef && session.taskId && task) {
     const recentEvents = await listTaskEvents(session.taskId, 10);
     const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
@@ -213,12 +216,6 @@ export async function runSession(
     }
   }
 
-  // Mark session as active (before starting so concurrency checks work)
-  await db
-    .update(sessions)
-    .set({ status: 'active', startedAt: new Date(), workerId })
-    .where(eq(sessions.id, sessionId));
-
   const adapter = selectAdapter(agent, capability);
   const sessionProc = new SessionProcess(session, adapter, workerId);
   await sessionProc.start(
@@ -229,6 +226,7 @@ export async function runSession(
     mcpConfigPath,
     mcpServers,
     initialImage,
+    userResumeText,
   );
 
   // Wait until the session releases its pg-boss slot (first awaiting_input or
