@@ -44,13 +44,14 @@ export const POST = withErrorBoundary(
       throw new BadRequestError('Agent has no prompt-mode capability');
     }
 
-    // Create scratch task
+    // Create scratch task (isAdHoc=true so it is excluded from the Kanban board)
     const task = await createTask({
       title: `Ad-hoc · ${format(new Date(), 'MMM d, HH:mm')}`,
       description: 'Auto-created for quick agent launch.',
       projectId: id,
       status: 'in_progress',
       assigneeAgentId: body.agentId,
+      isAdHoc: true,
     });
 
     // Create and enqueue session

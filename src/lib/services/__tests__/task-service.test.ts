@@ -6,12 +6,14 @@ const mockTaskBase = {
   ownerId: '00000000-0000-0000-0000-000000000001',
   workspaceId: '00000000-0000-0000-0000-000000000001',
   parentTaskId: null,
+  projectId: null,
   title: 'Test Task',
   description: null,
   status: 'todo' as const,
   priority: 3,
   sortOrder: 1000,
   assigneeAgentId: null,
+  isAdHoc: false,
   inputContext: {},
   dueAt: null,
   createdAt: new Date(),
@@ -78,7 +80,7 @@ vi.mock('@/lib/db', () => {
   };
 });
 
-import { createTask, updateTask, listTasksByStatus } from '../task-service';
+import { createTask, updateTask, listTasksByStatus, listTasksBoardItems } from '../task-service';
 import { computeSortOrder } from '@/lib/sort-order';
 
 describe('task-service', () => {
@@ -109,6 +111,22 @@ describe('task-service', () => {
 
       const result = await createTask({ title: 'New Task' });
       expect(result.sortOrder).toBe(1000);
+    });
+
+    it('creates an ad-hoc task when isAdHoc: true is provided', async () => {
+      mockState.selectResult = [];
+      mockState.insertResult = [{ ...mockTaskBase, isAdHoc: true }];
+
+      const result = await createTask({ title: 'Ad-hoc · Feb 23, 10:00', isAdHoc: true });
+      expect(result.isAdHoc).toBe(true);
+    });
+
+    it('defaults isAdHoc to false for regular tasks', async () => {
+      mockState.selectResult = [];
+      mockState.insertResult = [{ ...mockTaskBase, isAdHoc: false }];
+
+      const result = await createTask({ title: 'Regular Task' });
+      expect(result.isAdHoc).toBe(false);
     });
   });
 
@@ -143,7 +161,24 @@ describe('task-service', () => {
 
   describe('listTasksByStatus', () => {
     it('respects cursor - returns only tasks after cursor value', async () => {
-      const task2 = { ...mockTaskBase, id: 'task-2', sortOrder: 2000 };
+      const task2 = {
+        ...mockTaskBase,
+        id: 'task-2',
+        sortOrder: 2000,
+        sort_order: 2000,
+        is_ad_hoc: false,
+        owner_id: mockTaskBase.ownerId,
+        workspace_id: mockTaskBase.workspaceId,
+        parent_task_id: null,
+        project_id: null,
+        assignee_agent_id: null,
+        input_context: {},
+        due_at: null,
+        created_at: mockTaskBase.createdAt,
+        updated_at: mockTaskBase.updatedAt,
+        subtask_total: 0,
+        subtask_done: 0,
+      };
       mockState.selectResult = [task2];
 
       const result = await listTasksByStatus({ status: 'todo', cursor: '1000', limit: 50 });
@@ -160,6 +195,18 @@ describe('task-service', () => {
         id: `task-${i}`,
         sortOrder: (i + 1) * 1000,
         sort_order: (i + 1) * 1000, // snake_case for the raw SQL mapper in listTasksBoardItems
+        is_ad_hoc: false,
+        owner_id: mockTaskBase.ownerId,
+        workspace_id: mockTaskBase.workspaceId,
+        parent_task_id: null,
+        project_id: null,
+        assignee_agent_id: null,
+        input_context: {},
+        due_at: null,
+        created_at: mockTaskBase.createdAt,
+        updated_at: mockTaskBase.updatedAt,
+        subtask_total: 0,
+        subtask_done: 0,
       }));
       mockState.selectResult = tasksArray;
 
@@ -168,6 +215,66 @@ describe('task-service', () => {
       // limit=2, DB returned 3 (limit+1), so hasMore=true
       expect(result.tasks).toHaveLength(2);
       expect(result.nextCursor).toBe('2000');
+    });
+  });
+
+  describe('listTasksBoardItems mapper', () => {
+    it('maps is_ad_hoc snake_case column to isAdHoc camelCase', async () => {
+      const rawRow = {
+        id: '00000000-0000-0000-0000-000000000099',
+        owner_id: '00000000-0000-0000-0000-000000000001',
+        workspace_id: '00000000-0000-0000-0000-000000000001',
+        parent_task_id: null,
+        project_id: null,
+        title: 'Ad-hoc Task',
+        description: null,
+        status: 'in_progress',
+        priority: 3,
+        sort_order: 1000,
+        assignee_agent_id: null,
+        is_ad_hoc: true,
+        input_context: {},
+        due_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        subtask_total: 0,
+        subtask_done: 0,
+      };
+      mockState.selectResult = [rawRow];
+
+      const result = await listTasksBoardItems([]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].isAdHoc).toBe(true);
+    });
+
+    it('maps is_ad_hoc = false correctly', async () => {
+      const rawRow = {
+        id: '00000000-0000-0000-0000-000000000099',
+        owner_id: '00000000-0000-0000-0000-000000000001',
+        workspace_id: '00000000-0000-0000-0000-000000000001',
+        parent_task_id: null,
+        project_id: null,
+        title: 'Regular Task',
+        description: null,
+        status: 'todo',
+        priority: 3,
+        sort_order: 1000,
+        assignee_agent_id: null,
+        is_ad_hoc: false,
+        input_context: {},
+        due_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        subtask_total: 0,
+        subtask_done: 0,
+      };
+      mockState.selectResult = [rawRow];
+
+      const result = await listTasksBoardItems([]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].isAdHoc).toBe(false);
     });
   });
 });
