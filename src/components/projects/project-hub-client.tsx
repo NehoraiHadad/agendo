@@ -117,14 +117,6 @@ export function ProjectHubClient({
                 <span className="text-xs text-muted-foreground">{agent.name}</span>
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => openLaunch()}
-              className="flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border border-dashed border-white/[0.08] hover:border-white/[0.2] transition-colors text-sm min-w-[100px]"
-            >
-              <span className="text-2xl leading-none text-muted-foreground">+</span>
-              <span className="text-xs text-muted-foreground">Pick agent</span>
-            </button>
           </div>
         )}
       </section>
