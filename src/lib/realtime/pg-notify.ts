@@ -26,15 +26,24 @@ export async function publish(channel: string, payload: unknown): Promise<void> 
   const { db } = await import('@/lib/db');
   const { sql } = await import('drizzle-orm');
   const serialized = JSON.stringify(payload);
-  const safe = serialized.length > 7500
-    ? JSON.stringify({ type: 'ref', originalType: (payload as { type?: string }).type ?? 'unknown' })
-    : serialized;
+  const safe =
+    serialized.length > 7500
+      ? JSON.stringify({
+          type: 'ref',
+          originalType: (payload as { type?: string }).type ?? 'unknown',
+        })
+      : serialized;
   await db.execute(sql`SELECT pg_notify(${channel}, ${safe})`);
 }
 
 /**
  * Subscribe to a PG NOTIFY channel.
  * Returns an unsubscribe function that releases the connection.
+ *
+ * IMPORTANT: We must hold a reference to the handler function and remove it
+ * via client.off() before releasing the client back to the pool. Without this,
+ * a reused pool client accumulates stale handlers from previous subscriptions
+ * and fires them all when a new notification arrives — causing duplicate events.
  */
 export async function subscribe(
   channel: string,
@@ -42,10 +51,12 @@ export async function subscribe(
 ): Promise<() => void> {
   const client = await getListenerPool().connect();
   await client.query(`LISTEN "${channel}"`);
-  client.on('notification', (msg) => {
+  const handler = (msg: { channel: string; payload?: string }) => {
     if (msg.channel === channel && msg.payload) callback(msg.payload);
-  });
+  };
+  client.on('notification', handler);
   return () => {
+    client.off('notification', handler);
     client.query(`UNLISTEN "${channel}"`).catch(() => {});
     client.release();
   };

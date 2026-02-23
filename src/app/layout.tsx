@@ -1,18 +1,20 @@
 import type { Metadata, Viewport } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Outfit, JetBrains_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import './globals.css';
 
-const geist = Geist({
+const outfit = Outfit({
   subsets: ['latin'],
-  variable: '--font-geist',
+  variable: '--font-outfit',
   display: 'swap',
+  weight: ['300', '400', '500', '600', '700'],
 });
 
-const geistMono = Geist_Mono({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
-  variable: '--font-geist-mono',
+  variable: '--font-jetbrains',
   display: 'swap',
+  weight: ['400', '500'],
 });
 
 export const viewport: Viewport = {
@@ -39,7 +41,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
+    <html lang="en" className={`${outfit.variable} ${jetbrainsMono.variable} dark`}>
       <body className="font-sans antialiased">
         {children}
         <Toaster richColors position="bottom-right" />

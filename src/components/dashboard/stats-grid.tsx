@@ -1,5 +1,3 @@
-import { Card, CardContent } from '@/components/ui/card';
-import { ListTodo, Play, Clock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { DashboardStats } from '@/lib/services/dashboard-service';
 
@@ -7,70 +5,98 @@ interface StatsGridProps {
   stats: DashboardStats;
 }
 
-const METRIC_CONFIGS = [
+const METRICS = [
   {
-    title: 'TOTAL TASKS',
+    title: 'Total Tasks',
     key: 'totalTasks' as const,
-    icon: ListTodo,
-    borderColor: 'border-blue-500/60',
-    iconColor: 'text-blue-400',
-    glowClass: '',
+    color: 'oklch(0.68 0.14 235)',
+    dimColor: 'oklch(0.68 0.14 235 / 0.12)',
+    isLive: false,
+    isAlert: false,
   },
   {
-    title: 'ACTIVE EXECUTIONS',
+    title: 'Active',
     key: 'activeExecutions' as const,
-    icon: Play,
-    borderColor: 'border-emerald-500/60',
-    iconColor: 'text-emerald-400',
-    glowClass: 'glow-success',
+    color: 'oklch(0.72 0.18 145)',
+    dimColor: 'oklch(0.72 0.18 145 / 0.12)',
+    isLive: true,
+    isAlert: false,
   },
   {
-    title: 'QUEUED',
+    title: 'Queued',
     key: 'queuedExecutions' as const,
-    icon: Clock,
-    borderColor: 'border-amber-500/60',
-    iconColor: 'text-amber-400',
-    glowClass: '',
+    color: 'oklch(0.78 0.15 70)',
+    dimColor: 'oklch(0.78 0.15 70 / 0.12)',
+    isLive: false,
+    isAlert: false,
   },
   {
-    title: 'FAILED (24H)',
+    title: 'Failed / 24h',
     key: 'failedLast24h' as const,
-    icon: AlertTriangle,
-    borderColor: 'border-red-500/60',
-    iconColor: 'text-red-400',
-    glowClass: '',
+    color: 'oklch(0.62 0.22 22)',
+    dimColor: 'oklch(0.62 0.22 22 / 0.12)',
+    isLive: false,
+    isAlert: true,
   },
 ] as const;
 
 export function StatsGrid({ stats }: StatsGridProps) {
+  const allValues = METRICS.map((m) => stats[m.key] as number);
+  const maxValue = Math.max(...allValues, 1);
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {METRIC_CONFIGS.map((metric) => (
-        <Card
-          key={metric.title}
-          className={cn(
-            'border-l-2 hover:scale-[1.01] cursor-default',
-            metric.borderColor,
-            metric.glowClass,
-          )}
-        >
-          <CardContent className="px-5 py-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium mb-2">
-                  {metric.title}
-                </p>
-                <p className="text-4xl font-mono font-semibold text-foreground tabular-nums leading-none">
-                  {stats[metric.key]}
-                </p>
-              </div>
-              <div className={cn('mt-1 rounded-lg p-2 bg-white/[0.04]', metric.iconColor)}>
-                <metric.icon className="h-4 w-4" />
-              </div>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {METRICS.map((m) => {
+        const value = stats[m.key] as number;
+        const pct = (value / maxValue) * 100;
+        const isActive = m.isLive && value > 0;
+        const isAlert = m.isAlert && value > 0;
+        const useAccent = isActive || isAlert;
+
+        return (
+          <div
+            key={m.key}
+            className={cn(
+              'group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[oklch(0.10_0_0)]',
+              'px-5 pt-4 pb-3 transition-colors hover:bg-[oklch(0.115_0_0)] cursor-default',
+              isActive && 'border-l-2',
+              isAlert && value > 0 && 'border-l-2',
+            )}
+            style={
+              useAccent
+                ? {
+                    borderLeftColor: m.color,
+                    boxShadow: `0 0 20px ${m.dimColor}`,
+                  }
+                : { borderLeftColor: 'oklch(0.25 0 0)' }
+            }
+          >
+            {/* Label */}
+            <p className="mb-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground/40 select-none">
+              {m.title}
+            </p>
+
+            {/* Value */}
+            <p
+              className="font-mono text-5xl font-bold tabular-nums leading-none"
+              style={{ color: useAccent ? m.color : 'oklch(0.88 0 0)' }}
+            >
+              {value}
+            </p>
+
+            {/* Bottom progress bar — shows relative magnitude across all metrics */}
+            <div className="mt-4 h-px bg-white/[0.05] overflow-hidden rounded-full">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${pct}%`,
+                  background: `linear-gradient(90deg, ${m.color} 0%, ${m.dimColor} 100%)`,
+                }}
+              />
             </div>
-          </CardContent>
-        </Card>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -43,7 +43,7 @@ export type AgendoEvent =
       mcpServers: Array<{ name: string; status?: string; tools?: string[] }>;
     })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
-  | (EventBase & { type: 'user:message'; text: string })
+  | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
   | (EventBase & { type: 'system:info'; message: string })
   | (EventBase & { type: 'system:error'; message: string });
 
@@ -63,6 +63,12 @@ export type AgendoControl =
       approvalId: string;
       toolName: string;
       decision: 'allow' | 'deny' | 'allow-session';
+    }
+  | {
+      /** Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion). */
+      type: 'tool-result';
+      toolUseId: string;
+      content: string;
     };
 
 // ============================================================================

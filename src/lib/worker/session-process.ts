@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
-import { eq, and, inArray, isNull, or } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
 import { serializeEvent } from '@/lib/realtime/events';
@@ -62,6 +62,10 @@ export class SessionProcess {
   private idleTimeoutKilled = false;
   private interruptInProgress = false;
   private interruptKilled = false;
+  /** Set by terminate() so onExit transitions to 'idle' (resumable) instead of 'ended'. */
+  private terminateKilled = false;
+  /** Set by handleCancel() so onExit skips the "unexpected exit" error message. */
+  private cancelKilled = false;
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
@@ -95,6 +99,10 @@ export class SessionProcess {
    * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
    *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
    * @param mcpServers - Optional MCP server list for ACP session/new (Gemini).
+   * @param initialImage - Optional image attachment for cold resume.
+   * @param displayText - Optional override for the user:message event text. When
+   *   provided (e.g. on cold resume), only this text is shown in the chat view
+   *   instead of the full prompt (which may contain system context preambles).
    */
   async start(
     prompt: string,
@@ -104,19 +112,18 @@ export class SessionProcess {
     mcpConfigPath?: string,
     mcpServers?: AcpMcpServer[],
     initialImage?: ImageContent,
+    displayText?: string,
   ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
-    // Only claim if status is idle/active and no other worker owns it.
+    // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
+    // reconciler always resets orphaned 'active' sessions back to 'idle' before
+    // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
+    // 'active' here caused a double-claim race: the retried old job and the
+    // reconciler's new job both claimed the same session concurrently.
     const [claimed] = await db
       .update(sessions)
       .set({ status: 'active', workerId: this.workerId, startedAt: new Date() })
-      .where(
-        and(
-          eq(sessions.id, this.session.id),
-          inArray(sessions.status, ['idle', 'active', 'ended']),
-          or(isNull(sessions.workerId), eq(sessions.workerId, this.workerId)),
-        ),
-      )
+      .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
       .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
 
     if (!claimed) {
@@ -213,7 +220,9 @@ export class SessionProcess {
     if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the
       // session log and is replayed after a page refresh (cold-resume path).
-      await this.emitEvent({ type: 'user:message', text: prompt });
+      // Use displayText if provided so system preambles (e.g. [Previous Work Summary])
+      // are not shown in the chat view.
+      await this.emitEvent({ type: 'user:message', text: displayText ?? prompt });
       this.managedProcess = this.adapter.resume(resumeRef, prompt, spawnOpts);
     } else {
       this.managedProcess = this.adapter.spawn(prompt, spawnOpts);
@@ -435,6 +444,8 @@ export class SessionProcess {
           await this.persistAllowedTool(control.toolName);
         }
       }
+    } else if (control.type === 'tool-result') {
+      await this.pushToolResult(control.toolUseId, control.content);
     }
   }
 
@@ -454,7 +465,27 @@ export class SessionProcess {
       return;
     }
     await this.adapter.sendMessage(text, image);
-    await this.emitEvent({ type: 'user:message', text });
+    await this.emitEvent({ type: 'user:message', text, hasImage: !!image });
+    await this.transitionTo('active');
+    this.resetIdleTimer();
+  }
+
+  /**
+   * Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion).
+   * Only valid when the session is active or awaiting_input.
+   */
+  async pushToolResult(toolUseId: string, content: string): Promise<void> {
+    if (!['active', 'awaiting_input'].includes(this.status)) {
+      console.warn(
+        `[session-process] pushToolResult ignored — session ${this.session.id} is ${this.status}`,
+      );
+      return;
+    }
+    if (!this.adapter.sendToolResult) {
+      console.warn(`[session-process] adapter does not support sendToolResult`);
+      return;
+    }
+    await this.adapter.sendToolResult(toolUseId, content);
     await this.transitionTo('active');
     this.resetIdleTimer();
   }
@@ -464,6 +495,9 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   private async handleCancel(): Promise<void> {
+    // Set flag BEFORE sending the interrupt so onExit doesn't emit "Session ended
+    // unexpectedly" — a user-initiated cancel is not a crash.
+    this.cancelKilled = true;
     await this.emitEvent({ type: 'system:info', message: 'Cancellation requested' });
     // Emit synthetic tool-end for every in-flight tool call to prevent forever-spinners
     for (const toolUseId of this.activeToolUseIds) {
@@ -614,11 +648,21 @@ export class SessionProcess {
     this.unsubscribeControl = null;
 
     // Determine final session status based on exit code.
-    // SIGINT (130) = user-requested cancel -> ended.
-    // Clean exit (0) = agent finished normally -> idle (resumable).
-    // Anything else -> ended.
+    // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
+    // Clean exit (0) = agent finished normally → idle (resumable).
+    // terminateKilled = graceful worker shutdown → idle (auto-resumable on next message).
+    // interruptKilled / idleTimeoutKilled → idle (resumable).
+    // Anything else → ended (crash / unsupported command).
     if (this.status === 'active' || this.status === 'awaiting_input') {
-      if (exitCode === 0 || this.idleTimeoutKilled || this.interruptKilled) {
+      if (this.cancelKilled) {
+        // Cancel route already set status='ended' in DB — just kill the tmux companion.
+        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
+      } else if (
+        exitCode === 0 ||
+        this.idleTimeoutKilled ||
+        this.interruptKilled ||
+        this.terminateKilled
+      ) {
         await this.transitionTo('idle');
       } else {
         await this.emitEvent({
@@ -817,6 +861,9 @@ export class SessionProcess {
    * Used during worker shutdown to terminate live sessions that are awaiting input.
    */
   terminate(): void {
+    // Set flag BEFORE sending SIGTERM so onExit transitions to 'idle' (resumable)
+    // instead of 'ended'. This allows cold-resume after a graceful worker restart.
+    this.terminateKilled = true;
     this.managedProcess?.kill('SIGTERM');
   }
 }
