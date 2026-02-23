@@ -2,11 +2,27 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Circle, ExternalLink } from 'lucide-react';
+import {
+  ArrowRight,
+  Circle,
+  ExternalLink,
+  Sparkles,
+  Brain,
+  Code,
+  Bot,
+  type LucideIcon,
+} from 'lucide-react';
 import { QuickLaunchDialog } from '@/components/sessions/quick-launch-dialog';
 import type { Project, Task, Agent } from '@/lib/types';
 import type { SessionWithAgent } from '@/lib/services/session-service';
 import type { SessionStatus } from '@/lib/realtime/events';
+
+const LUCIDE_ICONS: Record<string, LucideIcon> = {
+  sparkles: Sparkles,
+  brain: Brain,
+  code: Code,
+  bot: Bot,
+};
 
 const STATUS_CONFIG: Record<SessionStatus, { color: string; label: string; dot: string }> = {
   active: { color: 'text-blue-400', label: 'Active', dot: 'fill-blue-400' },
@@ -44,9 +60,18 @@ export function ProjectHubClient({
     setLaunchOpen(true);
   }
 
-  function getAgentIcon(agent: Agent): string {
-    const meta = agent.metadata as { icon?: string } | null;
-    return meta?.icon ?? '🤖';
+  function getAgentIcon(agent: Agent): React.ReactNode {
+    const meta = agent.metadata as { icon?: string; color?: string } | null;
+    const iconName = meta?.icon?.toLowerCase();
+    const color = meta?.color;
+    const LucideIcon = iconName ? LUCIDE_ICONS[iconName] : undefined;
+    if (LucideIcon) {
+      return <LucideIcon className="size-6" style={color ? { color } : undefined} />;
+    }
+    // Fallback: treat as emoji or render default
+    if (iconName && iconName.length <= 4)
+      return <span className="text-2xl leading-none">{iconName}</span>;
+    return <Bot className="size-6 text-muted-foreground" />;
   }
 
   return (
@@ -86,7 +111,9 @@ export function ProjectHubClient({
                 onClick={() => openLaunch(agent.id)}
                 className="flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border border-white/[0.08] bg-card hover:border-white/[0.2] hover:bg-card/80 transition-colors text-sm font-medium min-w-[100px]"
               >
-                <span className="text-2xl leading-none">{getAgentIcon(agent)}</span>
+                <span className="flex items-center justify-center size-7">
+                  {getAgentIcon(agent)}
+                </span>
                 <span className="text-xs text-muted-foreground">{agent.name}</span>
               </button>
             ))}
