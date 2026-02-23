@@ -230,6 +230,40 @@ export async function handleAssignTask(args: {
   });
 }
 
+export async function handleStartAgentSession(args: {
+  taskId: string;
+  agent: string;
+  initialPrompt?: string;
+  permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
+}): Promise<unknown> {
+  // 1. Resolve agent slug → UUID
+  const agentId = await resolveAgentSlug(args.agent);
+
+  // 2. Find a prompt-mode capability for this agent
+  const capabilities = (await apiCall(`/api/agents/${agentId}/capabilities`)) as Array<{
+    id: string;
+    interactionMode: string;
+  }>;
+  const promptCap = capabilities.find((c) => c.interactionMode === 'prompt');
+  if (!promptCap) {
+    throw new Error(`Agent "${args.agent}" has no prompt-mode capability. Cannot start a session.`);
+  }
+
+  // 3. Create and enqueue the session (fire-and-forget)
+  const session = (await apiCall('/api/sessions', {
+    method: 'POST',
+    body: {
+      taskId: args.taskId,
+      agentId,
+      capabilityId: promptCap.id,
+      initialPrompt: args.initialPrompt,
+      permissionMode: args.permissionMode ?? 'bypassPermissions',
+    },
+  })) as { id: string };
+
+  return { sessionId: session.id, agentId, taskId: args.taskId, agent: args.agent };
+}
+
 export async function handleListProjects(args: { isActive?: boolean }): Promise<unknown> {
   const params = new URLSearchParams();
   if (args.isActive === false) params.set('isActive', 'false');
@@ -504,6 +538,49 @@ function createServer(): McpServer {
     async (args) => {
       try {
         const result = await handleAssignTask(args);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- start_agent_session --
+  server.tool(
+    'start_agent_session',
+    'Start a new agent session for a task. The session runs asynchronously (fire-and-forget). Returns a sessionId you can use to monitor progress.',
+    {
+      taskId: z.string().describe('UUID of the task the agent should work on'),
+      agent: z.string().describe('Agent slug (e.g. claude-code-1, codex-cli-1, gemini-cli-1)'),
+      initialPrompt: z
+        .string()
+        .optional()
+        .describe('Initial prompt / instructions to send to the agent'),
+      permissionMode: z
+        .enum(['default', 'bypassPermissions', 'acceptEdits'])
+        .optional()
+        .describe(
+          'Permission mode for the session. Defaults to bypassPermissions for autonomous operation.',
+        ),
+    },
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+    async (args) => {
+      try {
+        const result = await handleStartAgentSession(args);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };

@@ -15,9 +15,19 @@ interface EventBase {
 export type AgendoEvent =
   | (EventBase & { type: 'agent:text'; text: string })
   | (EventBase & { type: 'agent:thinking'; text: string })
-  | (EventBase & { type: 'agent:tool-start'; toolUseId: string; toolName: string; input: Record<string, unknown> })
+  | (EventBase & {
+      type: 'agent:tool-start';
+      toolUseId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    })
   | (EventBase & { type: 'agent:tool-end'; toolUseId: string; content: unknown })
-  | (EventBase & { type: 'agent:result'; costUsd: number | null; turns: number | null; durationMs: number | null })
+  | (EventBase & {
+      type: 'agent:result';
+      costUsd: number | null;
+      turns: number | null;
+      durationMs: number | null;
+    })
   | (EventBase & { type: 'agent:activity'; thinking: boolean })
   | (EventBase & {
       type: 'agent:tool-approval';
@@ -26,7 +36,12 @@ export type AgendoEvent =
       toolInput: Record<string, unknown>;
       dangerLevel: number;
     })
-  | (EventBase & { type: 'session:init'; sessionRef: string; slashCommands: string[]; mcpServers: Array<{ name: string; status?: string; tools?: string[] }> })
+  | (EventBase & {
+      type: 'session:init';
+      sessionRef: string;
+      slashCommands: string[];
+      mcpServers: Array<{ name: string; status?: string; tools?: string[] }>;
+    })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
   | (EventBase & { type: 'user:message'; text: string })
   | (EventBase & { type: 'system:info'; message: string })
@@ -39,11 +54,16 @@ export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';
 // ============================================================================
 
 export type AgendoControl =
-  | { type: 'message'; text: string; image?: { mimeType: string; data: string } }
+  | { type: 'message'; text: string; imageRef?: { path: string; mimeType: string } }
   | { type: 'cancel' }
   | { type: 'interrupt' }
   | { type: 'redirect'; newPrompt: string }
-  | { type: 'tool-approval'; approvalId: string; toolName: string; decision: 'allow' | 'deny' | 'allow-session' };
+  | {
+      type: 'tool-approval';
+      approvalId: string;
+      toolName: string;
+      decision: 'allow' | 'deny' | 'allow-session';
+    };
 
 // ============================================================================
 // Distributive Omit for AgendoEvent

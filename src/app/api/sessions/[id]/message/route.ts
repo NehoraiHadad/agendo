@@ -1,3 +1,6 @@
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
@@ -7,6 +10,7 @@ import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { BadRequestError } from '@/lib/errors';
+import { config } from '@/lib/config';
 import type { AgendoControl } from '@/lib/realtime/events';
 
 export const POST = withErrorBoundary(
@@ -25,13 +29,22 @@ export const POST = withErrorBoundary(
       !['active', 'awaiting_input', 'idle'].includes(session.status) &&
       !(session.status === 'ended' && canResume)
     ) {
-      throw new BadRequestError(
-        `Session not accepting messages (status: ${session.status})`,
-      );
+      throw new BadRequestError(`Session not accepting messages (status: ${session.status})`);
     }
 
     // Cold resume: process has exited; update initialPrompt and restart via run-session job.
     if (session.status === 'idle' || session.status === 'ended') {
+      // If an image was attached, save it to a predictable path for the session-runner to pick up.
+      if (image) {
+        const dir = join(config.LOG_DIR, 'attachments', id);
+        mkdirSync(dir, { recursive: true });
+        const imgPath = join(dir, 'resume-image');
+        writeFileSync(imgPath, Buffer.from(image.data, 'base64'));
+        writeFileSync(
+          join(dir, 'resume-pending.json'),
+          JSON.stringify({ path: imgPath, mimeType: image.mimeType }),
+        );
+      }
       await db
         .update(sessions)
         .set({
@@ -46,7 +59,22 @@ export const POST = withErrorBoundary(
     }
 
     // Hot path: process is alive — forward message via PG NOTIFY.
-    const control: AgendoControl = { type: 'message', text: message, ...(image && { image }) };
+    // Images are saved to disk first; only the file path is sent through PG NOTIFY
+    // to avoid exceeding the 7500-byte payload limit (a base64 image is far larger).
+    let imageRef: { path: string; mimeType: string } | undefined;
+    if (image) {
+      const dir = join(config.LOG_DIR, 'attachments', id);
+      mkdirSync(dir, { recursive: true });
+      const imgPath = join(dir, randomUUID());
+      writeFileSync(imgPath, Buffer.from(image.data, 'base64'));
+      imageRef = { path: imgPath, mimeType: image.mimeType };
+    }
+
+    const control: AgendoControl = {
+      type: 'message',
+      text: message,
+      ...(imageRef && { imageRef }),
+    };
     await publish(channelName('agendo_control', id), control);
 
     return NextResponse.json({ data: { delivered: true } }, { status: 202 });

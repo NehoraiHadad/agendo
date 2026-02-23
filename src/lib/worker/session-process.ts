@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray, isNull, or } from 'drizzle-orm';
@@ -101,6 +102,7 @@ export class SessionProcess {
     envOverrides?: Record<string, string>,
     mcpConfigPath?: string,
     mcpServers?: AcpMcpServer[],
+    initialImage?: ImageContent,
   ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim if status is idle/active and no other worker owns it.
@@ -182,6 +184,7 @@ export class SessionProcess {
       allowedTools: this.session.allowedTools ?? [],
       ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      ...(initialImage ? { initialImage } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval
@@ -394,7 +397,25 @@ export class SessionProcess {
     } else if (control.type === 'interrupt') {
       await this.handleInterrupt();
     } else if (control.type === 'message') {
-      await this.pushMessage(control.text, control.image);
+      let image: ImageContent | undefined;
+      if (control.imageRef) {
+        try {
+          const data = readFileSync(control.imageRef.path).toString('base64');
+          image = { mimeType: control.imageRef.mimeType, data };
+          // Clean up the temp file (best-effort)
+          try {
+            unlinkSync(control.imageRef.path);
+          } catch {
+            /* ignore */
+          }
+        } catch (err) {
+          console.warn(
+            `[session-process] Failed to read image file ${control.imageRef.path}:`,
+            err,
+          );
+        }
+      }
+      await this.pushMessage(control.text, image);
     } else if (control.type === 'redirect') {
       await this.pushMessage(control.newPrompt);
     } else if (control.type === 'tool-approval') {
