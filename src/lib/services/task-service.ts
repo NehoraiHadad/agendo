@@ -23,6 +23,7 @@ export interface CreateTaskInput {
   projectId?: string;
   inputContext?: Record<string, unknown>;
   dueAt?: Date;
+  isAdHoc?: boolean;
 }
 
 export interface UpdateTaskInput {
@@ -98,15 +99,19 @@ async function touchTask(id: string): Promise<void> {
  */
 export async function listTasksBoardItems(
   conditions: ReturnType<typeof and>[],
-  options: { limit?: number } = {},
+  options: { limit?: number; includeAdHoc?: boolean } = {},
 ): Promise<TaskBoardItem[]> {
   const limit = options.limit;
 
   // Filter out tasks belonging to soft-deleted projects
   const activeProjectFilter = sql`(${tasks.projectId} IS NULL OR ${projects.isActive} = true)`;
-  const allConditions = conditions.length > 0
-    ? and(...(conditions as Parameters<typeof and>), activeProjectFilter)
-    : activeProjectFilter;
+  // Exclude ad-hoc tasks from board views unless explicitly requested
+  const adHocFilter = options.includeAdHoc ? undefined : sql`${tasks.isAdHoc} = false`;
+  const baseConditions = adHocFilter ? [activeProjectFilter, adHocFilter] : [activeProjectFilter];
+  const allConditions =
+    conditions.length > 0
+      ? and(...(conditions as Parameters<typeof and>), ...baseConditions)
+      : and(...baseConditions);
 
   // Use raw SQL for the LEFT JOIN aggregation
   const query = sql`
@@ -130,9 +135,9 @@ export async function listTasksBoardItems(
 
   const result = await db.execute(query);
   // node-postgres returns QueryResult with .rows; drizzle may or may not unwrap it
-  const rows: Array<Record<string, unknown>> =
-    Array.isArray(result) ? (result as unknown as Array<Record<string, unknown>>) :
-    (result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+  const rows: Array<Record<string, unknown>> = Array.isArray(result)
+    ? (result as unknown as Array<Record<string, unknown>>)
+    : ((result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? []);
 
   return rows.map((row) => ({
     id: row.id as string,
@@ -147,6 +152,7 @@ export async function listTasksBoardItems(
     assigneeAgentId: (row.assignee_agent_id as string | null) ?? null,
     projectId: (row.project_id as string | null) ?? null,
     inputContext: (row.input_context as Record<string, unknown>) ?? {},
+    isAdHoc: Boolean(row.is_ad_hoc),
     dueAt: row.due_at != null ? new Date(row.due_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -170,6 +176,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       assigneeAgentId: input.assigneeAgentId,
       projectId: input.projectId,
       inputContext: input.inputContext ?? {},
+      isAdHoc: input.isAdHoc ?? false,
       dueAt: input.dueAt,
     })
     .returning();
@@ -259,39 +266,45 @@ export async function getTaskById(id: string): Promise<Task> {
 export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
   const task = await getTaskById(id);
 
-  const [subtaskResult, completedSubtaskResult, depResult, blockedByResult, assigneeResult, parentResult] =
-    await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(tasks)
-        .where(eq(tasks.parentTaskId, id)),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(tasks)
-        .where(and(eq(tasks.parentTaskId, id), eq(tasks.status, 'done'))),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(taskDependencies)
-        .where(eq(taskDependencies.taskId, id)),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(taskDependencies)
-        .where(eq(taskDependencies.dependsOnTaskId, id)),
-      task.assigneeAgentId
-        ? db
-            .select({ id: agents.id, name: agents.name, slug: agents.slug })
-            .from(agents)
-            .where(eq(agents.id, task.assigneeAgentId))
-            .limit(1)
-        : Promise.resolve([]),
-      task.parentTaskId
-        ? db
-            .select({ id: tasks.id, title: tasks.title })
-            .from(tasks)
-            .where(eq(tasks.id, task.parentTaskId))
-            .limit(1)
-        : Promise.resolve([]),
-    ]);
+  const [
+    subtaskResult,
+    completedSubtaskResult,
+    depResult,
+    blockedByResult,
+    assigneeResult,
+    parentResult,
+  ] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(tasks)
+      .where(eq(tasks.parentTaskId, id)),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(tasks)
+      .where(and(eq(tasks.parentTaskId, id), eq(tasks.status, 'done'))),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.taskId, id)),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.dependsOnTaskId, id)),
+    task.assigneeAgentId
+      ? db
+          .select({ id: agents.id, name: agents.name, slug: agents.slug })
+          .from(agents)
+          .where(eq(agents.id, task.assigneeAgentId))
+          .limit(1)
+      : Promise.resolve([]),
+    task.parentTaskId
+      ? db
+          .select({ id: tasks.id, title: tasks.title })
+          .from(tasks)
+          .where(eq(tasks.id, task.parentTaskId))
+          .limit(1)
+      : Promise.resolve([]),
+  ]);
 
   return {
     ...task,
