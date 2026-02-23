@@ -65,6 +65,7 @@ export class SessionProcess {
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
+  private dataBuffer = '';
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -239,8 +240,15 @@ export class SessionProcess {
     // Write raw chunk to the session log file under the 'stdout' stream prefix.
     this.logWriter?.write(chunk, 'stdout');
 
+    // Buffer partial lines: NDJSON lines from large tool results can span multiple
+    // data chunks. Splitting only on '\n' without buffering would emit the tail of
+    // a split line as agent:text, showing raw JSON fragments in the UI.
+    const combined = this.dataBuffer + chunk;
+    const lines = combined.split('\n');
+    this.dataBuffer = lines.pop() ?? ''; // last element is incomplete (no trailing \n yet)
+
     // Parse each NDJSON line and map to a structured AgendoEvent.
-    for (const line of chunk.split('\n')) {
+    for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       if (!trimmed.startsWith('{')) {

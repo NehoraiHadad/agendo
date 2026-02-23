@@ -399,13 +399,26 @@ type DisplayItem =
       dangerLevel: number;
     };
 
+/** Extract displayable text from a tool result content value.
+ *  MCP tools return content as an array of content blocks: [{type:'text',text:'...'}].
+ *  Plain string content is used as-is. Anything else falls back to JSON.stringify. */
+function extractToolContent(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) {
+    const texts = raw
+      .filter((b): b is Record<string, unknown> => typeof b === 'object' && b !== null)
+      .filter((b) => b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text as string);
+    if (texts.length > 0) return texts.join('\n');
+  }
+  return JSON.stringify(raw ?? '');
+}
+
 function buildToolResultMap(events: AgendoEvent[]): Map<string, ToolCallResult> {
   const map = new Map<string, ToolCallResult>();
   for (const ev of events) {
     if (ev.type === 'agent:tool-end') {
-      const content =
-        typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content ?? '');
-      map.set(ev.toolUseId, { content, isError: false });
+      map.set(ev.toolUseId, { content: extractToolContent(ev.content), isError: false });
     }
   }
   return map;
@@ -466,9 +479,7 @@ function buildDisplayItems(
       case 'agent:tool-end': {
         const pending = pendingTools.get(ev.toolUseId);
         if (pending) {
-          const content =
-            typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content ?? '');
-          pending.result = { content, isError: false };
+          pending.result = { content: extractToolContent(ev.content), isError: false };
           pendingTools.delete(ev.toolUseId);
         }
         break;
