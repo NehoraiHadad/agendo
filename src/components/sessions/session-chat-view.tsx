@@ -282,6 +282,49 @@ function InfoPill({ text }: { text: string }) {
   );
 }
 
+function TurnCompletePill({
+  text,
+  costUsd,
+  sessionCostUsd,
+}: {
+  text: string;
+  costUsd: number | null;
+  sessionCostUsd: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasCost = costUsd !== null;
+  return (
+    <div className="flex flex-col items-center my-1 gap-1">
+      <button
+        type="button"
+        onClick={() => hasCost && setOpen((v) => !v)}
+        className={`text-xs text-muted-foreground/70 bg-white/[0.04] border border-white/[0.05] px-3 py-0.5 rounded-full transition-colors ${
+          hasCost
+            ? 'hover:bg-white/[0.07] hover:border-white/[0.10] cursor-pointer'
+            : 'cursor-default'
+        }`}
+      >
+        {text}
+        {hasCost && <span className="ml-1 opacity-40">{open ? '▲' : '▼'}</span>}
+      </button>
+      {open && hasCost && (
+        <div className="bg-[oklch(0.12_0_0)] border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-muted-foreground/80 shadow-lg space-y-1 min-w-[160px]">
+          <div className="flex justify-between gap-4">
+            <span>This turn</span>
+            <span className="font-mono text-foreground/70">${(costUsd ?? 0).toFixed(4)}</span>
+          </div>
+          {sessionCostUsd !== null && (
+            <div className="flex justify-between gap-4 border-t border-white/[0.06] pt-1">
+              <span>Session total</span>
+              <span className="font-mono text-foreground/70">${sessionCostUsd.toFixed(4)}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ErrorPill({ text }: { text: string }) {
   return (
     <div className="flex justify-center my-1">
@@ -386,6 +429,13 @@ type AssistantPart = { kind: 'text'; text: string } | { kind: 'tool'; tool: Tool
 
 type DisplayItem =
   | { kind: 'assistant'; id: number; parts: AssistantPart[] }
+  | {
+      kind: 'turn-complete';
+      id: number;
+      text: string;
+      costUsd: number | null;
+      sessionCostUsd: number | null;
+    }
   | { kind: 'thinking'; id: number; text: string }
   | { kind: 'user'; id: number; text: string }
   | { kind: 'info'; id: number; text: string }
@@ -432,6 +482,7 @@ function buildDisplayItems(
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
   let sessionInitCount = 0;
+  let sessionCostUsd = 0;
 
   for (const ev of events) {
     switch (ev.type) {
@@ -501,18 +552,22 @@ function buildDisplayItems(
         const parts: string[] = ['Turn complete'];
         if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
         if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
-        if (ev.costUsd != null) parts.push(`$${ev.costUsd.toFixed(4)}`);
-        items.push({ kind: 'info', id: ev.id, text: parts.join(' · ') });
+        if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
+        items.push({
+          kind: 'turn-complete',
+          id: ev.id,
+          text: parts.join(' · '),
+          costUsd: ev.costUsd ?? null,
+          sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
+        });
         break;
       }
 
       case 'session:init': {
         sessionInitCount++;
-        items.push({
-          kind: 'info',
-          id: ev.id,
-          text: sessionInitCount === 1 ? 'Session started' : 'Session resumed',
-        });
+        if (sessionInitCount === 1) {
+          items.push({ kind: 'info', id: ev.id, text: 'Session started' });
+        }
         break;
       }
 
@@ -618,6 +673,15 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
         return <ThinkingBubble key={idx} text={item.text} />;
       case 'user':
         return <UserBubble key={idx} text={item.text} />;
+      case 'turn-complete':
+        return (
+          <TurnCompletePill
+            key={idx}
+            text={item.text}
+            costUsd={item.costUsd}
+            sessionCostUsd={item.sessionCostUsd}
+          />
+        );
       case 'info':
         return <InfoPill key={idx} text={item.text} />;
       case 'error':
