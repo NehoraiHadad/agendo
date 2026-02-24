@@ -389,6 +389,58 @@ export function SessionMessageInput({
     }
   }
 
+  // Shared image-processing logic used by both the file picker and the paste handler.
+  function processImageFile(file: File | Blob) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const commaIdx = dataUrl.indexOf(',');
+      const meta = dataUrl.slice(0, commaIdx);
+      const rawData = dataUrl.slice(commaIdx + 1);
+      let mimeType = (meta.match(/:(.*?);/)?.[1] ?? 'image/png').toLowerCase();
+      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
+      if (SUPPORTED_IMAGE_TYPES.has(mimeType)) {
+        setPendingImage({ dataUrl, mimeType, data: rawData });
+        return;
+      }
+      // Convert unsupported format → JPEG via canvas
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0);
+        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const jpegData = jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1);
+        setPendingImage({ dataUrl: jpegDataUrl, mimeType: 'image/jpeg', data: jpegData });
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Document-level paste listener: Chrome filters image items from clipboardData when the
+  // target is a <textarea>, so the React onPaste never sees the image and doesn't call
+  // preventDefault — causing Chrome to show "doesn't support pasting images here".
+  // Listening at document level intercepts the event before Chrome's fallback kicks in.
+  useEffect(() => {
+    function onDocPaste(e: ClipboardEvent) {
+      // Only intercept when this input form is focused
+      const form = textareaRef.current?.closest('form');
+      if (!form?.contains(document.activeElement)) return;
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.type.startsWith('image/'));
+      if (!imageItem) return;
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      if (file) processImageFile(file);
+    }
+    document.addEventListener('paste', onDocPaste);
+    return () => document.removeEventListener('paste', onDocPaste);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (showPicker && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {

@@ -28,7 +28,7 @@ export type DisplayItem =
       sessionCostUsd: number | null;
     }
   | { kind: 'thinking'; id: number; text: string }
-  | { kind: 'user'; id: number; text: string; hasImage?: boolean }
+  | { kind: 'user'; id: number; text: string; hasImage?: boolean; imageDataUrl?: string }
   | { kind: 'info'; id: number; text: string }
   | { kind: 'error'; id: number; text: string }
   | {

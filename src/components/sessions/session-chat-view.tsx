@@ -811,6 +811,9 @@ export function SessionChatView({
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
   const msgIdRef = useRef(0);
+  // Accumulates base64 image data URLs in send order so we can re-hydrate
+  // user:message display items (which only carry hasImage:boolean, not the URL).
+  const imageUrlsQueueRef = useRef<string[]>([]);
 
   const handleInterrupt = useCallback(async () => {
     if (isInterrupting) return;
@@ -823,6 +826,7 @@ export function SessionChatView({
   }, [sessionId, isInterrupting]);
 
   const handleSent = useCallback((text: string, imageDataUrl?: string) => {
+    if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
     setOptimisticMessages((prev) => [
       ...prev,
       { id: String(++msgIdRef.current), text, imageDataUrl },
@@ -888,6 +892,18 @@ export function SessionChatView({
   const isThinking = lastActivityEvent?.thinking ?? false;
   const showTyping = (isActive || isThinking) && stream.isConnected;
 
+  // Re-hydrate user items that have images: stream events only carry hasImage:boolean,
+  // so we correlate them (in order) with the URLs we buffered at send time.
+  const augmentedDisplayItems = (() => {
+    let queueIdx = 0;
+    return displayItems.map((item) => {
+      if (item.kind === 'user' && item.hasImage) {
+        return { ...item, imageDataUrl: imageUrlsQueueRef.current[queueIdx++] };
+      }
+      return item;
+    });
+  })();
+
   function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
     switch (item.kind) {
       case 'assistant':
@@ -895,7 +911,14 @@ export function SessionChatView({
       case 'thinking':
         return <ThinkingBubble key={idx} text={item.text} />;
       case 'user':
-        return <UserBubble key={idx} text={item.text} hasImage={item.hasImage} />;
+        return (
+          <UserBubble
+            key={idx}
+            text={item.text}
+            hasImage={item.hasImage}
+            imageDataUrl={item.imageDataUrl}
+          />
+        );
       case 'turn-complete':
         return (
           <TurnCompletePill
@@ -974,7 +997,7 @@ export function SessionChatView({
         {/* Initial prompt banner — shown once at the top if present */}
         {initialPrompt && <InitialPromptBanner prompt={initialPrompt} />}
 
-        {displayItems.map((item, i) => renderDisplayItem(item, i))}
+        {augmentedDisplayItems.map((item, i) => renderDisplayItem(item, i))}
 
         {/* Optimistic user messages shown while real event is in-flight */}
         {optimisticMessages.map((msg) => (
