@@ -1158,4 +1158,17 @@ export class SessionProcess {
     this.terminateKilled = true;
     this.managedProcess?.kill('SIGTERM');
   }
+
+  /**
+   * Mark this session as intentionally terminated by the worker, WITHOUT
+   * sending a signal. Used at the very start of shutdown() — synchronously,
+   * before any await — to ensure terminateKilled is true before onExit fires.
+   *
+   * Needed because SIGINT (Ctrl-C / pm2 restart) is delivered to the whole
+   * process group: Claude exits concurrently with our shutdown handler, so
+   * we must set the flag before the I/O event loop tick that fires onExit.
+   */
+  markTerminating(): void {
+    this.terminateKilled = true;
+  }
 }

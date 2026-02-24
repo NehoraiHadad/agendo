@@ -14,7 +14,7 @@ import {
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runExecution } from '../lib/worker/execution-runner';
-import { runSession, liveSessionProcs } from '../lib/worker/session-runner';
+import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { queryAI } from '../lib/services/ai-query-service';
 import { getHelpText } from '../lib/discovery/schema-extractor';
@@ -213,6 +213,15 @@ async function main(): Promise<void> {
     console.log(`[worker] Received ${signal}, shutting down...`);
     clearInterval(heartbeatInterval);
     staleReaper.stop();
+
+    // SYNCHRONOUSLY mark every known session process as terminating BEFORE any
+    // await. SIGINT (and sometimes SIGTERM) is delivered to the entire process
+    // group — Claude exits at the same time as us. We must set terminateKilled
+    // before the I/O event loop tick that fires onExit, otherwise onExit sees
+    // terminateKilled=false and emits "Session ended unexpectedly".
+    for (const proc of allSessionProcs.values()) {
+      proc.markTerminating();
+    }
     // Stop pg-boss from delivering new jobs (short timeout since we manage our own wait below)
     await stopBoss();
     // Wait for in-flight slot-holding jobs (sessions not yet at awaiting_input, executions)

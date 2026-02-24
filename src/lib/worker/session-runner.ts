@@ -21,6 +21,16 @@ import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
  */
 export const liveSessionProcs = new Map<string, SessionProcess>();
 
+/**
+ * ALL active session processes, registered immediately when runSession starts
+ * (before the first awaiting_input). This superset of liveSessionProcs lets
+ * the shutdown handler call markTerminating() synchronously on every proc —
+ * critical for SIGINT/SIGTERM sent to the whole process group, where Claude
+ * exits concurrently with our shutdown handler and we must set terminateKilled
+ * before the onExit I/O callback fires.
+ */
+export const allSessionProcs = new Map<string, SessionProcess>();
+
 function interpolatePrompt(template: string, args: Record<string, unknown>): string {
   return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path: string) => {
     const parts = path.split('.');
@@ -218,6 +228,11 @@ export async function runSession(
 
   const adapter = selectAdapter(agent, capability);
   const sessionProc = new SessionProcess(session, adapter, workerId);
+
+  // Register immediately so the shutdown handler can markTerminating() even
+  // before the first awaiting_input (i.e. while still in active state).
+  allSessionProcs.set(sessionId, sessionProc);
+
   await sessionProc.start(
     prompt,
     resumeRef ?? session.sessionRef ?? undefined,
@@ -240,9 +255,10 @@ export async function runSession(
     `[session-runner] slot released for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
   );
 
-  // Wire exit cleanup: remove from live map when the process actually exits,
+  // Wire exit cleanup: remove from both maps when the process actually exits,
   // and clean up the ephemeral MCP config file written for this session.
   void sessionProc.waitForExit().then(() => {
+    allSessionProcs.delete(sessionId);
     liveSessionProcs.delete(sessionId);
     console.log(
       `[session-runner] session ${sessionId} removed from live map — ${liveSessionProcs.size} live session(s) remaining`,
