@@ -4,7 +4,16 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Circle, Loader2, PowerOff } from 'lucide-react';
+import {
+  ArrowLeft,
+  Circle,
+  Loader2,
+  PowerOff,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  BookOpen,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -34,6 +43,50 @@ const WebTerminal = dynamic(
     ),
   },
 );
+
+type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
+
+const MODE_CYCLE: PermissionMode[] = ['plan', 'default', 'acceptEdits', 'bypassPermissions'];
+
+const MODE_CONFIG: Record<
+  PermissionMode,
+  { label: string; icon: React.ElementType; className: string; title: string }
+> = {
+  plan: {
+    label: 'Plan',
+    icon: BookOpen,
+    className: 'text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20',
+    title:
+      'Plan mode: Claude presents a plan before executing changes. Click to switch to Approve mode.',
+  },
+  default: {
+    label: 'Approve',
+    icon: Shield,
+    className: 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20',
+    title: 'Approve mode: each tool requires your approval. Click to switch to Edit-only mode.',
+  },
+  acceptEdits: {
+    label: 'Edit Only',
+    icon: ShieldCheck,
+    className: 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 border-blue-500/20',
+    title:
+      'Edit-only mode: file edits are auto-approved, bash requires approval. Click to switch to Auto mode.',
+  },
+  bypassPermissions: {
+    label: 'Auto',
+    icon: ShieldOff,
+    className:
+      'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20',
+    title: 'Auto mode: all tools approved automatically. Click to switch to Plan mode.',
+  },
+  dontAsk: {
+    label: 'Auto',
+    icon: ShieldOff,
+    className:
+      'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20',
+    title: 'Auto mode: all tools approved automatically. Click to switch to Plan mode.',
+  },
+};
 
 interface SessionDetailClientProps {
   session: Session;
@@ -76,6 +129,10 @@ export function SessionDetailClient({
   const logStream = useSessionLogStream(session.id);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(
+    (session.permissionMode as PermissionMode) ?? 'bypassPermissions',
+  );
+  const [isModeChanging, setIsModeChanging] = useState(false);
 
   async function handleEndSession() {
     if (isEnding) return;
@@ -87,6 +144,28 @@ export function SessionDetailClient({
       setIsEnding(false);
     }
   }
+
+  async function handleModeChange() {
+    if (isModeChanging || currentStatus === 'ended') return;
+    const nextIndex = (MODE_CYCLE.indexOf(permissionMode) + 1) % MODE_CYCLE.length;
+    const nextMode = MODE_CYCLE[nextIndex];
+    setIsModeChanging(true);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/mode`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode }),
+      });
+      if (res.ok) {
+        setPermissionMode(nextMode);
+      }
+    } finally {
+      setIsModeChanging(false);
+    }
+  }
+
+  const modeCfg = MODE_CONFIG[permissionMode];
+  const ModeIcon = modeCfg.icon;
 
   return (
     <div className="flex flex-col gap-4 sm:gap-6">
@@ -104,20 +183,37 @@ export function SessionDetailClient({
             </h1>
             <SessionStatusIndicator status={currentStatus} />
             {currentStatus !== 'ended' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowEndConfirm(true)}
-                disabled={isEnding}
-                className="h-6 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 gap-1"
-              >
-                {isEnding ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <PowerOff className="size-3" />
-                )}
-                End Session
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleModeChange()}
+                  disabled={isModeChanging}
+                  title={modeCfg.title}
+                  className={`h-6 px-2 text-xs border gap-1 ${modeCfg.className}`}
+                >
+                  {isModeChanging ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <ModeIcon className="size-3" />
+                  )}
+                  {modeCfg.label}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowEndConfirm(true)}
+                  disabled={isEnding}
+                  className="h-6 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 gap-1"
+                >
+                  {isEnding ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <PowerOff className="size-3" />
+                  )}
+                  End Session
+                </Button>
+              </>
             )}
           </div>
           <p className="mt-0.5 text-xs sm:text-sm text-muted-foreground truncate">
@@ -128,20 +224,35 @@ export function SessionDetailClient({
 
       {/* Tabs */}
       <Tabs defaultValue={defaultTab} className="flex flex-col">
-        <TabsList>
-          <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="terminal">Terminal</TabsTrigger>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="events">Events</TabsTrigger>
-          <TabsTrigger value="info">Info</TabsTrigger>
+        <TabsList className="flex w-full overflow-x-auto">
+          <TabsTrigger value="chat" className="shrink-0">
+            Chat
+          </TabsTrigger>
+          <TabsTrigger value="terminal" className="shrink-0">
+            Terminal
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="shrink-0">
+            Logs
+          </TabsTrigger>
+          <TabsTrigger value="events" className="shrink-0">
+            Events
+          </TabsTrigger>
+          <TabsTrigger value="info" className="shrink-0">
+            Info
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat" forceMount className="mt-4 data-[state=inactive]:hidden">
-          <SessionChatView sessionId={session.id} stream={stream} currentStatus={currentStatus} />
+          <SessionChatView
+            sessionId={session.id}
+            stream={stream}
+            currentStatus={currentStatus}
+            initialPrompt={session.initialPrompt}
+          />
         </TabsContent>
 
         <TabsContent value="terminal" className="mt-4">
-          <WebTerminal sessionId={session.id} className="h-[500px]" />
+          <WebTerminal sessionId={session.id} className="h-[300px] sm:h-[500px]" />
         </TabsContent>
 
         <TabsContent value="logs" className="mt-4">

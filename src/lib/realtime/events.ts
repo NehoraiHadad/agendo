@@ -45,7 +45,22 @@ export type AgendoEvent =
   | (EventBase & { type: 'session:state'; status: SessionStatus })
   | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
   | (EventBase & { type: 'system:info'; message: string })
-  | (EventBase & { type: 'system:error'; message: string });
+  | (EventBase & { type: 'system:error'; message: string })
+  | (EventBase & {
+      type: 'team:message';
+      /** Slug of the team agent that sent this message (e.g. "mobile-analyst") */
+      fromAgent: string;
+      /** Raw message text — plain markdown or JSON-encoded structured payload */
+      text: string;
+      summary?: string;
+      /** Agent color hint from the Claude team config (e.g. "blue", "green") */
+      color?: string;
+      /** Original timestamp from the team inbox file */
+      sourceTimestamp: string;
+      /** True when text is valid JSON (idle_notification, task_assignment, etc.) */
+      isStructured: boolean;
+      structuredPayload?: Record<string, unknown>;
+    });
 
 export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';
 
@@ -69,6 +84,11 @@ export type AgendoControl =
       type: 'tool-result';
       toolUseId: string;
       content: string;
+    }
+  | {
+      /** Change the permission mode of a live session. Worker restarts the process with the new mode. */
+      type: 'set-permission-mode';
+      mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
     };
 
 // ============================================================================

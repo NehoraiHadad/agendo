@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
 import {
   Bot,
   User,
@@ -13,6 +13,8 @@ import {
   Minimize2,
   Paperclip,
   Square,
+  ArrowDown,
+  MessageSquare,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -22,9 +24,22 @@ import { EditView } from '@/components/executions/tool-views/edit-view';
 import { MultiEditView } from '@/components/executions/tool-views/multi-edit-view';
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
-import { AskUserQuestionCard } from '@/components/sessions/ask-user-question-card';
+import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+
+// Module-level set keeps the early-return guard in ToolCard stable and avoids
+// creating a dynamic component reference during render (react-hooks/static-components).
+// Keep in sync with the TOOL_RENDERERS registry in interactive-tools.tsx.
+const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
 import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
+import {
+  buildDisplayItems,
+  buildToolResultMap,
+  type ToolCallResult,
+  type ToolState,
+  type AssistantPart,
+  type DisplayItem,
+} from './session-chat-utils';
 
 // ---------------------------------------------------------------------------
 // Markdown renderer configuration
@@ -116,11 +131,6 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
 // Tool result display
 // ---------------------------------------------------------------------------
 
-interface ToolCallResult {
-  content: string;
-  isError: boolean;
-}
-
 function ToolOutput({ name, result }: { name: string; result: ToolCallResult }) {
   const { content, isError } = result;
   if (!content) return null;
@@ -158,33 +168,46 @@ function ToolOutput({ name, result }: { name: string; result: ToolCallResult }) 
 }
 
 // ---------------------------------------------------------------------------
-// ToolCard — collapsible card for tool calls
+// ToolCard — collapsible card for tool calls (memoized to avoid re-renders)
 // ---------------------------------------------------------------------------
 
-interface ToolState {
-  toolUseId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  result?: ToolCallResult;
-}
-
-function ToolCard({ tool, sessionId }: { tool: ToolState; sessionId: string }) {
+const ToolCard = memo(function ToolCard({
+  tool,
+  sessionId,
+}: {
+  tool: ToolState;
+  sessionId: string;
+}) {
   // Derive open state: auto-open while pending or on error, auto-close on success.
   // manualOpen overrides auto-behavior once the user explicitly toggles.
   // Must be declared before any early return to satisfy Rules of Hooks.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
 
-  // AskUserQuestion gets a dedicated interactive card instead of the generic JSON view.
-  if (tool.toolName === 'AskUserQuestion') {
-    const questions = Array.isArray(tool.input.questions)
-      ? (tool.input.questions as Parameters<typeof AskUserQuestionCard>[0]['questions'])
-      : [];
+  // Interactive tools (AskUserQuestion, ExitPlanMode, …) are handled by the
+  // renderer registry. InteractiveTool is a stable component — not created
+  // during render — so Fast Refresh and hook state are preserved correctly.
+  if (INTERACTIVE_TOOL_NAMES.has(tool.toolName)) {
     return (
-      <AskUserQuestionCard
-        sessionId={sessionId}
-        toolUseId={tool.toolUseId}
-        questions={questions}
+      <InteractiveTool
+        toolName={tool.toolName}
+        input={tool.input}
         isAnswered={tool.result !== undefined}
+        respond={async (payload) => {
+          if (payload.kind !== 'tool-result') return;
+          const res = await fetch(`/api/sessions/${sessionId}/control`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'tool-result',
+              toolUseId: tool.toolUseId,
+              content: payload.content,
+            }),
+          });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(body.error ?? `Server error ${res.status}`);
+          }
+        }}
       />
     );
   }
@@ -285,17 +308,91 @@ function ToolCard({ tool, sessionId }: { tool: ToolState; sessionId: string }) {
       )}
     </div>
   );
-}
+});
+
+// ---------------------------------------------------------------------------
+// ToolGroup — collapses N consecutive tool calls into one expandable row
+// ---------------------------------------------------------------------------
+
+const ToolGroup = memo(function ToolGroup({
+  tools,
+  sessionId,
+}: {
+  tools: ToolState[];
+  sessionId: string;
+}) {
+  const allDone = tools.every((t) => t.result !== undefined);
+  const hasError = tools.some((t) => t.result?.isError);
+  const hasPending = tools.some((t) => t.result === undefined);
+
+  // Auto-open while any tool is in-flight or errored; auto-close when all succeed.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const autoOpen = !allDone || hasError;
+  const open = manualOpen !== null ? manualOpen : autoOpen;
+
+  // Collapsed summary: unique tool names with counts
+  const nameCounts = tools.reduce<Record<string, number>>((acc, t) => {
+    acc[t.toolName] = (acc[t.toolName] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summaryParts = Object.entries(nameCounts)
+    .slice(0, 4)
+    .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
+  const summary = summaryParts.join(', ') + (Object.keys(nameCounts).length > 4 ? '…' : '');
+
+  const statusIcon = hasPending ? (
+    <Loader2 className="size-3 text-zinc-400 animate-spin shrink-0" />
+  ) : hasError ? (
+    <span className="text-red-400 text-xs shrink-0">✗</span>
+  ) : (
+    <Check className="size-3 text-emerald-400 shrink-0" />
+  );
+
+  return (
+    <div className="rounded-md border border-white/[0.07] bg-white/[0.02] text-xs">
+      <button
+        type="button"
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/5 rounded-md transition-colors"
+        onClick={() => setManualOpen((v) => (v !== null ? !v : !open))}
+        aria-expanded={open}
+      >
+        <Wrench className="size-3 shrink-0 text-muted-foreground/50" />
+        <span className="font-mono text-foreground/80 font-medium shrink-0">
+          {tools.length} tools
+        </span>
+        {!open && (
+          <span className="text-muted-foreground/45 truncate flex-1 min-w-0">{summary}</span>
+        )}
+        {statusIcon}
+        <span className="ml-auto text-muted-foreground/40 shrink-0">
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-2 pb-2 space-y-1.5">
+          {tools.map((tool) => (
+            <ToolCard key={tool.toolUseId} tool={tool} sessionId={sessionId} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Bubble components
 // ---------------------------------------------------------------------------
 
 function InfoPill({ text }: { text: string }) {
+  // Guard: raw JSON leaking into system:info (e.g. from a transient emit error)
+  // must not flood the chat. Truncate JSON blobs to a safe preview length.
+  const isRawJson = text.startsWith('{') || text.startsWith('[');
+  const display = isRawJson ? text.slice(0, 120) + (text.length > 120 ? '…' : '') : text;
   return (
     <div className="flex justify-center my-1">
-      <span className="text-xs text-muted-foreground/70 bg-white/[0.04] border border-white/[0.05] px-3 py-0.5 rounded-full">
-        {text}
+      <span className="text-xs text-muted-foreground/70 bg-white/[0.04] border border-white/[0.05] px-3 py-0.5 rounded-full max-w-full truncate">
+        {display}
       </span>
     </div>
   );
@@ -354,28 +451,68 @@ function ErrorPill({ text }: { text: string }) {
   );
 }
 
+/** Group consecutive tool parts (excluding AskUserQuestion) into ToolGroup cards. */
+function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.ReactNode[] {
+  const result: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    const startIdx = i;
+    const part = parts[i];
+
+    if (part.kind === 'text') {
+      result.push(
+        <div
+          key={`t-${startIdx}`}
+          className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words overflow-x-auto leading-relaxed"
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {part.text}
+          </ReactMarkdown>
+        </div>,
+      );
+      i++;
+    } else {
+      // Collect consecutive regular tool parts (break at AskUserQuestion)
+      const toolGroup: ToolState[] = [];
+      while (i < parts.length && parts[i].kind === 'tool') {
+        const tp = parts[i] as { kind: 'tool'; tool: ToolState };
+        if (tp.tool.toolName === 'AskUserQuestion') break;
+        toolGroup.push(tp.tool);
+        i++;
+      }
+
+      if (toolGroup.length === 0) {
+        // AskUserQuestion — always standalone
+        const tp = parts[i] as { kind: 'tool'; tool: ToolState };
+        result.push(<ToolCard key={tp.tool.toolUseId} tool={tp.tool} sessionId={sessionId} />);
+        i++;
+      } else if (toolGroup.length < 2) {
+        result.push(
+          <ToolCard key={toolGroup[0].toolUseId} tool={toolGroup[0]} sessionId={sessionId} />,
+        );
+      } else {
+        result.push(
+          <ToolGroup
+            key={`grp-${toolGroup[0].toolUseId}`}
+            tools={toolGroup}
+            sessionId={sessionId}
+          />,
+        );
+      }
+    }
+  }
+
+  return result;
+}
+
 function AssistantBubble({ parts, sessionId }: { parts: AssistantPart[]; sessionId: string }) {
   return (
     <div className="flex gap-2 items-start w-full">
       <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
         <Bot className="size-3.5 text-muted-foreground" />
       </div>
-      <div className="space-y-1.5 min-w-0 flex-1">
-        {parts.map((part, i) =>
-          part.kind === 'text' ? (
-            <div
-              key={i}
-              className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words overflow-x-auto leading-relaxed"
-            >
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {part.text}
-              </ReactMarkdown>
-            </div>
-          ) : (
-            <ToolCard key={part.tool.toolUseId} tool={part.tool} sessionId={sessionId} />
-          ),
-        )}
-      </div>
+      <div className="space-y-1.5 min-w-0 flex-1">{renderAssistantParts(parts, sessionId)}</div>
     </div>
   );
 }
@@ -462,177 +599,188 @@ function TypingIndicator() {
 }
 
 // ---------------------------------------------------------------------------
-// Display item types and build logic
+// TeamMessageCard — collapsible card for incoming team agent messages
 // ---------------------------------------------------------------------------
 
-type AssistantPart = { kind: 'text'; text: string } | { kind: 'tool'; tool: ToolState };
+/** Maps Claude team color names to Tailwind classes. */
+const TEAM_COLORS: Record<string, { border: string; dot: string; bg: string }> = {
+  blue: {
+    border: 'border-l-blue-400',
+    dot: 'text-blue-400',
+    bg: 'bg-blue-400/[0.04]',
+  },
+  green: {
+    border: 'border-l-emerald-400',
+    dot: 'text-emerald-400',
+    bg: 'bg-emerald-400/[0.04]',
+  },
+  purple: {
+    border: 'border-l-purple-400',
+    dot: 'text-purple-400',
+    bg: 'bg-purple-400/[0.04]',
+  },
+  red: {
+    border: 'border-l-red-400',
+    dot: 'text-red-400',
+    bg: 'bg-red-400/[0.04]',
+  },
+  yellow: {
+    border: 'border-l-yellow-400',
+    dot: 'text-yellow-400',
+    bg: 'bg-yellow-400/[0.04]',
+  },
+  orange: {
+    border: 'border-l-orange-400',
+    dot: 'text-orange-400',
+    bg: 'bg-orange-400/[0.04]',
+  },
+  cyan: {
+    border: 'border-l-cyan-400',
+    dot: 'text-cyan-400',
+    bg: 'bg-cyan-400/[0.04]',
+  },
+};
+const DEFAULT_TEAM_COLOR = {
+  border: 'border-l-zinc-500',
+  dot: 'text-zinc-400',
+  bg: 'bg-zinc-400/[0.04]',
+};
 
-type DisplayItem =
-  | { kind: 'assistant'; id: number; parts: AssistantPart[] }
-  | {
-      kind: 'turn-complete';
-      id: number;
-      text: string;
-      costUsd: number | null;
-      sessionCostUsd: number | null;
-    }
-  | { kind: 'thinking'; id: number; text: string }
-  | { kind: 'user'; id: number; text: string; hasImage?: boolean }
-  | { kind: 'info'; id: number; text: string }
-  | { kind: 'error'; id: number; text: string }
-  | {
-      kind: 'tool-approval';
-      id: number;
-      approvalId: string;
-      toolName: string;
-      toolInput: Record<string, unknown>;
-      dangerLevel: number;
-    };
-
-/** Extract displayable text from a tool result content value.
- *  MCP tools return content as an array of content blocks: [{type:'text',text:'...'}].
- *  Plain string content is used as-is. Anything else falls back to JSON.stringify. */
-function extractToolContent(raw: unknown): string {
-  if (typeof raw === 'string') return raw;
-  if (Array.isArray(raw)) {
-    const texts = raw
-      .filter((b): b is Record<string, unknown> => typeof b === 'object' && b !== null)
-      .filter((b) => b.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text as string);
-    if (texts.length > 0) return texts.join('\n');
+function formatRelativeTime(timestamp: string): string {
+  try {
+    const diffMs = Date.now() - new Date(timestamp).getTime();
+    if (diffMs < 60_000) return 'just now';
+    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
+    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
+    return `${Math.floor(diffMs / 86_400_000)}d ago`;
+  } catch {
+    return '';
   }
-  return JSON.stringify(raw ?? '');
 }
 
-function buildToolResultMap(events: AgendoEvent[]): Map<string, ToolCallResult> {
-  const map = new Map<string, ToolCallResult>();
-  for (const ev of events) {
-    if (ev.type === 'agent:tool-end') {
-      map.set(ev.toolUseId, { content: extractToolContent(ev.content), isError: false });
-    }
-  }
-  return map;
-}
+const TeamMessageCard = memo(function TeamMessageCard({
+  item,
+}: {
+  item: Extract<DisplayItem, { kind: 'team-message' }>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const colors = TEAM_COLORS[item.color ?? ''] ?? DEFAULT_TEAM_COLOR;
+  const relativeTime = formatRelativeTime(item.sourceTimestamp);
 
-function buildDisplayItems(
-  events: AgendoEvent[],
-  toolResultMap: Map<string, ToolCallResult>,
-): DisplayItem[] {
-  const items: DisplayItem[] = [];
-  // Track pending tool calls so we can hydrate them with results as they arrive
-  const pendingTools = new Map<string, ToolState>();
-  let sessionInitCount = 0;
-  let sessionCostUsd = 0;
-
-  for (const ev of events) {
-    switch (ev.type) {
-      case 'agent:text': {
-        const last = items[items.length - 1];
-        if (last && last.kind === 'assistant') {
-          // Append to existing text part if the last part is already text
-          const lastPart = last.parts[last.parts.length - 1];
-          if (lastPart && lastPart.kind === 'text') {
-            lastPart.text += ev.text;
-          } else {
-            last.parts.push({ kind: 'text', text: ev.text });
-          }
-        } else {
-          items.push({ kind: 'assistant', id: ev.id, parts: [{ kind: 'text', text: ev.text }] });
-        }
-        break;
-      }
-
-      case 'agent:thinking': {
-        items.push({ kind: 'thinking', id: ev.id, text: ev.text });
-        break;
-      }
-
-      case 'agent:tool-start': {
-        const result = toolResultMap.get(ev.toolUseId);
-        const toolState: ToolState = {
-          toolUseId: ev.toolUseId,
-          toolName: ev.toolName,
-          input: ev.input,
-          result,
-        };
-        pendingTools.set(ev.toolUseId, toolState);
-
-        // Append tool part in order within the current assistant bubble
-        const last = items[items.length - 1];
-        if (last && last.kind === 'assistant') {
-          last.parts.push({ kind: 'tool', tool: toolState });
-        } else {
-          items.push({ kind: 'assistant', id: ev.id, parts: [{ kind: 'tool', tool: toolState }] });
-        }
-        break;
-      }
-
-      case 'agent:tool-end': {
-        const pending = pendingTools.get(ev.toolUseId);
-        if (pending) {
-          pending.result = { content: extractToolContent(ev.content), isError: false };
-          pendingTools.delete(ev.toolUseId);
-        }
-        break;
-      }
-
-      case 'agent:tool-approval': {
-        items.push({
-          kind: 'tool-approval',
-          id: ev.id,
-          approvalId: ev.approvalId,
-          toolName: ev.toolName,
-          toolInput: ev.toolInput,
-          dangerLevel: ev.dangerLevel,
-        });
-        break;
-      }
-
-      case 'agent:result': {
-        const parts: string[] = ['Turn complete'];
-        if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
-        if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
-        if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
-        items.push({
-          kind: 'turn-complete',
-          id: ev.id,
-          text: parts.join(' · '),
-          costUsd: ev.costUsd ?? null,
-          sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
-        });
-        break;
-      }
-
-      case 'session:init': {
-        sessionInitCount++;
-        if (sessionInitCount === 1) {
-          items.push({ kind: 'info', id: ev.id, text: 'Session started' });
-        }
-        break;
-      }
-
-      case 'user:message': {
-        items.push({ kind: 'user', id: ev.id, text: ev.text, hasImage: ev.hasImage });
-        break;
-      }
-
-      case 'system:info': {
-        items.push({ kind: 'info', id: ev.id, text: ev.message });
-        break;
-      }
-
-      case 'system:error': {
-        items.push({ kind: 'error', id: ev.id, text: ev.message });
-        break;
-      }
-
-      // session:state and agent:activity are handled by the hook, not rendered here
-      default:
-        break;
-    }
+  // idle_notification: render as a compact single-line badge — no content body
+  if (item.isStructured && item.structuredPayload?.type === 'idle_notification') {
+    return (
+      <div
+        className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 py-1.5 flex items-center gap-2`}
+      >
+        <span className={`text-[10px] ${colors.dot} select-none`}>●</span>
+        <span className="text-xs font-mono text-muted-foreground/60">{item.fromAgent}</span>
+        <span className="text-xs text-muted-foreground/40">idle</span>
+        <span className="ml-auto text-[10px] text-muted-foreground/30 pr-2">{relativeTime}</span>
+      </div>
+    );
   }
 
-  return items;
+  // task_assignment: show compact card with task ID
+  if (item.isStructured && item.structuredPayload?.type === 'task_assignment') {
+    const taskId = item.structuredPayload.taskId as string | undefined;
+    const taskTitle = item.structuredPayload.taskTitle as string | undefined;
+    return (
+      <div className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 py-2 space-y-1`}>
+        <div className="flex items-center gap-2">
+          <span className={`text-[10px] ${colors.dot} select-none`}>●</span>
+          <span className="text-xs font-mono text-muted-foreground/60">{item.fromAgent}</span>
+          <span className="text-xs text-muted-foreground/40">task assigned</span>
+          <span className="ml-auto text-[10px] text-muted-foreground/30 pr-2">{relativeTime}</span>
+        </div>
+        {taskId && (
+          <div className="text-xs text-muted-foreground/60">
+            <span className="font-mono text-muted-foreground/40">{taskId.slice(0, 8)}</span>
+            {taskTitle && <span className="ml-1.5">{taskTitle}</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Default: full markdown card with optional collapse after 6 lines
+  const lines = item.text.split('\n');
+  const COLLAPSE_THRESHOLD = 6;
+  const shouldCollapse = lines.length > COLLAPSE_THRESHOLD;
+  const displayText =
+    shouldCollapse && !expanded ? lines.slice(0, COLLAPSE_THRESHOLD).join('\n') + '\n…' : item.text;
+
+  return (
+    <div
+      className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 pr-2 py-2 space-y-1.5`}
+    >
+      {/* Header row */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className={`text-[10px] ${colors.dot} select-none shrink-0`}>●</span>
+        <span className="text-xs font-mono text-muted-foreground/70 shrink-0">
+          {item.fromAgent}
+        </span>
+        {item.summary && (
+          <span className="text-xs text-muted-foreground/45 truncate flex-1 min-w-0">
+            {item.summary}
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground/30 shrink-0 ml-auto">
+          {relativeTime}
+        </span>
+      </div>
+
+      {/* Markdown content */}
+      <div className="text-xs text-foreground/65 break-words overflow-hidden">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {displayText}
+        </ReactMarkdown>
+      </div>
+
+      {/* Expand / collapse toggle */}
+      {shouldCollapse && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className={`text-[10px] ${colors.dot} opacity-60 hover:opacity-100 transition-opacity`}
+        >
+          {expanded ? 'Show less ▲' : 'Show more ▼'}
+        </button>
+      )}
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// InitialPromptBanner — shows the prompt that kicked off the session
+// ---------------------------------------------------------------------------
+
+function InitialPromptBanner({ prompt }: { prompt: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const PREVIEW_LEN = 220;
+  const isLong = prompt.length > PREVIEW_LEN;
+  const displayText = isLong && !expanded ? prompt.slice(0, PREVIEW_LEN) + '…' : prompt;
+
+  return (
+    <div className="rounded-md border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2 text-xs space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <MessageSquare className="size-3 text-violet-400/70 shrink-0" />
+        <span className="text-violet-400/70 font-medium">Initial prompt</span>
+      </div>
+      <p className="text-muted-foreground/60 whitespace-pre-wrap break-words leading-relaxed">
+        {displayText}
+      </p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-violet-400/50 hover:text-violet-400/80 transition-colors"
+        >
+          {expanded ? 'Show less ▲' : 'Show more ▼'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -643,10 +791,19 @@ interface SessionChatViewProps {
   sessionId: string;
   stream: UseSessionStreamReturn;
   currentStatus: SessionStatus | null | string;
+  initialPrompt?: string | null;
 }
 
-export function SessionChatView({ sessionId, stream, currentStatus }: SessionChatViewProps) {
+export function SessionChatView({
+  sessionId,
+  stream,
+  currentStatus,
+  initialPrompt,
+}: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<
     { id: string; text: string; imageDataUrl?: string }[]
@@ -684,12 +841,33 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
     }
   }, [stream.events, optimisticMessages.length]);
 
-  useEffect(() => {
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distFromBottom < 80;
+    isNearBottomRef.current = near;
+    setUserScrolledUp(!near);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setUserScrolledUp(false);
+    isNearBottomRef.current = true;
+  }, []);
+
+  // Auto-scroll only when the user hasn't scrolled up
+  useEffect(() => {
+    if (isNearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [stream.events.length, optimisticMessages.length]);
 
-  const toolResultMap = buildToolResultMap(stream.events);
-  const displayItems = buildDisplayItems(stream.events, toolResultMap);
+  const toolResultMap = useMemo(() => buildToolResultMap(stream.events), [stream.events]);
+  const displayItems = useMemo(
+    () => buildDisplayItems(stream.events, toolResultMap),
+    [stream.events, toolResultMap],
+  );
 
   // Extract slash commands and MCP servers from the most recent session:init event
   const initEvent = stream.events
@@ -745,6 +923,8 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
           />
         );
       }
+      case 'team-message':
+        return <TeamMessageCard key={item.id} item={item} />;
     }
   }
 
@@ -771,6 +951,8 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
 
       {/* Chat area */}
       <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
@@ -789,6 +971,9 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
           </div>
         )}
 
+        {/* Initial prompt banner — shown once at the top if present */}
+        {initialPrompt && <InitialPromptBanner prompt={initialPrompt} />}
+
         {displayItems.map((item, i) => renderDisplayItem(item, i))}
 
         {/* Optimistic user messages shown while real event is in-flight */}
@@ -799,6 +984,20 @@ export function SessionChatView({ sessionId, stream, currentStatus }: SessionCha
         {showTyping && <TypingIndicator />}
 
         {stream.error && <ErrorPill text={`Stream error: ${stream.error}`} />}
+
+        {/* Sticky scroll-to-bottom button — appears when user has scrolled up */}
+        {userScrolledUp && stream.events.length > 0 && (
+          <div className="sticky bottom-2 flex justify-center pointer-events-none">
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="pointer-events-auto flex items-center gap-1.5 text-xs text-foreground/70 bg-[oklch(0.12_0_0)] hover:bg-[oklch(0.16_0_0)] border border-white/[0.12] hover:border-white/[0.20] rounded-full px-3 py-1.5 shadow-lg transition-all"
+            >
+              <ArrowDown className="size-3" />
+              <span>Scroll to bottom</span>
+            </button>
+          </div>
+        )}
 
         <div ref={bottomRef} />
       </div>

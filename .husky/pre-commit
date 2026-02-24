@@ -103,18 +103,19 @@ if [[ "${SKIP_MIGRATIONS:-}" == "1" ]]; then
   step_skip "Drizzle migration drift (skipped)"
 elif echo "$STAGED" | grep -q "src/lib/db/schema.ts"; then
   t=$(date +%s)
-  if pnpm db:generate --check 2>/dev/null; then
+  CHECK_OUT=$(pnpm db:generate --check 2>&1) || EXIT_CODE=$?
+  if [[ -z "${EXIT_CODE:-}" ]]; then
     step_ok "Drizzle migration drift" "$(elapsed $t)"
+  elif echo "$CHECK_OUT" | grep -qiE "unrecognized|unknown|invalid.*flag|not.*supported"; then
+    echo "  ⚠  drizzle-kit --check not supported by installed version, skipping"
+    step_skip "Drizzle migration drift (flag unsupported)"
+  elif [[ "${EXIT_CODE:-0}" -eq 127 ]]; then
+    echo "  ⚠  drizzle-kit not found, skipping"
+    step_skip "Drizzle migration drift (drizzle-kit missing)"
   else
-    EXIT_CODE=$?
-    if [[ $EXIT_CODE -eq 127 ]]; then
-      echo "  ⚠  drizzle-kit --check not supported, skipping"
-      step_skip "Drizzle migration drift (flag unsupported)"
-    else
-      step_fail "Drizzle migration drift" "$(elapsed $t)"
-      echo "  schema.ts has changes not reflected in migrations."
-      echo "  Run: pnpm db:generate"
-    fi
+    step_fail "Drizzle migration drift" "$(elapsed $t)"
+    echo "  schema.ts has changes not reflected in migrations."
+    echo "  Run: pnpm db:generate"
   fi
 else
   step_skip "Drizzle migration drift"

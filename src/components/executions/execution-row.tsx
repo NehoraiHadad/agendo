@@ -34,10 +34,10 @@ export function ExecutionRow({ execution, onCancelled }: ExecutionRowProps) {
       <TableCell>
         <ExecutionStatusBadge status={execution.status} />
       </TableCell>
-      <TableCell className="text-xs font-mono text-muted-foreground/70">
+      <TableCell className="hidden sm:table-cell text-xs font-mono text-muted-foreground/70">
         {formatDuration(execution.startedAt, execution.endedAt)}
       </TableCell>
-      <TableCell className="text-xs font-mono text-muted-foreground/60">
+      <TableCell className="hidden sm:table-cell text-xs font-mono text-muted-foreground/60">
         {execution.exitCode !== null ? execution.exitCode : '-'}
       </TableCell>
       <TableCell className="text-right">

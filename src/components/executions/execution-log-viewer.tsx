@@ -49,7 +49,7 @@ export function ExecutionLogViewer({
   onStatusChange,
   externalStream,
 }: ExecutionLogViewerProps) {
-  const internal = useExecutionStream(externalStream ? null : (enabled ? executionId : null));
+  const internal = useExecutionStream(externalStream ? null : enabled ? executionId : null);
   const stream = externalStream ?? internal;
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -58,7 +58,7 @@ export function ExecutionLogViewer({
   const [rawMatchIndex, setRawMatchIndex] = useState(0);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
-  const currentStatus = stream.status ?? initialStatus ?? 'queued';
+  const _currentStatus = stream.status ?? initialStatus ?? 'queued';
 
   // Notify parent of status changes from SSE stream
   useEffect(() => {
@@ -140,32 +140,38 @@ export function ExecutionLogViewer({
    * SECURITY: line.html is pre-sanitized by DOMPurify in log-renderer.ts
    * with ALLOWED_TAGS: ['span'] and ALLOWED_ATTR: ['style'].
    */
-  function renderLine(line: RenderedLine, index: number) {
-    const colorClass = getStreamColorClass(line.stream);
-    const isMatch = searchQuery && line.text.toLowerCase().includes(searchQuery.toLowerCase());
-    const isCurrentMatch = isMatch && matchIndices[currentMatchIndex] === index;
-    // html is sanitized by DOMPurify in log-renderer.ts
-    const sanitizedHtml = isMatch ? highlightMatches(line.html, line.text, searchQuery) : line.html;
+  const renderLine = useCallback(
+    (line: RenderedLine, index: number) => {
+      const colorClass = getStreamColorClass(line.stream);
+      const isMatch =
+        searchQuery !== '' && line.text.toLowerCase().includes(searchQuery.toLowerCase());
+      const isCurrentMatch = isMatch && matchIndices[currentMatchIndex] === index;
+      // html is sanitized by DOMPurify in log-renderer.ts
+      const sanitizedHtml = isMatch
+        ? highlightMatches(line.html, line.text, searchQuery)
+        : line.html;
 
-    return (
-      <div
-        key={line.id}
-        data-line-index={index}
-        className={`flex gap-2 px-3 py-px hover:bg-white/5 ${
-          isCurrentMatch ? 'bg-amber-500/10 ring-1 ring-amber-500/30' : ''
-        }`}
-      >
-        <span className="select-none text-muted-foreground/30 tabular-nums text-right min-w-[3ch]">
-          {index + 1}
-        </span>
-        {/* Content is sanitized by DOMPurify (ALLOWED_TAGS: ['span'], ALLOWED_ATTR: ['style']) */}
-        <span
-          className={`${colorClass} ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}
-          dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
-        />
-      </div>
-    );
-  }
+      return (
+        <div
+          key={line.id}
+          data-line-index={index}
+          className={`flex gap-2 px-3 py-px hover:bg-white/5 ${
+            isCurrentMatch ? 'bg-amber-500/10 ring-1 ring-amber-500/30' : ''
+          }`}
+        >
+          <span className="select-none text-muted-foreground/30 tabular-nums text-right min-w-[3ch]">
+            {index + 1}
+          </span>
+          {/* Content is sanitized by DOMPurify (ALLOWED_TAGS: ['span'], ALLOWED_ATTR: ['style']) */}
+          <span
+            className={`${colorClass} ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}
+            dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+          />
+        </div>
+      );
+    },
+    [searchQuery, matchIndices, currentMatchIndex, wrapLines],
+  );
 
   return (
     <div className="flex flex-col rounded-md">
@@ -210,7 +216,9 @@ export function ExecutionLogViewer({
           {stream.lines.length === 0 && !stream.error && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
               <Loader2 className="size-5 animate-spin" />
-              <span className="text-xs">{stream.isConnected ? 'Waiting for output…' : 'Connecting…'}</span>
+              <span className="text-xs">
+                {stream.isConnected ? 'Waiting for output…' : 'Connecting…'}
+              </span>
             </div>
           )}
           {stream.lines.map((line, i) => renderLine(line, i))}

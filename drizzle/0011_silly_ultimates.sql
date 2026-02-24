@@ -1,0 +1,2 @@
+-- permissionMode enum expansion: added 'plan' and 'dontAsk' values.
+-- No DDL required — column is varchar, constraint is TypeScript-level only.

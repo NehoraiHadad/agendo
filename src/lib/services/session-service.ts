@@ -10,7 +10,7 @@ export interface CreateSessionInput {
   capabilityId: string;
   idleTimeoutSec?: number;
   initialPrompt?: string;
-  permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
+  permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
   allowedTools?: string[];
 }
 

@@ -1,4 +1,4 @@
-export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits';
+export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
 
 export type PermissionDecision = 'allow' | 'deny' | 'allow-session';
 
