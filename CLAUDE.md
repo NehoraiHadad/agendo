@@ -17,8 +17,9 @@ agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex,
 
 ```bash
 # Development (never run pnpm dev directly — use PM2)
-pm2 restart agendo              # restart Next.js app
-pm2 restart agendo-worker       # restart worker
+pm2 restart agendo-worker       # restart worker (ALWAYS safe — does not host MCP)
+./scripts/safe-restart-agendo.sh  # restart Next.js app SAFELY (waits for sessions to end)
+pm2 restart agendo              # ⚠ DANGER during active sessions — kills MCP connection
 
 # Build
 pnpm build                      # Next.js production build
@@ -68,6 +69,26 @@ pnpm worker:dev                 # tsx watch for local dev
 Config: `/home/ubuntu/projects/ecosystem.config.js`. After env changes: `pm2 restart <name> --update-env && pm2 save`. To fully purge old vars: `pm2 delete <name> && pm2 start ecosystem.config.js --only <name>`.
 
 Worker reads env from `ecosystem.config.js` (NOT `.env.local`). The Next.js app reads `.env.local`.
+
+### Safe Restart Patterns
+
+`agendo-worker` **never** hosts the MCP server — always safe to restart:
+
+```bash
+pm2 restart agendo-worker --update-env
+```
+
+`agendo` (Next.js) **hosts the MCP server**. Restarting it drops any live agent MCP connection:
+
+```bash
+# SAFE: waits for active sessions to end first (up to 5 min), then restarts
+./scripts/safe-restart-agendo.sh
+
+# IMMEDIATE: skips the wait (use only when no sessions are active)
+./scripts/safe-restart-agendo.sh --force
+```
+
+`pm2 restart agendo` directly is safe only when you are certain no agent sessions are active.
 
 ## Required Environment Variables
 
