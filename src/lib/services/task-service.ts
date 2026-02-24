@@ -4,6 +4,7 @@ import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/
 import { isValidTaskTransition } from '@/lib/state-machines';
 import { NotFoundError, ConflictError } from '@/lib/errors';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
+import { sendPushToAll } from '@/lib/services/notification-service';
 import type { Task, TaskStatus } from '@/lib/types';
 
 // --- Types ---
@@ -71,6 +72,7 @@ async function getNextSortOrder(status: TaskStatus): Promise<number> {
 
 /**
  * Reindex all sort_order values in a column with fresh gaps.
+ * Runs inside a transaction so a partial failure leaves the column unchanged.
  */
 export async function reindexColumn(status: TaskStatus): Promise<void> {
   const columnTasks = await db
@@ -79,12 +81,16 @@ export async function reindexColumn(status: TaskStatus): Promise<void> {
     .where(eq(tasks.status, status))
     .orderBy(asc(tasks.sortOrder));
 
-  for (let i = 0; i < columnTasks.length; i++) {
-    await db
-      .update(tasks)
-      .set({ sortOrder: (i + 1) * SORT_ORDER_GAP })
-      .where(eq(tasks.id, columnTasks[i].id));
-  }
+  if (columnTasks.length === 0) return;
+
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < columnTasks.length; i++) {
+      await tx
+        .update(tasks)
+        .set({ sortOrder: (i + 1) * SORT_ORDER_GAP })
+        .where(eq(tasks.id, columnTasks[i].id));
+    }
+  });
 }
 
 /**
@@ -220,6 +226,9 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
       eventType: 'status_changed',
       payload: { from: existing.status, to: input.status },
     });
+    if (input.status === 'done') {
+      void sendPushToAll({ title: 'Task completed', body: existing.title, url: '/tasks' });
+    }
   }
 
   if (input.assigneeAgentId !== undefined && input.assigneeAgentId !== existing.assigneeAgentId) {

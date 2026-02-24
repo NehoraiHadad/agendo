@@ -66,11 +66,13 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
     [meta.pageSize],
   );
 
+  const hasFetchedRef = useRef(false);
   useEffect(() => {
-    if (!initialData) {
-      fetchExecutions(1, statusFilter);
+    if (!initialData && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
+      fetchExecutions(1, 'all');
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialData, fetchExecutions]);
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
@@ -111,17 +113,27 @@ export function ExecutionTable({ initialData, initialMeta }: ExecutionTableProps
 
       <div
         ref={scrollContainerRef}
-        className="rounded-xl border border-white/[0.06] overflow-hidden overflow-y-auto"
+        className="rounded-xl border border-white/[0.06] overflow-hidden overflow-y-auto overflow-x-auto"
         style={{ maxHeight: '70vh' }}
       >
-        <Table>
+        <Table className="min-w-[400px]">
           <TableHeader className="bg-white/[0.02]">
             <TableRow>
-              <TableHead className="w-[100px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">ID</TableHead>
-              <TableHead className="w-[120px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Status</TableHead>
-              <TableHead className="w-[120px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Duration</TableHead>
-              <TableHead className="w-[80px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Exit Code</TableHead>
-              <TableHead className="w-[80px] text-right text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">Actions</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                ID
+              </TableHead>
+              <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                Status
+              </TableHead>
+              <TableHead className="hidden sm:table-cell text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                Duration
+              </TableHead>
+              <TableHead className="hidden sm:table-cell text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                Exit Code
+              </TableHead>
+              <TableHead className="text-right text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                Actions
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

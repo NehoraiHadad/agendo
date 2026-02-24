@@ -240,11 +240,19 @@ export async function runSession(
     `[session-runner] slot released for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
   );
 
-  // Wire exit cleanup: remove from live map when the process actually exits.
+  // Wire exit cleanup: remove from live map when the process actually exits,
+  // and clean up the ephemeral MCP config file written for this session.
   void sessionProc.waitForExit().then(() => {
     liveSessionProcs.delete(sessionId);
     console.log(
       `[session-runner] session ${sessionId} removed from live map — ${liveSessionProcs.size} live session(s) remaining`,
     );
+    if (mcpConfigPath) {
+      try {
+        unlinkSync(mcpConfigPath);
+      } catch {
+        // Best-effort: file may already be gone.
+      }
+    }
   });
 }

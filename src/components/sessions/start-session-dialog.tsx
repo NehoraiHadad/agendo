@@ -48,69 +48,95 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAgents = useCallback(async () => {
-    if (agentIdProp) return;
-    setIsLoadingAgents(true);
-    try {
-      const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50');
-      setAgents(res.data.filter((a) => a.isActive));
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingAgents(false);
-    }
-  }, [agentIdProp]);
-
-  const fetchCapabilities = useCallback(async () => {
-    if (!activeAgentId) return;
-    setIsLoadingCaps(true);
-    try {
-      const res = await apiFetch<ApiResponse<AgentCapability[]>>(
-        `/api/agents/${activeAgentId}/capabilities`,
-      );
-      const promptCaps = res.data.filter((c) => c.isEnabled && c.interactionMode === 'prompt');
-      if (promptCaps.length > 0) {
-        setPromptCapId(promptCaps[0].id);
+  const fetchAgents = useCallback(
+    async (signal: AbortSignal) => {
+      if (agentIdProp) return;
+      setIsLoadingAgents(true);
+      try {
+        const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50', { signal });
+        if (!signal.aborted) setAgents(res.data.filter((a) => a.isActive));
+      } catch {
+        // ignore
+      } finally {
+        if (!signal.aborted) setIsLoadingAgents(false);
       }
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingCaps(false);
-    }
-  }, [activeAgentId]);
+    },
+    [agentIdProp],
+  );
 
-  const fetchTask = useCallback(async () => {
-    setIsLoadingTask(true);
-    try {
-      const res = await apiFetch<ApiResponse<Task>>(`/api/tasks/${taskId}`);
-      const task = res.data;
-      const lines: string[] = [];
-      if (task.title) lines.push(task.title);
-      if (task.description) lines.push('', task.description);
-      setPromptText(lines.join('\n'));
-    } catch {
-      // ignore — prompt stays empty
-    } finally {
-      setIsLoadingTask(false);
-    }
-  }, [taskId]);
+  const fetchCapabilities = useCallback(
+    async (signal: AbortSignal) => {
+      if (!activeAgentId) return;
+      setIsLoadingCaps(true);
+      try {
+        const res = await apiFetch<ApiResponse<AgentCapability[]>>(
+          `/api/agents/${activeAgentId}/capabilities`,
+          { signal },
+        );
+        if (!signal.aborted) {
+          const promptCaps = res.data.filter((c) => c.isEnabled && c.interactionMode === 'prompt');
+          if (promptCaps.length > 0) {
+            setPromptCapId(promptCaps[0].id);
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!signal.aborted) setIsLoadingCaps(false);
+      }
+    },
+    [activeAgentId],
+  );
+
+  const fetchTask = useCallback(
+    async (signal: AbortSignal) => {
+      setIsLoadingTask(true);
+      try {
+        const res = await apiFetch<ApiResponse<Task>>(`/api/tasks/${taskId}`, { signal });
+        if (!signal.aborted) {
+          const task = res.data;
+          const lines: string[] = [];
+          if (task.title) lines.push(task.title);
+          if (task.description) lines.push('', task.description);
+          setPromptText(lines.join('\n'));
+        }
+      } catch {
+        // ignore — prompt stays empty
+      } finally {
+        if (!signal.aborted) setIsLoadingTask(false);
+      }
+    },
+    [taskId],
+  );
 
   useEffect(() => {
-    if (open) {
-      setSelectedAgentId(agentIdProp ?? '');
-      setPromptCapId('');
-      setPromptText('');
-      setError(null);
-      fetchAgents();
-      fetchTask();
-    }
+    if (!open) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    setSelectedAgentId(agentIdProp ?? '');
+    setPromptCapId('');
+    setPromptText('');
+    setError(null);
+
+    // fetchAgents and fetchTask are independent — run in parallel
+    void Promise.all([fetchAgents(signal), fetchTask(signal)]);
+
+    return () => {
+      controller.abort();
+    };
   }, [open, agentIdProp, fetchAgents, fetchTask]);
 
   useEffect(() => {
-    if (open && activeAgentId) {
-      setPromptCapId('');
-      fetchCapabilities();
-    }
+    if (!open || !activeAgentId) return;
+    const controller = new AbortController();
+
+    setPromptCapId('');
+    void fetchCapabilities(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
   }, [open, activeAgentId, fetchCapabilities]);
 
   async function handleSubmit(e: React.FormEvent) {

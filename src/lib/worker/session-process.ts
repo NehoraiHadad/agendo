@@ -14,6 +14,9 @@ import type {
   SessionStatus,
 } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
+import { enqueueSession } from '@/lib/worker/queue';
+import { sendPushToAll } from '@/lib/services/notification-service';
+import { TeamInboxMonitor } from '@/lib/worker/team-inbox-monitor';
 import type {
   AgentAdapter,
   SpawnOpts,
@@ -66,6 +69,10 @@ export class SessionProcess {
   private terminateKilled = false;
   /** Set by handleCancel() so onExit skips the "unexpected exit" error message. */
   private cancelKilled = false;
+  /** Set by handleSetPermissionMode() so onExit re-enqueues for immediate restart. */
+  private modeChangeRestart = false;
+  /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
+  private sigkillTimers: ReturnType<typeof setTimeout>[] = [];
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
@@ -76,11 +83,33 @@ export class SessionProcess {
   private slotReleaseFuture = new Future<void>();
   private exitHandled = false;
   private sessionStartTime = Date.now();
+  /**
+   * Tools that must always require human approval via the control_request path,
+   * regardless of permissionMode.
+   *
+   * These represent human-interaction gates (plan approval, etc.) rather than
+   * dangerous-action permissions.  The Claude Code CLI never auto-approves
+   * these even in bypassPermissions mode.
+   *
+   * Note: AskUserQuestion is NOT listed here because it arrives via the NDJSON
+   * tool_use path (not control_request) and is detected generically from
+   * is_error:true in Claude's stdout — no hardcoded name needed.
+   */
+  private static readonly APPROVAL_GATED_TOOLS = new Set(['ExitPlanMode', 'exit_plan_mode']);
+
   private activeToolUseIds = new Set<string>();
+  /** tool_use IDs for interactive tools awaiting a human response via the UI. */
+  private pendingHumanResponseIds = new Set<string>();
+  /** toolUseIds for APPROVAL_GATED_TOOLS — suppress their agent:tool-start/end events. */
+  private suppressedToolUseIds = new Set<string>();
   private pendingApprovals = new Map<
     string,
     (decision: 'allow' | 'deny' | 'allow-session') => void
   >();
+  /** Maps toolName → pending approvalId, so a duplicate call auto-denies the old one. */
+  private pendingApprovalsByTool = new Map<string, string>();
+  /** Team inbox monitor — non-null only when this session is a team leader. */
+  private teamInboxMonitor: TeamInboxMonitor | null = null;
 
   constructor(
     private session: Session,
@@ -153,7 +182,14 @@ export class SessionProcess {
     // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
     this.unsubscribeControl = await subscribe(
       channelName('agendo_control', this.session.id),
-      (payload) => void this.onControl(payload),
+      (payload) => {
+        this.onControl(payload).catch((err: unknown) => {
+          console.error(
+            `[session-process] Control handler error for session ${this.session.id}:`,
+            err,
+          );
+        });
+      },
     );
 
     // Build child env: start from the worker's own env, then strip vars that
@@ -204,7 +240,15 @@ export class SessionProcess {
     // (Claude handles this via the session:init NDJSON event)
     this.adapter.onSessionRef?.((ref) => {
       this.sessionRef = ref;
-      void db.update(sessions).set({ sessionRef: ref }).where(eq(sessions.id, this.session.id));
+      db.update(sessions)
+        .set({ sessionRef: ref })
+        .where(eq(sessions.id, this.session.id))
+        .catch((err: unknown) => {
+          console.error(
+            `[session-process] Failed to persist sessionRef for session ${this.session.id}:`,
+            err,
+          );
+        });
     });
 
     // Wire thinking callback for agent:activity events
@@ -239,6 +283,41 @@ export class SessionProcess {
     this.managedProcess.onExit((code) => void this.onExit(code));
 
     this.startHeartbeat();
+
+    // If this session is a team leader, start monitoring the team inbox for
+    // incoming agent messages and surface them as team:message events.
+    const teamName = TeamInboxMonitor.findTeamForSession(this.session.id);
+    if (teamName) {
+      this.teamInboxMonitor = new TeamInboxMonitor(teamName);
+      // Backfill: emit all messages that already existed in the inbox so they
+      // appear in the chat view on reconnect / cold-resume.
+      const existing = this.teamInboxMonitor.readAllMessages();
+      for (const msg of existing) {
+        await this.emitEvent({
+          type: 'team:message',
+          fromAgent: msg.from,
+          text: msg.text,
+          summary: msg.summary,
+          color: msg.color,
+          sourceTimestamp: msg.timestamp,
+          isStructured: msg.isStructured,
+          structuredPayload: msg.structuredPayload,
+        });
+      }
+      // Poll for new messages every 4 seconds.
+      this.teamInboxMonitor.startPolling(4000, (msg) => {
+        void this.emitEvent({
+          type: 'team:message',
+          fromAgent: msg.from,
+          text: msg.text,
+          summary: msg.summary,
+          color: msg.color,
+          sourceTimestamp: msg.timestamp,
+          isStructured: msg.isStructured,
+          structuredPayload: msg.structuredPayload,
+        });
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -265,11 +344,71 @@ export class SessionProcess {
         continue;
       }
 
+      // Separate try-catch for JSON parsing vs event emission so that a
+      // transient emit failure (DB error, etc.) never causes raw JSON to leak
+      // into the chat as a system:info message.
+      let parsed: Record<string, unknown>;
       try {
-        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        // Line is not JSON — treat as plain text info (shell output, etc.)
+        await this.emitEvent({ type: 'system:info', message: trimmed });
+        continue;
+      }
+
+      try {
+        // Generic interactive tool detection: when Claude's own NDJSON output
+        // contains a type:'user' block with is_error:true tool_results, it means
+        // the CLI tried to handle an interactive tool (AskUserQuestion, ExitPlanMode,
+        // or any future tool) natively but failed in pipe mode. We detect this
+        // from the raw parsed object BEFORE emitting events, so the suppression
+        // check below can immediately catch the resulting agent:tool-end partial.
+        //
+        // This is fully generic — no hardcoded tool name list needed for the
+        // NDJSON path. The is_error flag in Claude's own output is the signal.
+        if (parsed.type === 'user') {
+          const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
+          for (const block of msg?.content ?? []) {
+            if (block.type === 'tool_result' && block.is_error === true) {
+              const id = (block.tool_use_id as string | undefined) ?? '';
+              if (id && this.activeToolUseIds.has(id)) {
+                this.pendingHumanResponseIds.add(id);
+              }
+            }
+          }
+        }
+
         const partials = this.mapClaudeJsonToEvents(parsed);
 
         for (const partial of partials) {
+          // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
+          // These appear only as control_request approval cards — not as ToolCard widgets.
+          if (
+            partial.type === 'agent:tool-start' &&
+            SessionProcess.APPROVAL_GATED_TOOLS.has(partial.toolName)
+          ) {
+            this.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
+            this.suppressedToolUseIds.add(partial.toolUseId);
+            continue;
+          }
+          if (
+            partial.type === 'agent:tool-end' &&
+            this.suppressedToolUseIds.has(partial.toolUseId)
+          ) {
+            this.activeToolUseIds.delete(partial.toolUseId);
+            this.suppressedToolUseIds.delete(partial.toolUseId);
+            continue;
+          }
+
+          // Suppress the error tool-end for any interactive tool: the UI card
+          // stays live and pushToolResult routes the human's answer when it arrives.
+          if (
+            partial.type === 'agent:tool-end' &&
+            this.pendingHumanResponseIds.has(partial.toolUseId)
+          ) {
+            continue; // suppress — keep in activeToolUseIds until human responds
+          }
+
           const event = await this.emitEvent(partial);
 
           // Track in-flight tool calls to enable synthetic cleanup on cancel.
@@ -297,9 +436,13 @@ export class SessionProcess {
             this.resetIdleTimer();
           }
         }
-      } catch {
-        // Line was valid text but not parseable JSON or mapping returned null.
-        await this.emitEvent({ type: 'system:info', message: trimmed });
+      } catch (err) {
+        // Event emission failed (transient DB/publish error). Log but don't
+        // surface raw JSON to the user — it would appear as a broken UI element.
+        console.error(
+          `[session-process] Failed to emit event for session ${this.session.id}:`,
+          err,
+        );
       }
     }
   }
@@ -446,6 +589,8 @@ export class SessionProcess {
       }
     } else if (control.type === 'tool-result') {
       await this.pushToolResult(control.toolUseId, control.content);
+    } else if (control.type === 'set-permission-mode') {
+      await this.handleSetPermissionMode(control.mode);
     }
   }
 
@@ -481,6 +626,35 @@ export class SessionProcess {
       );
       return;
     }
+
+    // AskUserQuestion special path: Claude already consumed an error tool_result
+    // automatically (non-interactive mode), so we can't use sendToolResult.
+    // Instead: emit agent:tool-end to mark the UI card as answered, then send
+    // the user's answer as a regular user message so Claude can act on it.
+    if (this.pendingHumanResponseIds.has(toolUseId)) {
+      this.pendingHumanResponseIds.delete(toolUseId);
+      this.activeToolUseIds.delete(toolUseId);
+      // Emit tool-end with full JSON so the UI can display the selected option.
+      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content });
+      // Extract just the answer values — Claude already has the question in
+      // context, so sending {"answers":{"Q":"A"}} is redundant and noisy.
+      let messageText = content;
+      try {
+        const parsed = JSON.parse(content) as { answers?: Record<string, string> };
+        if (parsed.answers) {
+          const values = Object.values(parsed.answers);
+          messageText = values.join(', ');
+        }
+      } catch {
+        // fall back to raw content
+      }
+      await this.adapter.sendMessage(messageText);
+      await this.emitEvent({ type: 'user:message', text: messageText });
+      await this.transitionTo('active');
+      this.resetIdleTimer();
+      return;
+    }
+
     if (!this.adapter.sendToolResult) {
       console.warn(`[session-process] adapter does not support sendToolResult`);
       return;
@@ -508,11 +682,45 @@ export class SessionProcess {
       });
     }
     this.activeToolUseIds.clear();
+    this.suppressedToolUseIds.clear();
+    // Drain pending tool approvals so any adapter blocked on handleApprovalRequest unblocks.
+    this.drainPendingApprovals('deny');
     await this.adapter.interrupt();
     // Allow graceful shutdown; escalate to SIGKILL after grace period.
-    setTimeout(() => {
+    const t = setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
     }, SIGKILL_DELAY_MS);
+    this.sigkillTimers.push(t);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: permission mode change (graceful restart with new mode)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handle a set-permission-mode control: update in-memory session state and DB,
+   * emit a system:info event visible in the chat, then terminate the process.
+   * Because terminateKilled=true, onExit transitions to 'idle' (not 'ended'),
+   * and modeChangeRestart=true causes onExit to immediately re-enqueue the
+   * session so it cold-resumes with the new --permission-mode flag.
+   */
+  private async handleSetPermissionMode(
+    mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
+  ): Promise<void> {
+    this.session.permissionMode = mode;
+    await this.emitEvent({
+      type: 'system:info',
+      message: `Permission mode changing to "${mode}". Session will restart automatically.`,
+    });
+    this.modeChangeRestart = true;
+    // terminateKilled=true ensures onExit transitions to 'idle' (not 'ended').
+    this.terminateKilled = true;
+    this.drainPendingApprovals('deny');
+    this.managedProcess?.kill('SIGTERM');
+    const t = setTimeout(() => {
+      this.managedProcess?.kill('SIGKILL');
+    }, SIGKILL_DELAY_MS);
+    this.sigkillTimers.push(t);
   }
 
   // ---------------------------------------------------------------------------
@@ -530,6 +738,7 @@ export class SessionProcess {
       await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted]' });
     }
     this.activeToolUseIds.clear();
+    this.suppressedToolUseIds.clear();
 
     // Ask the adapter to send an interrupt signal. For Claude this writes a
     // control_request{subtype:'interrupt'} to stdin and waits up to 3s for a
@@ -560,10 +769,13 @@ export class SessionProcess {
       await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted by user]' });
     }
     this.activeToolUseIds.clear();
+    this.suppressedToolUseIds.clear();
+    this.drainPendingApprovals('deny');
     await this.adapter.interrupt();
-    setTimeout(() => {
+    const t = setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
     }, SIGKILL_DELAY_MS);
+    this.sigkillTimers.push(t);
   }
 
   // ---------------------------------------------------------------------------
@@ -587,6 +799,12 @@ export class SessionProcess {
       // Resolve the slot future so the pg-boss slot frees while the process
       // stays alive in-memory awaiting the next user message.
       this.slotReleaseFuture.resolve();
+      // Notify subscribed browsers that the agent is ready for input
+      void sendPushToAll({
+        title: 'Agent finished',
+        body: 'Your agent is ready for the next message',
+        url: `/sessions/${this.session.id}`,
+      });
     }
   }
 
@@ -604,17 +822,33 @@ export class SessionProcess {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    this.idleTimer = setTimeout(async () => {
+    this.idleTimer = setTimeout(() => {
       if (this.status !== 'awaiting_input') return;
-      await this.emitEvent({
+      this.emitEvent({
         type: 'system:info',
         message: `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
-      });
-      this.idleTimeoutKilled = true;
-      this.managedProcess?.kill('SIGTERM');
-      setTimeout(() => {
-        this.managedProcess?.kill('SIGKILL');
-      }, SIGKILL_DELAY_MS);
+      })
+        .then(() => {
+          this.idleTimeoutKilled = true;
+          this.managedProcess?.kill('SIGTERM');
+          const t = setTimeout(() => {
+            this.managedProcess?.kill('SIGKILL');
+          }, SIGKILL_DELAY_MS);
+          this.sigkillTimers.push(t);
+        })
+        .catch((err: unknown) => {
+          console.error(
+            `[session-process] Failed to emit idle timeout event for session ${this.session.id}:`,
+            err,
+          );
+          // Still kill the process even if event emission fails.
+          this.idleTimeoutKilled = true;
+          this.managedProcess?.kill('SIGTERM');
+          const t = setTimeout(() => {
+            this.managedProcess?.kill('SIGKILL');
+          }, SIGKILL_DELAY_MS);
+          this.sigkillTimers.push(t);
+        });
     }, this.session.idleTimeoutSec * 1_000);
   }
 
@@ -642,6 +876,16 @@ export class SessionProcess {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+    // Clear any pending SIGKILL escalation timers — the process has already exited.
+    for (const t of this.sigkillTimers) {
+      clearTimeout(t);
+    }
+    this.sigkillTimers = [];
+    // Drain any approval promises so blocked adapters unblock immediately.
+    this.drainPendingApprovals('deny');
+    // Stop team inbox polling if active.
+    this.teamInboxMonitor?.stopPolling();
+    this.teamInboxMonitor = null;
     // Unsubscribe from the control channel to release the pg pool connection.
     // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
@@ -678,6 +922,20 @@ export class SessionProcess {
     }
 
     await db.update(sessions).set({ endedAt: new Date() }).where(eq(sessions.id, this.session.id));
+
+    // Mode-change restart: re-enqueue immediately so the session cold-resumes
+    // with the updated permissionMode (already written to DB by the PATCH endpoint).
+    // The session status is now 'idle', so the next session-runner job can claim it.
+    if (this.modeChangeRestart && this.sessionRef) {
+      enqueueSession({ sessionId: this.session.id, resumeRef: this.sessionRef }).catch(
+        (err: unknown) => {
+          console.error(
+            `[session-process] Failed to re-enqueue session ${this.session.id} after mode change:`,
+            err,
+          );
+        },
+      );
+    }
 
     if (this.logWriter) {
       await this.logWriter.close();
@@ -759,6 +1017,20 @@ export class SessionProcess {
     }
   }
 
+  /**
+   * Resolve all pending tool approval promises with the given decision so that
+   * any adapter blocked on `handleApprovalRequest` unblocks immediately. Called
+   * on cancel, terminate, and idle-timeout to prevent the process from hanging
+   * forever waiting for a human who will never respond.
+   */
+  private drainPendingApprovals(decision: 'allow' | 'deny' | 'allow-session'): void {
+    for (const [, resolver] of this.pendingApprovals) {
+      resolver(decision);
+    }
+    this.pendingApprovals.clear();
+    this.pendingApprovalsByTool.clear();
+  }
+
   // ---------------------------------------------------------------------------
   // Private: tool approval
   // ---------------------------------------------------------------------------
@@ -804,11 +1076,16 @@ export class SessionProcess {
     toolName: string,
     toolInput: Record<string, unknown>,
   ): Promise<PermissionDecision> {
-    // Non-interactive modes: auto-allow without prompting the user.
-    // Claude already receives --permission-mode <mode> via its CLI flag, so
-    // this guard is primarily for Codex and Gemini adapters which relay their
-    // permission requests through this handler.
-    if (this.session.permissionMode !== 'default') {
+    // Interactive tools always require human input regardless of permissionMode.
+    // permissionMode bypasses safety prompts for dangerous tools (Bash, Write…),
+    // but ExitPlanMode and AskUserQuestion are human-interaction primitives —
+    // the agent is asking the human something, not requesting permission for a
+    // risky action. The Claude Code CLI itself never auto-approves these even in
+    // bypassPermissions mode, and we must match that behaviour.
+    if (
+      this.session.permissionMode !== 'default' &&
+      !SessionProcess.APPROVAL_GATED_TOOLS.has(toolName)
+    ) {
       return 'allow';
     }
 
@@ -816,6 +1093,18 @@ export class SessionProcess {
     if (this.isToolAllowed(toolName)) {
       return 'allow';
     }
+
+    // Auto-deny any previous pending approval for the same tool to prevent duplicate cards.
+    const existingApprovalId = this.pendingApprovalsByTool.get(toolName);
+    if (existingApprovalId) {
+      const existingResolver = this.pendingApprovals.get(existingApprovalId);
+      if (existingResolver) {
+        existingResolver('deny');
+        this.pendingApprovals.delete(existingApprovalId);
+      }
+      this.pendingApprovalsByTool.delete(toolName);
+    }
+    this.pendingApprovalsByTool.set(toolName, approvalId);
 
     // Emit approval request event to frontend and block until user responds.
     await this.emitEvent({
@@ -827,7 +1116,10 @@ export class SessionProcess {
     });
 
     return new Promise((resolve) => {
-      this.pendingApprovals.set(approvalId, resolve);
+      this.pendingApprovals.set(approvalId, (decision) => {
+        this.pendingApprovalsByTool.delete(toolName);
+        resolve(decision);
+      });
     });
   }
 

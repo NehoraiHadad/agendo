@@ -192,18 +192,29 @@ export class GeminiAdapter implements AgentAdapter {
         }
 
         const approvalId = String(msg.id);
-        void this.approvalHandler(approvalId, toolName, toolInput).then((decision) => {
-          const chosenOption =
-            decision === 'deny'
-              ? (options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1])
-              : (options.find((o) => o.kind === 'allow_once') ?? options[0]);
-          this.writeJson({
-            jsonrpc: '2.0',
-            id: msg.id,
-            // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
-            result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
+        const msgId = msg.id;
+        this.approvalHandler(approvalId, toolName, toolInput)
+          .then((decision) => {
+            const chosenOption =
+              decision === 'deny'
+                ? (options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1])
+                : (options.find((o) => o.kind === 'allow_once') ?? options[0]);
+            this.writeJson({
+              jsonrpc: '2.0',
+              id: msgId,
+              // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
+              result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
+            });
+          })
+          .catch((err: unknown) => {
+            console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
+            const allowOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
+            this.writeJson({
+              jsonrpc: '2.0',
+              id: msgId,
+              result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
+            });
           });
-        });
       }
       // Handle fs/read_text_file and fs/write_text_file client requests from Gemini
       else if (msg.method === 'fs/read_text_file') {
@@ -296,6 +307,13 @@ export class GeminiAdapter implements AgentAdapter {
     this.thinkingCallback?.(false);
   }
 
+  /**
+   * ACP request timeout for handshake/init methods (initialize, session/new).
+   * session/prompt is not limited here because the caller's idle-timeout handles it.
+   */
+  private static readonly INIT_METHODS = new Set(['initialize', 'session/new']);
+  private static readonly INIT_TIMEOUT_MS = 30_000;
+
   private sendRequest<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {
     const id = ++this.requestId;
     return new Promise<T>((resolve, reject) => {
@@ -304,6 +322,21 @@ export class GeminiAdapter implements AgentAdapter {
         reject,
       });
       this.writeJson({ jsonrpc: '2.0', id, method, params });
+
+      // Guard init-phase requests with a hard timeout to prevent hanging
+      // indefinitely if the Gemini process fails to respond during startup.
+      if (GeminiAdapter.INIT_METHODS.has(method)) {
+        setTimeout(() => {
+          if (this.pendingRequests.has(id)) {
+            this.pendingRequests.delete(id);
+            reject(
+              new Error(
+                `ACP request "${method}" timed out after ${GeminiAdapter.INIT_TIMEOUT_MS}ms`,
+              ),
+            );
+          }
+        }, GeminiAdapter.INIT_TIMEOUT_MS);
+      }
     });
   }
 
