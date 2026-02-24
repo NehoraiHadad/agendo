@@ -25,13 +25,30 @@ export function CapabilityList({ agentId, initialCapabilities }: CapabilityListP
 
   useEffect(() => {
     if (initialCapabilities) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
     setIsLoading(true);
-    apiFetch<ApiResponse<AgentCapability[]>>(`/api/agents/${agentId}/capabilities`)
-      .then((res) => { if (!cancelled) setCapabilities(res.data); })
-      .catch((err) => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Failed to load'); })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
+
+    async function loadCapabilities() {
+      try {
+        const res = await apiFetch<ApiResponse<AgentCapability[]>>(
+          `/api/agents/${agentId}/capabilities`,
+          { signal },
+        );
+        if (!signal.aborted) setCapabilities(res.data);
+      } catch (err) {
+        if (!signal.aborted) {
+          setLoadError(err instanceof Error ? err.message : 'Failed to load');
+        }
+      } finally {
+        if (!signal.aborted) setIsLoading(false);
+      }
+    }
+
+    void loadCapabilities();
+    return () => {
+      controller.abort();
+    };
   }, [agentId, initialCapabilities]);
 
   function handleCreated(cap: AgentCapability) {
@@ -55,7 +72,7 @@ export function CapabilityList({ agentId, initialCapabilities }: CapabilityListP
     startSync(async () => {
       const result = await syncCapabilities(agentId);
       if (result.success && result.added?.length) {
-        setCapabilities((prev) => [...prev, ...result.added!]);
+        setCapabilities((prev) => [...prev, ...(result.added ?? [])]);
       } else if (!result.success) {
         setSyncError(result.error ?? 'Sync failed');
       }
@@ -106,7 +123,8 @@ export function CapabilityList({ agentId, initialCapabilities }: CapabilityListP
 
       {capabilities.length === 0 ? (
         <p className="text-xs text-muted-foreground/60">
-          No capabilities configured. Click &quot;Sync from --help&quot; to auto-detect, or add manually.
+          No capabilities configured. Click &quot;Sync from --help&quot; to auto-detect, or add
+          manually.
         </p>
       ) : (
         <div className="space-y-2">

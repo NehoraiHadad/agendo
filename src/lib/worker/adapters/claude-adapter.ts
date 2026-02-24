@@ -310,11 +310,19 @@ export class ClaudeAdapter implements AgentAdapter {
             this.hasEmittedThinking = false; // reset for next turn
           }
 
-          if (
-            msg.type === 'control_request' &&
-            (msg.request as Record<string, unknown>)?.subtype === 'can_use_tool'
-          ) {
-            void this.handleToolApprovalRequest(msg);
+          if (msg.type === 'control_request') {
+            const req = msg.request as Record<string, unknown>;
+            if (req?.subtype === 'can_use_tool') {
+              this.handleToolApprovalRequest(msg).catch((err: unknown) => {
+                console.error('[claude-adapter] handleToolApprovalRequest failed:', err);
+              });
+            } else {
+              // Log unknown control_request subtypes so we can discover
+              // new abstract mechanisms (e.g. AskUserQuestion, ExitPlanMode).
+              console.log(
+                `[claude-adapter] unknown control_request subtype="${String(req?.subtype)}" payload=${JSON.stringify(msg).slice(0, 300)}`,
+              );
+            }
           }
         } catch {
           /* skip non-JSON lines */

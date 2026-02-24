@@ -26,15 +26,29 @@ export function TaskDependenciesPanel({ taskId }: TaskDependenciesPanelProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/tasks/${taskId}/dependencies`)
-      .then((res) => res.json())
-      .then((json) => setDependencies(json.data ?? []))
-      .catch(() => {});
+    const controller = new AbortController();
+    const { signal } = controller;
 
-    fetch(`/api/tasks/${taskId}/dependencies?direction=dependents`)
-      .then((res) => res.json())
-      .then((json) => setDependents(json.data ?? []))
-      .catch(() => {});
+    const load = async () => {
+      try {
+        const [depsRes, dependentsRes] = await Promise.all([
+          fetch(`/api/tasks/${taskId}/dependencies`, { signal }),
+          fetch(`/api/tasks/${taskId}/dependencies?direction=dependents`, { signal }),
+        ]);
+        const [depsJson, dependentsJson] = await Promise.all([
+          depsRes.json(),
+          dependentsRes.json(),
+        ]);
+        if (signal.aborted) return;
+        setDependencies(depsJson.data ?? []);
+        setDependents(dependentsJson.data ?? []);
+      } catch {
+        // ignore abort and network errors
+      }
+    };
+
+    void load();
+    return () => controller.abort();
   }, [taskId]);
 
   // Derive visible search results: show fetched results only when query is non-empty
@@ -46,9 +60,7 @@ export function TaskDependenciesPanel({ taskId }: TaskDependenciesPanelProps) {
   const searchTasks = useCallback(
     async (currentTaskId: string, currentDeps: Dep[], query: string) => {
       try {
-        const res = await fetch(
-          `/api/tasks?limit=10&q=${encodeURIComponent(query)}`,
-        );
+        const res = await fetch(`/api/tasks?limit=10&q=${encodeURIComponent(query)}`);
         const json = await res.json();
         const existing = new Set([currentTaskId, ...currentDeps.map((d) => d.id)]);
         setFetchedResults((json.data ?? []).filter((t: Dep) => !existing.has(t.id)));

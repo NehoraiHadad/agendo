@@ -4,7 +4,11 @@ import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { createTaskAction, deleteTaskAction, updateTaskStatusAction } from '@/lib/actions/task-actions';
+import {
+  createTaskAction,
+  deleteTaskAction,
+  updateTaskStatusAction,
+} from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { X as XIcon } from 'lucide-react';
 import type { Task } from '@/lib/types';
@@ -24,10 +28,22 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const [newTitle, setNewTitle] = useState('');
 
   useEffect(() => {
-    fetch(`/api/tasks/${taskId}/subtasks`)
-      .then((res) => res.json())
-      .then((json) => setSubtasks(json.data ?? []))
-      .catch(() => {});
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/subtasks`, { signal });
+        const json = await res.json();
+        if (signal.aborted) return;
+        setSubtasks(json.data ?? []);
+      } catch {
+        // ignore abort and network errors
+      }
+    };
+
+    void load();
+    return () => controller.abort();
   }, [taskId]);
 
   const handleAdd = async () => {
@@ -57,8 +73,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   };
 
   const allDone =
-    subtasks.length > 0 &&
-    subtasks.every((s) => s.status === 'done' || s.status === 'cancelled');
+    subtasks.length > 0 && subtasks.every((s) => s.status === 'done' || s.status === 'cancelled');
 
   return (
     <div className="flex flex-col gap-2">

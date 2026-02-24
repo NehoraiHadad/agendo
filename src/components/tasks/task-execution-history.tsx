@@ -21,36 +21,36 @@ export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryPr
   const router = useRouter();
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [isLoadingExec, setIsLoadingExec] = useState(true);
-  const [isLoadingSess, setIsLoadingSess] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
 
-    apiFetch<ApiListResponse<Execution>>(`/api/executions?taskId=${taskId}&pageSize=10`)
-      .then((result) => {
-        if (!cancelled) setExecutions(result.data);
-      })
-      .catch(() => {
-        // Network error
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingExec(false);
-      });
+    async function loadAll() {
+      try {
+        const [execResult, sessResult] = await Promise.all([
+          apiFetch<ApiListResponse<Execution>>(`/api/executions?taskId=${taskId}&pageSize=10`, {
+            signal,
+          }),
+          apiFetch<ApiListResponse<Session>>(`/api/sessions?taskId=${taskId}&pageSize=10`, {
+            signal,
+          }),
+        ]);
+        if (signal.aborted) return;
+        setExecutions(execResult.data);
+        setSessions(sessResult.data);
+      } catch {
+        // Network error or abort — leave state as empty arrays
+      } finally {
+        if (!signal.aborted) setIsLoading(false);
+      }
+    }
 
-    apiFetch<ApiListResponse<Session>>(`/api/sessions?taskId=${taskId}&pageSize=10`)
-      .then((result) => {
-        if (!cancelled) setSessions(result.data);
-      })
-      .catch(() => {
-        // Network error
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingSess(false);
-      });
+    void loadAll();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [taskId]);
 
@@ -65,24 +65,21 @@ export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryPr
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">Agent Sessions</h3>
-          <StartSessionDialog
-            taskId={taskId}
-            agentId={agentId ?? undefined}
-          />
+          <StartSessionDialog taskId={taskId} agentId={agentId ?? undefined} />
         </div>
 
-        {isLoadingSess && (
+        {isLoading && (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
         )}
 
-        {!isLoadingSess && sessions.length === 0 && (
+        {!isLoading && sessions.length === 0 && (
           <p className="text-sm text-muted-foreground">No sessions yet.</p>
         )}
 
-        {!isLoadingSess && sessions.length > 0 && (
+        {!isLoading && sessions.length > 0 && (
           <div className="flex flex-col gap-1">
             {sessions.map((sess) => (
               <Link
@@ -119,18 +116,18 @@ export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryPr
           />
         </div>
 
-        {isLoadingExec && (
+        {isLoading && (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
         )}
 
-        {!isLoadingExec && executions.length === 0 && (
+        {!isLoading && executions.length === 0 && (
           <p className="text-sm text-muted-foreground">No executions yet.</p>
         )}
 
-        {!isLoadingExec && executions.length > 0 && (
+        {!isLoading && executions.length > 0 && (
           <div className="flex flex-col gap-1">
             {executions.map((exec) => (
               <Link
