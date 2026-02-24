@@ -4,6 +4,10 @@ import { useState } from 'react';
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, Check, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { InteractiveTool } from '@/components/sessions/interactive-tools';
+
+// Keep in sync with the TOOL_RENDERERS registry in interactive-tools.tsx.
+const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
 
 // ---------------------------------------------------------------------------
 // Danger level helpers
@@ -111,16 +115,31 @@ export function ToolApprovalCard({
     }
   }
 
+  // Interactive tools (ExitPlanMode, …) delegate to the renderer registry.
+  // The renderer calls respond({ kind:'approval', decision }) which we translate
+  // into the same handleDecision() call used by the generic approval UI.
+  if (INTERACTIVE_TOOL_NAMES.has(toolName)) {
+    return (
+      <InteractiveTool
+        toolName={toolName}
+        input={toolInput}
+        isAnswered={decided}
+        respond={async (payload) => {
+          if (payload.kind !== 'approval') return;
+          await handleDecision(payload.decision);
+        }}
+        onResolved={onResolved}
+      />
+    );
+  }
+
   return (
     <div className="rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-3 text-sm">
       {/* Header row */}
       <div className="flex items-center gap-2">
         {danger.icon}
         <span className="font-mono font-medium text-foreground/90">{toolName}</span>
-        <Badge
-          variant={danger.badgeVariant}
-          className={danger.badgeClassName}
-        >
+        <Badge variant={danger.badgeVariant} className={danger.badgeClassName}>
           {danger.label}
         </Badge>
         <span className="ml-auto text-xs text-muted-foreground/50">Tool approval required</span>

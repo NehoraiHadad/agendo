@@ -384,11 +384,12 @@ export const sessions = pgTable(
     totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
     totalTurns: integer('total_turns').notNull().default(0),
     // Tool permission mode for this session.
-    // 'bypassPermissions' = auto-allow all tools (default — safe for trusted local use).
+    // 'bypassPermissions' / 'dontAsk' = auto-allow all tools (default — safe for trusted local use).
     // 'default' = ask user before each tool call (Claude emits control_request).
     // 'acceptEdits' = auto-allow file edits, ask for bash.
+    // 'plan' = read-only: Claude can plan but cannot execute tools that modify the system.
     permissionMode: text('permission_mode', {
-      enum: ['default', 'bypassPermissions', 'acceptEdits'],
+      enum: ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'dontAsk'],
     })
       .notNull()
       .default('bypassPermissions'),
@@ -406,3 +407,13 @@ export const sessions = pgTable(
     index('idx_sessions_heartbeat').on(table.heartbeatAt),
   ],
 );
+
+// ─── Push Subscriptions ───────────────────────────────────────────────────────
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

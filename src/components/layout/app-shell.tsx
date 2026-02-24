@@ -5,6 +5,9 @@ import dynamic from 'next/dynamic';
 import { Menu } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './sidebar';
+import { NotificationToggle } from '@/components/pwa/notification-toggle';
+import { IosInstallHint } from '@/components/pwa/ios-install-hint';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { cn } from '@/lib/utils';
 
 const CommandPalette = dynamic(
@@ -49,14 +52,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+            <span className="flex-1 text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
               agenDo
             </span>
+            <NotificationToggle />
           </header>
+          <IosInstallHint />
+          <InstallPrompt />
 
-          <main className="flex-1 overflow-y-auto p-4 sm:p-6 animate-fade-in-up">
-            {children}
-          </main>
+          <main className="flex-1 overflow-y-auto p-4 sm:p-6 animate-fade-in-up">{children}</main>
         </div>
       </div>
     </TooltipProvider>

@@ -43,8 +43,9 @@ export function TaskColumn({ status, label, filteredTaskIds }: TaskColumnProps) 
   return (
     <div
       className={cn(
-        'flex min-w-[280px] flex-col rounded-xl border border-white/[0.05] bg-white/[0.02] transition-colors',
-        isOver && 'border-primary/30 bg-primary/[0.03] shadow-[inset_0_0_0_1px_oklch(0.7_0.18_280/0.2)]',
+        'flex w-full sm:min-w-[280px] flex-col rounded-xl border border-white/[0.05] bg-white/[0.02] transition-colors',
+        isOver &&
+          'border-primary/30 bg-primary/[0.03] shadow-[inset_0_0_0_1px_oklch(0.7_0.18_280/0.2)]',
       )}
     >
       <div className="flex items-center justify-between border-b border-white/[0.05] px-4 py-3">

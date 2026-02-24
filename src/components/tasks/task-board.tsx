@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   DndContext,
   closestCorners,
@@ -38,7 +38,10 @@ const COLUMN_LABELS: Record<TaskStatus, string> = {
 };
 
 /** Extract column status from a droppable id like "column-todo" or a task id */
-function resolveColumnStatus(overId: string, tasksById: Record<string, TaskBoardItem>): TaskStatus | null {
+function resolveColumnStatus(
+  overId: string,
+  tasksById: Record<string, TaskBoardItem>,
+): TaskStatus | null {
   if (overId.startsWith('column-')) {
     return overId.replace('column-', '') as TaskStatus;
   }
@@ -188,6 +191,24 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const projects = Object.values(projectsById);
   const hasProjects = projects.length > 0;
 
+  // Pre-compute filtered task IDs per column to avoid inline filter on every render
+  const filteredColumnTaskIds = useMemo<Record<string, string[] | undefined>>(
+    () =>
+      Object.fromEntries(
+        BOARD_COLUMNS.map((status) => [
+          status,
+          selectedProjectIds.length === 0
+            ? undefined
+            : columns[status].filter(
+                (id) =>
+                  tasksById[id]?.projectId != null &&
+                  selectedProjectIds.includes(tasksById[id].projectId as string),
+              ),
+        ]),
+      ),
+    [columns, tasksById, selectedProjectIds],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-6 py-4">
@@ -237,25 +258,15 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex flex-1 gap-4 overflow-x-auto p-4">
-          {BOARD_COLUMNS.map((status) => {
-            const filteredTaskIds =
-              selectedProjectIds.length === 0
-                ? undefined
-                : columns[status].filter(
-                    (id) =>
-                      tasksById[id]?.projectId != null &&
-                      selectedProjectIds.includes(tasksById[id].projectId as string),
-                  );
-            return (
-              <TaskColumn
-                key={status}
-                status={status}
-                label={COLUMN_LABELS[status]}
-                filteredTaskIds={filteredTaskIds}
-              />
-            );
-          })}
+        <div className="flex flex-col sm:flex-row flex-1 gap-4 p-4 sm:overflow-x-auto">
+          {BOARD_COLUMNS.map((status) => (
+            <TaskColumn
+              key={status}
+              status={status}
+              label={COLUMN_LABELS[status]}
+              filteredTaskIds={filteredColumnTaskIds[status]}
+            />
+          ))}
         </div>
 
         <DragOverlay dropAnimation={null}>

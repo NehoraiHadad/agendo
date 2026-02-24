@@ -22,7 +22,16 @@ export function ActiveExecutionsList({ initialData }: ActiveExecutionsListProps)
         const result = await apiFetch<{ data: ActiveExecution[] }>(
           '/api/dashboard?view=active-executions',
         );
-        setExecutions(result.data);
+        // Only update state when data actually changed to avoid unnecessary re-renders
+        setExecutions((prev) => {
+          if (
+            prev.length === result.data.length &&
+            JSON.stringify(prev) === JSON.stringify(result.data)
+          ) {
+            return prev;
+          }
+          return result.data;
+        });
       } catch {
         /* polling failure, keep stale data */
       }

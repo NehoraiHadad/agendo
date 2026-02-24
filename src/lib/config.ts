@@ -15,6 +15,10 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   MCP_SERVER_PATH: z.string().optional(),
   TERMINAL_JWT_SECRET: z.string().min(16).optional(),
+  // Web Push (VAPID) — optional, push notifications disabled if not set
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

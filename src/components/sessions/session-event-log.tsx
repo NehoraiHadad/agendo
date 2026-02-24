@@ -58,9 +58,7 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
         summary: (e) => {
           const ev = e as Extract<AgendoEvent, { type: 'agent:tool-end' }>;
           const contentStr =
-            typeof ev.content === 'string'
-              ? ev.content
-              : JSON.stringify(ev.content);
+            typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content);
           return `${ev.toolUseId.slice(0, 8)} — ${truncate(contentStr, 60)}`;
         },
       };
@@ -138,6 +136,15 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
         summary: (e) => {
           const ev = e as Extract<AgendoEvent, { type: 'system:error' }>;
           return ev.message;
+        },
+      };
+    case 'team:message':
+      return {
+        color: 'text-cyan-400',
+        label: 'team:message',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'team:message' }>;
+          return `${ev.fromAgent}: ${truncate(ev.summary ?? ev.text, 80)}`;
         },
       };
   }

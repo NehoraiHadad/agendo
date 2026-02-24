@@ -176,6 +176,12 @@ describe('resolveAgentSlug', () => {
 
 describe('handleCreateTask', () => {
   it('calls POST /api/tasks with correct body', async () => {
+    // Clear session env vars so auto-assign logic doesn't add extra fields
+    const savedAgentId = process.env.AGENDO_AGENT_ID;
+    const savedProjectId = process.env.AGENDO_PROJECT_ID;
+    delete process.env.AGENDO_AGENT_ID;
+    delete process.env.AGENDO_PROJECT_ID;
+
     mockApiResponse({ id: 'task-1', title: 'New task' });
 
     const result = await handleCreateTask({
@@ -183,6 +189,9 @@ describe('handleCreateTask', () => {
       description: 'A description',
       priority: 'high',
     });
+
+    process.env.AGENDO_AGENT_ID = savedAgentId;
+    if (savedProjectId !== undefined) process.env.AGENDO_PROJECT_ID = savedProjectId;
 
     expect(result).toEqual({ id: 'task-1', title: 'New task' });
     const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);

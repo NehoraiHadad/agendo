@@ -43,20 +43,26 @@ export function AgentRow({ agent }: AgentRowProps) {
         </TableCell>
         <TableCell className="font-medium text-foreground">
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full shrink-0 ${agent.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/30'}`} />
+            <span
+              className={`h-2 w-2 rounded-full shrink-0 ${agent.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/30'}`}
+            />
             <Link href={`/agents/${agent.id}`} className="hover:text-primary transition-colors">
               {agent.name}
             </Link>
           </div>
         </TableCell>
-        <TableCell className="font-mono text-xs text-muted-foreground/60 max-w-48 truncate">
+        <TableCell className="hidden md:table-cell font-mono text-xs text-muted-foreground/60 max-w-48 truncate">
           {agent.binaryPath}
         </TableCell>
-        <TableCell className="text-xs text-muted-foreground/60">{agent.toolType ?? '-'}</TableCell>
+        <TableCell className="hidden sm:table-cell text-xs text-muted-foreground/60">
+          {agent.toolType ?? '-'}
+        </TableCell>
         <TableCell>
           <AgentStatusBadge isActive={agent.isActive} />
         </TableCell>
-        <TableCell className="text-xs text-muted-foreground/60">{agent.version ?? '-'}</TableCell>
+        <TableCell className="hidden sm:table-cell text-xs text-muted-foreground/60">
+          {agent.version ?? '-'}
+        </TableCell>
         <TableCell>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" asChild>
