@@ -11,6 +11,8 @@ export interface ExecutionEntry {
 
 interface ExecutionState {
   entries: Record<string, ExecutionEntry>;
+  /** O(1) lookup: taskId → active ExecutionEntry (queued/running/cancelling) */
+  activeByTaskId: Record<string, ExecutionEntry>;
 }
 
 interface ExecutionActions {
@@ -24,15 +26,26 @@ const ACTIVE_STATUSES: ReadonlySet<ExecutionStatus> = new Set(['queued', 'runnin
 
 export const useExecutionStore = create<ExecutionStore>((set, get) => ({
   entries: {},
+  activeByTaskId: {},
 
   updateExecution: (entry) => {
-    set((state) => ({
-      entries: { ...state.entries, [entry.id]: entry },
-    }));
+    set((state) => {
+      const newEntries = { ...state.entries, [entry.id]: entry };
+      const newActiveByTaskId = { ...state.activeByTaskId };
+
+      if (ACTIVE_STATUSES.has(entry.status)) {
+        newActiveByTaskId[entry.taskId] = entry;
+      } else if (newActiveByTaskId[entry.taskId]?.id === entry.id) {
+        // Only evict if this exact execution was the tracked active one
+        const { [entry.taskId]: _, ...rest } = newActiveByTaskId;
+        return { entries: newEntries, activeByTaskId: rest };
+      }
+
+      return { entries: newEntries, activeByTaskId: newActiveByTaskId };
+    });
   },
 
   getActiveExecution: (taskId) => {
-    const entries = Object.values(get().entries);
-    return entries.find((e) => e.taskId === taskId && ACTIVE_STATUSES.has(e.status)) ?? null;
+    return get().activeByTaskId[taskId] ?? null;
   },
 }));

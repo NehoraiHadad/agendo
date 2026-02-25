@@ -13,6 +13,7 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core';
 import { DragOverlay } from '@dnd-kit/core';
+import { Ghost } from 'lucide-react';
 import { useTaskBoardStore, BOARD_COLUMNS } from '@/lib/store/task-board-store';
 import { TaskColumn } from './task-column';
 import { TaskDetailSheet } from './task-detail-sheet';
@@ -20,7 +21,7 @@ import { TaskCreateDialog } from './task-create-dialog';
 import { TaskDragOverlay } from './task-drag-overlay';
 import { useBoardSse } from '@/hooks/use-board-sse';
 import { toast } from 'sonner';
-import type { TaskStatus, Project } from '@/lib/types';
+import type { TaskStatus, Project, Task } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
 
 interface TaskBoardProps {
@@ -60,10 +61,15 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const projectsById = useTaskBoardStore((s) => s.projectsById);
   const selectedProjectIds = useTaskBoardStore((s) => s.selectedProjectIds);
   const setProjectFilter = useTaskBoardStore((s) => s.setProjectFilter);
+  const showAdHoc = useTaskBoardStore((s) => s.showAdHoc);
+  const setShowAdHoc = useTaskBoardStore((s) => s.setShowAdHoc);
+  const applyServerCreate = useTaskBoardStore((s) => s.applyServerCreate);
+  const purgeAdHocTasks = useTaskBoardStore((s) => s.purgeAdHocTasks);
   const hydrated = useRef(false);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const originalStatusRef = useRef<TaskStatus | null>(null);
+  const adHocLoadedRef = useRef(false);
 
   // Initialize SSE connection
   useBoardSse();
@@ -75,6 +81,39 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       hydrated.current = true;
     }
   }, [initialData, initialCursors, initialProjects, hydrate, hydrateProjects]);
+
+  // Sync ad-hoc visibility: fetch on enable, purge on disable
+  useEffect(() => {
+    if (!showAdHoc) {
+      purgeAdHocTasks();
+      adHocLoadedRef.current = false;
+      return;
+    }
+
+    if (adHocLoadedRef.current) return;
+    adHocLoadedRef.current = true;
+
+    async function fetchAdHoc() {
+      try {
+        const results = await Promise.all(
+          BOARD_COLUMNS.map((status) =>
+            fetch(`/api/tasks?status=${status}&includeAdHoc=true&limit=100`)
+              .then((r) => r.json())
+              .then((j) => (j.data as Task[]) ?? []),
+          ),
+        );
+        for (const tasks of results) {
+          for (const task of tasks) {
+            if ((task as TaskBoardItem).isAdHoc) applyServerCreate(task);
+          }
+        }
+      } catch {
+        // silently ignore — ad-hoc view is best-effort
+      }
+    }
+
+    void fetchAdHoc();
+  }, [showAdHoc, applyServerCreate, purgeAdHocTasks]);
 
   const toggleProjectFilter = useCallback(
     (projectId: string) => {
@@ -105,14 +144,16 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       const { active, over } = event;
       if (!over) return;
 
-      const activeTask = tasksById[String(active.id)];
+      // Read fresh state via getState() — avoids stale closure without subscribing reactively
+      const { tasksById: tbid, columns: cols } = useTaskBoardStore.getState();
+      const activeTask = tbid[String(active.id)];
       if (!activeTask) return;
 
-      const overStatus = resolveColumnStatus(String(over.id), tasksById);
+      const overStatus = resolveColumnStatus(String(over.id), tbid);
       if (!overStatus || overStatus === activeTask.status) return;
 
       // Moving between columns during drag (visual feedback)
-      const overColumn = columns[overStatus];
+      const overColumn = cols[overStatus];
       const overIndex =
         over.id === `column-${overStatus}`
           ? overColumn.length
@@ -124,7 +165,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         overIndex >= 0 ? overIndex : overColumn.length,
       );
     },
-    [tasksById, columns, optimisticReorder],
+    [optimisticReorder],
   );
 
   const handleDragEnd = useCallback(
@@ -135,17 +176,20 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       if (!over) return;
 
       const taskId = String(active.id);
-      const task = tasksById[taskId];
+
+      // Read fresh state via getState() — avoids stale closure without subscribing reactively
+      const { tasksById: tbid, columns: cols } = useTaskBoardStore.getState();
+      const task = tbid[taskId];
       if (!task) return;
 
       // Use the status captured at drag start (before optimistic updates modified tasksById)
       const originalStatus = originalStatusRef.current;
       originalStatusRef.current = null;
 
-      const overStatus = resolveColumnStatus(String(over.id), tasksById);
+      const overStatus = resolveColumnStatus(String(over.id), tbid);
       if (!overStatus) return;
 
-      const column = columns[overStatus];
+      const column = cols[overStatus];
       const overIndex =
         over.id === `column-${overStatus}` ? column.length - 1 : column.indexOf(String(over.id));
       const finalIndex = overIndex >= 0 ? overIndex : column.length - 1;
@@ -153,12 +197,16 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       // Apply optimistic reorder (if not already applied by dragOver)
       optimisticReorder(taskId, overStatus, finalIndex);
 
-      // Calculate sort order neighbors from the current column state
+      // Calculate sort order neighbors from the current column state (post-optimistic)
       const currentColumn = useTaskBoardStore.getState().columns[overStatus];
       const idx = currentColumn.indexOf(taskId);
 
-      const afterTask = idx > 0 ? tasksById[currentColumn[idx - 1]] : null;
-      const beforeTask = idx < currentColumn.length - 1 ? tasksById[currentColumn[idx + 1]] : null;
+      const afterTask =
+        idx > 0 ? useTaskBoardStore.getState().tasksById[currentColumn[idx - 1]] : null;
+      const beforeTask =
+        idx < currentColumn.length - 1
+          ? useTaskBoardStore.getState().tasksById[currentColumn[idx + 1]]
+          : null;
 
       const afterSortOrder = afterTask?.sortOrder ?? null;
       const beforeSortOrder = beforeTask?.sortOrder ?? null;
@@ -185,7 +233,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         settleOptimistic(taskId);
       }
     },
-    [tasksById, columns, optimisticReorder, settleOptimistic],
+    [optimisticReorder, settleOptimistic],
   );
 
   const projects = Object.values(projectsById);
@@ -211,16 +259,30 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b px-6 py-4">
-        <h1 className="text-2xl font-semibold">Tasks</h1>
-        <TaskCreateDialog />
+      <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
+        <h1 className="text-xl font-semibold sm:text-2xl">Tasks</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAdHoc(!showAdHoc)}
+            title={showAdHoc ? 'Hide ad-hoc tasks' : 'Show ad-hoc tasks (chat scratch tasks)'}
+            className={`flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+              showAdHoc
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                : 'border-white/[0.06] text-muted-foreground/50 hover:border-white/10 hover:text-muted-foreground'
+            }`}
+          >
+            <Ghost className="h-3 w-3" />
+            Ad-hoc
+          </button>
+          <TaskCreateDialog />
+        </div>
       </div>
 
       {hasProjects && (
-        <div className="flex items-center gap-2 border-b border-white/[0.05] px-6 py-2">
+        <div className="flex items-center gap-2 border-b border-white/[0.05] overflow-x-auto px-4 py-2 sm:px-6 sm:flex-wrap">
           <button
             onClick={() => setProjectFilter([])}
-            className={`rounded-full border px-3 py-0.5 text-xs transition-colors ${
+            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition-colors min-h-[36px] ${
               selectedProjectIds.length === 0
                 ? 'border-white/20 bg-white/10 text-foreground'
                 : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'
@@ -234,7 +296,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
               <button
                 key={project.id}
                 onClick={() => toggleProjectFilter(project.id)}
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-xs transition-colors ${
+                className={`shrink-0 flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
                   isSelected
                     ? 'border-white/20 bg-white/10 text-foreground'
                     : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'
@@ -258,7 +320,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex flex-col sm:flex-row flex-1 gap-4 p-4 sm:overflow-x-auto">
+        <div className="flex flex-row flex-1 min-h-0 gap-3 p-3 overflow-x-auto sm:gap-4 sm:p-4">
           {BOARD_COLUMNS.map((status) => (
             <TaskColumn
               key={status}

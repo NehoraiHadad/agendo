@@ -1,18 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
-  Circle,
   Loader2,
   PowerOff,
   Shield,
   ShieldCheck,
   ShieldOff,
   BookOpen,
+  Pencil,
+  Check,
+  X,
+  Cpu,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,6 +51,33 @@ const WebTerminal = dynamic(
 type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
 
 const MODE_CYCLE: PermissionMode[] = ['plan', 'default', 'acceptEdits', 'bypassPermissions'];
+
+/** Extract a short human-readable label from a model ID string.
+ *  e.g. "claude-sonnet-4-5-20250514" → "Sonnet 4.5" */
+function modelDisplayLabel(modelId: string): string {
+  const lower = modelId.toLowerCase();
+  // Match common Claude model families
+  const families = ['opus', 'sonnet', 'haiku'];
+  for (const fam of families) {
+    const idx = lower.indexOf(fam);
+    if (idx !== -1) {
+      // Try to extract version numbers after the family name
+      const rest = lower.slice(idx + fam.length).replace(/^-/, '');
+      const versionMatch = rest.match(/^(\d+)[.-](\d+)/);
+      const version = versionMatch ? ` ${versionMatch[1]}.${versionMatch[2]}` : '';
+      return fam.charAt(0).toUpperCase() + fam.slice(1) + version;
+    }
+  }
+  // Fallback: return the raw ID with claude- prefix stripped
+  return modelId.replace(/^claude-/, '');
+}
+
+/** Quick-pick model families. The ID is a prefix — the CLI resolves to the latest version. */
+const MODEL_FAMILIES = [
+  { keyword: 'opus', label: 'Opus', id: 'claude-opus-4-6' },
+  { keyword: 'sonnet', label: 'Sonnet', id: 'claude-sonnet-4-6' },
+  { keyword: 'haiku', label: 'Haiku', id: 'claude-haiku-4-5-20251001' },
+];
 
 const MODE_CONFIG: Record<
   PermissionMode,
@@ -96,20 +127,60 @@ interface SessionDetailClientProps {
   taskTitle: string;
 }
 
+interface StatusConfig {
+  dotColor: string;
+  pillBg: string;
+  pillBorder: string;
+  textColor: string;
+  label: string;
+  animate: boolean;
+}
+
+const STATUS_CONFIGS: Record<SessionStatus, StatusConfig> = {
+  active: {
+    dotColor: 'bg-blue-400',
+    pillBg: 'bg-blue-500/10',
+    pillBorder: 'border-blue-500/25',
+    textColor: 'text-blue-400',
+    label: 'Active',
+    animate: true,
+  },
+  awaiting_input: {
+    dotColor: 'bg-emerald-400',
+    pillBg: 'bg-emerald-500/10',
+    pillBorder: 'border-emerald-500/25',
+    textColor: 'text-emerald-400',
+    label: 'Your turn',
+    animate: true,
+  },
+  idle: {
+    dotColor: 'bg-zinc-500',
+    pillBg: 'bg-zinc-500/10',
+    pillBorder: 'border-zinc-600/20',
+    textColor: 'text-zinc-400',
+    label: 'Paused',
+    animate: false,
+  },
+  ended: {
+    dotColor: 'bg-zinc-600',
+    pillBg: 'bg-zinc-700/10',
+    pillBorder: 'border-zinc-700/20',
+    textColor: 'text-zinc-500',
+    label: 'Ended',
+    animate: false,
+  },
+};
+
 function SessionStatusIndicator({ status }: { status: SessionStatus | null }) {
   if (!status) return null;
-
-  const configs: Record<SessionStatus, { color: string; label: string; animate?: boolean }> = {
-    active: { color: 'text-blue-400', label: 'Active', animate: true },
-    awaiting_input: { color: 'text-emerald-400', label: 'Your turn', animate: false },
-    idle: { color: 'text-zinc-400', label: 'Paused', animate: false },
-    ended: { color: 'text-red-400', label: 'Ended', animate: false },
-  };
-
-  const cfg = configs[status];
+  const cfg = STATUS_CONFIGS[status];
   return (
-    <span className={`flex items-center gap-1.5 text-xs ${cfg.color}`}>
-      <Circle className={`size-2 fill-current ${cfg.animate ? 'animate-pulse' : ''}`} />
+    <span
+      className={`inline-flex items-center gap-1.5 text-[11px] font-medium rounded-full px-2.5 py-1 border ${cfg.pillBg} ${cfg.pillBorder} ${cfg.textColor}`}
+    >
+      <span
+        className={`inline-block size-1.5 rounded-full ${cfg.dotColor} ${cfg.animate ? 'animate-pulse' : ''}`}
+      />
       {cfg.label}
     </span>
   );
@@ -122,6 +193,7 @@ export function SessionDetailClient({
   capLabel,
   taskTitle,
 }: SessionDetailClientProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const defaultTab = searchParams.get('tab') ?? 'chat';
   const stream = useSessionStream(session.id);
@@ -133,6 +205,93 @@ export function SessionDetailClient({
     (session.permissionMode as PermissionMode) ?? 'bypassPermissions',
   );
   const [isModeChanging, setIsModeChanging] = useState(false);
+  const [isModelChanging, setIsModelChanging] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close model menu on outside click
+  useEffect(() => {
+    if (!showModelMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setShowModelMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showModelMenu]);
+
+  // Derive model from the latest system:info "Model switched" event, init event, or session DB.
+  // system:info events from handleSetModel are the freshest source after a model switch.
+  const lastModelInfoEvent = [...stream.events]
+    .reverse()
+    .find(
+      (e) =>
+        e.type === 'system:info' &&
+        (e as Extract<typeof e, { type: 'system:info' }>).message.startsWith('Model switched to'),
+    ) as Extract<(typeof stream.events)[number], { type: 'system:info' }> | undefined;
+  const modelFromInfo = lastModelInfoEvent
+    ? (lastModelInfoEvent.message.match(/Model switched to "(.+)"/)?.[1] ?? null)
+    : null;
+  const modelInitEvent = stream.events
+    .filter((e): e is Extract<typeof e, { type: 'session:init' }> => e.type === 'session:init')
+    .at(-1);
+  const currentModel = modelFromInfo ?? modelInitEvent?.model ?? session.model ?? null;
+  const modelLabel = currentModel ? modelDisplayLabel(currentModel) : null;
+
+  async function handleModelChange(modelId: string) {
+    if (isModelChanging || currentStatus === 'ended') return;
+    setIsModelChanging(true);
+    setShowModelMenu(false);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/model`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      if (!res.ok) {
+        console.error('Model change failed:', res.status);
+      }
+    } finally {
+      setIsModelChanging(false);
+    }
+  }
+
+  // Session rename
+  const [sessionTitle, setSessionTitle] = useState<string>(session.title ?? '');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  const startEditing = useCallback(() => {
+    setEditValue(sessionTitle);
+    setIsEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }, [sessionTitle]);
+
+  const cancelEditing = useCallback(() => {
+    setIsEditingTitle(false);
+  }, []);
+
+  const saveTitle = useCallback(async () => {
+    const trimmed = editValue.trim();
+    setIsEditingTitle(false);
+    if (trimmed === sessionTitle) return;
+    setSessionTitle(trimmed);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: trimmed || null }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Invalidate Next.js router cache so the title persists after navigation/refresh
+      router.refresh();
+    } catch {
+      // Revert on error
+      setSessionTitle(sessionTitle);
+    }
+  }, [editValue, session.id, sessionTitle, router]);
 
   async function handleEndSession() {
     if (isEnding) return;
@@ -168,63 +327,175 @@ export function SessionDetailClient({
   const ModeIcon = modeCfg.icon;
 
   return (
-    <div className="flex flex-col gap-4 sm:gap-6">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <Link href="/sessions">
-          <Button variant="ghost" size="icon" className="shrink-0">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-base sm:text-xl font-semibold font-mono">
-              {session.id.slice(0, 8)}
-            </h1>
-            <SessionStatusIndicator status={currentStatus} />
-            {currentStatus !== 'ended' && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleModeChange()}
-                  disabled={isModeChanging}
-                  title={modeCfg.title}
-                  className={`h-6 px-2 text-xs border gap-1 ${modeCfg.className}`}
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header card */}
+      <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] overflow-hidden shrink-0 mb-4 sm:mb-5">
+        {/* Status accent top bar */}
+        <div
+          className="h-[2px] w-full"
+          style={{
+            background:
+              currentStatus === 'active'
+                ? 'linear-gradient(90deg, oklch(0.6 0.2 250 / 0.8) 0%, oklch(0.6 0.2 250 / 0.1) 100%)'
+                : currentStatus === 'awaiting_input'
+                  ? 'linear-gradient(90deg, oklch(0.65 0.2 145 / 0.8) 0%, oklch(0.65 0.2 145 / 0.1) 100%)'
+                  : 'linear-gradient(90deg, oklch(0.4 0 0 / 0.4) 0%, transparent 100%)',
+          }}
+        />
+
+        <div className="flex items-center gap-3 px-4 py-3">
+          {/* Back button */}
+          <Link href="/sessions">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground/50 hover:text-foreground hover:bg-white/[0.05]"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+
+          {/* Title + meta */}
+          <div className="flex-1 min-w-0">
+            {/* Title row */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {isEditingTitle ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={titleInputRef}
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void saveTitle();
+                      if (e.key === 'Escape') cancelEditing();
+                    }}
+                    placeholder={`Session ${session.id.slice(0, 8)}`}
+                    className="text-base font-semibold bg-white/[0.06] border border-white/[0.15] rounded-lg px-2.5 py-1 focus:outline-none focus:border-primary/50 min-w-0 w-44 sm:w-64"
+                  />
+                  <button
+                    onClick={() => void saveTitle()}
+                    className="p-1.5 text-emerald-400 hover:text-emerald-300 transition-colors rounded"
+                    aria-label="Save"
+                  >
+                    <Check className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={cancelEditing}
+                    className="p-1.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors rounded"
+                    aria-label="Cancel"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={startEditing}
+                  className="group flex items-center gap-1.5 text-base font-semibold hover:text-foreground/80 transition-colors text-left"
+                  title="Click to rename session"
                 >
-                  {isModeChanging ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <ModeIcon className="size-3" />
-                  )}
-                  {modeCfg.label}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowEndConfirm(true)}
-                  disabled={isEnding}
-                  className="h-6 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 gap-1"
-                >
-                  {isEnding ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <PowerOff className="size-3" />
-                  )}
-                  End Session
-                </Button>
-              </>
-            )}
+                  <span className="font-mono text-foreground/90">
+                    {sessionTitle || session.id.slice(0, 8)}
+                  </span>
+                  <Pencil className="size-3 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors shrink-0" />
+                </button>
+              )}
+
+              <SessionStatusIndicator status={currentStatus} />
+            </div>
+
+            {/* Meta breadcrumb */}
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
+              <span className="text-muted-foreground/60">{agentName}</span>
+              <span className="text-muted-foreground/20">·</span>
+              <span>{capLabel}</span>
+              <span className="text-muted-foreground/20">·</span>
+              <span className="truncate max-w-[200px]">{taskTitle}</span>
+            </div>
           </div>
-          <p className="mt-0.5 text-xs sm:text-sm text-muted-foreground truncate">
-            {agentName} · {capLabel} · {taskTitle}
-          </p>
+
+          {/* Action buttons */}
+          {currentStatus !== 'ended' && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Model selector */}
+              <div className="relative" ref={modelMenuRef}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowModelMenu((v) => !v)}
+                  disabled={isModelChanging}
+                  title={currentModel ? `Model: ${currentModel}` : 'Select model'}
+                  className="h-7 px-2.5 text-xs border gap-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border-cyan-500/20"
+                >
+                  {isModelChanging ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Cpu className="size-3" />
+                  )}
+                  <span className="hidden sm:inline">{modelLabel ?? 'Model'}</span>
+                </Button>
+                {showModelMenu && (
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
+                    {MODEL_FAMILIES.map((fam) => {
+                      const isActive = currentModel?.toLowerCase().includes(fam.keyword);
+                      return (
+                        <button
+                          key={fam.keyword}
+                          type="button"
+                          onClick={() => void handleModelChange(fam.id)}
+                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/[0.06] transition-colors ${
+                            isActive ? 'text-cyan-400 font-medium' : 'text-foreground/70'
+                          }`}
+                        >
+                          {fam.label}
+                          {isActive && (
+                            <span className="ml-1.5 text-muted-foreground/40 font-mono text-[10px]">
+                              {currentModel}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleModeChange()}
+                disabled={isModeChanging}
+                title={modeCfg.title}
+                className={`h-7 px-2.5 text-xs border gap-1.5 ${modeCfg.className}`}
+              >
+                {isModeChanging ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <ModeIcon className="size-3" />
+                )}
+                <span className="hidden sm:inline">{modeCfg.label}</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowEndConfirm(true)}
+                disabled={isEnding}
+                className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 gap-1.5"
+              >
+                {isEnding ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <PowerOff className="size-3" />
+                )}
+                <span className="hidden sm:inline">End</span>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue={defaultTab} className="flex flex-col">
-        <TabsList className="flex w-full overflow-x-auto">
+      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+        <TabsList className="flex w-full overflow-x-auto shrink-0">
           <TabsTrigger value="chat" className="shrink-0">
             Chat
           </TabsTrigger>
@@ -242,7 +513,11 @@ export function SessionDetailClient({
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="chat" forceMount className="mt-4 data-[state=inactive]:hidden">
+        <TabsContent
+          value="chat"
+          forceMount
+          className="mt-4 data-[state=inactive]:hidden flex flex-col min-h-0"
+        >
           <SessionChatView
             sessionId={session.id}
             stream={stream}

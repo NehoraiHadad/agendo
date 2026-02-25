@@ -14,9 +14,14 @@ export interface ToolState {
   toolName: string;
   input: Record<string, unknown>;
   result?: ToolCallResult;
+  durationMs?: number;
+  numFiles?: number;
+  truncated?: boolean;
 }
 
-export type AssistantPart = { kind: 'text'; text: string } | { kind: 'tool'; tool: ToolState };
+export type AssistantPart =
+  | { kind: 'text'; text: string; fromDelta?: boolean }
+  | { kind: 'tool'; tool: ToolState };
 
 export type DisplayItem =
   | { kind: 'assistant'; id: number; parts: AssistantPart[] }
@@ -26,6 +31,8 @@ export type DisplayItem =
       text: string;
       costUsd: number | null;
       sessionCostUsd: number | null;
+      isError?: boolean;
+      errors?: string[];
     }
   | { kind: 'thinking'; id: number; text: string }
   | { kind: 'user'; id: number; text: string; hasImage?: boolean; imageDataUrl?: string }
@@ -54,6 +61,20 @@ export type DisplayItem =
 // ---------------------------------------------------------------------------
 // Pure utility functions
 // ---------------------------------------------------------------------------
+
+/** Map a Claude result error subtype to a human-readable label. */
+function errorSubtypeLabel(subtype?: string): string {
+  switch (subtype) {
+    case 'error_max_turns':
+      return 'Max turns reached';
+    case 'error_during_execution':
+      return 'Error during execution';
+    case 'error_max_budget_usd':
+      return 'Budget exceeded';
+    default:
+      return subtype ? `Error: ${subtype}` : 'Error';
+  }
+}
 
 /** Extract displayable text from a tool result content value.
  *  MCP tools return content as an array of content blocks: [{type:'text',text:'...'}].
@@ -95,9 +116,13 @@ export function buildDisplayItems(
       case 'agent:text': {
         const last = items[items.length - 1];
         if (last && last.kind === 'assistant') {
-          // Append to existing text part if the last part is already text
           const lastPart = last.parts[last.parts.length - 1];
-          if (lastPart && lastPart.kind === 'text') {
+          if (lastPart && lastPart.kind === 'text' && lastPart.fromDelta) {
+            // Replace the delta-accumulated text with the complete text.
+            lastPart.text = ev.text;
+            lastPart.fromDelta = false;
+          } else if (lastPart && lastPart.kind === 'text') {
+            // Append to existing non-delta text (consecutive assistant messages)
             lastPart.text += ev.text;
           } else {
             last.parts.push({ kind: 'text', text: ev.text });
@@ -108,8 +133,40 @@ export function buildDisplayItems(
         break;
       }
 
+      case 'agent:text-delta': {
+        // Streaming delta — accumulate into the current assistant text bubble.
+        // Mark with fromDelta so the subsequent agent:text can replace (not append).
+        const lastD = items[items.length - 1];
+        if (lastD && lastD.kind === 'assistant') {
+          const lastPartD = lastD.parts[lastD.parts.length - 1];
+          if (lastPartD && lastPartD.kind === 'text' && lastPartD.fromDelta) {
+            lastPartD.text += ev.text;
+          } else {
+            lastD.parts.push({ kind: 'text', text: ev.text, fromDelta: true });
+          }
+        } else {
+          items.push({
+            kind: 'assistant',
+            id: ev.id,
+            parts: [{ kind: 'text', text: ev.text, fromDelta: true }],
+          });
+        }
+        break;
+      }
+
       case 'agent:thinking': {
         items.push({ kind: 'thinking', id: ev.id, text: ev.text });
+        break;
+      }
+
+      case 'agent:thinking-delta': {
+        // Streaming thinking delta — accumulate into the current thinking bubble.
+        const lastTh = items[items.length - 1];
+        if (lastTh && lastTh.kind === 'thinking') {
+          lastTh.text += ev.text;
+        } else {
+          items.push({ kind: 'thinking', id: ev.id, text: ev.text });
+        }
         break;
       }
 
@@ -137,6 +194,9 @@ export function buildDisplayItems(
         const pending = pendingTools.get(ev.toolUseId);
         if (pending) {
           pending.result = { content: extractToolContent(ev.content), isError: false };
+          if (ev.durationMs != null) pending.durationMs = ev.durationMs;
+          if (ev.numFiles != null) pending.numFiles = ev.numFiles;
+          if (ev.truncated != null) pending.truncated = ev.truncated;
           pendingTools.delete(ev.toolUseId);
         }
         break;
@@ -163,9 +223,18 @@ export function buildDisplayItems(
       }
 
       case 'agent:result': {
-        const parts: string[] = ['Turn complete'];
+        const label = ev.isError ? errorSubtypeLabel(ev.subtype) : 'Turn complete';
+        const parts: string[] = [label];
         if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
         if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
+        if (ev.durationApiMs != null && ev.durationMs != null && ev.durationMs > 0) {
+          const pct = Math.round((ev.durationApiMs / ev.durationMs) * 100);
+          parts.push(`${pct}% API`);
+        }
+        const webSearches = ev.serverToolUse?.webSearchRequests ?? 0;
+        if (webSearches > 0) parts.push(`${webSearches} search${webSearches > 1 ? 'es' : ''}`);
+        const denials = ev.permissionDenials?.length ?? 0;
+        if (denials > 0) parts.push(`${denials} denied`);
         if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
         items.push({
           kind: 'turn-complete',
@@ -173,6 +242,8 @@ export function buildDisplayItems(
           text: parts.join(' · '),
           costUsd: ev.costUsd ?? null,
           sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
+          isError: ev.isError,
+          errors: ev.errors,
         });
         break;
       }
@@ -191,7 +262,11 @@ export function buildDisplayItems(
       }
 
       case 'system:info': {
-        items.push({ kind: 'info', id: ev.id, text: ev.message });
+        let infoText = ev.message;
+        if (ev.compactMeta) {
+          infoText = `Context compacted: ${ev.compactMeta.preTokens.toLocaleString()} tokens → summarized (${ev.compactMeta.trigger})`;
+        }
+        items.push({ kind: 'info', id: ev.id, text: infoText });
         break;
       }
 
@@ -211,6 +286,16 @@ export function buildDisplayItems(
           isStructured: ev.isStructured,
           structuredPayload: ev.structuredPayload,
           sourceTimestamp: ev.sourceTimestamp,
+        });
+        break;
+      }
+
+      case 'system:mcp-status': {
+        const names = ev.servers.map((s) => `${s.name} (${s.status})`).join(', ');
+        items.push({
+          kind: 'error',
+          id: ev.id,
+          text: `MCP server disconnected: ${names}`,
         });
         break;
       }

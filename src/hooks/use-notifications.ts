@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -13,24 +13,26 @@ function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
 
 export type NotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported';
 
-export function useNotifications() {
-  const isSupported =
-    typeof window !== 'undefined' &&
-    'serviceWorker' in navigator &&
-    'PushManager' in window &&
-    'Notification' in window;
+const noop = () => () => {};
+const getSupported = () =>
+  'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const getNotSupported = () => false;
 
-  const [permission, setPermission] = useState<NotificationPermission>(
-    isSupported ? (Notification.permission as NotificationPermission) : 'unsupported',
-  );
+export function useNotifications() {
+  const isSupported = useSyncExternalStore(noop, getSupported, getNotSupported);
+  const [permission, setPermission] = useState<NotificationPermission>('unsupported');
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Check existing subscription on mount
+  // Read initial permission and subscription after hydration
   useEffect(() => {
     if (!isSupported) return;
+    // Read permission and subscription asynchronously to avoid synchronous setState in effect
     navigator.serviceWorker.ready
-      .then((reg) => reg.pushManager.getSubscription())
+      .then((reg) => {
+        setPermission(Notification.permission as NotificationPermission);
+        return reg.pushManager.getSubscription();
+      })
       .then((sub) => setIsSubscribed(sub !== null))
       .catch(() => {});
   }, [isSupported]);

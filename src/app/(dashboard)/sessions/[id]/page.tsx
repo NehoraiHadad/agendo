@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';

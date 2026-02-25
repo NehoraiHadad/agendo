@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';
@@ -36,5 +37,29 @@ export const GET = withErrorBoundary(
         taskTitle: row.taskTitle,
       },
     });
+  },
+);
+
+const patchSchema = z.object({
+  title: z.string().max(200).nullable(),
+});
+
+export const PATCH = withErrorBoundary(
+  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
+    const { id } = await params;
+    assertUUID(id, 'Session');
+
+    const body = await req.json();
+    const { title } = patchSchema.parse(body);
+
+    const [updated] = await db
+      .update(sessions)
+      .set({ title })
+      .where(eq(sessions.id, id))
+      .returning({ id: sessions.id, title: sessions.title });
+
+    if (!updated) throw new NotFoundError('Session', id);
+
+    return NextResponse.json({ data: updated });
   },
 );

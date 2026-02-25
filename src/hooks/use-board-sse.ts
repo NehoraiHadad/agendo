@@ -9,9 +9,8 @@ const MAX_RETRY_DELAY = 30000;
 const BASE_RETRY_DELAY = 1000;
 
 export function useBoardSse() {
-  const applyServerUpdate = useTaskBoardStore((s) => s.applyServerUpdate);
-  const applyServerCreate = useTaskBoardStore((s) => s.applyServerCreate);
-  const updateExecution = useExecutionStore((s) => s.updateExecution);
+  // Access store actions via getState() inside the effect — no reactive subscriptions
+  // needed since Zustand action references are stable across renders.
   const retryCount = useRef(0);
   const esRef = useRef<EventSource | null>(null);
 
@@ -28,6 +27,8 @@ export function useBoardSse() {
       es.addEventListener('snapshot', (e: MessageEvent) => {
         try {
           const { tasks } = JSON.parse(e.data) as { tasks: Task[] };
+          const { purgeAdHocTasks, applyServerUpdate } = useTaskBoardStore.getState();
+          purgeAdHocTasks();
           for (const task of tasks) {
             applyServerUpdate(task);
           }
@@ -39,7 +40,7 @@ export function useBoardSse() {
       es.addEventListener('task_updated', (e: MessageEvent) => {
         try {
           const task = JSON.parse(e.data) as Task;
-          applyServerUpdate(task);
+          useTaskBoardStore.getState().applyServerUpdate(task);
         } catch {
           // ignore
         }
@@ -48,7 +49,9 @@ export function useBoardSse() {
       es.addEventListener('task_created', (e: MessageEvent) => {
         try {
           const task = JSON.parse(e.data) as Task;
-          applyServerCreate(task);
+          // Skip ad-hoc tasks — they are managed via the ad-hoc panel, not the main board
+          if (task.isAdHoc) return;
+          useTaskBoardStore.getState().applyServerCreate(task);
         } catch {
           // ignore
         }
@@ -61,7 +64,7 @@ export function useBoardSse() {
             taskId: string;
             status: string;
           };
-          updateExecution({
+          useExecutionStore.getState().updateExecution({
             id: data.id,
             taskId: data.taskId,
             status: data.status as import('@/lib/types').ExecutionStatus,
@@ -97,5 +100,5 @@ export function useBoardSse() {
         esRef.current = null;
       }
     };
-  }, [applyServerUpdate, applyServerCreate, updateExecution]);
+  }, []); // stable — only runs once; store actions accessed via getState()
 }

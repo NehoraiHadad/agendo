@@ -4,13 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatDistanceStrict, formatDistanceToNow } from 'date-fns';
-import {
-  Activity,
-  Clock,
-  MessageSquare,
-  MinusCircle,
-  Pause,
-} from 'lucide-react';
+import { Activity, MessageSquare, MinusCircle, Pause } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,7 +14,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Table, TableBody, TableHead, TableHeader, TableRow, TableCell } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableCell,
+} from '@/components/ui/table';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
@@ -119,7 +120,11 @@ function SessionRow({ session }: SessionRowProps) {
           href={`/sessions/${session.id}`}
           className="font-mono text-xs text-muted-foreground/70 hover:text-primary transition-colors no-underline hover:no-underline"
         >
-          {session.id.slice(0, 8)}
+          {session.title ? (
+            <span className="text-foreground/80 font-sans font-medium">{session.title}</span>
+          ) : (
+            session.id.slice(0, 8)
+          )}
         </Link>
       </TableCell>
       <TableCell>
@@ -144,6 +149,44 @@ function SessionRow({ session }: SessionRowProps) {
         {formatDistanceToNow(session.createdAt, { addSuffix: true })}
       </TableCell>
     </TableRow>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SessionCard — mobile card layout
+// ---------------------------------------------------------------------------
+
+function SessionCard({ session }: SessionRowProps) {
+  return (
+    <Link
+      href={`/sessions/${session.id}`}
+      className="block rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 hover:border-white/[0.12] hover:bg-white/[0.04] transition-colors no-underline"
+    >
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="min-w-0 flex-1">
+          {session.title ? (
+            <p className="text-sm font-medium text-foreground/90 truncate">{session.title}</p>
+          ) : (
+            <p className="font-mono text-xs text-muted-foreground/70">{session.id.slice(0, 8)}</p>
+          )}
+          {session.taskTitle && (
+            <p className="mt-0.5 text-xs text-muted-foreground/60 truncate">{session.taskTitle}</p>
+          )}
+        </div>
+        <SessionStatusBadge status={session.status} className="shrink-0" />
+      </div>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground/50 flex-wrap">
+        {session.agentName && <span>{session.agentName}</span>}
+        <span>{session.totalTurns} turns</span>
+        {session.totalCostUsd != null && (
+          <span className="font-mono">${Number(session.totalCostUsd).toFixed(4)}</span>
+        )}
+        <span>{formatDuration(session.startedAt, session.endedAt)}</span>
+        <span suppressHydrationWarning>
+          {formatDistanceToNow(session.createdAt, { addSuffix: true })}
+        </span>
+      </div>
+    </Link>
   );
 }
 
@@ -234,9 +277,19 @@ export function SessionTable({ taskId }: SessionTableProps) {
         {isLoading && <span className="text-sm text-muted-foreground/60">Loading...</span>}
       </div>
 
+      {/* Mobile card list (< sm) */}
+      <div className="flex flex-col gap-2 sm:hidden">
+        {!isLoading && data.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground/50">No sessions found.</p>
+        ) : (
+          data.map((session) => <SessionCard key={session.id} session={session} />)
+        )}
+      </div>
+
+      {/* Desktop table (sm+) */}
       <div
         ref={scrollContainerRef}
-        className="rounded-xl border border-white/[0.06] overflow-hidden overflow-y-auto"
+        className="hidden sm:block rounded-xl border border-white/[0.06] overflow-hidden overflow-y-auto"
         style={{ maxHeight: '70vh' }}
       >
         <Table>

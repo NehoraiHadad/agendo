@@ -1,6 +1,19 @@
 export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
 
-export type PermissionDecision = 'allow' | 'deny' | 'allow-session';
+export type PermissionDecision =
+  | 'allow'
+  | 'deny'
+  | 'allow-session'
+  | { behavior: 'allow'; updatedInput: Record<string, unknown> };
+
+/** Full context of a tool approval request, passed to the ApprovalHandler. */
+export interface ApprovalRequest {
+  approvalId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  /** True when this is an AskUserQuestion interactive prompt (not a permission gate). */
+  isAskUser: boolean;
+}
 
 /** MCP server descriptor for the ACP session/new protocol (used by Gemini).
  *  Note: env is an array of {name, value} pairs, NOT a Record — this matches
@@ -29,6 +42,16 @@ export interface SpawnOpts {
   mcpServers?: AcpMcpServer[];
   /** Initial image to attach to the first user message (for cold resumes with image attachments). */
   initialImage?: ImageContent;
+  /** Max budget in USD for this session. Claude will stop when exceeded. */
+  maxBudgetUsd?: number;
+  /** Fallback model when primary model is overloaded. */
+  fallbackModel?: string;
+  /** When true, only use MCP servers from the provided config (ignore global). */
+  strictMcpConfig?: boolean;
+  /** Force a specific session UUID (syncs with agendo's session ID). */
+  sessionId?: string;
+  /** Text to append to Claude's system prompt (e.g., MCP context preamble). */
+  appendSystemPrompt?: string;
 }
 
 export interface ManagedProcess {
@@ -46,11 +69,7 @@ export interface ImageContent {
 }
 
 /** Callback type injected by SessionProcess to handle per-tool approval requests. */
-export type ApprovalHandler = (
-  approvalId: string,
-  toolName: string,
-  toolInput: Record<string, unknown>,
-) => Promise<PermissionDecision>;
+export type ApprovalHandler = (request: ApprovalRequest) => Promise<PermissionDecision>;
 
 export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
@@ -64,4 +83,10 @@ export interface AgentAdapter {
   onThinkingChange(cb: (thinking: boolean) => void): void;
   setApprovalHandler(handler: ApprovalHandler): void;
   onSessionRef?(cb: (ref: string) => void): void;
+  /** Change the permission mode in-place via control_request (no process restart). */
+  setPermissionMode?(mode: string): Promise<boolean>;
+  /** Switch the AI model in-place via control_request. */
+  setModel?(model: string): Promise<boolean>;
+  /** Query MCP server connection status via control_request. */
+  getMcpStatus?(): Promise<Record<string, unknown> | null>;
 }

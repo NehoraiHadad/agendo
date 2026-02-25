@@ -14,19 +14,52 @@ interface EventBase {
 
 export type AgendoEvent =
   | (EventBase & { type: 'agent:text'; text: string })
+  | (EventBase & { type: 'agent:text-delta'; text: string })
   | (EventBase & { type: 'agent:thinking'; text: string })
+  | (EventBase & { type: 'agent:thinking-delta'; text: string })
   | (EventBase & {
       type: 'agent:tool-start';
       toolUseId: string;
       toolName: string;
       input: Record<string, unknown>;
     })
-  | (EventBase & { type: 'agent:tool-end'; toolUseId: string; content: unknown })
+  | (EventBase & {
+      type: 'agent:tool-end';
+      toolUseId: string;
+      content: unknown;
+      durationMs?: number;
+      numFiles?: number;
+      truncated?: boolean;
+    })
   | (EventBase & {
       type: 'agent:result';
       costUsd: number | null;
       turns: number | null;
       durationMs: number | null;
+      isError?: boolean;
+      subtype?: string;
+      errors?: string[];
+      durationApiMs?: number | null;
+      modelUsage?: Record<
+        string,
+        {
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          costUSD: number;
+          contextWindow?: number;
+          maxOutputTokens?: number;
+        }
+      >;
+      serviceTier?: string;
+      inferenceGeo?: string;
+      permissionDenials?: Array<{
+        toolName: string;
+        toolUseId: string;
+        toolInput?: Record<string, unknown>;
+      }>;
+      serverToolUse?: { webSearchRequests?: number; webFetchRequests?: number };
     })
   | (EventBase & { type: 'agent:activity'; thinking: boolean })
   | (EventBase & {
@@ -41,11 +74,42 @@ export type AgendoEvent =
       sessionRef: string;
       slashCommands: string[];
       mcpServers: Array<{ name: string; status?: string; tools?: string[] }>;
+      model?: string;
+      apiKeySource?: string;
+      cwd?: string;
+      tools?: string[];
+      permissionMode?: string;
     })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
   | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
-  | (EventBase & { type: 'system:info'; message: string })
+  | (EventBase & {
+      type: 'system:info';
+      message: string;
+      compactMeta?: { trigger: 'auto' | 'manual'; preTokens: number };
+    })
   | (EventBase & { type: 'system:error'; message: string })
+  | (EventBase & {
+      type: 'system:mcp-status';
+      servers: Array<{ name: string; status: string }>;
+    })
+  | (EventBase & {
+      type: 'system:rate-limit';
+      status: string;
+      rateLimitType: string;
+      resetsAt: number;
+      isUsingOverage: boolean;
+      overageStatus?: string;
+    })
+  | (EventBase & {
+      type: 'agent:ask-user';
+      requestId: string;
+      questions: Array<{
+        question: string;
+        header: string;
+        options: Array<{ label: string; description: string; markdown?: string }>;
+        multiSelect: boolean;
+      }>;
+    })
   | (EventBase & {
       type: 'team:message';
       /** Slug of the team agent that sent this message (e.g. "mobile-analyst") */
@@ -78,6 +142,8 @@ export type AgendoControl =
       approvalId: string;
       toolName: string;
       decision: 'allow' | 'deny' | 'allow-session';
+      /** Modified tool input to send back to Claude (only for 'allow' decisions with edits). */
+      updatedInput?: Record<string, unknown>;
     }
   | {
       /** Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion). */
@@ -86,9 +152,20 @@ export type AgendoControl =
       content: string;
     }
   | {
+      /** Answer an AskUserQuestion prompt — keyed by requestId from the agent:ask-user event. */
+      type: 'answer-question';
+      requestId: string;
+      answers: Record<string, string>;
+    }
+  | {
       /** Change the permission mode of a live session. Worker restarts the process with the new mode. */
       type: 'set-permission-mode';
       mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
+    }
+  | {
+      /** Switch the AI model of a live session via control_request. */
+      type: 'set-model';
+      model: string;
     };
 
 // ============================================================================

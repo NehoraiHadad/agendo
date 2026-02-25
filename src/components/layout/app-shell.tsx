@@ -44,10 +44,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Main content area */}
         <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
           {/* Mobile top bar */}
-          <header className="flex h-11 shrink-0 items-center gap-3 border-b border-white/[0.06] px-4 sm:hidden">
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.05] bg-[--sidebar] px-3 sm:hidden">
             <button
               onClick={() => setMobileOpen(true)}
-              className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground/60 hover:text-foreground/80 hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
               aria-label="Open navigation"
             >
               <Menu className="h-5 w-5" />
