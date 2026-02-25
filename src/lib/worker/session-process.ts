@@ -23,6 +23,7 @@ import type {
   ManagedProcess,
   ImageContent,
   PermissionDecision,
+  ApprovalRequest,
   AcpMcpServer,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
@@ -73,6 +74,8 @@ export class SessionProcess {
   private modeChangeRestart = false;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
   private sigkillTimers: ReturnType<typeof setTimeout>[] = [];
+  /** Periodic MCP health check timer — checks for disconnected MCP servers. */
+  private mcpHealthTimer: ReturnType<typeof setInterval> | null = null;
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
@@ -102,12 +105,26 @@ export class SessionProcess {
   private pendingHumanResponseIds = new Set<string>();
   /** toolUseIds for APPROVAL_GATED_TOOLS — suppress their agent:tool-start/end events. */
   private suppressedToolUseIds = new Set<string>();
-  private pendingApprovals = new Map<
-    string,
-    (decision: 'allow' | 'deny' | 'allow-session') => void
-  >();
+  private pendingApprovals = new Map<string, (decision: PermissionDecision) => void>();
   /** Maps toolName → pending approvalId, so a duplicate call auto-denies the old one. */
   private pendingApprovalsByTool = new Map<string, string>();
+  /** Stores AskUserQuestion questions indexed by requestId for use when the answer arrives. */
+  private pendingAskUserQuestions = new Map<
+    string,
+    Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description: string; markdown?: string }>;
+      multiSelect: boolean;
+    }>
+  >();
+  /** Buffer for batching text deltas from stream_event messages (200ms flush interval). */
+  private deltaBuffer = '';
+  private deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Buffer for batching thinking deltas (same interval as text deltas). */
+  private thinkingDeltaBuffer = '';
+  private thinkingDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly DELTA_FLUSH_MS = 200;
   /** Team inbox monitor — non-null only when this session is a team leader. */
   private teamInboxMonitor: TeamInboxMonitor | null = null;
 
@@ -229,12 +246,15 @@ export class SessionProcess {
       ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
       ...(initialImage ? { initialImage } : {}),
+      // Sync Claude's session ID with agendo's DB session ID
+      sessionId: this.session.id,
+      // Only use our MCP servers when an MCP config is provided
+      strictMcpConfig: !!mcpConfigPath,
+      // TODO: wire maxBudgetUsd and fallbackModel when session config supports them
     };
 
     // Wire approval handler so adapter can request per-tool approval
-    this.adapter.setApprovalHandler((id, name, input) =>
-      this.handleApprovalRequest(id, name, input),
-    );
+    this.adapter.setApprovalHandler((req) => this.handleApprovalRequest(req));
 
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
@@ -283,6 +303,7 @@ export class SessionProcess {
     this.managedProcess.onExit((code) => void this.onExit(code));
 
     this.startHeartbeat();
+    this.startMcpHealthCheck();
 
     // If this session is a team leader, start monitoring the team inbox for
     // incoming agent messages and surface them as team:message events.
@@ -419,12 +440,15 @@ export class SessionProcess {
             this.activeToolUseIds.delete(event.toolUseId);
           }
 
-          // Persist sessionRef once the agent announces its session ID.
+          // Persist sessionRef and model once the agent announces its session ID.
           if (event.type === 'session:init') {
             this.sessionRef = event.sessionRef;
             await db
               .update(sessions)
-              .set({ sessionRef: event.sessionRef })
+              .set({
+                sessionRef: event.sessionRef,
+                ...(event.model ? { model: event.model } : {}),
+              })
               .where(eq(sessions.id, this.session.id));
           }
 
@@ -466,18 +490,41 @@ export class SessionProcess {
       const mcpServers = Array.isArray(parsed.mcp_servers)
         ? (parsed.mcp_servers as Array<{ name: string; status?: string; tools?: string[] }>)
         : [];
+      const model = typeof parsed.model === 'string' ? parsed.model : undefined;
+      const apiKeySource =
+        typeof parsed.apiKeySource === 'string' ? parsed.apiKeySource : undefined;
+      const cwd = typeof parsed.cwd === 'string' ? parsed.cwd : undefined;
+      const tools = Array.isArray(parsed.tools) ? (parsed.tools as string[]) : undefined;
+      const permissionMode =
+        typeof parsed.permissionMode === 'string' ? parsed.permissionMode : undefined;
       return [
         {
           type: 'session:init',
           sessionRef: parsed.session_id as string,
           slashCommands,
           mcpServers,
+          model,
+          apiKeySource,
+          cwd,
+          tools,
+          permissionMode,
         },
       ];
     }
 
     // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)
+    // Clear any pending delta buffer — the complete text is the source of truth.
     if (type === 'assistant') {
+      if (this.deltaFlushTimer) {
+        clearTimeout(this.deltaFlushTimer);
+        this.deltaFlushTimer = null;
+      }
+      this.deltaBuffer = '';
+      if (this.thinkingDeltaFlushTimer) {
+        clearTimeout(this.thinkingDeltaFlushTimer);
+        this.thinkingDeltaFlushTimer = null;
+      }
+      this.thinkingDeltaBuffer = '';
       const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
       const events: AgendoEventPayload[] = [];
       for (const block of message?.content ?? []) {
@@ -500,6 +547,7 @@ export class SessionProcess {
     // User turn: content is an array of blocks (tool_result, etc.)
     if (type === 'user') {
       const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
+      const toolUseResult = parsed.tool_use_result as Record<string, unknown> | undefined;
       const events: AgendoEventPayload[] = [];
       for (const block of message?.content ?? []) {
         if (block.type === 'tool_result') {
@@ -507,6 +555,9 @@ export class SessionProcess {
             type: 'agent:tool-end',
             toolUseId: (block.tool_use_id as string | undefined) ?? '',
             content: block.content ?? null,
+            durationMs: toolUseResult?.durationMs as number | undefined,
+            numFiles: toolUseResult?.numFiles as number | undefined,
+            truncated: toolUseResult?.truncated as boolean | undefined,
           });
         }
       }
@@ -523,6 +574,62 @@ export class SessionProcess {
       const costUsd = (parsed.total_cost_usd as number | null | undefined) ?? null;
       const turns = (parsed.num_turns as number | null | undefined) ?? null;
       const durationMs = (parsed.duration_ms as number | null | undefined) ?? null;
+      const durationApiMs = (parsed.duration_api_ms as number | null | undefined) ?? null;
+      const isError = parsed.is_error === true;
+      const subtype = typeof parsed.subtype === 'string' ? parsed.subtype : undefined;
+      const rawErrors = Array.isArray(parsed.errors)
+        ? (parsed.errors as string[]).filter((e) => typeof e === 'string')
+        : undefined;
+      const errors = rawErrors && rawErrors.length > 0 ? rawErrors : undefined;
+
+      // Per-model usage breakdown
+      const rawModelUsage = parsed.modelUsage as
+        | Record<string, Record<string, unknown>>
+        | undefined;
+      const modelUsage = rawModelUsage
+        ? Object.fromEntries(
+            Object.entries(rawModelUsage).map(([m, u]) => [
+              m,
+              {
+                inputTokens: (u.inputTokens as number) ?? 0,
+                outputTokens: (u.outputTokens as number) ?? 0,
+                cacheReadInputTokens: u.cacheReadInputTokens as number | undefined,
+                cacheCreationInputTokens: u.cacheCreationInputTokens as number | undefined,
+                costUSD: (u.costUSD as number) ?? 0,
+                contextWindow: u.contextWindow as number | undefined,
+                maxOutputTokens: u.maxOutputTokens as number | undefined,
+              },
+            ]),
+          )
+        : undefined;
+
+      // Permission denials
+      const rawDenials = Array.isArray(parsed.permission_denials)
+        ? (parsed.permission_denials as Array<Record<string, unknown>>)
+        : undefined;
+      const permissionDenials = rawDenials?.map((d) => ({
+        toolName: (d.tool_name as string) ?? '',
+        toolUseId: (d.tool_use_id as string) ?? '',
+        toolInput: d.tool_input as Record<string, unknown> | undefined,
+      }));
+
+      // Service tier and inference geo
+      const rawUsage = parsed.usage as Record<string, unknown> | undefined;
+      const serviceTier =
+        typeof rawUsage?.service_tier === 'string' ? rawUsage.service_tier : undefined;
+      const inferenceGeo =
+        typeof rawUsage?.inference_geo === 'string' && rawUsage.inference_geo !== ''
+          ? rawUsage.inference_geo
+          : undefined;
+
+      // Server-side tool usage (web search, fetch)
+      const rawServerToolUse = rawUsage?.server_tool_use as Record<string, unknown> | undefined;
+      const serverToolUse = rawServerToolUse
+        ? {
+            webSearchRequests: rawServerToolUse.web_search_requests as number | undefined,
+            webFetchRequests: rawServerToolUse.web_fetch_requests as number | undefined,
+          }
+        : undefined;
 
       // Persist cumulative cost/turn stats to the session row.
       void db
@@ -533,10 +640,149 @@ export class SessionProcess {
         })
         .where(eq(sessions.id, this.session.id));
 
-      return [{ type: 'agent:result', costUsd, turns, durationMs }];
+      const events: AgendoEventPayload[] = [
+        {
+          type: 'agent:result',
+          costUsd,
+          turns,
+          durationMs,
+          durationApiMs,
+          isError,
+          subtype,
+          errors,
+          modelUsage,
+          serviceTier,
+          inferenceGeo,
+          permissionDenials,
+          serverToolUse,
+        },
+      ];
+
+      // Emit a system:error so error results appear as red pills in the chat
+      if (isError && errors && errors.length > 0) {
+        events.push({ type: 'system:error', message: errors.join('; ') });
+      }
+
+      return events;
+    }
+
+    // compact_boundary — conversation compaction with metadata (new protocol)
+    if (type === 'system' && parsed.subtype === 'compact_boundary') {
+      const compactMeta = parsed.compact_metadata as
+        | { trigger?: string; pre_tokens?: number }
+        | undefined;
+      const trigger = compactMeta?.trigger === 'manual' ? ('manual' as const) : ('auto' as const);
+      const preTokens = typeof compactMeta?.pre_tokens === 'number' ? compactMeta.pre_tokens : 0;
+      return [
+        {
+          type: 'system:info',
+          message: `Conversation compacted (${trigger}, ${preTokens.toLocaleString()} tokens)`,
+          compactMeta: { trigger, preTokens },
+        },
+      ];
+    }
+
+    // Claude emits a 'compact' message when it compacts the conversation history (legacy).
+    if (type === 'compact') {
+      return [{ type: 'system:info', message: 'Conversation history compacted' }];
+    }
+
+    // rate_limit_event — account rate limit status from Claude Code
+    if (type === 'rate_limit_event') {
+      const info = parsed.rate_limit_info as Record<string, unknown> | undefined;
+      if (info) {
+        return [
+          {
+            type: 'system:rate-limit',
+            status: (info.status as string) ?? 'unknown',
+            rateLimitType: (info.rateLimitType as string) ?? 'unknown',
+            resetsAt: (info.resetsAt as number) ?? 0,
+            isUsingOverage: (info.isUsingOverage as boolean) ?? false,
+            overageStatus: info.overageStatus as string | undefined,
+          },
+        ];
+      }
+      return [];
+    }
+
+    // stream_event — token-level streaming from --include-partial-messages.
+    // Batch text_delta and thinking_delta events to limit PG NOTIFY throughput (~5 events/sec).
+    if (type === 'stream_event') {
+      const event = parsed.event as Record<string, unknown> | undefined;
+      if (event?.type === 'content_block_delta') {
+        const delta = event.delta as Record<string, unknown> | undefined;
+        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+          this.deltaBuffer += delta.text;
+          if (!this.deltaFlushTimer) {
+            this.deltaFlushTimer = setTimeout(() => {
+              void this.flushDeltaBuffer();
+            }, SessionProcess.DELTA_FLUSH_MS);
+          }
+        } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+          this.thinkingDeltaBuffer += delta.thinking;
+          if (!this.thinkingDeltaFlushTimer) {
+            this.thinkingDeltaFlushTimer = setTimeout(() => {
+              void this.flushThinkingDeltaBuffer();
+            }, SessionProcess.DELTA_FLUSH_MS);
+          }
+        }
+      }
+      // All other stream_event subtypes (message_start, content_block_start/stop,
+      // message_delta, message_stop) are ignored — the complete messages provide
+      // the same data in a more reliable form.
+      return [];
     }
 
     return [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: text delta batching (token-level streaming)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Flush accumulated text deltas as a single agent:text-delta event.
+   * Called on a 200ms timer to limit PG NOTIFY throughput to ~5 events/sec
+   * instead of the raw 20-50 events/sec from content_block_delta.
+   *
+   * Text-delta events are NOT persisted to the log file (the complete
+   * agent:text event from the `assistant` message is the source of truth).
+   */
+  private async flushDeltaBuffer(): Promise<void> {
+    this.deltaFlushTimer = null;
+    const text = this.deltaBuffer;
+    if (!text) return;
+    this.deltaBuffer = '';
+
+    const event: AgendoEvent = {
+      id: ++this.eventSeq,
+      sessionId: this.session.id,
+      ts: Date.now(),
+      type: 'agent:text-delta',
+      text,
+    };
+
+    // Publish directly to PG NOTIFY without writing to log file.
+    // Deltas are redundant with the complete agent:text event.
+    await publish(channelName('agendo_events', this.session.id), event);
+  }
+
+  /** Flush accumulated thinking deltas as a single agent:thinking-delta event. */
+  private async flushThinkingDeltaBuffer(): Promise<void> {
+    this.thinkingDeltaFlushTimer = null;
+    const text = this.thinkingDeltaBuffer;
+    if (!text) return;
+    this.thinkingDeltaBuffer = '';
+
+    const event: AgendoEvent = {
+      id: ++this.eventSeq,
+      sessionId: this.session.id,
+      ts: Date.now(),
+      type: 'agent:thinking-delta',
+      text,
+    };
+
+    await publish(channelName('agendo_events', this.session.id), event);
   }
 
   // ---------------------------------------------------------------------------
@@ -582,15 +828,33 @@ export class SessionProcess {
       const resolver = this.pendingApprovals.get(control.approvalId);
       if (resolver) {
         this.pendingApprovals.delete(control.approvalId);
-        resolver(control.decision);
+        // If the user edited the tool input before approving, pass through updatedInput.
+        const decision: PermissionDecision =
+          control.decision === 'allow' && control.updatedInput
+            ? { behavior: 'allow', updatedInput: control.updatedInput }
+            : control.decision;
+        resolver(decision);
         if (control.decision === 'allow-session') {
           await this.persistAllowedTool(control.toolName);
         }
       }
     } else if (control.type === 'tool-result') {
       await this.pushToolResult(control.toolUseId, control.content);
+    } else if (control.type === 'answer-question') {
+      const resolver = this.pendingApprovals.get(control.requestId);
+      if (resolver) {
+        this.pendingApprovals.delete(control.requestId);
+        const questions = this.pendingAskUserQuestions.get(control.requestId) ?? [];
+        resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
+      } else {
+        console.warn(
+          `[session-process] answer-question for unknown requestId=${control.requestId}`,
+        );
+      }
     } else if (control.type === 'set-permission-mode') {
       await this.handleSetPermissionMode(control.mode);
+    } else if (control.type === 'set-model') {
+      await this.handleSetModel(control.model);
     }
   }
 
@@ -708,6 +972,31 @@ export class SessionProcess {
     mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
   ): Promise<void> {
     this.session.permissionMode = mode;
+
+    // Try in-place mode change via control_request (no process restart).
+    if (this.adapter.setPermissionMode) {
+      try {
+        const success = await this.adapter.setPermissionMode(mode);
+        if (success) {
+          await db
+            .update(sessions)
+            .set({ permissionMode: mode })
+            .where(eq(sessions.id, this.session.id));
+          await this.emitEvent({
+            type: 'system:info',
+            message: `Permission mode changed to "${mode}".`,
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          `[session-process] In-place setPermissionMode failed for session ${this.session.id}, falling back to restart:`,
+          err,
+        );
+      }
+    }
+
+    // Fallback: kill and restart with new mode.
     await this.emitEvent({
       type: 'system:info',
       message: `Permission mode changing to "${mode}". Session will restart automatically.`,
@@ -721,6 +1010,37 @@ export class SessionProcess {
       this.managedProcess?.kill('SIGKILL');
     }, SIGKILL_DELAY_MS);
     this.sigkillTimers.push(t);
+  }
+
+  private async handleSetModel(model: string): Promise<void> {
+    if (!this.adapter.setModel) {
+      await this.emitEvent({
+        type: 'system:error',
+        message: 'Model switching is not supported by this agent.',
+      });
+      return;
+    }
+
+    try {
+      const success = await this.adapter.setModel(model);
+      if (success) {
+        await db.update(sessions).set({ model }).where(eq(sessions.id, this.session.id));
+        await this.emitEvent({
+          type: 'system:info',
+          message: `Model switched to "${model}".`,
+        });
+      } else {
+        await this.emitEvent({
+          type: 'system:error',
+          message: `Failed to switch model to "${model}" — CLI did not respond.`,
+        });
+      }
+    } catch (err) {
+      await this.emitEvent({
+        type: 'system:error',
+        message: `Failed to switch model: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -872,6 +1192,18 @@ export class SessionProcess {
     this.slotReleaseFuture.resolve();
 
     this.stopHeartbeat();
+    this.stopMcpHealthCheck();
+    // Flush any pending deltas before teardown.
+    if (this.deltaFlushTimer) {
+      clearTimeout(this.deltaFlushTimer);
+      this.deltaFlushTimer = null;
+    }
+    this.deltaBuffer = '';
+    if (this.thinkingDeltaFlushTimer) {
+      clearTimeout(this.thinkingDeltaFlushTimer);
+      this.thinkingDeltaFlushTimer = null;
+    }
+    this.thinkingDeltaBuffer = '';
     if (this.idleTimer !== null) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -1017,6 +1349,45 @@ export class SessionProcess {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Private: MCP health check
+  // ---------------------------------------------------------------------------
+
+  private startMcpHealthCheck(): void {
+    const getMcpStatus = this.adapter.getMcpStatus?.bind(this.adapter);
+    if (!getMcpStatus) return;
+    this.mcpHealthTimer = setInterval(async () => {
+      try {
+        const resp = await getMcpStatus();
+        if (!resp) return; // timeout or process dead — skip silently
+        const servers = Array.isArray(resp.servers)
+          ? (resp.servers as Array<{ name: string; status: string }>)
+          : [];
+        const disconnected = servers.filter(
+          (s) => s.status && s.status !== 'connected' && s.status !== 'ready',
+        );
+        if (disconnected.length > 0) {
+          await this.emitEvent({
+            type: 'system:mcp-status',
+            servers: disconnected,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[session-process] MCP health check failed for session ${this.session.id}:`,
+          err,
+        );
+      }
+    }, 60_000);
+  }
+
+  private stopMcpHealthCheck(): void {
+    if (this.mcpHealthTimer !== null) {
+      clearInterval(this.mcpHealthTimer);
+      this.mcpHealthTimer = null;
+    }
+  }
+
   /**
    * Resolve all pending tool approval promises with the given decision so that
    * any adapter blocked on `handleApprovalRequest` unblocks immediately. Called
@@ -1071,14 +1442,21 @@ export class SessionProcess {
    * Otherwise, emits an agent:tool-approval event to the frontend and blocks
    * until the user responds via the control channel.
    */
-  private async handleApprovalRequest(
-    approvalId: string,
-    toolName: string,
-    toolInput: Record<string, unknown>,
-  ): Promise<PermissionDecision> {
+  private async handleApprovalRequest(req: ApprovalRequest): Promise<PermissionDecision> {
+    const { approvalId, toolName, toolInput, isAskUser } = req;
+
+    // AskUserQuestion is a human-interaction primitive: the agent is asking the
+    // user a question, not requesting permission for a dangerous action.
+    // Auto-approve the can_use_tool request — the tool will "fail" in pipe mode
+    // (error tool_result), then the interactive-tools renderer shows the question
+    // card, and pushToolResult routes the human's answer when it arrives.
+    if (isAskUser) {
+      return 'allow';
+    }
+
     // Interactive tools always require human input regardless of permissionMode.
     // permissionMode bypasses safety prompts for dangerous tools (Bash, Write…),
-    // but ExitPlanMode and AskUserQuestion are human-interaction primitives —
+    // but ExitPlanMode is a human-interaction primitive —
     // the agent is asking the human something, not requesting permission for a
     // risky action. The Claude Code CLI itself never auto-approves these even in
     // bypassPermissions mode, and we must match that behaviour.
@@ -1118,6 +1496,59 @@ export class SessionProcess {
     return new Promise((resolve) => {
       this.pendingApprovals.set(approvalId, (decision) => {
         this.pendingApprovalsByTool.delete(toolName);
+        resolve(decision);
+      });
+    });
+  }
+
+  /**
+   * Handle an AskUserQuestion control_request from Claude.
+   *
+   * Flow:
+   * 1. Emit an `agent:ask-user` event so the frontend renders a question card.
+   * 2. Wait up to 5 minutes for the user to send an `answer-question` control.
+   * 3. Return `{ behavior: 'allow', updatedInput: { questions, answers } }` so
+   *    the claude-adapter sends the correct control_response with updatedInput.
+   * 4. On timeout, deny the request so the agent can gracefully handle it.
+   */
+  private async handleAskUserQuestion(
+    requestId: string,
+    toolInput: Record<string, unknown>,
+  ): Promise<PermissionDecision> {
+    const questions =
+      (toolInput.questions as
+        | Array<{
+            question: string;
+            header: string;
+            options: Array<{ label: string; description: string; markdown?: string }>;
+            multiSelect: boolean;
+          }>
+        | undefined) ?? [];
+
+    // Store questions so the onControl answer-question handler can include them in updatedInput.
+    this.pendingAskUserQuestions.set(requestId, questions);
+
+    await this.emitEvent({
+      type: 'agent:ask-user',
+      requestId,
+      questions,
+    });
+
+    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingApprovals.delete(requestId);
+        this.pendingAskUserQuestions.delete(requestId);
+        console.warn(
+          `[session-process] AskUserQuestion requestId=${requestId} timed out after 5 minutes`,
+        );
+        resolve('deny');
+      }, TIMEOUT_MS);
+
+      this.pendingApprovals.set(requestId, (decision) => {
+        clearTimeout(timer);
+        this.pendingAskUserQuestions.delete(requestId);
         resolve(decision);
       });
     });

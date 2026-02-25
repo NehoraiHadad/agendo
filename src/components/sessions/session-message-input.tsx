@@ -110,16 +110,19 @@ function SlashCommandPicker({
   const showCategories = hasSkills && hasBuiltins;
 
   return (
-    <div className="absolute bottom-full left-0 right-0 mb-1 z-50 rounded-lg border border-white/[0.10] bg-[oklch(0.10_0_0)] shadow-2xl overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-white/[0.06]">
-        <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">
-          Slash commands · ↑↓ navigate · ↵ select · Esc dismiss
+    <div className="absolute bottom-full left-0 right-0 mb-1.5 z-50 rounded-xl border border-white/[0.10] bg-[oklch(0.085_0_0)] shadow-[0_-8px_32px_oklch(0_0_0/0.5),0_0_0_1px_oklch(1_0_0/0.04)] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06] bg-white/[0.02]">
+        <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider font-medium">
+          Slash commands
+        </span>
+        <span className="text-[9px] text-muted-foreground/25 hidden sm:inline">
+          ↑↓ navigate · ↵ select · Esc dismiss
         </span>
       </div>
       <ul className="max-h-48 overflow-auto" role="listbox">
         {showCategories && hasSkills && (
-          <li className="px-3 pt-1.5 pb-0.5" aria-hidden>
-            <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">
+          <li className="px-3 pt-2 pb-0.5" aria-hidden>
+            <span className="text-[9px] font-semibold text-muted-foreground/30 uppercase tracking-widest">
               Skills
             </span>
           </li>
@@ -133,8 +136,8 @@ function SlashCommandPicker({
           return (
             <li key={`${i}-${cmd.name}`}>
               {isFirstBuiltin && (
-                <div className="px-3 py-1 border-t border-white/[0.06] mt-0.5">
-                  <span className="text-[9px] text-muted-foreground/35 uppercase tracking-widest">
+                <div className="px-3 pt-2 pb-0.5 border-t border-white/[0.06] mt-1">
+                  <span className="text-[9px] font-semibold text-muted-foreground/30 uppercase tracking-widest">
                     Commands
                   </span>
                 </div>
@@ -142,14 +145,20 @@ function SlashCommandPicker({
               <div
                 role="option"
                 aria-selected={i === activeIdx}
-                className={`flex items-baseline gap-3 px-3 py-2 cursor-pointer text-xs transition-colors ${
-                  i === activeIdx ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
+                className={`flex items-baseline gap-3 px-3 py-2 cursor-pointer text-xs transition-all duration-100 ${
+                  i === activeIdx
+                    ? 'bg-primary/[0.09] border-l-2 border-primary/50 pl-[10px]'
+                    : 'border-l-2 border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]'
                 }`}
                 onMouseEnter={() => onChangeActive(i)}
                 onClick={() => onSelect(cmd)}
               >
-                <span className="font-mono text-primary shrink-0">{cmd.name}</span>
-                <span className="text-muted-foreground/60 truncate">{cmd.description}</span>
+                <span
+                  className={`font-mono shrink-0 transition-colors ${i === activeIdx ? 'text-primary' : 'text-primary/70'}`}
+                >
+                  {cmd.name}
+                </span>
+                <span className="text-muted-foreground/55 truncate">{cmd.description}</span>
                 <span className="ml-auto shrink-0 flex items-center gap-1">
                   {cmd.blocked && (
                     <span
@@ -538,7 +547,7 @@ export function SessionMessageInput({
     <>
       <form
         onSubmit={handleSubmit}
-        className="relative flex flex-col gap-0 border-t border-white/[0.07] bg-[oklch(0.09_0_0)] px-3 py-2.5"
+        className="relative shrink-0 flex flex-col gap-0 border-t border-white/[0.06] bg-[oklch(0.075_0.002_280)] px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[inset_0_1px_0_oklch(1_0_0/0.04)]"
       >
         {/* Slash command picker */}
         {showPicker && filteredCommands.length > 0 && !showModelPicker && (
@@ -580,18 +589,18 @@ export function SessionMessageInput({
 
         {/* Image preview */}
         {pendingImage && (
-          <div className="mb-2 flex items-start">
-            <div className="relative">
+          <div className="mb-2.5 flex items-start">
+            <div className="relative group">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={pendingImage.dataUrl}
                 alt="attachment"
-                className="h-16 w-16 object-cover rounded-lg border border-white/[0.10]"
+                className="h-16 w-16 object-cover rounded-xl border border-white/[0.12] shadow-[0_4px_12px_oklch(0_0_0/0.4)]"
               />
               <button
                 type="button"
                 onClick={() => setPendingImage(null)}
-                className="absolute -top-1 -right-1 rounded-full bg-zinc-800 border border-white/20 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                className="absolute -top-1.5 -right-1.5 rounded-full bg-zinc-900 border border-white/[0.15] p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-zinc-800 transition-all shadow-sm"
                 aria-label="Remove image"
               >
                 <X className="size-2.5" />
@@ -606,11 +615,11 @@ export function SessionMessageInput({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 flex items-center justify-center h-11 w-9 rounded-lg border border-white/[0.08] bg-white/[0.04] text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/[0.08] transition-colors disabled:opacity-30"
+              className="shrink-0 flex items-center justify-center h-[44px] w-9 rounded-xl border border-white/[0.09] bg-white/[0.03] text-muted-foreground/40 hover:text-muted-foreground/80 hover:bg-white/[0.07] hover:border-white/[0.14] active:scale-95 transition-all duration-150 disabled:opacity-25"
               disabled={isSending}
               aria-label="Attach image"
             >
-              <Paperclip className="size-4" />
+              <Paperclip className="size-3.5" />
             </button>
             <input
               ref={fileInputRef}
@@ -629,7 +638,7 @@ export function SessionMessageInput({
             placeholder={placeholder}
             rows={1}
             dir="auto"
-            className="flex-1 min-h-[44px] max-h-32 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 disabled:opacity-50 transition-[border-color,box-shadow] resize-none leading-tight overflow-y-auto"
+            className="flex-1 min-h-[44px] max-h-32 rounded-xl border border-white/[0.09] bg-[oklch(0.08_0_0)] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 focus:bg-[oklch(0.085_0.003_280)] disabled:opacity-40 transition-[border-color,box-shadow,background-color] resize-none leading-tight overflow-y-auto"
             disabled={isSending}
             autoComplete="off"
             spellCheck={false}
@@ -638,7 +647,7 @@ export function SessionMessageInput({
           <Button
             type="submit"
             size="icon"
-            className="shrink-0 h-11 w-11"
+            className="shrink-0 h-[44px] w-[44px] rounded-xl shadow-[0_2px_8px_oklch(0.7_0.18_280/0.2)] hover:shadow-[0_4px_16px_oklch(0.7_0.18_280/0.35)] active:scale-95 transition-all duration-150 disabled:shadow-none"
             disabled={(!message.trim() && !pendingImage) || isSending}
             aria-label="Send message"
           >

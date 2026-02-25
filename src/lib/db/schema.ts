@@ -397,6 +397,10 @@ export const sessions = pgTable(
     // Persisted so approval survives process restarts.
     allowedTools: jsonb('allowed_tools').notNull().$type<string[]>().default([]),
     initialPrompt: text('initial_prompt'),
+    // User-assigned display name for the session (optional)
+    title: text('title'),
+    // AI model reported by the agent CLI (e.g. "claude-sonnet-4-5-20250514").
+    model: text('model'),
     totalDurationMs: integer('total_duration_ms'),
     tmuxSessionName: text('tmux_session_name'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

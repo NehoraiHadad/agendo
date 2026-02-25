@@ -55,6 +55,7 @@ export interface ListTasksOptions {
   parentTaskId?: string;
   projectId?: string;
   q?: string;
+  includeAdHoc?: boolean;
 }
 
 // --- Implementation ---
@@ -348,7 +349,10 @@ export async function listTasksByStatus(
     conditions.push(ilike(tasks.title, `%${options.q}%`));
   }
 
-  const result = await listTasksBoardItems(conditions, { limit: limit + 1 });
+  const result = await listTasksBoardItems(conditions, {
+    limit: limit + 1,
+    includeAdHoc: options.includeAdHoc,
+  });
 
   const hasMore = result.length > limit;
   const page = hasMore ? result.slice(0, limit) : result;

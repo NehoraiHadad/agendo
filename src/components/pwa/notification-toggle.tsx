@@ -1,20 +1,15 @@
 'use client';
 
-import { useState } from 'react';
 import { Bell, BellOff } from 'lucide-react';
 import { useNotifications } from '@/hooks/use-notifications';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 export function NotificationToggle() {
-  // Lazy initializer avoids a setState-in-effect pattern while still
-  // correctly returning false during SSR (typeof window === 'undefined').
-  const [mounted] = useState(() => typeof window !== 'undefined');
-
   const { isSupported, permission, isSubscribed, isLoading, subscribe, unsubscribe } =
     useNotifications();
 
-  if (!mounted || !isSupported) return null;
+  if (!isSupported) return null;
 
   const handleClick = () => {
     if (isSubscribed) {

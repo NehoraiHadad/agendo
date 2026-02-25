@@ -18,6 +18,8 @@ export class ClaudeAdapter implements AgentAdapter {
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private hasEmittedThinking = false;
   private approvalHandler: ApprovalHandler | null = null;
+  /** Carryover buffer for incomplete NDJSON lines split across stdout chunks. */
+  private adapterDataBuffer = '';
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, []);
@@ -204,25 +206,127 @@ export class ClaudeAdapter implements AgentAdapter {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Generic control_request/control_response exchange
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a control_request to the Claude CLI via stdin and wait for the
+   * matching control_response on stdout. Returns the parsed response payload
+   * or null on timeout / process death.
+   */
+  private sendControlRequest(
+    requestType: string,
+    payload: Record<string, unknown>,
+    timeoutMs = 5000,
+  ): Promise<Record<string, unknown> | null> {
+    return this.lock.acquire(async () => {
+      const cp = this.childProcess;
+      if (!cp?.stdin?.writable || !cp.stdout) return null;
+      // Capture narrowed references for use inside the Promise callback.
+      const cpStdin = cp.stdin;
+      const cpStdout = cp.stdout;
+
+      const requestId = `ctrl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const request = JSON.stringify({
+        type: 'control_request',
+        request_id: requestId,
+        request_type: requestType,
+        ...payload,
+      });
+
+      return new Promise<Record<string, unknown> | null>((resolve) => {
+        let settled = false;
+        const finish = (result: Record<string, unknown> | null) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cpStdout.off('data', onData);
+          cp.off('exit', onExit);
+          resolve(result);
+        };
+
+        // Buffer for matching control_response across chunks
+        let respBuffer = '';
+
+        const onData = (chunk: Buffer | string) => {
+          const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
+          respBuffer += text;
+          const lines = respBuffer.split('\n');
+          respBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('{')) continue;
+            try {
+              const msg = JSON.parse(trimmed) as Record<string, unknown>;
+              if (msg.type === 'control_response' && msg.request_id === requestId) {
+                finish(msg);
+                return;
+              }
+            } catch {
+              /* skip */
+            }
+          }
+        };
+
+        const onExit = () => finish(null);
+        const timer = setTimeout(() => finish(null), timeoutMs);
+
+        cpStdout.on('data', onData);
+        cp.once('exit', onExit);
+        cpStdin.write(request + '\n');
+      });
+    });
+  }
+
+  async setPermissionMode(mode: string): Promise<boolean> {
+    const resp = await this.sendControlRequest('set_permission_mode', { mode });
+    return resp !== null;
+  }
+
+  async setModel(model: string): Promise<boolean> {
+    const resp = await this.sendControlRequest('set_model', { model });
+    return resp !== null;
+  }
+
+  async getMcpStatus(): Promise<Record<string, unknown> | null> {
+    return this.sendControlRequest('mcp_status', {});
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tool approval handling
+  // ---------------------------------------------------------------------------
+
   private async handleToolApprovalRequest(msg: Record<string, unknown>): Promise<void> {
     const requestId = msg.request_id as string;
     const req = msg.request as Record<string, unknown>;
     const toolName = req.tool_name as string;
     const toolInput = (req.input as Record<string, unknown>) ?? {};
+    const isAskUser = toolName === 'AskUserQuestion';
 
     let decision: PermissionDecision = 'allow';
     if (this.approvalHandler) {
-      decision = await this.approvalHandler(requestId, toolName, toolInput);
+      decision = await this.approvalHandler({
+        approvalId: requestId,
+        toolName,
+        toolInput,
+        isAskUser,
+      });
     }
 
     const outcome = decision === 'deny' ? 'deny' : 'allow';
+    const response: Record<string, unknown> = { subtype: outcome };
+    if (typeof decision === 'object' && decision.updatedInput) {
+      response.updatedInput = decision.updatedInput;
+    }
+
     const stdin = this.childProcess?.stdin;
     if (stdin?.writable) {
       stdin.write(
         JSON.stringify({
           request_id: requestId,
           type: 'control_response',
-          response: { subtype: outcome },
+          response,
         }) + '\n',
       );
     }
@@ -232,6 +336,7 @@ export class ClaudeAdapter implements AgentAdapter {
     this.tmuxSessionName = `claude-${opts.executionId}`;
     this.sessionId = null;
     this.hasEmittedThinking = false;
+    this.adapterDataBuffer = '';
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
 
@@ -244,8 +349,19 @@ export class ClaudeAdapter implements AgentAdapter {
       '--output-format',
       'stream-json',
       '--verbose',
+      '--include-partial-messages',
       '--permission-mode',
       opts.permissionMode ?? 'default',
+      // Budget limit — Claude stops when exceeded
+      ...(opts.maxBudgetUsd != null ? ['--max-budget-usd', String(opts.maxBudgetUsd)] : []),
+      // Fallback model for overload resilience
+      ...(opts.fallbackModel ? ['--fallback-model', opts.fallbackModel] : []),
+      // Strict MCP config — only use our servers, ignore global
+      ...(opts.strictMcpConfig ? ['--strict-mcp-config'] : []),
+      // Sync session ID with agendo's DB
+      ...(opts.sessionId ? ['--session-id', opts.sessionId] : []),
+      // Append to Claude's system prompt
+      ...(opts.appendSystemPrompt ? ['--append-system-prompt', opts.appendSystemPrompt] : []),
       ...extraFlags,
       ...(opts.extraArgs ?? []),
     ];
@@ -298,8 +414,15 @@ export class ClaudeAdapter implements AgentAdapter {
         this.sessionId = this.extractSessionId(text);
       }
 
-      // Scan each line for result (thinking=false) and tool approval requests
-      for (const line of text.split('\n')) {
+      // Buffer incomplete NDJSON lines split across chunks.
+      // The last element of split('\n') is either '' (line ended with \n)
+      // or a partial line — save it as the carryover buffer.
+      const combined = this.adapterDataBuffer + text;
+      const lines = combined.split('\n');
+      this.adapterDataBuffer = lines.pop() ?? '';
+
+      // Scan each complete line for result (thinking=false) and tool approval requests
+      for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed.startsWith('{')) continue;
         try {
@@ -329,6 +452,7 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       }
 
+      // Forward raw text to data callbacks unchanged (session-process has its own buffer)
       for (const cb of dataCallbacks) cb(text);
     });
 

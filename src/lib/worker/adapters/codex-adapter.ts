@@ -106,7 +106,12 @@ export class CodexAdapter implements AgentAdapter {
       const params = request.params as Record<string, unknown>;
       const toolName = (params.message as string) ?? 'unknown';
       const toolInput = (params.requestedSchema as Record<string, unknown>) ?? {};
-      const decision = await this.approvalHandler(approvalId, toolName, toolInput);
+      const decision = await this.approvalHandler({
+        approvalId,
+        toolName,
+        toolInput,
+        isAskUser: false,
+      });
       if (decision === 'deny') {
         return { action: 'cancel' as const };
       }

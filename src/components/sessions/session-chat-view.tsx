@@ -228,26 +228,30 @@ const ToolCard = memo(function ToolCard({
 
   return (
     <div
-      className={`rounded-md border text-xs ${
-        isError ? 'border-red-500/20 bg-red-500/[0.06]' : 'border-white/[0.07] bg-white/[0.03]'
+      className={`rounded-lg border text-xs overflow-hidden ${
+        isError
+          ? 'border-red-500/20 bg-red-500/[0.04]'
+          : 'border-white/[0.06] bg-[oklch(0.075_0_0)]'
       }`}
     >
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/5 rounded-md transition-colors"
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-white/[0.03] transition-colors"
         onClick={() => setManualOpen((v) => (v !== null ? !v : !open))}
         aria-expanded={open}
       >
-        <Wrench className="size-3 shrink-0 text-muted-foreground/50" />
-        <span className="font-mono text-foreground/90 font-medium">{tool.toolName}</span>
-        {statusIcon}
-        <span className="ml-auto text-muted-foreground/40">
+        <Wrench className="size-3 shrink-0 text-muted-foreground/35" />
+        <span className="font-mono text-[11px] text-foreground/85 font-medium tracking-tight">
+          {tool.toolName}
+        </span>
+        <span className="ml-1">{statusIcon}</span>
+        <span className="ml-auto text-muted-foreground/30">
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
       </button>
 
       {open && (
-        <div className="px-2.5 pb-2">
+        <div className="px-2.5 pb-2 border-t border-white/[0.04]">
           {tool.toolName === 'Write' || tool.toolName === 'CreateFile' ? (
             <WriteView
               input={
@@ -349,28 +353,30 @@ const ToolGroup = memo(function ToolGroup({
   );
 
   return (
-    <div className="rounded-md border border-white/[0.07] bg-white/[0.02] text-xs">
+    <div className="rounded-lg border border-white/[0.06] bg-[oklch(0.075_0_0)] text-xs overflow-hidden">
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/5 rounded-md transition-colors"
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-white/[0.03] transition-colors"
         onClick={() => setManualOpen((v) => (v !== null ? !v : !open))}
         aria-expanded={open}
       >
-        <Wrench className="size-3 shrink-0 text-muted-foreground/50" />
-        <span className="font-mono text-foreground/80 font-medium shrink-0">
+        <Wrench className="size-3 shrink-0 text-muted-foreground/35" />
+        <span className="font-mono text-[11px] text-foreground/70 font-medium shrink-0">
           {tools.length} tools
         </span>
         {!open && (
-          <span className="text-muted-foreground/45 truncate flex-1 min-w-0">{summary}</span>
+          <span className="text-muted-foreground/35 truncate flex-1 min-w-0 text-[10px]">
+            {summary}
+          </span>
         )}
-        {statusIcon}
-        <span className="ml-auto text-muted-foreground/40 shrink-0">
+        <span className="shrink-0">{statusIcon}</span>
+        <span className="ml-auto text-muted-foreground/30 shrink-0">
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
       </button>
 
       {open && (
-        <div className="px-2 pb-2 space-y-1.5">
+        <div className="px-2 pb-2 space-y-1.5 border-t border-white/[0.04] pt-1.5">
           {tools.map((tool) => (
             <ToolCard key={tool.toolUseId} tool={tool} sessionId={sessionId} />
           ))}
@@ -390,8 +396,8 @@ function InfoPill({ text }: { text: string }) {
   const isRawJson = text.startsWith('{') || text.startsWith('[');
   const display = isRawJson ? text.slice(0, 120) + (text.length > 120 ? '…' : '') : text;
   return (
-    <div className="flex justify-center my-1">
-      <span className="text-xs text-muted-foreground/70 bg-white/[0.04] border border-white/[0.05] px-3 py-0.5 rounded-full max-w-full truncate">
+    <div className="flex justify-center my-2">
+      <span className="text-[11px] text-muted-foreground/50 bg-white/[0.03] border border-white/[0.05] px-3 py-0.5 rounded-full max-w-full truncate tracking-wide">
         {display}
       </span>
     </div>
@@ -402,19 +408,24 @@ function TurnCompletePill({
   text,
   costUsd,
   sessionCostUsd,
+  isError,
 }: {
   text: string;
   costUsd: number | null;
   sessionCostUsd: number | null;
+  isError?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasCost = costUsd !== null;
+  const errorStyle = isError
+    ? 'text-red-400 bg-red-500/[0.08] border-red-800/30'
+    : 'text-muted-foreground/70 bg-white/[0.04] border-white/[0.05]';
   return (
     <div className="flex flex-col items-center my-1 gap-1">
       <button
         type="button"
         onClick={() => hasCost && setOpen((v) => !v)}
-        className={`text-xs text-muted-foreground/70 bg-white/[0.04] border border-white/[0.05] px-3 py-0.5 rounded-full transition-colors ${
+        className={`text-xs px-3 py-0.5 rounded-full border transition-colors ${errorStyle} ${
           hasCost
             ? 'hover:bg-white/[0.07] hover:border-white/[0.10] cursor-pointer'
             : 'cursor-default'
@@ -464,7 +475,8 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
       result.push(
         <div
           key={`t-${startIdx}`}
-          className="rounded-lg bg-white/[0.04] text-foreground border border-white/[0.05] px-3 py-2 text-sm break-words overflow-x-auto leading-relaxed"
+          className="rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
+          style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
             {part.text}
@@ -508,9 +520,10 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
 
 function AssistantBubble({ parts, sessionId }: { parts: AssistantPart[]; sessionId: string }) {
   return (
-    <div className="flex gap-2 items-start w-full">
-      <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
-        <Bot className="size-3.5 text-muted-foreground" />
+    <div className="flex gap-2.5 items-start w-full animate-fade-in-up">
+      {/* Agent avatar */}
+      <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/[0.10] border border-primary/20 p-1.5 shadow-[0_0_8px_oklch(0.7_0.18_280/0.12)]">
+        <Bot className="size-3.5 text-primary/80" />
       </div>
       <div className="space-y-1.5 min-w-0 flex-1">{renderAssistantParts(parts, sessionId)}</div>
     </div>
@@ -520,24 +533,27 @@ function AssistantBubble({ parts, sessionId }: { parts: AssistantPart[]; session
 function ThinkingBubble({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex gap-2 items-start w-full">
-      <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
-        <Bot className="size-3.5 text-muted-foreground/50" />
+    <div className="flex gap-2.5 items-start w-full">
+      <div className="mt-0.5 flex-shrink-0 rounded-lg bg-white/[0.04] border border-white/[0.06] p-1.5">
+        <Bot className="size-3.5 text-muted-foreground/40" />
       </div>
-      <div className="rounded-md border border-white/[0.06] bg-white/[0.02] text-xs w-full">
+      <div className="rounded-lg border border-white/[0.05] bg-white/[0.015] text-xs w-full overflow-hidden">
         <button
           type="button"
-          className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/5 rounded-md transition-colors text-muted-foreground/50"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] rounded-lg transition-colors"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
         >
-          <span className="italic">Thinking…</span>
-          <span className="ml-auto">
+          <span className="text-muted-foreground/35 italic text-[11px] flex items-center gap-1.5">
+            <span className="inline-block size-1 rounded-full bg-violet-400/40 animate-pulse" />
+            Thinking…
+          </span>
+          <span className="ml-auto text-muted-foreground/25">
             {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
           </span>
         </button>
         {open && (
-          <div className="px-2.5 pb-2 text-muted-foreground/60 whitespace-pre-wrap break-words text-xs font-mono">
+          <div className="px-3 pb-2.5 text-muted-foreground/50 whitespace-pre-wrap break-words text-xs font-mono border-t border-white/[0.04] pt-2">
             {text}
           </div>
         )}
@@ -556,10 +572,16 @@ function UserBubble({
   imageDataUrl?: string;
 }) {
   return (
-    <div className="flex gap-2 items-start justify-end">
+    <div className="flex gap-2.5 items-start justify-end animate-fade-in-up">
       <div
         dir="auto"
-        className="rounded-2xl rounded-tr-sm bg-primary/15 border border-primary/20 text-foreground ml-auto px-3 py-2 text-sm max-w-[85%] space-y-2"
+        className="rounded-2xl rounded-tr-sm ml-auto px-3.5 py-2.5 text-sm max-w-[85%] space-y-2 shadow-sm"
+        style={{
+          background:
+            'linear-gradient(135deg, oklch(0.7 0.18 280 / 0.18) 0%, oklch(0.65 0.2 260 / 0.12) 100%)',
+          border: '1px solid oklch(0.7 0.18 280 / 0.25)',
+          boxShadow: '0 2px 12px oklch(0.7 0.18 280 / 0.08)',
+        }}
       >
         {imageDataUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -574,9 +596,12 @@ function UserBubble({
             <span>Image attached</span>
           </div>
         ) : null}
-        {text && <span className="whitespace-pre-wrap break-words block">{text}</span>}
+        {text && (
+          <span className="whitespace-pre-wrap break-words block text-foreground/90">{text}</span>
+        )}
       </div>
-      <div className="mt-1 flex-shrink-0 rounded-full bg-primary/10 border border-primary/20 p-1.5">
+      {/* User avatar */}
+      <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/15 border border-primary/25 p-1.5">
         <User className="size-3.5 text-primary" />
       </div>
     </div>
@@ -585,14 +610,24 @@ function UserBubble({
 
 function TypingIndicator() {
   return (
-    <div className="flex gap-2 items-start">
-      <div className="mt-1 flex-shrink-0 rounded-full bg-white/[0.06] border border-white/[0.08] p-1.5">
-        <Bot className="size-3.5 text-muted-foreground" />
+    <div className="flex gap-2.5 items-start animate-fade-in-up">
+      <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/[0.10] border border-primary/20 p-1.5 shadow-[0_0_8px_oklch(0.7_0.18_280/0.12)]">
+        <Bot className="size-3.5 text-primary/80" />
       </div>
-      <div className="rounded-lg bg-white/[0.04] px-3 py-2.5 flex gap-1 items-center">
-        <span className="size-1.5 rounded-full bg-zinc-400 animate-pulse" />
-        <span className="size-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:150ms]" />
-        <span className="size-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:300ms]" />
+      <div className="rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.06] px-4 py-3 flex gap-1.5 items-center">
+        {/* Staggered bouncing dots */}
+        <span
+          className="inline-block size-1.5 rounded-full bg-primary/50"
+          style={{ animation: 'typingDot 1.2s ease-in-out infinite', animationDelay: '0ms' }}
+        />
+        <span
+          className="inline-block size-1.5 rounded-full bg-primary/50"
+          style={{ animation: 'typingDot 1.2s ease-in-out infinite', animationDelay: '180ms' }}
+        />
+        <span
+          className="inline-block size-1.5 rounded-full bg-primary/50"
+          style={{ animation: 'typingDot 1.2s ease-in-out infinite', animationDelay: '360ms' }}
+        />
       </div>
     </div>
   );
@@ -762,23 +797,34 @@ function InitialPromptBanner({ prompt }: { prompt: string }) {
   const displayText = isLong && !expanded ? prompt.slice(0, PREVIEW_LEN) + '…' : prompt;
 
   return (
-    <div className="rounded-md border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2 text-xs space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        <MessageSquare className="size-3 text-violet-400/70 shrink-0" />
-        <span className="text-violet-400/70 font-medium">Initial prompt</span>
+    <div
+      className="rounded-xl overflow-hidden mb-1"
+      style={{
+        background:
+          'linear-gradient(135deg, oklch(0.55 0.15 280 / 0.08) 0%, oklch(0.5 0.12 260 / 0.04) 100%)',
+        border: '1px solid oklch(0.7 0.18 280 / 0.15)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-violet-500/10">
+        <MessageSquare className="size-3 text-violet-400/60 shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-violet-400/60">
+          Initial prompt
+        </span>
       </div>
-      <p className="text-muted-foreground/60 whitespace-pre-wrap break-words leading-relaxed">
-        {displayText}
-      </p>
-      {isLong && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="text-violet-400/50 hover:text-violet-400/80 transition-colors"
-        >
-          {expanded ? 'Show less ▲' : 'Show more ▼'}
-        </button>
-      )}
+      <div className="px-3 py-2.5 text-xs space-y-1.5">
+        <p className="text-muted-foreground/55 whitespace-pre-wrap break-words leading-relaxed">
+          {displayText}
+        </p>
+        {isLong && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-violet-400/45 hover:text-violet-400/70 transition-colors text-[10px]"
+          >
+            {expanded ? 'Show less ▲' : 'Show more ▼'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -926,6 +972,7 @@ export function SessionChatView({
             text={item.text}
             costUsd={item.costUsd}
             sessionCostUsd={item.sessionCostUsd}
+            isError={item.isError}
           />
         );
       case 'info':
@@ -956,7 +1003,7 @@ export function SessionChatView({
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
-          : 'flex flex-col rounded-xl border border-white/[0.07]'
+          : 'flex flex-col rounded-xl border border-white/[0.07] flex-1 min-h-0'
       }
     >
       {/* Header */}
@@ -979,7 +1026,7 @@ export function SessionChatView({
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
-            : 'h-[55dvh] min-h-[280px] sm:h-[50dvh] sm:min-h-[320px] overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+            : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
         }
         role="log"
         aria-live="polite"

@@ -16,13 +16,16 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-jetbrains',
   display: 'swap',
   weight: ['400', '500'],
+  // Secondary font (code/IDs only) — skip <link rel="preload"> to avoid
+  // competing with Outfit for render-blocking priority.
+  preload: false,
 });
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   themeColor: '#0d0d0e',
+  viewportFit: 'cover',
 };
 
 export const metadata: Metadata = {

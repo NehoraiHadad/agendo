@@ -41,6 +41,24 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
           return `"${truncate(ev.text, 80)}"`;
         },
       };
+    case 'agent:text-delta':
+      return {
+        color: 'text-zinc-600',
+        label: 'agent:text-delta',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'agent:text-delta' }>;
+          return `"${truncate(ev.text, 80)}"`;
+        },
+      };
+    case 'agent:thinking-delta':
+      return {
+        color: 'text-zinc-600',
+        label: 'agent:thinking-delta',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'agent:thinking-delta' }>;
+          return `"${truncate(ev.text, 80)}"`;
+        },
+      };
     case 'agent:tool-start':
       return {
         color: 'text-blue-400',
@@ -69,6 +87,17 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
         summary: (e) => {
           const ev = e as Extract<AgendoEvent, { type: 'agent:tool-approval' }>;
           return `${ev.toolName} (danger: ${ev.dangerLevel})`;
+        },
+      };
+    case 'agent:ask-user':
+      return {
+        color: 'text-violet-400',
+        label: 'agent:ask-user',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'agent:ask-user' }>;
+          const count = ev.questions.length;
+          const first = ev.questions[0]?.header ?? ev.questions[0]?.question ?? '';
+          return count === 1 ? first : `${count} questions — ${first}`;
         },
       };
     case 'agent:result':
@@ -145,6 +174,26 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
         summary: (e) => {
           const ev = e as Extract<AgendoEvent, { type: 'team:message' }>;
           return `${ev.fromAgent}: ${truncate(ev.summary ?? ev.text, 80)}`;
+        },
+      };
+    case 'system:mcp-status':
+      return {
+        color: 'text-amber-400',
+        label: 'system:mcp-status',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'system:mcp-status' }>;
+          return ev.servers.map((s) => `${s.name}: ${s.status}`).join(', ');
+        },
+      };
+    case 'system:rate-limit':
+      return {
+        color: 'text-cyan-400',
+        label: 'system:rate-limit',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'system:rate-limit' }>;
+          const resetDate = new Date(ev.resetsAt * 1000);
+          const resetStr = resetDate.toLocaleTimeString();
+          return `${ev.status} (${ev.rateLimitType}) resets ${resetStr}`;
         },
       };
   }
