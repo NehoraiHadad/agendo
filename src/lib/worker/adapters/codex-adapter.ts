@@ -165,6 +165,12 @@ export class CodexAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
+  async setModel(model: string): Promise<boolean> {
+    if (!this.storedOpts) return false;
+    this.storedOpts = { ...this.storedOpts, model };
+    return true;
+  }
+
   /**
    * Maps a Codex JSONL parsed object to AgendoEventPayloads.
    * Used by session-process.ts to delegate event mapping.
