@@ -228,6 +228,13 @@ export class GeminiAdapter implements AgentAdapter {
           cwd: opts.cwd,
           mcpServers: opts.mcpServers ?? [],
         });
+      } else {
+        // loadSession not supported — create a fresh session in the new process
+        const result = await this.sendRequest<{ sessionId: string }>('session/new', {
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers ?? [],
+        });
+        this.sessionId = result.sessionId;
       }
     } catch (err) {
       this.modelSwitching = false;
@@ -519,9 +526,15 @@ export class GeminiAdapter implements AgentAdapter {
             cwd: opts.cwd,
             mcpServers: opts.mcpServers ?? [],
           });
+        } else {
+          // loadSession not supported — the old sessionId is invalid in this new
+          // process. Create a fresh session so session/prompt has a valid target.
+          const result = await this.sendRequest<{ sessionId: string }>('session/new', {
+            cwd: opts.cwd,
+            mcpServers: opts.mcpServers ?? [],
+          });
+          this.sessionId = result.sessionId;
         }
-        // If loadSession not supported, we already set this.sessionId in resume()
-        // and skip session/load — the first prompt will use the stored sessionId.
       } else {
         const result = await this.sendRequest<{ sessionId: string }>('session/new', {
           cwd: opts.cwd,
