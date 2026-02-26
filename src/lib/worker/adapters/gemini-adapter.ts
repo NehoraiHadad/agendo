@@ -2,6 +2,8 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { AsyncLock } from '@/lib/utils/async-lock';
+import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import type {
   AgentAdapter,
   ApprovalHandler,
@@ -24,6 +26,9 @@ interface AcpMessage {
   error?: { code: number; message: string };
 }
 
+/** Auto-incrementing ID for synthetic tool-use events. */
+let toolUseCounter = 0;
+
 export class GeminiAdapter implements AgentAdapter {
   private childProcess: ChildProcess | null = null;
   private requestId = 0;
@@ -34,6 +39,13 @@ export class GeminiAdapter implements AgentAdapter {
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private approvalHandler: ApprovalHandler | null = null;
   private sessionRefCallback: ((ref: string) => void) | null = null;
+  /** Stored image for the next sendPrompt call. */
+  private pendingImage: ImageContent | null = null;
+  /** Data callbacks from the ManagedProcess — used to emit synthetic NDJSON. */
+  private dataCallbacks: Array<(chunk: string) => void> = [];
+
+  /** Timeout for session/prompt ACP requests (10 minutes). */
+  static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, null);
@@ -48,21 +60,48 @@ export class GeminiAdapter implements AgentAdapter {
     return this.sessionId;
   }
 
-  async sendMessage(message: string, _image?: ImageContent): Promise<void> {
+  async sendMessage(message: string, image?: ImageContent): Promise<void> {
     if (!this.sessionId) throw new Error('No active Gemini ACP session');
     await this.currentTurn;
+    this.pendingImage = image ?? null;
     this.currentTurn = this.lock.acquire(() => this.sendPrompt(message));
     await this.currentTurn;
   }
 
   async interrupt(): Promise<void> {
+    // Step 1: Send ACP cancelRequest for all pending requests
     for (const [id] of this.pendingRequests) {
       this.writeJson({ jsonrpc: '2.0', method: 'cancelRequest', params: { id } });
     }
+
+    // Step 2: Wait 2s, then SIGINT
     await new Promise<void>((r) => setTimeout(r, 2000));
+    if (!this.isAlive()) return;
     if (this.childProcess?.pid) {
       try {
         process.kill(-this.childProcess.pid, 'SIGINT');
+      } catch {
+        // Process group already dead
+      }
+    }
+
+    // Step 3: Wait 2s, then SIGTERM (escalation)
+    await new Promise<void>((r) => setTimeout(r, 2000));
+    if (!this.isAlive()) return;
+    if (this.childProcess?.pid) {
+      try {
+        process.kill(-this.childProcess.pid, 'SIGTERM');
+      } catch {
+        // Process group already dead
+      }
+    }
+
+    // Step 4: Wait 5s, then SIGKILL (final escalation)
+    await new Promise<void>((r) => setTimeout(r, 5000));
+    if (!this.isAlive()) return;
+    if (this.childProcess?.pid) {
+      try {
+        process.kill(-this.childProcess.pid, 'SIGKILL');
       } catch {
         // Process group already dead
       }
@@ -85,9 +124,14 @@ export class GeminiAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
+  mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
+    return mapGeminiJsonToEvents(parsed as GeminiEvent);
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
+    this.dataCallbacks = dataCallbacks;
 
     const cp = nodeSpawn('gemini', ['--experimental-acp', ...(opts.extraArgs ?? [])], {
       cwd: opts.cwd,
@@ -126,10 +170,14 @@ export class GeminiAdapter implements AgentAdapter {
     });
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
-    // On failure, fire exitCallbacks(1) so session-process transitions to 'ended'.
+    // On failure, emit a structured error event and exit with code 0 so that
+    // session-process transitions to 'idle' (resumable) instead of showing the
+    // scary "Session ended unexpectedly" message. The gemini:turn-error event
+    // already communicates the failure to the frontend via agent:result{isError}.
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
       console.error('[GeminiAdapter] init failed:', err.message);
-      for (const cb of exitCallbacks) cb(1);
+      this.emitNdjson({ type: 'gemini:turn-error', message: `Init failed: ${err.message}` });
+      for (const cb of exitCallbacks) cb(0);
       cp.kill();
     });
 
@@ -151,7 +199,7 @@ export class GeminiAdapter implements AgentAdapter {
     };
   }
 
-  private handleAcpMessage(msg: AcpMessage, dataCallbacks: Array<(chunk: string) => void>): void {
+  private handleAcpMessage(msg: AcpMessage, _dataCallbacks: Array<(chunk: string) => void>): void {
     // Response to one of our requests (has id + result or error, no method)
     if (msg.id !== undefined && !msg.method && ('result' in msg || 'error' in msg)) {
       const pending = this.pendingRequests.get(msg.id);
@@ -178,6 +226,10 @@ export class GeminiAdapter implements AgentAdapter {
 
         const toolName = (toolCall?.title as string | undefined) ?? 'unknown';
         const toolInput = (toolCall?.rawInput as Record<string, unknown>) ?? {};
+        const toolUseId = `gemini-tool-${++toolUseCounter}`;
+
+        // Emit tool-start NDJSON so the frontend shows the tool card
+        this.emitNdjson({ type: 'gemini:tool-start', toolName, toolInput, toolUseId });
 
         if (!this.approvalHandler) {
           // Auto-allow: pick the first allow_once option
@@ -188,6 +240,8 @@ export class GeminiAdapter implements AgentAdapter {
             // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
             result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
           });
+          // Emit tool-end after approval
+          this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
           return;
         }
 
@@ -205,6 +259,8 @@ export class GeminiAdapter implements AgentAdapter {
               // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
               result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
             });
+            // Emit tool-end after approval response
+            this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
           })
           .catch((err: unknown) => {
             console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
@@ -214,6 +270,7 @@ export class GeminiAdapter implements AgentAdapter {
               id: msgId,
               result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
             });
+            this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
           });
       }
       // Handle fs/read_text_file and fs/write_text_file client requests from Gemini
@@ -256,13 +313,14 @@ export class GeminiAdapter implements AgentAdapter {
         if (sessionUpdate === 'agent_message_chunk') {
           const content = update?.content as Record<string, unknown> | undefined;
           if (content?.type === 'text' && typeof content.text === 'string') {
-            for (const cb of dataCallbacks) cb(content.text);
+            // Emit structured NDJSON instead of raw text
+            this.emitNdjson({ type: 'gemini:text', text: content.text });
           }
         } else if (sessionUpdate === 'agent_thought_chunk') {
-          // Thinking output — emit as-is so session-process can display it
           const content = update?.content as Record<string, unknown> | undefined;
           if (content?.type === 'text' && typeof content.text === 'string') {
-            for (const cb of dataCallbacks) cb(content.text);
+            // Emit structured NDJSON for thinking output
+            this.emitNdjson({ type: 'gemini:thinking', text: content.text });
           }
         }
       }
@@ -292,24 +350,52 @@ export class GeminiAdapter implements AgentAdapter {
       this.sessionRefCallback?.(this.sessionId);
     }
 
-    // 3. First prompt
+    // 3. First prompt (pass initial image if provided)
     await this.sendPrompt(prompt);
   }
 
   private async sendPrompt(text: string): Promise<void> {
     if (!this.sessionId) throw new Error('No active session');
     this.thinkingCallback?.(true);
-    // ACP v0.20 renamed prompt → session/prompt
-    await this.sendRequest('session/prompt', {
-      sessionId: this.sessionId,
-      prompt: [{ type: 'text', text }],
-    });
-    this.thinkingCallback?.(false);
+
+    // Build prompt content blocks — text always present, image optional
+    const promptContent: Array<Record<string, unknown>> = [{ type: 'text', text }];
+    if (this.pendingImage) {
+      promptContent.push({
+        type: 'image',
+        data: this.pendingImage.data,
+        mimeType: this.pendingImage.mimeType,
+      });
+      this.pendingImage = null;
+    }
+
+    try {
+      // ACP v0.20 renamed prompt → session/prompt
+      const result = await this.sendRequest<Record<string, unknown>>('session/prompt', {
+        sessionId: this.sessionId,
+        prompt: promptContent,
+      });
+
+      // Emit synthetic result event so session-process emits agent:result
+      this.emitNdjson({ type: 'gemini:turn-complete', result: result ?? {} });
+    } catch (err) {
+      // Emit error event so session-process transitions to awaiting_input
+      const message = err instanceof Error ? err.message : String(err);
+      // Don't emit error for process exit — onExit handles that
+      if (!message.includes('Gemini process exited')) {
+        this.emitNdjson({ type: 'gemini:turn-error', message });
+      }
+      // Re-throw so the lock.acquire caller can handle it if needed
+      throw err;
+    } finally {
+      this.thinkingCallback?.(false);
+    }
   }
 
   /**
    * ACP request timeout for handshake/init methods (initialize, session/new).
-   * session/prompt is not limited here because the caller's idle-timeout handles it.
+   * session/prompt also gets a timeout (PROMPT_TIMEOUT_MS) to prevent hanging
+   * indefinitely if Gemini crashes mid-turn without closing stdout.
    */
   private static readonly INIT_METHODS = new Set(['initialize', 'session/new']);
   private static readonly INIT_TIMEOUT_MS = 30_000;
@@ -323,21 +409,34 @@ export class GeminiAdapter implements AgentAdapter {
       });
       this.writeJson({ jsonrpc: '2.0', id, method, params });
 
-      // Guard init-phase requests with a hard timeout to prevent hanging
-      // indefinitely if the Gemini process fails to respond during startup.
+      // Determine timeout based on method type
+      let timeoutMs: number | null = null;
       if (GeminiAdapter.INIT_METHODS.has(method)) {
+        timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
+      } else if (method === 'session/prompt') {
+        timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
+      }
+
+      if (timeoutMs !== null) {
+        const ms = timeoutMs;
         setTimeout(() => {
           if (this.pendingRequests.has(id)) {
             this.pendingRequests.delete(id);
-            reject(
-              new Error(
-                `ACP request "${method}" timed out after ${GeminiAdapter.INIT_TIMEOUT_MS}ms`,
-              ),
-            );
+            reject(new Error(`ACP request "${method}" timed out after ${ms}ms`));
           }
-        }, GeminiAdapter.INIT_TIMEOUT_MS);
+        }, ms);
       }
     });
+  }
+
+  /**
+   * Emit a synthetic NDJSON line to all dataCallbacks. session-process.ts
+   * parses these through the standard NDJSON pipeline and delegates to
+   * mapJsonToEvents (gemini-event-mapper.ts).
+   */
+  private emitNdjson(event: GeminiEvent): void {
+    const line = JSON.stringify(event) + '\n';
+    for (const cb of this.dataCallbacks) cb(line);
   }
 
   private writeJson(msg: Record<string, unknown>): void {
