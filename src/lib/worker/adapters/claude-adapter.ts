@@ -231,8 +231,7 @@ export class ClaudeAdapter implements AgentAdapter {
       const request = JSON.stringify({
         type: 'control_request',
         request_id: requestId,
-        request_type: requestType,
-        ...payload,
+        request: { subtype: requestType, ...payload },
       });
 
       return new Promise<Record<string, unknown> | null>((resolve) => {
@@ -358,8 +357,10 @@ export class ClaudeAdapter implements AgentAdapter {
       ...(opts.fallbackModel ? ['--fallback-model', opts.fallbackModel] : []),
       // Strict MCP config — only use our servers, ignore global
       ...(opts.strictMcpConfig ? ['--strict-mcp-config'] : []),
-      // Sync session ID with agendo's DB
-      ...(opts.sessionId ? ['--session-id', opts.sessionId] : []),
+      // NOTE: --session-id is intentionally omitted. For new sessions Claude
+      // generates its own ID (reported via system:init). For resumed sessions
+      // --resume already identifies the target; adding --session-id would
+      // require --fork-session which we don't want.
       // Append to Claude's system prompt
       ...(opts.appendSystemPrompt ? ['--append-system-prompt', opts.appendSystemPrompt] : []),
       ...extraFlags,
