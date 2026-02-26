@@ -26,6 +26,21 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, AgentCapability, Task } from '@/lib/types';
 
+interface ModelOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+/** Derive provider name from an agent binary path for model API queries. */
+function deriveProvider(binaryPath: string): string {
+  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  if (base.startsWith('claude')) return 'claude';
+  if (base.startsWith('codex')) return 'codex';
+  if (base.startsWith('gemini')) return 'gemini';
+  return 'claude';
+}
+
 interface StartSessionDialogProps {
   taskId: string;
   agentId?: string;
@@ -47,6 +62,9 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [promptText, setPromptText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>('');
 
   const fetchAgents = useCallback(
     async (signal: AbortSignal) => {
@@ -139,6 +157,46 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     };
   }, [open, activeAgentId, fetchCapabilities]);
 
+  // Fetch models when agent changes
+  const fetchModels = useCallback(async (signal: AbortSignal, binaryPath: string) => {
+    setIsLoadingModels(true);
+    setSelectedModel('');
+    try {
+      const provider = deriveProvider(binaryPath);
+      const res = await fetch(`/api/models?provider=${encodeURIComponent(provider)}`, { signal });
+      if (res.ok && !signal.aborted) {
+        const body = (await res.json()) as { data: ModelOption[] };
+        setAvailableModels(body.data ?? []);
+      }
+    } catch {
+      if (!signal.aborted) setAvailableModels([]);
+    } finally {
+      if (!signal.aborted) setIsLoadingModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open || !activeAgentId) return;
+    const controller = new AbortController();
+
+    // For pre-selected agents (agentIdProp), agents[] may be empty — fetch the agent directly.
+    const agent = agents.find((a) => a.id === activeAgentId);
+    if (agent) {
+      void fetchModels(controller.signal, agent.binaryPath);
+    } else {
+      // Fetch agent info to get binaryPath
+      apiFetch<ApiResponse<Agent>>(`/api/agents/${activeAgentId}`, { signal: controller.signal })
+        .then((res) => {
+          if (!controller.signal.aborted) {
+            void fetchModels(controller.signal, res.data.binaryPath);
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => controller.abort();
+  }, [open, activeAgentId, agents, fetchModels]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!activeAgentId || !promptCapId) return;
@@ -154,6 +212,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           agentId: activeAgentId,
           capabilityId: promptCapId,
           initialPrompt: promptText || undefined,
+          model: selectedModel || undefined,
         }),
       });
       setOpen(false);
@@ -204,6 +263,32 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                       ))}
                     </SelectContent>
                   </Select>
+                )}
+              </div>
+            )}
+
+            {activeAgentId && (
+              <div className="space-y-2">
+                <Label htmlFor="session-model">Model (optional)</Label>
+                {isLoadingModels ? (
+                  <Skeleton className="h-9 w-full" />
+                ) : availableModels.length > 0 ? (
+                  <Select value={selectedModel} onValueChange={setSelectedModel}>
+                    <SelectTrigger id="session-model" className="w-full">
+                      <SelectValue placeholder="Default model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableModels.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground/50">
+                    No models found — using agent default.
+                  </p>
                 )}
               </div>
             )}

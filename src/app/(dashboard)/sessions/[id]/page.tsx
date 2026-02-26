@@ -14,6 +14,7 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       session: sessions,
       agentName: agents.name,
       agentSlug: agents.slug,
+      agentBinaryPath: agents.binaryPath,
       capLabel: agentCapabilities.label,
       taskTitle: tasks.title,
     })
@@ -26,13 +27,14 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
 
   if (rows.length === 0) notFound();
 
-  const { session, agentName, agentSlug, capLabel, taskTitle } = rows[0];
+  const { session, agentName, agentSlug, agentBinaryPath, capLabel, taskTitle } = rows[0];
 
   return (
     <SessionDetailWrapper
       session={session}
       agentName={agentName}
       agentSlug={agentSlug}
+      agentBinaryPath={agentBinaryPath}
       capLabel={capLabel}
       taskTitle={taskTitle}
     />

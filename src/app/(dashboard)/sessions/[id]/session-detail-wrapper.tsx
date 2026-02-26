@@ -22,6 +22,7 @@ interface Props {
   session: Session;
   agentName: string;
   agentSlug: string;
+  agentBinaryPath: string;
   capLabel: string;
   taskTitle: string;
 }
