@@ -170,13 +170,12 @@ export class GeminiAdapter implements AgentAdapter {
     });
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
-    // On failure, emit a structured error event and exit with code 0 so that
-    // session-process transitions to 'idle' (resumable) instead of showing the
-    // scary "Session ended unexpectedly" message. The gemini:turn-error event
-    // already communicates the failure to the frontend via agent:result{isError}.
+    // Error events are already emitted by initAndRun (for init failures) or
+    // sendPrompt (for prompt failures). Here we just clean up: exit with code 0
+    // so session-process transitions to 'idle' (resumable) instead of showing
+    // the "Session ended unexpectedly" message.
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
       console.error('[GeminiAdapter] init failed:', err.message);
-      this.emitNdjson({ type: 'gemini:turn-error', message: `Init failed: ${err.message}` });
       for (const cb of exitCallbacks) cb(0);
       cp.kill();
     });
@@ -332,25 +331,30 @@ export class GeminiAdapter implements AgentAdapter {
     opts: SpawnOpts,
     resumeSessionId: string | null,
   ): Promise<void> {
-    // 1. Handshake — ACP v0.20+ requires clientCapabilities.fs
-    await this.sendRequest('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
-    });
-
-    // 2. Create session or reuse existing
-    // Note: ACP v0.20 renamed newSession → session/new and requires mcpServers:[].
-    // loadSession (resume) is only supported when agentCapabilities.loadSession=true.
-    if (!resumeSessionId) {
-      const result = await this.sendRequest<{ sessionId: string }>('session/new', {
-        cwd: opts.cwd,
-        mcpServers: opts.mcpServers ?? [],
+    // 1–2: Handshake + session creation.
+    // Errors here are init failures (sendPrompt was never called), so we emit
+    // the error event here. sendPrompt handles its own errors separately.
+    try {
+      await this.sendRequest('initialize', {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
       });
-      this.sessionId = result.sessionId;
-      this.sessionRefCallback?.(this.sessionId);
+
+      if (!resumeSessionId) {
+        const result = await this.sendRequest<{ sessionId: string }>('session/new', {
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers ?? [],
+        });
+        this.sessionId = result.sessionId;
+        this.sessionRefCallback?.(this.sessionId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emitNdjson({ type: 'gemini:turn-error', message: `Init failed: ${message}` });
+      throw err;
     }
 
-    // 3. First prompt (pass initial image if provided)
+    // 3. First prompt — sendPrompt emits its own error events on failure.
     await this.sendPrompt(prompt);
   }
 
