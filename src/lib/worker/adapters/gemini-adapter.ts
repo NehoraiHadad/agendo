@@ -74,9 +74,13 @@ export class GeminiAdapter implements AgentAdapter {
   }
 
   async interrupt(): Promise<void> {
-    // Step 1: Send ACP cancelRequest for all pending requests
-    for (const [id] of this.pendingRequests) {
-      this.writeJson({ jsonrpc: '2.0', method: 'cancelRequest', params: { id } });
+    // Step 1: Send ACP session/cancel notification (per spec — no id, it's a notification)
+    if (this.sessionId) {
+      this.writeJson({
+        jsonrpc: '2.0',
+        method: 'session/cancel',
+        params: { sessionId: this.sessionId },
+      });
     }
 
     // Step 2: Wait 2s, then SIGINT
@@ -340,12 +344,33 @@ export class GeminiAdapter implements AgentAdapter {
     // Errors here are init failures (sendPrompt was never called), so we emit
     // the error event here. sendPrompt handles its own errors separately.
     try {
-      await this.sendRequest('initialize', {
-        protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
-      });
+      const initResult = await this.sendRequest<{ agentCapabilities?: Record<string, unknown> }>(
+        'initialize',
+        {
+          protocolVersion: 1,
+          clientInfo: { name: 'agendo', version: '1.0.0' },
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            terminal: true,
+          },
+        },
+      );
 
-      if (!resumeSessionId) {
+      if (resumeSessionId) {
+        // session/load: resume an existing session (requires loadSession capability)
+        const supportsLoad = !!(
+          initResult?.agentCapabilities as Record<string, unknown> | undefined
+        )?.loadSession;
+        if (supportsLoad) {
+          await this.sendRequest('session/load', {
+            sessionId: resumeSessionId,
+            cwd: opts.cwd,
+            mcpServers: opts.mcpServers ?? [],
+          });
+        }
+        // If loadSession not supported, we already set this.sessionId in resume()
+        // and skip session/load — the first prompt will use the stored sessionId.
+      } else {
         const result = await this.sendRequest<{ sessionId: string }>('session/new', {
           cwd: opts.cwd,
           mcpServers: opts.mcpServers ?? [],
