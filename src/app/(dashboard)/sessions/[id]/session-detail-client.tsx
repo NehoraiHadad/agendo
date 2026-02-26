@@ -356,10 +356,10 @@ export function SessionDetailClient({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header card */}
-      <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] overflow-hidden shrink-0 mb-4 sm:mb-5">
+      <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] overflow-visible shrink-0 mb-4 sm:mb-5">
         {/* Status accent top bar */}
         <div
-          className="h-[2px] w-full"
+          className="h-[2px] w-full rounded-t-xl"
           style={{
             background:
               currentStatus === 'active'
