@@ -1055,6 +1055,14 @@ export class SessionProcess {
       const success = await this.adapter.setModel(model);
       if (success) {
         await db.update(sessions).set({ model }).where(eq(sessions.id, this.session.id));
+        // Emit session:init so the frontend info panel updates the displayed model.
+        await this.emitEvent({
+          type: 'session:init',
+          sessionRef: '',
+          slashCommands: [],
+          mcpServers: [],
+          model,
+        });
         await this.emitEvent({
           type: 'system:info',
           message: `Model switched to "${model}".`,

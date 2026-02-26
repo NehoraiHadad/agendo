@@ -577,8 +577,11 @@ export function SessionMessageInput({
           <ModelPickerPopover
             provider={deriveProvider(agentBinaryPath)}
             onSelect={(modelId) => {
-              void submitText(`/model ${modelId}`);
               setShowModelPicker(false);
+              void apiFetch(`/api/sessions/${sessionId}/model`, {
+                method: 'PATCH',
+                body: JSON.stringify({ model: modelId }),
+              });
             }}
             onClose={() => setShowModelPicker(false)}
           />
