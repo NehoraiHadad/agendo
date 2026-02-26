@@ -282,12 +282,13 @@ export class GeminiAdapter implements AgentAdapter {
           });
       }
       // Handle fs/read_text_file and fs/write_text_file client requests from Gemini
+      // Per ACP spec: params include sessionId, path, line?, limit?
       else if (msg.method === 'fs/read_text_file') {
         const {
           path: filePath,
           line,
           limit,
-        } = msg.params as { path: string; line?: number; limit?: number };
+        } = msg.params as { sessionId: string; path: string; line?: number; limit?: number };
         try {
           let content = readFileSync(filePath, 'utf-8');
           if (line !== undefined && line !== null) {
@@ -301,7 +302,11 @@ export class GeminiAdapter implements AgentAdapter {
           this.writeJson({ jsonrpc: '2.0', id: msg.id, result: { content: '' } });
         }
       } else if (msg.method === 'fs/write_text_file') {
-        const { path: filePath, content } = msg.params as { path: string; content: string };
+        const { path: filePath, content } = msg.params as {
+          sessionId: string;
+          path: string;
+          content: string;
+        };
         try {
           writeFileSync(filePath, content, 'utf-8');
         } catch {
