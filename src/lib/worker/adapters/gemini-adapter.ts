@@ -43,6 +43,12 @@ export class GeminiAdapter implements AgentAdapter {
   private pendingImage: ImageContent | null = null;
   /** Data callbacks from the ManagedProcess — used to emit synthetic NDJSON. */
   private dataCallbacks: Array<(chunk: string) => void> = [];
+  /** Exit callbacks from the ManagedProcess — stored for model-switch re-wiring. */
+  private exitCallbacks: Array<(code: number | null) => void> = [];
+  /** Spawn opts stored for process restart during model switch. */
+  private storedOpts: SpawnOpts | null = null;
+  /** When true, suppresses exit callbacks during model-switch process restart. */
+  private modelSwitching = false;
 
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -128,14 +134,122 @@ export class GeminiAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
+  async setModel(model: string): Promise<boolean> {
+    if (!this.storedOpts || !this.sessionId) return false;
+
+    this.modelSwitching = true;
+    this.storedOpts = { ...this.storedOpts, model };
+
+    // Kill the old process group and wait for it to exit
+    const oldCp = this.childProcess;
+    if (oldCp?.pid) {
+      const exitPromise = new Promise<void>((resolve) => {
+        oldCp.once('exit', () => resolve());
+      });
+      try {
+        process.kill(-oldCp.pid, 'SIGTERM');
+      } catch {
+        // Already dead
+      }
+      await exitPromise;
+    }
+
+    // Reject all pending requests from the old process
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(new Error('Gemini process restarting for model switch'));
+    }
+    this.pendingRequests.clear();
+
+    // Spawn new process with updated model
+    const opts = this.storedOpts;
+    const geminiArgs = ['--experimental-acp'];
+    if (opts.model) {
+      geminiArgs.push('-m', opts.model);
+    }
+    geminiArgs.push(...(opts.extraArgs ?? []));
+
+    const cp = nodeSpawn('gemini', geminiArgs, {
+      cwd: opts.cwd,
+      env: opts.env as NodeJS.ProcessEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      detached: true,
+    });
+    this.childProcess = cp;
+    cp.unref();
+
+    // Wire new stdout to readline parser → same dataCallbacks
+    const rl = createInterface({ input: cp.stdout ?? process.stdin });
+    rl.on('line', (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('{')) return;
+      try {
+        const msg = JSON.parse(trimmed) as AcpMessage;
+        this.handleAcpMessage(msg, this.dataCallbacks);
+      } catch {
+        // Skip non-JSON lines
+      }
+    });
+
+    cp.stderr?.on('data', (chunk: Buffer) => {
+      for (const cb of this.dataCallbacks) cb(chunk.toString('utf-8'));
+    });
+
+    // Wire exit handler to same exitCallbacks (respecting modelSwitching flag)
+    cp.on('exit', (code) => {
+      for (const [, pending] of this.pendingRequests) {
+        pending.reject(new Error('Gemini process exited'));
+      }
+      this.pendingRequests.clear();
+      if (!this.modelSwitching) {
+        for (const cb of this.exitCallbacks) cb(code);
+      }
+    });
+
+    // Re-initialize ACP and reload session
+    try {
+      const initResult = await this.sendRequest<{ agentCapabilities?: Record<string, unknown> }>(
+        'initialize',
+        {
+          protocolVersion: 1,
+          clientInfo: { name: 'agendo', version: '1.0.0' },
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            terminal: true,
+          },
+        },
+      );
+
+      const supportsLoad = !!(initResult?.agentCapabilities as Record<string, unknown> | undefined)
+        ?.loadSession;
+      if (supportsLoad) {
+        await this.sendRequest('session/load', {
+          sessionId: this.sessionId,
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers ?? [],
+        });
+      }
+    } catch (err) {
+      this.modelSwitching = false;
+      const message = err instanceof Error ? err.message : String(err);
+      this.emitNdjson({ type: 'gemini:turn-error', message: `Model switch failed: ${message}` });
+      return false;
+    }
+
+    this.modelSwitching = false;
+    return true;
+  }
+
   mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
     return mapGeminiJsonToEvents(parsed as GeminiEvent);
   }
 
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
+    this.storedOpts = opts;
     const dataCallbacks: Array<(chunk: string) => void> = [];
     const exitCallbacks: Array<(code: number | null) => void> = [];
     this.dataCallbacks = dataCallbacks;
+    this.exitCallbacks = exitCallbacks;
 
     const geminiArgs = ['--experimental-acp'];
     if (opts.model) {
@@ -178,7 +292,7 @@ export class GeminiAdapter implements AgentAdapter {
         pending.reject(new Error('Gemini process exited'));
       }
       this.pendingRequests.clear();
-      if (!exitFired) {
+      if (!exitFired && !this.modelSwitching) {
         exitFired = true;
         for (const cb of exitCallbacks) cb(code);
       }
