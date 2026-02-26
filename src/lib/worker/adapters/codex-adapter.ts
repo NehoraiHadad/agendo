@@ -292,6 +292,13 @@ export class CodexAdapter implements AgentAdapter {
         if (type === 'thread.started' && parsed.thread_id && !this.threadId) {
           this.threadId = parsed.thread_id as string;
           this.sessionRefCallback?.(this.threadId);
+
+          // Emit synthetic init event with model info so session:init includes it
+          if (this.storedOpts?.model) {
+            const initLine =
+              JSON.stringify({ type: 'codex:init', model: this.storedOpts.model }) + '\n';
+            for (const cb of this.dataCallbacks) cb(initLine);
+          }
         }
 
         // Thinking state management

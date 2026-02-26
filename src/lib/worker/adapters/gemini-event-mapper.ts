@@ -19,7 +19,8 @@ export type GeminiEvent =
     }
   | { type: 'gemini:tool-end'; toolUseId: string }
   | { type: 'gemini:turn-complete'; result: Record<string, unknown> }
-  | { type: 'gemini:turn-error'; message: string };
+  | { type: 'gemini:turn-error'; message: string }
+  | { type: 'gemini:init'; model: string; sessionId: string };
 
 // ---------------------------------------------------------------------------
 // Main mapper: GeminiEvent → AgendoEventPayload[]
@@ -27,6 +28,20 @@ export type GeminiEvent =
 
 export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] {
   switch (event.type) {
+    // -----------------------------------------------------------------------
+    // gemini:init → session:init with model (synthetic, emitted by adapter)
+    // -----------------------------------------------------------------------
+    case 'gemini:init':
+      return [
+        {
+          type: 'session:init',
+          sessionRef: event.sessionId,
+          slashCommands: [],
+          mcpServers: [],
+          model: event.model,
+        },
+      ];
+
     // -----------------------------------------------------------------------
     // gemini:text → agent:text
     // -----------------------------------------------------------------------
