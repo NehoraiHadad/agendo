@@ -181,7 +181,17 @@ export class GeminiAdapter implements AgentAdapter {
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
       console.error('[GeminiAdapter] init failed:', err.message);
       for (const cb of exitCallbacks) cb(0);
-      cp.kill();
+      // Kill the entire process group (not just the main process) — Gemini CLI
+      // spawns with detached:true, so cp.kill() alone leaves orphan children.
+      if (cp.pid) {
+        try {
+          process.kill(-cp.pid, 'SIGTERM');
+        } catch {
+          cp.kill();
+        }
+      } else {
+        cp.kill();
+      }
     });
 
     return {
