@@ -157,23 +157,6 @@ describe('mapGeminiJsonToEvents', () => {
   });
 
   // -----------------------------------------------------------------------
-  // gemini:retry → system:info
-  // -----------------------------------------------------------------------
-  it('maps gemini:retry to system:info', () => {
-    const event: GeminiEvent = {
-      type: 'gemini:retry',
-      message: 'Rate limited (attempt 1/3). Retrying in 15s...',
-    };
-    const result = mapGeminiJsonToEvents(event);
-    expect(result).toEqual([
-      {
-        type: 'system:info',
-        message: 'Rate limited (attempt 1/3). Retrying in 15s...',
-      },
-    ]);
-  });
-
-  // -----------------------------------------------------------------------
   // unknown event types → empty array
   // -----------------------------------------------------------------------
   it('returns empty array for unknown event types', () => {

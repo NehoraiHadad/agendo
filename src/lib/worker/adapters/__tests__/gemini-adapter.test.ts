@@ -621,11 +621,10 @@ describe('GeminiAdapter', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Retry with backoff for 429 rate-limit errors
+  // 429 errors surface as turn errors (no retry — Gemini duplicates messages)
   // ---------------------------------------------------------------------------
 
-  it('retries on 429 rate-limit errors with backoff', async () => {
-    vi.useFakeTimers();
+  it('surfaces 429 as gemini:turn-error without retrying', async () => {
     let promptAttempt = 0;
 
     mockStdinWrite.mockImplementation((data: string) => {
@@ -642,88 +641,7 @@ describe('GeminiAdapter', () => {
           queueMicrotask(() => {
             mockReadlineEmitter.emit(
               'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-retry' } }),
-            );
-          });
-        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          promptAttempt++;
-          queueMicrotask(() => {
-            if (promptAttempt < 3) {
-              // First two attempts: 429 error
-              mockReadlineEmitter.emit(
-                'line',
-                JSON.stringify({
-                  jsonrpc: '2.0',
-                  id: msg.id,
-                  error: { code: 429, message: 'Rate limit exceeded' },
-                }),
-              );
-            } else {
-              // Third attempt: success
-              mockReadlineEmitter.emit(
-                'line',
-                JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { done: true } }),
-              );
-            }
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
-
-    const adapter = new GeminiAdapter();
-    const received: string[] = [];
-    const proc = adapter.spawn('test prompt', opts);
-    proc.onData((chunk) => received.push(chunk));
-
-    // Let init complete
-    await vi.advanceTimersByTimeAsync(10);
-
-    // First prompt attempt → 429 → retry emitted, waits 15s
-    await vi.advanceTimersByTimeAsync(100);
-    const retryEvents1 = received.filter((r) => r.includes('gemini:retry'));
-    expect(retryEvents1.length).toBeGreaterThanOrEqual(1);
-
-    // Advance past first backoff (15s)
-    await vi.advanceTimersByTimeAsync(15_000);
-    await vi.advanceTimersByTimeAsync(100);
-
-    // Second prompt attempt → 429 → another retry, waits 30s
-    const retryEvents2 = received.filter((r) => r.includes('gemini:retry'));
-    expect(retryEvents2.length).toBeGreaterThanOrEqual(2);
-
-    // Advance past second backoff (30s)
-    await vi.advanceTimersByTimeAsync(30_000);
-    await vi.advanceTimersByTimeAsync(100);
-
-    // Third attempt should succeed
-    await vi.waitFor(() => {
-      expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
-    });
-
-    expect(promptAttempt).toBe(3);
-  });
-
-  it('does not retry on non-429 errors', async () => {
-    let promptAttempt = 0;
-
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
-            );
-          });
-        } else if (msg.method === 'session/new' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-noretry' } }),
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-429' } }),
             );
           });
         } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
@@ -734,7 +652,7 @@ describe('GeminiAdapter', () => {
               JSON.stringify({
                 jsonrpc: '2.0',
                 id: msg.id,
-                error: { code: -32000, message: 'Context length exceeded' },
+                error: { code: 429, message: 'Rate limit exceeded' },
               }),
             );
           });
@@ -754,81 +672,12 @@ describe('GeminiAdapter', () => {
       expect(received.find((r) => r.includes('gemini:turn-error'))).toBeDefined();
     });
 
-    // Should NOT have retried
+    // Should NOT have retried — Gemini ACP duplicates messages on retry
     expect(promptAttempt).toBe(1);
-    // Should NOT have emitted retry events
-    expect(received.filter((r) => r.includes('gemini:retry'))).toHaveLength(0);
-  });
-
-  it('retries on -32603 internal errors', async () => {
-    vi.useFakeTimers();
-    let promptAttempt = 0;
-
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
-            );
-          });
-        } else if (msg.method === 'session/new' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-ie' } }),
-            );
-          });
-        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          promptAttempt++;
-          queueMicrotask(() => {
-            if (promptAttempt < 2) {
-              mockReadlineEmitter.emit(
-                'line',
-                JSON.stringify({
-                  jsonrpc: '2.0',
-                  id: msg.id,
-                  error: { code: -32603, message: 'Internal error' },
-                }),
-              );
-            } else {
-              mockReadlineEmitter.emit(
-                'line',
-                JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { ok: true } }),
-              );
-            }
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
-
-    const adapter = new GeminiAdapter();
-    const received: string[] = [];
-    const proc = adapter.spawn('test prompt', opts);
-    proc.onData((chunk) => received.push(chunk));
-
-    // Let init complete
-    await vi.advanceTimersByTimeAsync(10);
-    // First prompt → -32603 → retry
-    await vi.advanceTimersByTimeAsync(100);
-    // Advance past first backoff (15s)
-    await vi.advanceTimersByTimeAsync(15_000);
-    await vi.advanceTimersByTimeAsync(100);
-
-    await vi.waitFor(() => {
-      expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
-    });
-
-    expect(promptAttempt).toBe(2);
-  });
-
-  it('has correct retry constants', () => {
-    expect(GeminiAdapter.MAX_RETRIES).toBe(3);
-    expect(GeminiAdapter.RETRY_DELAYS).toEqual([15_000, 30_000, 60_000]);
+    const error = JSON.parse(received.find((r) => r.includes('gemini:turn-error'))!) as Record<
+      string,
+      unknown
+    >;
+    expect(error.message).toContain('429');
   });
 });

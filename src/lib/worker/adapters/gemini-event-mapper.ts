@@ -19,8 +19,7 @@ export type GeminiEvent =
     }
   | { type: 'gemini:tool-end'; toolUseId: string }
   | { type: 'gemini:turn-complete'; result: Record<string, unknown> }
-  | { type: 'gemini:turn-error'; message: string }
-  | { type: 'gemini:retry'; message: string };
+  | { type: 'gemini:turn-error'; message: string };
 
 // ---------------------------------------------------------------------------
 // Main mapper: GeminiEvent → AgendoEventPayload[]
@@ -109,12 +108,6 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
           message: `Gemini turn failed: ${event.message}`,
         },
       ];
-
-    // -----------------------------------------------------------------------
-    // gemini:retry → system:info (informational — user sees retry message)
-    // -----------------------------------------------------------------------
-    case 'gemini:retry':
-      return [{ type: 'system:info', message: event.message }];
 
     default:
       return [];
