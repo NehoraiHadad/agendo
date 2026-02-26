@@ -196,6 +196,9 @@ export class CodexAdapter implements AgentAdapter {
       args.push(...permissionFlags(opts.permissionMode));
     }
 
+    if (opts.model) {
+      args.push('-m', opts.model);
+    }
     if (opts.extraArgs) {
       args.push(...opts.extraArgs);
     }

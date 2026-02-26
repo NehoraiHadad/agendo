@@ -12,6 +12,7 @@ export interface CreateSessionInput {
   initialPrompt?: string;
   permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
   allowedTools?: string[];
+  model?: string;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -26,6 +27,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       initialPrompt: input.initialPrompt,
       permissionMode: input.permissionMode,
       allowedTools: input.allowedTools,
+      ...(input.model ? { model: input.model } : {}),
     })
     .returning();
   return session;

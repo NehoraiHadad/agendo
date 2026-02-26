@@ -235,6 +235,7 @@ export async function handleStartAgentSession(args: {
   agent: string;
   initialPrompt?: string;
   permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits';
+  model?: string;
 }): Promise<unknown> {
   // 1. Resolve agent slug → UUID
   const agentId = await resolveAgentSlug(args.agent);
@@ -258,6 +259,7 @@ export async function handleStartAgentSession(args: {
       capabilityId: promptCap.id,
       initialPrompt: args.initialPrompt,
       permissionMode: args.permissionMode ?? 'bypassPermissions',
+      ...(args.model ? { model: args.model } : {}),
     },
   })) as { id: string };
 
@@ -571,6 +573,12 @@ function createServer(): McpServer {
         .optional()
         .describe(
           'Permission mode for the session. Defaults to bypassPermissions for autonomous operation.',
+        ),
+      model: z
+        .string()
+        .optional()
+        .describe(
+          'Override the default AI model (e.g. gemini-2.5-pro, o3). Forwarded as -m flag to the CLI.',
         ),
     },
     {

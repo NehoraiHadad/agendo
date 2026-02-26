@@ -46,6 +46,8 @@ export interface SpawnOpts {
   maxBudgetUsd?: number;
   /** Fallback model when primary model is overloaded. */
   fallbackModel?: string;
+  /** Override the default AI model (forwarded as --model / -m to the CLI). */
+  model?: string;
   /** When true, only use MCP servers from the provided config (ignore global). */
   strictMcpConfig?: boolean;
   /** Force a specific session UUID (syncs with agendo's session ID). */
