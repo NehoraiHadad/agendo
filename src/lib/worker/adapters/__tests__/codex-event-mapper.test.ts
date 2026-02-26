@@ -55,13 +55,14 @@ describe('mapCodexJsonToEvents', () => {
     ]);
   });
 
-  it('maps item.started with file_search to agent:tool-start', () => {
+  it('maps item.started with file_change to agent:tool-start', () => {
     const event: CodexEvent = {
       type: 'item.started',
       item: {
-        type: 'file_search',
+        type: 'file_change',
         id: 'item_002',
         call_id: 'call_002',
+        changes: [{ path: 'src/index.ts', kind: 'modify' }],
       },
     };
     const result = mapCodexJsonToEvents(event);
@@ -69,8 +70,8 @@ describe('mapCodexJsonToEvents', () => {
       {
         type: 'agent:tool-start',
         toolUseId: 'call_002',
-        toolName: 'FileSearch',
-        input: {},
+        toolName: 'FileChange',
+        input: { changes: [{ path: 'src/index.ts', kind: 'modify' }] },
       },
     ]);
   });
@@ -87,20 +88,20 @@ describe('mapCodexJsonToEvents', () => {
   // -----------------------------------------------------------------------
   // item.completed type=reasoning → agent:thinking
   // -----------------------------------------------------------------------
-  it('maps item.completed with reasoning to agent:thinking', () => {
+  it('maps item.completed with reasoning using item.text (official format)', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
         type: 'reasoning',
         id: 'item_010',
-        content: [{ type: 'reasoning_summary', text: 'Analyzing the code structure...' }],
+        text: 'Analyzing the code structure...',
       },
     };
     const result = mapCodexJsonToEvents(event);
     expect(result).toEqual([{ type: 'agent:thinking', text: 'Analyzing the code structure...' }]);
   });
 
-  it('maps item.completed with reasoning and multiple content blocks', () => {
+  it('maps item.completed with reasoning falling back to content array', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
@@ -119,20 +120,20 @@ describe('mapCodexJsonToEvents', () => {
   // -----------------------------------------------------------------------
   // item.completed type=agent_message → agent:text
   // -----------------------------------------------------------------------
-  it('maps item.completed with agent_message to agent:text', () => {
+  it('maps item.completed with agent_message using item.text (official format)', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
         type: 'agent_message',
         id: 'item_020',
-        content: [{ type: 'output_text', text: 'Here is the fix I made.' }],
+        text: 'Here is the fix I made.',
       },
     };
     const result = mapCodexJsonToEvents(event);
     expect(result).toEqual([{ type: 'agent:text', text: 'Here is the fix I made.' }]);
   });
 
-  it('maps agent_message with multiple output_text blocks', () => {
+  it('maps agent_message falling back to content array with output_text blocks', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
@@ -197,14 +198,17 @@ describe('mapCodexJsonToEvents', () => {
     ]);
   });
 
-  it('maps item.completed with file_search to agent:tool-end', () => {
+  it('maps item.completed with file_change to agent:tool-end', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
-        type: 'file_search',
+        type: 'file_change',
         id: 'item_032',
         call_id: 'call_032',
-        results: ['file1.ts', 'file2.ts'],
+        changes: [
+          { path: 'src/index.ts', kind: 'modify' },
+          { path: 'src/utils.ts', kind: 'create' },
+        ],
       },
     };
     const result = mapCodexJsonToEvents(event);
@@ -212,22 +216,24 @@ describe('mapCodexJsonToEvents', () => {
       {
         type: 'agent:tool-end',
         toolUseId: 'call_032',
-        content: JSON.stringify(['file1.ts', 'file2.ts']),
+        content: 'modify: src/index.ts\ncreate: src/utils.ts',
       },
     ]);
   });
 
   // -----------------------------------------------------------------------
-  // item.completed type=mcp_call → agent:tool-end
+  // item.completed type=mcp_tool_call → agent:tool-end
   // -----------------------------------------------------------------------
-  it('maps item.completed with mcp_call to agent:tool-end', () => {
+  it('maps item.completed with mcp_tool_call to agent:tool-end', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
-        type: 'mcp_call',
+        type: 'mcp_tool_call',
         id: 'item_040',
         call_id: 'call_040',
-        content: [{ type: 'output_text', text: 'MCP result here' }],
+        server: 'agendo',
+        tool: 'get_task',
+        content: [{ type: 'text', text: 'MCP result here' }],
       },
     };
     const result = mapCodexJsonToEvents(event);
@@ -241,17 +247,17 @@ describe('mapCodexJsonToEvents', () => {
   });
 
   // -----------------------------------------------------------------------
-  // item.started type=mcp_call → agent:tool-start
+  // item.started type=mcp_tool_call → agent:tool-start
   // -----------------------------------------------------------------------
-  it('maps item.started with mcp_call to agent:tool-start', () => {
+  it('maps item.started with mcp_tool_call to agent:tool-start', () => {
     const event: CodexEvent = {
       type: 'item.started',
       item: {
-        type: 'mcp_call',
+        type: 'mcp_tool_call',
         id: 'item_041',
         call_id: 'call_041',
-        name: 'mcp__agendo__get_task',
-        arguments: '{"taskId":"abc"}',
+        server: 'agendo',
+        tool: 'mcp__agendo__get_task',
       },
     };
     const result = mapCodexJsonToEvents(event);
@@ -260,7 +266,7 @@ describe('mapCodexJsonToEvents', () => {
         type: 'agent:tool-start',
         toolUseId: 'call_041',
         toolName: 'mcp__agendo__get_task',
-        input: { taskId: 'abc' },
+        input: { server: 'agendo', tool: 'mcp__agendo__get_task' },
       },
     ]);
   });
@@ -359,7 +365,7 @@ describe('mapCodexJsonToEvents', () => {
   // -----------------------------------------------------------------------
   // edge: missing fields handled gracefully
   // -----------------------------------------------------------------------
-  it('handles item.completed with empty content array', () => {
+  it('handles item.completed with empty content array (no text, no item.text)', () => {
     const event: CodexEvent = {
       type: 'item.completed',
       item: {
@@ -369,7 +375,8 @@ describe('mapCodexJsonToEvents', () => {
       },
     };
     const result = mapCodexJsonToEvents(event);
-    expect(result).toEqual([{ type: 'agent:text', text: '' }]);
+    // No item.text and empty content array → nothing to emit
+    expect(result).toEqual([]);
   });
 
   it('handles item.completed command_execution with no stdout/stderr', () => {

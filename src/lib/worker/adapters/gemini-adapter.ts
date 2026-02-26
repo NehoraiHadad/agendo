@@ -164,13 +164,18 @@ export class GeminiAdapter implements AgentAdapter {
       for (const cb of dataCallbacks) cb(chunk.toString('utf-8'));
     });
 
+    let exitFired = false;
+
     cp.on('exit', (code) => {
       // Reject all pending requests so awaiting callers unblock
       for (const [, pending] of this.pendingRequests) {
         pending.reject(new Error('Gemini process exited'));
       }
       this.pendingRequests.clear();
-      for (const cb of exitCallbacks) cb(code);
+      if (!exitFired) {
+        exitFired = true;
+        for (const cb of exitCallbacks) cb(code);
+      }
     });
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
@@ -180,7 +185,10 @@ export class GeminiAdapter implements AgentAdapter {
     // the "Session ended unexpectedly" message.
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
       console.error('[GeminiAdapter] init failed:', err.message);
-      for (const cb of exitCallbacks) cb(0);
+      if (!exitFired) {
+        exitFired = true;
+        for (const cb of exitCallbacks) cb(0);
+      }
       // Kill the entire process group (not just the main process) — Gemini CLI
       // spawns with detached:true, so cp.kill() alone leaves orphan children.
       if (cp.pid) {
@@ -340,6 +348,20 @@ export class GeminiAdapter implements AgentAdapter {
             // Emit structured NDJSON for thinking output
             this.emitNdjson({ type: 'gemini:thinking', text: content.text });
           }
+        } else if (sessionUpdate === 'tool_call_start') {
+          const toolCall = update?.toolCall as Record<string, unknown> | undefined;
+          const toolUseId = `gemini-tool-${++toolUseCounter}`;
+          this.emitNdjson({
+            type: 'gemini:tool-start',
+            toolName: (toolCall?.title as string) ?? (toolCall?.name as string) ?? 'unknown',
+            toolInput:
+              (toolCall?.rawInput as Record<string, unknown>) ??
+              (toolCall?.input as Record<string, unknown>) ??
+              {},
+            toolUseId,
+          });
+        } else if (sessionUpdate === 'tool_call_end' || sessionUpdate === 'tool_result') {
+          this.emitNdjson({ type: 'gemini:tool-end', toolUseId: `gemini-tool-${toolUseCounter}` });
         }
       }
     }

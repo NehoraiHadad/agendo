@@ -29,6 +29,23 @@ function permissionFlags(mode?: string): string[] {
 }
 
 /**
+ * Permission mode → flags valid for `codex exec resume`.
+ *
+ * `codex exec resume` does NOT accept `--cd` or `--sandbox`.
+ * Valid permission-related flags: `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`.
+ * `--full-auto` is the closest safe match (= `--sandbox workspace-write` + `--ask-for-approval on-request`).
+ */
+function resumePermissionFlags(mode?: string): string[] {
+  switch (mode) {
+    case 'bypassPermissions':
+    case 'dontAsk':
+      return ['--dangerously-bypass-approvals-and-sandbox'];
+    default:
+      return ['--full-auto'];
+  }
+}
+
+/**
  * STDIO-based adapter for the Codex CLI.
  *
  * Unlike Claude (persistent process, messages via stdin), Codex spawns a
@@ -169,8 +186,16 @@ export class CodexAdapter implements AgentAdapter {
     }
     args.push(prompt);
     args.push('--json');
-    args.push('--cd', opts.cwd);
-    args.push(...permissionFlags(opts.permissionMode));
+
+    if (resumeThreadId) {
+      // `codex exec resume` does NOT accept --cd or --sandbox flags.
+      // cwd is already set via nodeSpawn's cwd option.
+      args.push(...resumePermissionFlags(opts.permissionMode));
+    } else {
+      args.push('--cd', opts.cwd);
+      args.push(...permissionFlags(opts.permissionMode));
+    }
+
     if (opts.extraArgs) {
       args.push(...opts.extraArgs);
     }

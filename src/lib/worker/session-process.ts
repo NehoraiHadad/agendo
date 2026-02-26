@@ -399,9 +399,20 @@ export class SessionProcess {
           }
         }
 
-        const partials = this.adapter.mapJsonToEvents
-          ? this.adapter.mapJsonToEvents(parsed)
-          : this.mapClaudeJsonToEvents(parsed);
+        let partials: AgendoEventPayload[];
+        try {
+          partials = this.adapter.mapJsonToEvents
+            ? this.adapter.mapJsonToEvents(parsed)
+            : this.mapClaudeJsonToEvents(parsed);
+        } catch (mapErr) {
+          console.warn(
+            `[session-process] mapJsonToEvents error for session ${this.session.id}:`,
+            mapErr,
+            'line:',
+            trimmed.slice(0, 200),
+          );
+          continue;
+        }
 
         for (const partial of partials) {
           // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
@@ -640,7 +651,13 @@ export class SessionProcess {
           ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
           ...(turns !== null && { totalTurns: turns }),
         })
-        .where(eq(sessions.id, this.session.id));
+        .where(eq(sessions.id, this.session.id))
+        .catch((err: unknown) => {
+          console.error(
+            `[session-process] cost stats update failed for session ${this.session.id}:`,
+            err,
+          );
+        });
 
       const events: AgendoEventPayload[] = [
         {
@@ -1274,7 +1291,12 @@ export class SessionProcess {
       }
     }
 
-    await db.update(sessions).set({ endedAt: new Date() }).where(eq(sessions.id, this.session.id));
+    if (this.status === 'ended') {
+      await db
+        .update(sessions)
+        .set({ endedAt: new Date() })
+        .where(eq(sessions.id, this.session.id));
+    }
 
     // Mode-change restart: re-enqueue immediately so the session cold-resumes
     // with the updated permissionMode (already written to DB by the PATCH endpoint).
