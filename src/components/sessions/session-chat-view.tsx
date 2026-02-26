@@ -838,6 +838,7 @@ interface SessionChatViewProps {
   stream: UseSessionStreamReturn;
   currentStatus: SessionStatus | null | string;
   initialPrompt?: string | null;
+  agentBinaryPath?: string;
 }
 
 export function SessionChatView({
@@ -845,6 +846,7 @@ export function SessionChatView({
   stream,
   currentStatus,
   initialPrompt,
+  agentBinaryPath,
 }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1098,6 +1100,7 @@ export function SessionChatView({
         onSent={handleSent}
         slashCommands={slashCommands}
         mcpServers={mcpServers}
+        agentBinaryPath={agentBinaryPath}
       />
     </div>
   );

@@ -202,6 +202,8 @@ interface SessionMessageInputProps {
   slashCommands?: string[];
   /** MCP servers received from the agent's system:init event */
   mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>;
+  /** Agent binary path — used to derive provider for model picker */
+  agentBinaryPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +235,23 @@ function getBlockedMessage(
 // Main component
 // ---------------------------------------------------------------------------
 
+/** Derive a provider name from an agent binaryPath for the model picker. */
+function deriveProvider(binaryPath?: string): string | null {
+  if (!binaryPath) return null;
+  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  if (base.startsWith('claude')) return 'claude';
+  if (base.startsWith('codex')) return 'codex';
+  if (base.startsWith('gemini')) return 'gemini';
+  return null;
+}
+
 export function SessionMessageInput({
   sessionId,
   status,
   onSent,
   slashCommands,
   mcpServers,
+  agentBinaryPath,
 }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -562,6 +575,7 @@ export function SessionMessageInput({
         {/* Model picker */}
         {showModelPicker && (
           <ModelPickerPopover
+            provider={deriveProvider(agentBinaryPath)}
             onSelect={(modelId) => {
               void submitText(`/model ${modelId}`);
               setShowModelPicker(false);

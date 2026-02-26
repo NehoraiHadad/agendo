@@ -72,12 +72,19 @@ function modelDisplayLabel(modelId: string): string {
   return modelId.replace(/^claude-/, '');
 }
 
-/** Quick-pick model families. The ID is a prefix — the CLI resolves to the latest version. */
-const MODEL_FAMILIES = [
-  { keyword: 'opus', label: 'Opus', id: 'claude-opus-4-6' },
-  { keyword: 'sonnet', label: 'Sonnet', id: 'claude-sonnet-4-6' },
-  { keyword: 'haiku', label: 'Haiku', id: 'claude-haiku-4-5-20251001' },
-];
+interface DynamicModelOption {
+  id: string;
+  label: string;
+}
+
+/** Derive provider name from binary path for model API queries. */
+function deriveProvider(binaryPath: string): string {
+  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  if (base.startsWith('claude')) return 'claude';
+  if (base.startsWith('codex')) return 'codex';
+  if (base.startsWith('gemini')) return 'gemini';
+  return 'claude';
+}
 
 const MODE_CONFIG: Record<
   PermissionMode,
@@ -123,6 +130,7 @@ interface SessionDetailClientProps {
   session: Session;
   agentName: string;
   agentSlug: string;
+  agentBinaryPath: string;
   capLabel: string;
   taskTitle: string;
 }
@@ -190,6 +198,7 @@ export function SessionDetailClient({
   session,
   agentName,
   agentSlug,
+  agentBinaryPath,
   capLabel,
   taskTitle,
 }: SessionDetailClientProps) {
@@ -208,6 +217,7 @@ export function SessionDetailClient({
   const [isModelChanging, setIsModelChanging] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [dynamicModels, setDynamicModels] = useState<DynamicModelOption[]>([]);
 
   // Close model menu on outside click
   useEffect(() => {
@@ -220,6 +230,23 @@ export function SessionDetailClient({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showModelMenu]);
+
+  // Fetch available models for this agent's provider
+  useEffect(() => {
+    const provider = deriveProvider(agentBinaryPath);
+    const controller = new AbortController();
+    fetch(`/api/models?provider=${encodeURIComponent(provider)}`, { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: DynamicModelOption[] }>) : null))
+      .then((body) => {
+        if (!controller.signal.aborted && body?.data) {
+          setDynamicModels(body.data.map((m) => ({ id: m.id, label: m.label })));
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [agentBinaryPath]);
+
+  const headerModels = dynamicModels;
 
   // Derive model from the latest system:info "Model switched" event, init event, or session DB.
   // system:info events from handleSetModel are the freshest source after a model switch.
@@ -435,27 +462,35 @@ export function SessionDetailClient({
                   <span className="hidden sm:inline">{modelLabel ?? 'Model'}</span>
                 </Button>
                 {showModelMenu && (
-                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
-                    {MODEL_FAMILIES.map((fam) => {
-                      const isActive = currentModel?.toLowerCase().includes(fam.keyword);
-                      return (
-                        <button
-                          key={fam.keyword}
-                          type="button"
-                          onClick={() => void handleModelChange(fam.id)}
-                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/[0.06] transition-colors ${
-                            isActive ? 'text-cyan-400 font-medium' : 'text-foreground/70'
-                          }`}
-                        >
-                          {fam.label}
-                          {isActive && (
-                            <span className="ml-1.5 text-muted-foreground/40 font-mono text-[10px]">
-                              {currentModel}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] max-w-[320px] max-h-72 overflow-y-auto rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
+                    {headerModels.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground/50">
+                        No models available
+                      </div>
+                    ) : (
+                      headerModels.map((m) => {
+                        const isActiveModel =
+                          currentModel?.toLowerCase() === m.id.toLowerCase() ||
+                          currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => void handleModelChange(m.id)}
+                            className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/[0.06] transition-colors truncate ${
+                              isActiveModel ? 'text-cyan-400 font-medium' : 'text-foreground/70'
+                            }`}
+                          >
+                            {m.label}
+                            {isActiveModel && (
+                              <span className="ml-1.5 text-muted-foreground/40 font-mono text-[10px]">
+                                current
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
                   </div>
                 )}
               </div>
@@ -523,6 +558,7 @@ export function SessionDetailClient({
             stream={stream}
             currentStatus={currentStatus}
             initialPrompt={session.initialPrompt}
+            agentBinaryPath={agentBinaryPath}
           />
         </TabsContent>
 
