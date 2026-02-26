@@ -222,14 +222,23 @@ export class GeminiAdapter implements AgentAdapter {
 
       const supportsLoad = !!(initResult?.agentCapabilities as Record<string, unknown> | undefined)
         ?.loadSession;
+      let loaded = false;
       if (supportsLoad) {
-        await this.sendRequest('session/load', {
-          sessionId: this.sessionId,
-          cwd: opts.cwd,
-          mcpServers: opts.mcpServers ?? [],
-        });
-      } else {
-        // loadSession not supported — create a fresh session in the new process
+        try {
+          await this.sendRequest('session/load', {
+            sessionId: this.sessionId,
+            cwd: opts.cwd,
+            mcpServers: opts.mcpServers ?? [],
+          });
+          loaded = true;
+        } catch (loadErr) {
+          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+          console.warn(
+            `[GeminiAdapter] session/load failed during model switch, falling back: ${msg}`,
+          );
+        }
+      }
+      if (!loaded) {
         const result = await this.sendRequest<{ sessionId: string }>('session/new', {
           cwd: opts.cwd,
           mcpServers: opts.mcpServers ?? [],
@@ -516,19 +525,30 @@ export class GeminiAdapter implements AgentAdapter {
       );
 
       if (resumeSessionId) {
-        // session/load: resume an existing session (requires loadSession capability)
+        // session/load: resume an existing session (requires loadSession capability).
+        // Gemini advertises loadSession:true but session/load can still fail
+        // (e.g. session checkpoint missing after a 429 crash). Fall back to
+        // session/new so the user can continue without history.
         const supportsLoad = !!(
           initResult?.agentCapabilities as Record<string, unknown> | undefined
         )?.loadSession;
+        let loaded = false;
         if (supportsLoad) {
-          await this.sendRequest('session/load', {
-            sessionId: resumeSessionId,
-            cwd: opts.cwd,
-            mcpServers: opts.mcpServers ?? [],
-          });
-        } else {
-          // loadSession not supported — the old sessionId is invalid in this new
-          // process. Create a fresh session so session/prompt has a valid target.
+          try {
+            await this.sendRequest('session/load', {
+              sessionId: resumeSessionId,
+              cwd: opts.cwd,
+              mcpServers: opts.mcpServers ?? [],
+            });
+            loaded = true;
+          } catch (loadErr) {
+            const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+            console.warn(
+              `[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`,
+            );
+          }
+        }
+        if (!loaded) {
           const result = await this.sendRequest<{ sessionId: string }>('session/new', {
             cwd: opts.cwd,
             mcpServers: opts.mcpServers ?? [],
