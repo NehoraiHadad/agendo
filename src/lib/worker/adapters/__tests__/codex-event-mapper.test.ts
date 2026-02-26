@@ -344,13 +344,24 @@ describe('mapCodexJsonToEvents', () => {
   // -----------------------------------------------------------------------
   // error → system:error
   // -----------------------------------------------------------------------
-  it('maps error to system:error', () => {
+  it('maps error with nested error object to system:error', () => {
     const event: CodexEvent = {
       type: 'error',
       error: { message: 'Connection lost' },
     };
     const result = mapCodexJsonToEvents(event);
     expect(result).toEqual([{ type: 'system:error', message: 'Codex error: Connection lost' }]);
+  });
+
+  it('maps error with top-level message to system:error', () => {
+    const event: CodexEvent = {
+      type: 'error',
+      message: "You've hit your usage limit.",
+    };
+    const result = mapCodexJsonToEvents(event);
+    expect(result).toEqual([
+      { type: 'system:error', message: "Codex error: You've hit your usage limit." },
+    ]);
   });
 
   // -----------------------------------------------------------------------

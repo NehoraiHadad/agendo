@@ -68,7 +68,7 @@ export type CodexEvent =
       };
     }
   | { type: 'turn.failed'; error: { message: string; code?: string } }
-  | { type: 'error'; error: { message: string } };
+  | { type: 'error'; error?: { message: string }; message?: string };
 
 // ---------------------------------------------------------------------------
 // Tool item types that produce tool-start/tool-end events
@@ -290,13 +290,15 @@ export function mapCodexJsonToEvents(event: CodexEvent): AgendoEventPayload[] {
     // -----------------------------------------------------------------------
     // error → system:error
     // -----------------------------------------------------------------------
-    case 'error':
+    case 'error': {
+      const errMsg = event.error?.message ?? event.message ?? 'Unknown error';
       return [
         {
           type: 'system:error',
-          message: `Codex error: ${event.error.message}`,
+          message: `Codex error: ${errMsg}`,
         },
       ];
+    }
 
     default:
       return [];
