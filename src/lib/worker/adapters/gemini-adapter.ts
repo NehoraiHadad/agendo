@@ -47,6 +47,11 @@ export class GeminiAdapter implements AgentAdapter {
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
 
+  /** Max retries for 429 rate-limit errors. */
+  static readonly MAX_RETRIES = 3;
+  /** Backoff schedule in ms: 15s, 30s, 60s. */
+  static readonly RETRY_DELAYS = [15_000, 30_000, 60_000];
+
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, null);
   }
@@ -374,12 +379,7 @@ export class GeminiAdapter implements AgentAdapter {
     }
 
     try {
-      // ACP v0.20 renamed prompt → session/prompt
-      const result = await this.sendRequest<Record<string, unknown>>('session/prompt', {
-        sessionId: this.sessionId,
-        prompt: promptContent,
-      });
-
+      const result = await this.sendPromptWithRetry(promptContent);
       // Emit synthetic result event so session-process emits agent:result
       this.emitNdjson({ type: 'gemini:turn-complete', result: result ?? {} });
     } catch (err) {
@@ -394,6 +394,51 @@ export class GeminiAdapter implements AgentAdapter {
     } finally {
       this.thinkingCallback?.(false);
     }
+  }
+
+  /**
+   * Send session/prompt with retry + exponential backoff for 429 rate-limit errors.
+   * ACP mode has a strict per-minute rate limit (free tier: ~5 RPM).
+   */
+  private async sendPromptWithRetry(
+    promptContent: Array<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= GeminiAdapter.MAX_RETRIES; attempt++) {
+      try {
+        return await this.sendRequest<Record<string, unknown>>('session/prompt', {
+          sessionId: this.sessionId,
+          prompt: promptContent,
+        });
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const is429 = lastError.message.includes('429');
+        const isInternalError = lastError.message.includes('-32603');
+
+        // Only retry on rate-limit (429) or transient internal errors (-32603)
+        if ((!is429 && !isInternalError) || attempt >= GeminiAdapter.MAX_RETRIES) {
+          throw lastError;
+        }
+
+        // Process may have died during the request
+        if (!this.isAlive()) throw lastError;
+
+        const delay = GeminiAdapter.RETRY_DELAYS[attempt] ?? 60_000;
+        const delaySec = Math.round(delay / 1000);
+        this.emitNdjson({
+          type: 'gemini:retry',
+          message: `Rate limited (attempt ${attempt + 1}/${GeminiAdapter.MAX_RETRIES}). Retrying in ${delaySec}s...`,
+        });
+
+        await new Promise<void>((r) => setTimeout(r, delay));
+
+        // Check again after delay — process might have been killed
+        if (!this.isAlive()) throw lastError;
+      }
+    }
+
+    throw lastError ?? new Error('sendPromptWithRetry exhausted retries');
   }
 
   /**
