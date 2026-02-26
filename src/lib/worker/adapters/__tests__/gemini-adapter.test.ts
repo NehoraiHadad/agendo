@@ -439,10 +439,55 @@ describe('GeminiAdapter', () => {
       expect(turnError).toBeDefined();
     });
 
-    const turnError = received.find((r) => r.includes('gemini:turn-error'));
-    const parsed = JSON.parse(turnError!) as Record<string, unknown>;
+    const turnErrors = received.filter((r) => r.includes('gemini:turn-error'));
+    // Should emit exactly ONE error (from sendPrompt), not a duplicate from initAndRun
+    expect(turnErrors).toHaveLength(1);
+    const parsed = JSON.parse(turnErrors[0]) as Record<string, unknown>;
     expect(parsed.type).toBe('gemini:turn-error');
     expect(parsed.message).toContain('Context length exceeded');
+    // Prompt errors should NOT have "Init failed:" prefix
+    expect(parsed.message).not.toContain('Init failed:');
+  });
+
+  it('emits gemini:turn-error with "Init failed:" prefix for init errors', async () => {
+    // Respond to initialize with an error
+    mockStdinWrite.mockImplementation((data: string) => {
+      try {
+        const msg = JSON.parse(data) as { id?: number; method?: string };
+        if (msg.method === 'initialize' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                error: { code: -32603, message: 'Internal error' },
+              }),
+            );
+          });
+        }
+      } catch {
+        // Not JSON
+      }
+      return true;
+    });
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    await vi.waitFor(() => {
+      const turnError = received.find((r) => r.includes('gemini:turn-error'));
+      expect(turnError).toBeDefined();
+    });
+
+    const turnErrors = received.filter((r) => r.includes('gemini:turn-error'));
+    // Exactly ONE error event
+    expect(turnErrors).toHaveLength(1);
+    const parsed = JSON.parse(turnErrors[0]) as Record<string, unknown>;
+    expect(parsed.message).toContain('Init failed:');
+    expect(parsed.message).toContain('Internal error');
   });
 
   // ---------------------------------------------------------------------------
