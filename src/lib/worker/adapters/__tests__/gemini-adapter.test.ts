@@ -120,7 +120,7 @@ describe('GeminiAdapter', () => {
     expect(proc.pid).toBe(99999);
   });
 
-  it('sends initialize request synchronously on spawn', () => {
+  it('sends initialize request with clientInfo and terminal capability', () => {
     const adapter = new GeminiAdapter();
     adapter.spawn('test prompt', opts);
 
@@ -128,6 +128,11 @@ describe('GeminiAdapter', () => {
     const firstWrite = JSON.parse(mockStdinWrite.mock.calls[0][0]) as Record<string, unknown>;
     expect(firstWrite.method).toBe('initialize');
     expect(firstWrite.jsonrpc).toBe('2.0');
+    const params = firstWrite.params as Record<string, unknown>;
+    expect(params.clientInfo).toEqual({ name: 'agendo', version: '1.0.0' });
+    const caps = params.clientCapabilities as Record<string, unknown>;
+    expect(caps.terminal).toBe(true);
+    expect(caps.fs).toEqual({ readTextFile: true, writeTextFile: true });
   });
 
   it('extractSessionId returns null before init completes', () => {
@@ -335,18 +340,100 @@ describe('GeminiAdapter', () => {
   // Interrupt escalation
   // ---------------------------------------------------------------------------
 
-  it('sends cancelRequest on interrupt', async () => {
+  it('sends session/cancel notification on interrupt', async () => {
     vi.useFakeTimers();
+    setupAutoResponder();
     const adapter = new GeminiAdapter();
     adapter.spawn('test prompt', opts);
 
+    // Wait for init to complete so sessionId is set
+    await vi.advanceTimersByTimeAsync(10);
+
     const interruptPromise = adapter.interrupt();
+
+    // Check that session/cancel was sent (notification — no id)
+    const cancelWrite = mockStdinWrite.mock.calls.find((c) => {
+      try {
+        const msg = JSON.parse(c[0]) as Record<string, unknown>;
+        return msg.method === 'session/cancel';
+      } catch {
+        return false;
+      }
+    });
+    expect(cancelWrite).toBeDefined();
+    const cancelMsg = JSON.parse(cancelWrite![0]) as Record<string, unknown>;
+    expect(cancelMsg.id).toBeUndefined(); // notification, not request
+    expect((cancelMsg.params as Record<string, unknown>).sessionId).toBe('test-session-123');
 
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(5000);
 
     await interruptPromise;
+  });
+
+  it('uses session/load when resuming with loadSession capability', async () => {
+    // Auto-respond: initialize returns loadSession: true, session/load succeeds
+    mockStdinWrite.mockImplementation((data: string) => {
+      try {
+        const msg = JSON.parse(data) as { id?: number; method?: string };
+        if (msg.method === 'initialize' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                result: { agentCapabilities: { loadSession: true } },
+              }),
+            );
+          });
+        } else if (msg.method === 'session/load' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: null }),
+            );
+          });
+        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { done: true } }),
+            );
+          });
+        }
+      } catch {
+        // Not JSON
+      }
+      return true;
+    });
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.resume('existing-sess-id', 'continue working', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    await vi.waitFor(() => {
+      expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
+    });
+
+    // Verify session/load was called (not session/new)
+    const writes = mockStdinWrite.mock.calls.map((c) => {
+      try {
+        return JSON.parse(c[0]) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    });
+    expect(writes.find((w) => w?.method === 'session/load')).toBeDefined();
+    expect(writes.find((w) => w?.method === 'session/new')).toBeUndefined();
+
+    // Verify session/load params
+    const loadMsg = writes.find((w) => w?.method === 'session/load')!;
+    const loadParams = loadMsg.params as Record<string, unknown>;
+    expect(loadParams.sessionId).toBe('existing-sess-id');
+    expect(loadParams.cwd).toBe('/tmp');
   });
 
   // ---------------------------------------------------------------------------
