@@ -399,7 +399,9 @@ export class SessionProcess {
           }
         }
 
-        const partials = this.mapClaudeJsonToEvents(parsed);
+        const partials = this.adapter.mapJsonToEvents
+          ? this.adapter.mapJsonToEvents(parsed)
+          : this.mapClaudeJsonToEvents(parsed);
 
         for (const partial of partials) {
           // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
@@ -873,10 +875,16 @@ export class SessionProcess {
       );
       return;
     }
-    await this.adapter.sendMessage(text, image);
+    // Emit user message and transition to 'active' BEFORE calling sendMessage.
+    // This is critical for the Gemini ACP adapter, whose sendMessage() blocks
+    // until the full ACP roundtrip completes. If we transitioned after, the
+    // thinkingCallback(false) that fires inside sendMessage would see status
+    // still as 'awaiting_input' and the transitionTo('awaiting_input') would
+    // be a no-op — leaving the session stuck in 'active' forever.
     await this.emitEvent({ type: 'user:message', text, hasImage: !!image });
     await this.transitionTo('active');
     this.resetIdleTimer();
+    await this.adapter.sendMessage(text, image);
   }
 
   /**
@@ -912,10 +920,10 @@ export class SessionProcess {
       } catch {
         // fall back to raw content
       }
-      await this.adapter.sendMessage(messageText);
       await this.emitEvent({ type: 'user:message', text: messageText });
       await this.transitionTo('active');
       this.resetIdleTimer();
+      await this.adapter.sendMessage(messageText);
       return;
     }
 
@@ -1105,6 +1113,16 @@ export class SessionProcess {
   private async transitionTo(status: SessionStatus): Promise<void> {
     if (this.status === status) return; // already in this state, skip duplicate transition
     this.status = status;
+
+    // Flush any remaining text in the data buffer before entering awaiting_input.
+    // Gemini's ACP adapter may not emit a trailing newline after the last text chunk,
+    // leaving partial text stuck in the buffer. Without this flush, the user would
+    // never see the final text fragment.
+    if (status === 'awaiting_input' && this.dataBuffer.trim()) {
+      await this.emitEvent({ type: 'agent:text', text: this.dataBuffer.trim() });
+      this.dataBuffer = '';
+    }
+
     await db
       .update(sessions)
       .set({ status, lastActiveAt: new Date() })
@@ -1231,7 +1249,10 @@ export class SessionProcess {
     // Anything else → ended (crash / unsupported command).
     if (this.status === 'active' || this.status === 'awaiting_input') {
       if (this.cancelKilled) {
-        // Cancel route already set status='ended' in DB — just kill the tmux companion.
+        // Cancel route may have already set status='ended' in DB, but if the process
+        // died before the cancel route could update, status may still be 'active'.
+        // Explicitly transition to 'ended' to cover both cases.
+        await this.transitionTo('ended');
         spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
       } else if (
         exitCode === 0 ||

@@ -89,4 +89,9 @@ export interface AgentAdapter {
   setModel?(model: string): Promise<boolean>;
   /** Query MCP server connection status via control_request. */
   getMcpStatus?(): Promise<Record<string, unknown> | null>;
+  /** Map a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
+   *  When present, session-process.ts delegates to this instead of mapClaudeJsonToEvents. */
+  mapJsonToEvents?(
+    parsed: Record<string, unknown>,
+  ): import('@/lib/realtime/events').AgendoEventPayload[];
 }

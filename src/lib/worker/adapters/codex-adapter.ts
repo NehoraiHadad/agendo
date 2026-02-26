@@ -1,37 +1,87 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import {
-  LoggingMessageNotificationSchema,
-  ElicitRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import * as tmux from '@/lib/worker/tmux-manager';
+import { mapCodexJsonToEvents, type CodexEvent } from '@/lib/worker/adapters/codex-event-mapper';
 import type {
   AgentAdapter,
   ApprovalHandler,
   ManagedProcess,
   SpawnOpts,
 } from '@/lib/worker/adapters/types';
+import type { AgendoEventPayload } from '@/lib/realtime/events';
 
+const SIGKILL_DELAY_MS = 5_000;
+
+/**
+ * Permission mode → Codex exec flags.
+ */
+function permissionFlags(mode?: string): string[] {
+  switch (mode) {
+    case 'bypassPermissions':
+    case 'dontAsk':
+      return ['--dangerously-bypass-approvals-and-sandbox'];
+    case 'plan':
+      return ['--sandbox', 'read-only'];
+    case 'acceptEdits':
+    case 'default':
+    default:
+      return ['--sandbox', 'workspace-write'];
+  }
+}
+
+/**
+ * STDIO-based adapter for the Codex CLI.
+ *
+ * Unlike Claude (persistent process, messages via stdin), Codex spawns a
+ * NEW `codex exec` process per turn. The adapter returns a "virtual"
+ * ManagedProcess from spawn() with **stable callback arrays** that persist
+ * across process replacements. When sendMessage() is called, the old
+ * process is cleaned up and a new `codex exec resume <threadId>` process
+ * is spawned wired to the same callbacks.
+ */
 export class CodexAdapter implements AgentAdapter {
-  private client: Client | null = null;
-  private transport: StdioClientTransport | null = null;
   private threadId: string | null = null;
   private storedOpts: SpawnOpts | null = null;
-  private currentTurn: Promise<void> = Promise.resolve();
-  private turnAbortController: AbortController | null = new AbortController();
+  private currentChild: ChildProcess | null = null;
+  private alive = false;
+  private tmuxSessionName = '';
+
+  // Stable callback arrays that persist across child process replacements.
+  // The virtual ManagedProcess returned by spawn() references these.
+  private dataCallbacks: Array<(chunk: string) => void> = [];
+  private exitCallbacks: Array<(code: number | null) => void> = [];
+
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private approvalHandler: ApprovalHandler | null = null;
   private sessionRefCallback: ((ref: string) => void) | null = null;
-  private dataCallbacks: Array<(chunk: string) => void> = [];
+
+  /** NDJSON line buffer for partial lines split across data chunks. */
+  private lineBuffer = '';
+
+  // -----------------------------------------------------------------------
+  // AgentAdapter interface
+  // -----------------------------------------------------------------------
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     this.storedOpts = opts;
-    return this.launch(prompt, opts, null);
+    this.dataCallbacks = [];
+    this.exitCallbacks = [];
+    this.tmuxSessionName = `codex-${opts.executionId}`;
+    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
+
+    this.spawnExec(prompt, opts, null);
+    return this.buildVirtualProcess();
   }
 
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
     this.threadId = sessionRef;
     this.storedOpts = opts;
-    return this.launch(prompt, opts, sessionRef);
+    this.dataCallbacks = [];
+    this.exitCallbacks = [];
+    this.tmuxSessionName = `codex-${opts.executionId}`;
+    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
+
+    this.spawnExec(prompt, opts, sessionRef);
+    return this.buildVirtualProcess();
   }
 
   extractSessionId(_output: string): string | null {
@@ -39,23 +89,51 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async sendMessage(message: string): Promise<void> {
-    await this.currentTurn;
-    this.currentTurn = this.runTurn(message);
-    await this.currentTurn;
+    if (!this.threadId) {
+      throw new Error('No Codex thread ID — cannot send follow-up message');
+    }
+    if (!this.storedOpts) {
+      throw new Error('No stored opts for Codex session');
+    }
+
+    // Kill the old process if still running (shouldn't be, but be safe)
+    this.killCurrentChild();
+
+    // Spawn a new resume process wired to the same stable callbacks
+    this.spawnExec(message, this.storedOpts, this.threadId);
   }
 
   async interrupt(): Promise<void> {
-    this.turnAbortController?.abort();
-    this.turnAbortController = new AbortController();
-    // Give it 3s to cleanly abort before closing client
-    await new Promise<void>((r) => setTimeout(r, 3000));
-    if (this.client) {
-      void this.client.close();
+    const cp = this.currentChild;
+    if (!cp?.pid) return;
+
+    // SIGTERM the process group
+    try {
+      process.kill(-cp.pid, 'SIGTERM');
+    } catch {
+      // Already dead
+      return;
+    }
+
+    // Wait for exit or escalate to SIGKILL
+    const exited = await Promise.race([
+      new Promise<boolean>((resolve) => {
+        cp.once('exit', () => resolve(true));
+      }),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), SIGKILL_DELAY_MS)),
+    ]);
+
+    if (!exited) {
+      try {
+        process.kill(-cp.pid, 'SIGKILL');
+      } catch {
+        // Already dead
+      }
     }
   }
 
   isAlive(): boolean {
-    return false;
+    return this.alive;
   }
 
   onThinkingChange(cb: (thinking: boolean) => void): void {
@@ -70,160 +148,142 @@ export class CodexAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
-  private launch(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): ManagedProcess {
-    // Fresh AbortController for this launch
-    this.turnAbortController = new AbortController();
+  /**
+   * Maps a Codex JSONL parsed object to AgendoEventPayloads.
+   * Used by session-process.ts to delegate event mapping.
+   */
+  mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
+    return mapCodexJsonToEvents(parsed as CodexEvent);
+  }
 
-    this.dataCallbacks = [];
-    const exitCallbacks: Array<(code: number | null) => void> = [];
+  // -----------------------------------------------------------------------
+  // Private: spawn a `codex exec` child process
+  // -----------------------------------------------------------------------
 
-    const transport = new StdioClientTransport({
-      command: 'codex',
-      args: ['mcp-server', ...(opts.extraArgs ?? [])],
-      env: opts.env,
+  private spawnExec(prompt: string, opts: SpawnOpts, resumeThreadId: string | null): void {
+    this.lineBuffer = '';
+
+    const args = ['exec'];
+    if (resumeThreadId) {
+      args.push('resume', resumeThreadId);
+    }
+    args.push(prompt);
+    args.push('--json');
+    args.push('--cd', opts.cwd);
+    args.push(...permissionFlags(opts.permissionMode));
+    if (opts.extraArgs) {
+      args.push(...opts.extraArgs);
+    }
+
+    const cp = nodeSpawn('codex', args, {
+      cwd: opts.cwd,
+      env: opts.env as NodeJS.ProcessEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      detached: true,
     });
-    this.transport = transport;
+    cp.unref();
 
-    const client = new Client(
-      { name: 'agendo', version: '1.0.0' },
-      { capabilities: { elicitation: {} } },
-    );
-    this.client = client;
+    this.currentChild = cp;
+    this.alive = true;
 
-    // Stream output via MCP logging notifications (debug/streaming output from Codex)
-    client.setNotificationHandler(LoggingMessageNotificationSchema, (n) => {
-      const text =
-        typeof n.params.data === 'string' ? n.params.data : JSON.stringify(n.params.data);
-      for (const cb of this.dataCallbacks) cb(text + '\n');
+    cp.stdout?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf-8');
+
+      // Forward raw text to data callbacks (session-process logs it)
+      for (const cb of this.dataCallbacks) cb(text);
+
+      // Parse NDJSON lines for adapter-level signals
+      this.processLines(text);
     });
 
-    // Relay elicitation (permission) requests to the approval handler
-    client.setRequestHandler(ElicitRequestSchema, async (request) => {
-      if (!this.approvalHandler) {
-        return { action: 'accept' as const, content: {} };
+    cp.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf-8');
+      for (const cb of this.dataCallbacks) cb(text);
+    });
+
+    cp.on('exit', (code) => {
+      // If this is the current child, mark as not alive
+      if (cp === this.currentChild) {
+        this.alive = false;
+        this.currentChild = null;
       }
-      const approvalId = Math.random().toString(36).slice(2, 15);
-      const params = request.params as Record<string, unknown>;
-      const toolName = (params.message as string) ?? 'unknown';
-      const toolInput = (params.requestedSchema as Record<string, unknown>) ?? {};
-      const decision = await this.approvalHandler({
-        approvalId,
-        toolName,
-        toolInput,
-        isAskUser: false,
-      });
-      if (decision === 'deny') {
-        return { action: 'cancel' as const };
-      }
-      return { action: 'accept' as const, content: {} };
+
+      // Fire exit callbacks for turn.completed + exit(0) flow
+      // and for abnormal exits. The virtual process uses these
+      // to notify session-process of lifecycle changes.
+      for (const cb of this.exitCallbacks) cb(code);
     });
+  }
 
-    transport.onclose = () => {
-      for (const cb of exitCallbacks) cb(0);
-    };
-
-    // Async init chain — catch rejections to prevent unhandled promise crashes.
-    // On failure, fire exitCallbacks(1) so session-process transitions to 'ended'.
-    this.currentTurn = this.connectAndFirstTurn(
-      client,
-      transport,
-      prompt,
-      resumeThreadId,
-      opts,
-    ).catch((err: Error) => {
-      console.error('[CodexAdapter] init failed:', err.message);
-      for (const cb of exitCallbacks) cb(1);
-      void client.close();
-    });
-
+  /**
+   * Build the virtual ManagedProcess that persists across child replacements.
+   */
+  private buildVirtualProcess(): ManagedProcess {
     return {
-      pid: 0, // transport.pid available after connect() resolves
-      tmuxSession: '',
-      stdin: null,
+      pid: this.currentChild?.pid ?? 0,
+      tmuxSession: this.tmuxSessionName,
+      stdin: null, // Codex exec does not accept stdin
       kill: (signal) => {
-        if (signal === 'SIGKILL' && this.transport?.pid) {
-          try {
-            process.kill(-this.transport.pid, 'SIGKILL');
-          } catch {
-            // Process group already dead
-          }
-        } else {
-          void client.close();
+        const cp = this.currentChild;
+        if (!cp?.pid) return;
+        try {
+          process.kill(-cp.pid, signal);
+        } catch {
+          // Process group already dead
         }
       },
       onData: (cb) => this.dataCallbacks.push(cb),
-      onExit: (cb) => exitCallbacks.push(cb),
+      onExit: (cb) => this.exitCallbacks.push(cb),
     };
   }
 
-  private async connectAndFirstTurn(
-    client: Client,
-    transport: StdioClientTransport,
-    prompt: string,
-    resumeThreadId: string | null,
-    opts: SpawnOpts,
-  ): Promise<void> {
-    await client.connect(transport);
-    const toolName = resumeThreadId ? 'codex-reply' : 'codex';
-    await this.runTurnWith(toolName, resumeThreadId, prompt, opts);
-  }
+  /**
+   * Process buffered NDJSON lines, extracting thread ID and thinking state.
+   */
+  private processLines(text: string): void {
+    const combined = this.lineBuffer + text;
+    const lines = combined.split('\n');
+    this.lineBuffer = lines.pop() ?? '';
 
-  private async runTurnWith(
-    tool: 'codex' | 'codex-reply',
-    threadId: string | null,
-    prompt: string,
-    opts: SpawnOpts,
-  ): Promise<void> {
-    this.thinkingCallback?.(true);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('{')) continue;
 
-    const args: Record<string, string> = { prompt };
-    if (threadId) {
-      args.threadId = threadId;
-    } else {
-      args.cwd = opts.cwd;
-    }
+      try {
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        const type = parsed.type as string | undefined;
 
-    if (!this.client) throw new Error('No active MCP client');
-    const result = await this.client.callTool({ name: tool, arguments: args }, undefined, {
-      timeout: opts.timeoutSec * 1000,
-      resetTimeoutOnProgress: true,
-      signal: this.turnAbortController?.signal,
-    });
-
-    this.thinkingCallback?.(false);
-
-    // Emit the full response text to dataCallbacks so session-process can display it.
-    // Also scan for a JSON-encoded threadId on the first turn.
-    const content = result.content as Array<{ type: string; text?: string }>;
-    for (const block of content) {
-      if (block.type === 'text' && block.text) {
-        // Try to extract threadId (Codex embeds it as JSON on first turn)
-        if (!this.threadId) {
-          try {
-            const parsed = JSON.parse(block.text) as { threadId?: string; response?: string };
-            if (parsed.threadId) {
-              this.threadId = parsed.threadId;
-              this.sessionRefCallback?.(this.threadId);
-            }
-            // If the JSON has a separate response field, emit that; otherwise emit the raw text
-            const displayText = parsed.response ?? block.text;
-            for (const cb of this.dataCallbacks) cb(displayText + '\n');
-          } catch {
-            // Plain text response — emit as-is
-            for (const cb of this.dataCallbacks) cb(block.text + '\n');
-          }
-        } else {
-          for (const cb of this.dataCallbacks) cb(block.text + '\n');
+        // Extract thread ID from thread.started
+        if (type === 'thread.started' && parsed.thread_id && !this.threadId) {
+          this.threadId = parsed.thread_id as string;
+          this.sessionRefCallback?.(this.threadId);
         }
+
+        // Thinking state management
+        if (type === 'turn.started') {
+          this.thinkingCallback?.(true);
+        }
+        if (type === 'turn.completed' || type === 'turn.failed') {
+          this.thinkingCallback?.(false);
+        }
+      } catch {
+        // Not valid JSON — skip
       }
     }
   }
 
-  private async runTurn(message: string): Promise<void> {
-    if (!this.client || !this.threadId) {
-      throw new Error('No active Codex MCP session');
+  /**
+   * Kill the current child process (best-effort).
+   */
+  private killCurrentChild(): void {
+    const cp = this.currentChild;
+    if (!cp?.pid) return;
+    try {
+      process.kill(-cp.pid, 'SIGTERM');
+    } catch {
+      // Already dead
     }
-    if (!this.storedOpts) throw new Error('No stored opts for Codex session');
-    await this.runTurnWith('codex-reply', this.threadId, message, this.storedOpts);
+    this.currentChild = null;
   }
 }

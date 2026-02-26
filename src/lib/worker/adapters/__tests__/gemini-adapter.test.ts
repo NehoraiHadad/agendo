@@ -1,19 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 
 const mockStdinWrite = vi.fn((_data: string) => true);
 let mockReadlineEmitter: EventEmitter;
+let mockChildProcess: EventEmitter & {
+  stdin: Writable & { writable: boolean };
+  stdout: Readable;
+  stderr: Readable;
+  pid: number;
+  kill: ReturnType<typeof vi.fn>;
+};
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => {
-    const proc = new EventEmitter() as EventEmitter & {
-      stdin: Writable & { writable: boolean };
-      stdout: Readable;
-      stderr: Readable;
-      pid: number;
-      kill: ReturnType<typeof vi.fn>;
-    };
+    const proc = new EventEmitter() as typeof mockChildProcess;
     proc.stdin = new Writable({
       write(chunk: Buffer, _enc: string, cb: () => void) {
         mockStdinWrite(chunk.toString());
@@ -26,6 +27,7 @@ vi.mock('node:child_process', () => ({
     proc.pid = 99999;
     proc.kill = vi.fn();
     Object.assign(proc, { unref: vi.fn() });
+    mockChildProcess = proc;
     return proc;
   }),
 }));
@@ -39,7 +41,7 @@ vi.mock('node:readline', () => ({
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
-import type { SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts, ImageContent } from '@/lib/worker/adapters/types';
 
 const opts: SpawnOpts = {
   cwd: '/tmp',
@@ -49,9 +51,56 @@ const opts: SpawnOpts = {
   maxOutputBytes: 1024,
 };
 
+/**
+ * Set up an auto-responder that watches for ACP requests and sends
+ * canned responses. This handles the async timing issue where
+ * session/new request is only registered after initialize resolves.
+ */
+function setupAutoResponder(
+  sessionId = 'test-session-123',
+  promptResult: Record<string, unknown> = {},
+): void {
+  mockStdinWrite.mockImplementation((data: string) => {
+    try {
+      const msg = JSON.parse(data) as { id?: number; method?: string };
+      if (msg.method === 'initialize' && msg.id !== undefined) {
+        queueMicrotask(() => {
+          mockReadlineEmitter.emit(
+            'line',
+            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
+          );
+        });
+      } else if (msg.method === 'session/new' && msg.id !== undefined) {
+        queueMicrotask(() => {
+          mockReadlineEmitter.emit(
+            'line',
+            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId } }),
+          );
+        });
+      } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
+        queueMicrotask(() => {
+          mockReadlineEmitter.emit(
+            'line',
+            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: promptResult }),
+          );
+        });
+      }
+    } catch {
+      // Not JSON, ignore
+    }
+    return true;
+  });
+}
+
 describe('GeminiAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset to default (no auto-respond) — tests that need it call setupAutoResponder()
+    mockStdinWrite.mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('spawns gemini with --experimental-acp flag', () => {
@@ -75,8 +124,6 @@ describe('GeminiAdapter', () => {
     const adapter = new GeminiAdapter();
     adapter.spawn('test prompt', opts);
 
-    // The async initAndRun runs synchronously up to the first sendRequest,
-    // which calls writeJson synchronously before awaiting the response.
     expect(mockStdinWrite).toHaveBeenCalled();
     const firstWrite = JSON.parse(mockStdinWrite.mock.calls[0][0]) as Record<string, unknown>;
     expect(firstWrite.method).toBe('initialize');
@@ -95,13 +142,16 @@ describe('GeminiAdapter', () => {
     expect(adapter.extractSessionId('')).toBe('session-xyz');
   });
 
-  it('handles session/update notifications and calls onData callbacks', () => {
+  // ---------------------------------------------------------------------------
+  // NDJSON emission: text and thinking
+  // ---------------------------------------------------------------------------
+
+  it('emits gemini:text NDJSON for agent_message_chunk notifications', () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    // Simulate the server sending a session/update notification (ACP v0.20 format)
     const notification = JSON.stringify({
       jsonrpc: '2.0',
       method: 'session/update',
@@ -114,29 +164,95 @@ describe('GeminiAdapter', () => {
     });
     mockReadlineEmitter.emit('line', notification);
 
-    expect(received).toContain('Hello from Gemini!');
+    expect(received).toHaveLength(1);
+    const parsed = JSON.parse(received[0]) as Record<string, unknown>;
+    expect(parsed.type).toBe('gemini:text');
+    expect(parsed.text).toBe('Hello from Gemini!');
   });
 
-  it('auto-approves session/request_permission server requests', () => {
+  it('emits gemini:thinking NDJSON for agent_thought_chunk notifications', () => {
     const adapter = new GeminiAdapter();
-    adapter.spawn('test prompt', opts);
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
 
-    // Simulate a server-initiated permission request
+    const notification = JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        update: {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'Thinking about it...' },
+        },
+      },
+    });
+    mockReadlineEmitter.emit('line', notification);
+
+    expect(received).toHaveLength(1);
+    const parsed = JSON.parse(received[0]) as Record<string, unknown>;
+    expect(parsed.type).toBe('gemini:thinking');
+    expect(parsed.text).toBe('Thinking about it...');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Turn completion: emits gemini:turn-complete
+  // ---------------------------------------------------------------------------
+
+  it('emits gemini:turn-complete NDJSON after sendPrompt resolves', async () => {
+    const promptResult = { sessionId: 'test-session-123', done: true };
+    setupAutoResponder('test-session-123', promptResult);
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    await vi.waitFor(() => {
+      const turnComplete = received.find((r) => r.includes('gemini:turn-complete'));
+      expect(turnComplete).toBeDefined();
+    });
+
+    const turnComplete = received.find((r) => r.includes('gemini:turn-complete'));
+    const parsed = JSON.parse(turnComplete!) as Record<string, unknown>;
+    expect(parsed.type).toBe('gemini:turn-complete');
+    expect(parsed.result).toEqual(promptResult);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool approval: emits gemini:tool-start and gemini:tool-end
+  // ---------------------------------------------------------------------------
+
+  it('emits gemini:tool-start and gemini:tool-end for permission requests (auto-approve)', () => {
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
     const serverRequest = JSON.stringify({
       jsonrpc: '2.0',
       id: 'srv-req-1',
       method: 'session/request_permission',
-      params: { action: 'run_command', command: 'ls' },
+      params: {
+        toolCall: { title: 'Bash', rawInput: { command: 'ls -la' } },
+        options: [{ kind: 'allow_once', optionId: 'opt-1', name: 'Allow once' }],
+      },
     });
     mockReadlineEmitter.emit('line', serverRequest);
 
-    // Adapter should have written a response back
+    const toolStart = received.find((r) => r.includes('gemini:tool-start'));
+    const toolEnd = received.find((r) => r.includes('gemini:tool-end'));
+    expect(toolStart).toBeDefined();
+    expect(toolEnd).toBeDefined();
+
+    const parsedStart = JSON.parse(toolStart!) as Record<string, unknown>;
+    expect(parsedStart.toolName).toBe('Bash');
+    expect(parsedStart.toolInput).toEqual({ command: 'ls -la' });
+
     const writes = mockStdinWrite.mock.calls.map(
       (c) => JSON.parse(c[0]) as Record<string, unknown>,
     );
     const response = writes.find((w) => w.id === 'srv-req-1' && w.result !== undefined);
     expect(response).toBeDefined();
-    // ACP v0.20: result = { outcome: { outcome: 'selected', optionId } }
     const outcome = (response!.result as Record<string, unknown>).outcome as Record<
       string,
       unknown
@@ -144,14 +260,231 @@ describe('GeminiAdapter', () => {
     expect(outcome.outcome).toBe('selected');
   });
 
+  // ---------------------------------------------------------------------------
+  // mapJsonToEvents delegation
+  // ---------------------------------------------------------------------------
+
+  it('has mapJsonToEvents that delegates to gemini-event-mapper', () => {
+    const adapter = new GeminiAdapter();
+    const result = adapter.mapJsonToEvents!({ type: 'gemini:text', text: 'hi' });
+    expect(result).toEqual([{ type: 'agent:text', text: 'hi' }]);
+  });
+
+  it('mapJsonToEvents maps gemini:turn-complete to agent:result', () => {
+    const adapter = new GeminiAdapter();
+    const result = adapter.mapJsonToEvents!({
+      type: 'gemini:turn-complete',
+      result: {},
+    });
+    expect(result).toEqual([{ type: 'agent:result', costUsd: null, turns: 1, durationMs: null }]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Image support
+  // ---------------------------------------------------------------------------
+
+  it('passes image in sendMessage through to sendPrompt', async () => {
+    setupAutoResponder();
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    // Wait for init+first prompt to finish
+    await vi.waitFor(() => {
+      expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
+    });
+
+    // Replace auto-responder to capture the next prompt request instead of auto-responding
+    let capturedPromptParams: Record<string, unknown> | null = null;
+    mockStdinWrite.mockImplementation((data: string) => {
+      try {
+        const msg = JSON.parse(data) as {
+          id?: number;
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        if (msg.method === 'session/prompt' && msg.id !== undefined) {
+          capturedPromptParams = msg.params ?? null;
+          // Respond to unblock sendMessage
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }),
+            );
+          });
+        }
+      } catch {
+        // Not JSON
+      }
+      return true;
+    });
+
+    const image: ImageContent = { data: 'base64data', mimeType: 'image/png' };
+    await adapter.sendMessage('describe this image', image);
+
+    expect(capturedPromptParams).not.toBeNull();
+    const prompt = capturedPromptParams!.prompt as Array<Record<string, unknown>>;
+    expect(prompt).toHaveLength(2);
+    expect(prompt[0]).toEqual({ type: 'text', text: 'describe this image' });
+    expect(prompt[1]).toEqual({ type: 'image', data: 'base64data', mimeType: 'image/png' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Interrupt escalation
+  // ---------------------------------------------------------------------------
+
+  it('sends cancelRequest on interrupt', async () => {
+    vi.useFakeTimers();
+    const adapter = new GeminiAdapter();
+    adapter.spawn('test prompt', opts);
+
+    const interruptPromise = adapter.interrupt();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    await interruptPromise;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Non-JSON line handling
+  // ---------------------------------------------------------------------------
+
   it('ignores non-JSON stdout lines', () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    // Emit non-JSON debug line — should not throw or add to received
     expect(() => mockReadlineEmitter.emit('line', 'Loading... (debug)')).not.toThrow();
     expect(received).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // isAlive
+  // ---------------------------------------------------------------------------
+
+  it('isAlive returns true when stdin is writable', () => {
+    const adapter = new GeminiAdapter();
+    adapter.spawn('test prompt', opts);
+    expect(adapter.isAlive()).toBe(true);
+  });
+
+  it('isAlive returns false when stdin is not writable', () => {
+    const adapter = new GeminiAdapter();
+    adapter.spawn('test prompt', opts);
+    mockChildProcess.stdin.writable = false;
+    expect(adapter.isAlive()).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // PROMPT_TIMEOUT_MS exists
+  // ---------------------------------------------------------------------------
+
+  it('has a PROMPT_TIMEOUT_MS of 10 minutes', () => {
+    expect(GeminiAdapter.PROMPT_TIMEOUT_MS).toBe(600_000);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Error handling: turn error emission
+  // ---------------------------------------------------------------------------
+
+  it('emits gemini:turn-error when sendPrompt ACP request fails', async () => {
+    // Auto-respond to init, but send error for prompt
+    mockStdinWrite.mockImplementation((data: string) => {
+      try {
+        const msg = JSON.parse(data) as { id?: number; method?: string };
+        if (msg.method === 'initialize' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
+            );
+          });
+        } else if (msg.method === 'session/new' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } }),
+            );
+          });
+        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
+          queueMicrotask(() => {
+            mockReadlineEmitter.emit(
+              'line',
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                error: { code: -32000, message: 'Context length exceeded' },
+              }),
+            );
+          });
+        }
+      } catch {
+        // Not JSON
+      }
+      return true;
+    });
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('test prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    await vi.waitFor(() => {
+      const turnError = received.find((r) => r.includes('gemini:turn-error'));
+      expect(turnError).toBeDefined();
+    });
+
+    const turnError = received.find((r) => r.includes('gemini:turn-error'));
+    const parsed = JSON.parse(turnError!) as Record<string, unknown>;
+    expect(parsed.type).toBe('gemini:turn-error');
+    expect(parsed.message).toContain('Context length exceeded');
+  });
+
+  // ---------------------------------------------------------------------------
+  // onThinkingChange callback
+  // ---------------------------------------------------------------------------
+
+  it('calls thinkingCallback(true) before prompt and thinkingCallback(false) after', async () => {
+    setupAutoResponder();
+
+    const adapter = new GeminiAdapter();
+    const thinkingStates: boolean[] = [];
+    adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
+    adapter.spawn('test prompt', opts);
+
+    await vi.waitFor(() => {
+      expect(thinkingStates).toContain(true);
+      expect(thinkingStates).toContain(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Multi-turn: sendMessage after init completes
+  // ---------------------------------------------------------------------------
+
+  it('supports multi-turn conversation via sendMessage', async () => {
+    setupAutoResponder();
+
+    const adapter = new GeminiAdapter();
+    const received: string[] = [];
+    const proc = adapter.spawn('first prompt', opts);
+    proc.onData((chunk) => received.push(chunk));
+
+    // Wait for initial turn to complete
+    await vi.waitFor(() => {
+      expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
+    });
+
+    // Send a second message
+    received.length = 0; // clear
+    await adapter.sendMessage('second message');
+
+    // Should have emitted another turn-complete
+    expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
   });
 });
