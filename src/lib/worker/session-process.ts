@@ -250,6 +250,8 @@ export class SessionProcess {
       sessionId: this.session.id,
       // Only use our MCP servers when an MCP config is provided
       strictMcpConfig: !!mcpConfigPath,
+      // Forward model if set on the session (e.g. from DB or API)
+      ...(this.session.model ? { model: this.session.model } : {}),
       // TODO: wire maxBudgetUsd and fallbackModel when session config supports them
     };
 

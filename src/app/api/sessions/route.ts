@@ -15,6 +15,7 @@ const createSessionSchema = z.object({
   initialPrompt: z.string().optional(),
   permissionMode: z.enum(['default', 'bypassPermissions', 'acceptEdits']).optional(),
   allowedTools: z.array(z.string()).optional(),
+  model: z.string().optional(),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -58,6 +59,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     initialPrompt: body.initialPrompt,
     permissionMode: body.permissionMode,
     allowedTools: body.allowedTools,
+    model: body.model,
   });
 
   await enqueueSession({ sessionId: session.id });

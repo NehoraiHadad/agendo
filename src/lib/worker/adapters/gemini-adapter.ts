@@ -137,7 +137,13 @@ export class GeminiAdapter implements AgentAdapter {
     const exitCallbacks: Array<(code: number | null) => void> = [];
     this.dataCallbacks = dataCallbacks;
 
-    const cp = nodeSpawn('gemini', ['--experimental-acp', ...(opts.extraArgs ?? [])], {
+    const geminiArgs = ['--experimental-acp'];
+    if (opts.model) {
+      geminiArgs.push('-m', opts.model);
+    }
+    geminiArgs.push(...(opts.extraArgs ?? []));
+
+    const cp = nodeSpawn('gemini', geminiArgs, {
       cwd: opts.cwd,
       env: opts.env as NodeJS.ProcessEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
