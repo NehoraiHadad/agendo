@@ -457,14 +457,17 @@ export class SessionProcess {
 
           // Persist sessionRef and model once the agent announces its session ID.
           if (event.type === 'session:init') {
-            this.sessionRef = event.sessionRef;
-            await db
-              .update(sessions)
-              .set({
-                sessionRef: event.sessionRef,
-                ...(event.model ? { model: event.model } : {}),
-              })
-              .where(eq(sessions.id, this.session.id));
+            const updates: Record<string, string> = {};
+            if (event.sessionRef) {
+              this.sessionRef = event.sessionRef;
+              updates.sessionRef = event.sessionRef;
+            }
+            if (event.model) {
+              updates.model = event.model;
+            }
+            if (Object.keys(updates).length > 0) {
+              await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
+            }
           }
 
           // After the agent finishes a result, transition to awaiting_input.

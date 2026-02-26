@@ -549,6 +549,11 @@ export class GeminiAdapter implements AgentAdapter {
       throw err;
     }
 
+    // Emit init event with model and sessionId so the frontend can display them.
+    if (this.sessionId && opts.model) {
+      this.emitNdjson({ type: 'gemini:init', model: opts.model, sessionId: this.sessionId });
+    }
+
     // 3. First prompt — sendPrompt emits its own error events on failure.
     await this.sendPrompt(prompt);
   }

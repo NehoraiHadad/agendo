@@ -68,7 +68,8 @@ export type CodexEvent =
       };
     }
   | { type: 'turn.failed'; error: { message: string; code?: string } }
-  | { type: 'error'; error?: { message: string }; message?: string };
+  | { type: 'error'; error?: { message: string }; message?: string }
+  | { type: 'codex:init'; model: string };
 
 // ---------------------------------------------------------------------------
 // Tool item types that produce tool-start/tool-end events
@@ -127,6 +128,20 @@ export function mapCodexJsonToEvents(event: CodexEvent): AgendoEventPayload[] {
           sessionRef: event.thread_id,
           slashCommands: [],
           mcpServers: [],
+        },
+      ];
+
+    // -----------------------------------------------------------------------
+    // codex:init → session:init with model (synthetic, emitted by adapter)
+    // -----------------------------------------------------------------------
+    case 'codex:init':
+      return [
+        {
+          type: 'session:init',
+          sessionRef: '',
+          slashCommands: [],
+          mcpServers: [],
+          model: event.model,
         },
       ];
 
