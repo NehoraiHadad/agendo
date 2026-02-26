@@ -13,6 +13,7 @@ interface CodexItemBase {
   type: string;
   id?: string;
   call_id?: string;
+  text?: string;
   content?: CodexContentBlock[];
 }
 
@@ -24,15 +25,17 @@ interface CodexCommandItem extends CodexItemBase {
   stderr?: string;
 }
 
-interface CodexFileSearchItem extends CodexItemBase {
-  type: 'file_search';
-  results?: string[];
+interface CodexFileChangeItem extends CodexItemBase {
+  type: 'file_change';
+  changes?: Array<{ path: string; kind: string }>;
+  status?: string;
 }
 
-interface CodexMcpCallItem extends CodexItemBase {
-  type: 'mcp_call';
-  name?: string;
-  arguments?: string;
+interface CodexMcpToolCallItem extends CodexItemBase {
+  type: 'mcp_tool_call';
+  server?: string;
+  tool?: string;
+  status?: string;
 }
 
 interface CodexReasoningItem extends CodexItemBase {
@@ -45,8 +48,8 @@ interface CodexAgentMessageItem extends CodexItemBase {
 
 type CodexItem =
   | CodexCommandItem
-  | CodexFileSearchItem
-  | CodexMcpCallItem
+  | CodexFileChangeItem
+  | CodexMcpToolCallItem
   | CodexReasoningItem
   | CodexAgentMessageItem
   | CodexItemBase;
@@ -71,16 +74,16 @@ export type CodexEvent =
 // Tool item types that produce tool-start/tool-end events
 // ---------------------------------------------------------------------------
 
-const TOOL_ITEM_TYPES = new Set(['command_execution', 'file_search', 'mcp_call']);
+const TOOL_ITEM_TYPES = new Set(['command_execution', 'file_change', 'mcp_tool_call']);
 
 function toolNameForItem(item: CodexItem): string {
   switch (item.type) {
     case 'command_execution':
       return 'Bash';
-    case 'file_search':
-      return 'FileSearch';
-    case 'mcp_call':
-      return (item as CodexMcpCallItem).name ?? 'MCP';
+    case 'file_change':
+      return 'FileChange';
+    case 'mcp_tool_call':
+      return (item as CodexMcpToolCallItem).tool ?? 'MCP';
     default:
       return item.type;
   }
@@ -92,16 +95,16 @@ function toolInputForItem(item: CodexItem): Record<string, unknown> {
       const cmd = item as CodexCommandItem;
       return cmd.command ? { command: cmd.command } : {};
     }
-    case 'mcp_call': {
-      const mcp = item as CodexMcpCallItem;
-      if (mcp.arguments) {
-        try {
-          return JSON.parse(mcp.arguments) as Record<string, unknown>;
-        } catch {
-          return { arguments: mcp.arguments };
-        }
-      }
-      return {};
+    case 'file_change': {
+      const fc = item as CodexFileChangeItem;
+      return fc.changes ? { changes: fc.changes } : {};
+    }
+    case 'mcp_tool_call': {
+      const mcp = item as CodexMcpToolCallItem;
+      const input: Record<string, unknown> = {};
+      if (mcp.server) input.server = mcp.server;
+      if (mcp.tool) input.tool = mcp.tool;
+      return input;
     }
     default:
       return {};
@@ -157,17 +160,31 @@ export function mapCodexJsonToEvents(event: CodexEvent): AgendoEventPayload[] {
 
       // reasoning → agent:thinking
       if (item.type === 'reasoning') {
+        // Prefer top-level item.text (official JSONL format)
+        if (typeof item.text === 'string' && item.text) {
+          return [{ type: 'agent:thinking', text: item.text }];
+        }
+        // Fall back to content array
         const texts = (item.content ?? [])
           .filter((b) => typeof b.text === 'string')
           .map((b) => b.text as string);
+        if (texts.length === 0) return [];
         return [{ type: 'agent:thinking', text: texts.join('\n') }];
       }
 
       // agent_message → agent:text
       if (item.type === 'agent_message') {
+        // Prefer top-level item.text (official JSONL format)
+        if (typeof item.text === 'string' && item.text) {
+          return [{ type: 'agent:text', text: item.text }];
+        }
+        // Fall back to content array (accept both output_text and text block types)
         const texts = (item.content ?? [])
-          .filter((b) => b.type === 'output_text' && typeof b.text === 'string')
+          .filter(
+            (b) => (b.type === 'output_text' || b.type === 'text') && typeof b.text === 'string',
+          )
           .map((b) => b.text as string);
+        if (texts.length === 0) return [];
         return [{ type: 'agent:text', text: texts.join('\n') }];
       }
 
@@ -192,21 +209,22 @@ export function mapCodexJsonToEvents(event: CodexEvent): AgendoEventPayload[] {
         ];
       }
 
-      // file_search → agent:tool-end
-      if (item.type === 'file_search') {
-        const fs = item as CodexFileSearchItem;
+      // file_change → agent:tool-end
+      if (item.type === 'file_change') {
+        const fc = item as CodexFileChangeItem;
+        const content = fc.changes ? fc.changes.map((c) => `${c.kind}: ${c.path}`).join('\n') : '';
         return [
           {
             type: 'agent:tool-end',
-            toolUseId: fs.call_id ?? fs.id ?? '',
-            content: JSON.stringify(fs.results ?? []),
+            toolUseId: fc.call_id ?? fc.id ?? '',
+            content,
           },
         ];
       }
 
-      // mcp_call → agent:tool-end
-      if (item.type === 'mcp_call') {
-        const mcp = item as CodexMcpCallItem;
+      // mcp_tool_call → agent:tool-end
+      if (item.type === 'mcp_tool_call') {
+        const mcp = item as CodexMcpToolCallItem;
         const texts = (mcp.content ?? [])
           .filter((b) => typeof b.text === 'string')
           .map((b) => b.text as string);

@@ -351,6 +351,10 @@ export class ClaudeAdapter implements AgentAdapter {
       '--include-partial-messages',
       '--permission-mode',
       opts.permissionMode ?? 'default',
+      // Emit tool approval requests as control_request events on stdout
+      // (required by Agent SDK convention for programmatic tool approval handling)
+      '--permission-prompt-tool',
+      'stdio',
       // Budget limit — Claude stops when exceeded
       ...(opts.maxBudgetUsd != null ? ['--max-budget-usd', String(opts.maxBudgetUsd)] : []),
       // Fallback model for overload resilience
