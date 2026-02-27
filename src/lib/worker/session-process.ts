@@ -991,17 +991,26 @@ export class SessionProcess {
   // Private: permission mode change (graceful restart with new mode)
   // ---------------------------------------------------------------------------
 
+  /** Human-readable labels for permission modes. */
+  private static readonly MODE_LABELS: Record<string, string> = {
+    plan: 'Plan — agent presents a plan before executing',
+    default: 'Approve — each tool requires your approval',
+    acceptEdits: 'Edit Only — file edits auto-approved, bash needs approval',
+    bypassPermissions: 'Auto — all tools auto-approved',
+    dontAsk: 'Auto — all tools auto-approved',
+  };
+
   /**
    * Handle a set-permission-mode control: update in-memory session state and DB,
-   * emit a system:info event visible in the chat, then terminate the process.
-   * Because terminateKilled=true, onExit transitions to 'idle' (not 'ended'),
-   * and modeChangeRestart=true causes onExit to immediately re-enqueue the
-   * session so it cold-resumes with the new --permission-mode flag.
+   * emit a system:info event visible in the chat. If the adapter supports
+   * in-place mode switching, use it (no restart). Otherwise fall back to
+   * killing and cold-resuming with the new flags.
    */
   private async handleSetPermissionMode(
     mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
   ): Promise<void> {
     this.session.permissionMode = mode;
+    const label = SessionProcess.MODE_LABELS[mode] ?? mode;
 
     // Try in-place mode change via control_request (no process restart).
     if (this.adapter.setPermissionMode) {
@@ -1014,7 +1023,7 @@ export class SessionProcess {
             .where(eq(sessions.id, this.session.id));
           await this.emitEvent({
             type: 'system:info',
-            message: `Permission mode changed to "${mode}".`,
+            message: `Permission mode \u2192 ${label}.`,
           });
           return;
         }
@@ -1029,7 +1038,7 @@ export class SessionProcess {
     // Fallback: kill and restart with new mode.
     await this.emitEvent({
       type: 'system:info',
-      message: `Permission mode changing to "${mode}". Session will restart automatically.`,
+      message: `Permission mode \u2192 ${label}. Session will restart automatically.`,
     });
     this.modeChangeRestart = true;
     // terminateKilled=true ensures onExit transitions to 'idle' (not 'ended').
