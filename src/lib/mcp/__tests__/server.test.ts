@@ -508,12 +508,14 @@ describe('handleCreateSubtask — implicit env context', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleGetMyTask', () => {
-  it('throws when AGENDO_TASK_ID is not set', async () => {
+  it('returns guidance message when AGENDO_TASK_ID is not set', async () => {
     delete process.env.AGENDO_TASK_ID;
 
-    await expect(handleGetMyTask()).rejects.toThrow(
-      'No task assigned to this session (AGENDO_TASK_ID not set)',
-    );
+    const result = await handleGetMyTask();
+    expect(result).toEqual({
+      message:
+        'This is a planning conversation with no assigned task. Use create_task to create tasks.',
+    });
   });
 
   it('calls GET /api/tasks/:id using AGENDO_TASK_ID', async () => {
