@@ -132,8 +132,8 @@ export class SessionProcess {
   private static readonly DELTA_FLUSH_MS = 200;
   /** Team inbox monitor — non-null only when this session is a team leader. */
   private teamInboxMonitor: TeamInboxMonitor | null = null;
-  /** Periodic timer that scans for a team config until one is found. */
-  private teamDetectionTimer: ReturnType<typeof setInterval> | null = null;
+  /** tool_use ID of a pending TeamCreate call — attach monitor when it completes. */
+  private pendingTeamCreateId: string | null = null;
 
   constructor(
     private session: Session,
@@ -330,23 +330,40 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   /**
-   * Start periodic team detection. Teams are created AFTER the session starts
-   * (during the agent's first turn), so we poll every 10s until a team config
-   * is found on disk. For cold-resume, the team may already exist — we try
-   * immediately first.
+   * Called once at session start. Attaches a team monitor immediately if a team
+   * already exists on disk (cold-resume). Otherwise, team detection is event-driven:
+   * `onToolEvent()` watches for TeamCreate/TeamDelete in the agent's NDJSON stream.
    */
   private startTeamDetection(): void {
-    // Try immediately (handles cold-resume where team already exists on disk)
-    if (this.tryAttachTeamMonitor()) return;
+    this.tryAttachTeamMonitor();
+  }
 
-    // Poll every 10s until a team is found or session exits
-    const timer = setInterval(() => {
-      if (this.tryAttachTeamMonitor()) {
-        clearInterval(timer);
-        this.teamDetectionTimer = null;
+  /**
+   * React to team-related tool events from the agent's NDJSON output.
+   * Called from the event processing loop for every tool-start and tool-end.
+   */
+  private onToolEvent(event: AgendoEventPayload): void {
+    if (event.type === 'agent:tool-start' && event.toolName === 'TeamCreate') {
+      this.pendingTeamCreateId = event.toolUseId;
+    }
+    if (event.type === 'agent:tool-end' && this.pendingTeamCreateId === event.toolUseId) {
+      this.pendingTeamCreateId = null;
+      this.tryAttachTeamMonitor();
+    }
+    if (event.type === 'agent:tool-start' && event.toolName === 'TeamDelete') {
+      if (this.teamInboxMonitor) {
+        console.log(
+          `[session-process] TeamDelete detected — detaching team monitor for session ${this.session.id}`,
+        );
+        void this.emitEvent({
+          type: 'system:info',
+          message: 'Team deleted — normal idle timeout restored.',
+        });
+        this.teamInboxMonitor.stopPolling();
+        this.teamInboxMonitor = null;
+        this.resetIdleTimer();
       }
-    }, 10_000);
-    this.teamDetectionTimer = timer;
+    }
   }
 
   /**
@@ -528,6 +545,11 @@ export class SessionProcess {
           }
           if (event.type === 'agent:tool-end') {
             this.activeToolUseIds.delete(event.toolUseId);
+          }
+
+          // Detect TeamCreate / TeamDelete tool events for team lifecycle.
+          if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
+            this.onToolEvent(event);
           }
 
           // Persist sessionRef and model once the agent announces its session ID.
@@ -1479,11 +1501,7 @@ export class SessionProcess {
     this.sigkillTimers = [];
     // Drain any approval promises so blocked adapters unblock immediately.
     this.drainPendingApprovals('deny');
-    // Stop team detection polling and inbox monitoring.
-    if (this.teamDetectionTimer) {
-      clearInterval(this.teamDetectionTimer);
-      this.teamDetectionTimer = null;
-    }
+    // Stop team inbox monitoring.
     this.teamInboxMonitor?.stopPolling();
     this.teamInboxMonitor = null;
     // Unsubscribe from the control channel to release the pg pool connection.
