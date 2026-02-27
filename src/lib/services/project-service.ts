@@ -1,8 +1,10 @@
 import { eq } from 'drizzle-orm';
-import { access } from 'node:fs/promises';
+import { access, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { db } from '@/lib/db';
+import { allowedWorkingDirs } from '@/lib/config';
 import { projects, tasks } from '@/lib/db/schema';
-import { NotFoundError } from '@/lib/errors';
+import { NotFoundError, ValidationError } from '@/lib/errors';
 import type { Project } from '@/lib/types';
 
 // --- Types ---
@@ -14,6 +16,7 @@ export interface CreateProjectInput {
   envOverrides?: Record<string, string>;
   color?: string;
   icon?: string;
+  createDir?: boolean;
 }
 
 export interface UpdateProjectInput {
@@ -44,11 +47,25 @@ export async function getProject(id: string): Promise<Project> {
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
-  // Validate rootPath exists on disk before inserting.
+  const normalized = resolve(input.rootPath);
+
   try {
-    await access(input.rootPath);
+    await access(normalized);
   } catch {
-    throw new Error(`rootPath does not exist on disk: ${input.rootPath}`);
+    if (input.createDir) {
+      // Verify path is under an allowed directory before creating
+      const isAllowed = allowedWorkingDirs.some(
+        (allowed) => normalized === allowed || normalized.startsWith(allowed + '/'),
+      );
+      if (!isAllowed) {
+        throw new ValidationError(
+          `Cannot create directory outside allowed paths: ${allowedWorkingDirs.join(', ')}`,
+        );
+      }
+      await mkdir(normalized, { recursive: true });
+    } else {
+      throw new Error(`rootPath does not exist on disk: ${normalized}`);
+    }
   }
 
   const [project] = await db
@@ -56,7 +73,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     .values({
       name: input.name,
       description: input.description,
-      rootPath: input.rootPath,
+      rootPath: normalized,
       envOverrides: input.envOverrides ?? {},
       color: input.color ?? '#6366f1',
       icon: input.icon,
@@ -94,13 +111,24 @@ export async function deleteProject(id: string): Promise<void> {
   // Soft-delete: Tasks retain their projectId. They are hidden from the board via a JOIN filter on
   // projects.is_active. SET NULL FK cascade fires only on hard-delete (purge).
   // Do NOT use getProject() here — it rejects inactive projects, causing 404 on double-delete.
-  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  const [existing] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
   if (!existing) throw new NotFoundError('Project', id);
-  await db.update(projects).set({ isActive: false, updatedAt: new Date() }).where(eq(projects.id, id));
+  await db
+    .update(projects)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(projects.id, id));
 }
 
 export async function restoreProject(id: string): Promise<Project> {
-  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  const [existing] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
   if (!existing) throw new NotFoundError('Project', id);
   const [restored] = await db
     .update(projects)
@@ -115,7 +143,11 @@ export interface PurgeProjectOptions {
 }
 
 export async function purgeProject(id: string, options: PurgeProjectOptions = {}): Promise<void> {
-  const [existing] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, id)).limit(1);
+  const [existing] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
   if (!existing) throw new NotFoundError('Project', id);
   if (options.withTasks) {
     await db.delete(tasks).where(eq(tasks.projectId, id));

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Folder, Loader2, Plus, Search } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Check, Folder, FolderPlus, Loader2, Plus, Search, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,6 +36,15 @@ interface DiscoveredProject {
   type: 'git' | 'node' | 'python' | 'rust' | 'go' | 'other';
 }
 
+type PathStatus = 'idle' | 'checking' | 'exists' | 'creatable' | 'denied';
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 interface ProjectCreateDialogProps {
   onCreated: (project: Project) => void;
 }
@@ -52,6 +61,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const [discovering, setDiscovering] = useState(false);
   const [suggestions, setSuggestions] = useState<DiscoveredProject[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [pathStatus, setPathStatus] = useState<PathStatus>('idle');
+  const [pathDeniedReason, setPathDeniedReason] = useState('');
+  const [pathTouched, setPathTouched] = useState(false);
+  const checkAbortRef = useRef<AbortController | null>(null);
 
   function reset() {
     setName('');
@@ -62,7 +75,56 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
     setError(null);
     setSuggestions([]);
     setShowSuggestions(false);
+    setPathStatus('idle');
+    setPathDeniedReason('');
+    setPathTouched(false);
   }
+
+  // Auto-suggest rootPath from project name
+  useEffect(() => {
+    if (pathTouched || !name.trim()) return;
+    const slug = slugify(name);
+    if (slug) {
+      setRootPath(`/home/ubuntu/projects/${slug}`);
+    } else {
+      setRootPath('');
+    }
+  }, [name, pathTouched]);
+
+  // Debounced path check
+  useEffect(() => {
+    if (!rootPath || !rootPath.startsWith('/')) {
+      setPathStatus('idle');
+      setPathDeniedReason('');
+      return;
+    }
+
+    setPathStatus('checking');
+    const timer = setTimeout(async () => {
+      checkAbortRef.current?.abort();
+      const controller = new AbortController();
+      checkAbortRef.current = controller;
+
+      try {
+        const res = await fetch(`/api/projects/check-path?path=${encodeURIComponent(rootPath)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('Check failed');
+        const json = (await res.json()) as {
+          data: { status: PathStatus; reason?: string };
+        };
+        setPathStatus(json.data.status);
+        setPathDeniedReason(json.data.reason ?? '');
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setPathStatus('idle');
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [rootPath]);
 
   async function handleDiscover() {
     setDiscovering(true);
@@ -81,6 +143,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
 
   function handleSelectSuggestion(suggestion: DiscoveredProject) {
     setRootPath(suggestion.path);
+    setPathTouched(true);
     if (!name.trim()) setName(suggestion.name);
     setShowSuggestions(false);
   }
@@ -101,6 +164,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
           description: description.trim() || undefined,
           color,
           icon: icon.trim() || undefined,
+          createDir: pathStatus === 'creatable',
         }),
       });
       onCreated(res.data);
@@ -113,8 +177,21 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
     }
   }
 
+  const isCreateDisabled =
+    !name.trim() ||
+    !rootPath.trim() ||
+    isSubmitting ||
+    pathStatus === 'denied' ||
+    pathStatus === 'checking';
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) reset();
+      }}
+    >
       <DialogTrigger asChild>
         <Button>
           <Plus className="size-4 mr-2" />
@@ -144,7 +221,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
               <Input
                 id="proj-path"
                 value={rootPath}
-                onChange={(e) => setRootPath(e.target.value)}
+                onChange={(e) => {
+                  setRootPath(e.target.value);
+                  setPathTouched(true);
+                }}
                 placeholder="/home/ubuntu/projects/myapp"
                 required
                 className="flex-1 font-mono text-sm"
@@ -173,7 +253,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
                       No new projects found
                     </p>
                   ) : (
-                    <ul className="max-h-60 overflow-y-auto" onTouchMove={(e) => e.stopPropagation()}>
+                    <ul
+                      className="max-h-60 overflow-y-auto"
+                      onTouchMove={(e) => e.stopPropagation()}
+                    >
                       {suggestions.map((s) => (
                         <li key={s.path}>
                           <button
@@ -184,7 +267,9 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
                             <Folder className="size-4 shrink-0 text-muted-foreground" />
                             <div className="min-w-0">
                               <p className="font-medium truncate">{s.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono truncate">{s.path}</p>
+                              <p className="text-xs text-muted-foreground font-mono truncate">
+                                {s.path}
+                              </p>
                             </div>
                           </button>
                         </li>
@@ -194,12 +279,36 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
                 </PopoverContent>
               </Popover>
             </div>
+            {/* Path status indicator */}
+            {pathStatus === 'checking' && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                Checking path...
+              </p>
+            )}
+            {pathStatus === 'exists' && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Check className="size-3" />
+                Directory exists
+              </p>
+            )}
+            {pathStatus === 'creatable' && (
+              <p className="flex items-center gap-1.5 text-xs text-blue-400">
+                <FolderPlus className="size-3" />
+                Directory will be created
+              </p>
+            )}
+            {pathStatus === 'denied' && (
+              <p className="flex items-center gap-1.5 text-xs text-destructive">
+                <XCircle className="size-3" />
+                {pathDeniedReason || 'Path not allowed'}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="proj-desc">
-              Description{' '}
-              <span className="font-normal text-muted-foreground">(optional)</span>
+              Description <span className="font-normal text-muted-foreground">(optional)</span>
             </Label>
             <Textarea
               id="proj-desc"
@@ -233,8 +342,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
 
           <div className="space-y-2">
             <Label htmlFor="proj-icon">
-              Icon{' '}
-              <span className="font-normal text-muted-foreground">(optional emoji)</span>
+              Icon <span className="font-normal text-muted-foreground">(optional emoji)</span>
             </Label>
             <Input
               id="proj-icon"
@@ -249,13 +357,15 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
-            <Button type="submit" disabled={!name.trim() || !rootPath.trim() || isSubmitting}>
+            <Button type="submit" disabled={isCreateDisabled}>
               {isSubmitting ? (
                 <Loader2 className="size-4 mr-2 animate-spin" />
+              ) : pathStatus === 'creatable' ? (
+                <FolderPlus className="size-4 mr-2" />
               ) : (
                 <Plus className="size-4 mr-2" />
               )}
-              Create Project
+              {pathStatus === 'creatable' ? 'Create Project & Directory' : 'Create Project'}
             </Button>
           </DialogFooter>
         </form>

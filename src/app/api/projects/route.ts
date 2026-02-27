@@ -9,15 +9,19 @@ const createProjectSchema = z.object({
   description: z.string().max(1000).optional(),
   rootPath: z.string().min(1),
   envOverrides: z.record(z.string()).optional(),
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
   icon: z.string().max(50).optional(),
+  createDir: z.boolean().optional().default(false),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
   const url = new URL(req.url);
   const isActiveParam = url.searchParams.get('isActive');
 
-  let isActive: boolean | undefined = true;  // default: active only
+  let isActive: boolean | undefined = true; // default: active only
   if (isActiveParam === 'false') isActive = false;
   else if (isActiveParam === 'all') isActive = undefined;
 
