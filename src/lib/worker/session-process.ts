@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
@@ -28,6 +28,7 @@ import type {
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
+import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 
 const SIGKILL_DELAY_MS = 5_000;
 
@@ -72,6 +73,10 @@ export class SessionProcess {
   private cancelKilled = false;
   /** Set by handleSetPermissionMode() so onExit re-enqueues for immediate restart. */
   private modeChangeRestart = false;
+  /** Set by clearContextRestart (ExitPlanMode option 1): deny tool, kill, restart fresh. */
+  private clearContextRestart = false;
+  /** Stored cwd for plan file reading during clearContextRestart. */
+  private spawnCwd: string | null = null;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
   private sigkillTimers: ReturnType<typeof setTimeout>[] = [];
   /** Periodic MCP health check timer — checks for disconnected MCP servers. */
@@ -168,7 +173,12 @@ export class SessionProcess {
     // reconciler's new job both claimed the same session concurrently.
     const [claimed] = await db
       .update(sessions)
-      .set({ status: 'active', workerId: this.workerId, startedAt: new Date() })
+      .set({
+        status: 'active',
+        workerId: this.workerId,
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+      })
       .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
       .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
 
@@ -234,8 +244,9 @@ export class SessionProcess {
       childEnv['AGENDO_TASK_ID'] = this.session.taskId;
     }
 
+    this.spawnCwd = spawnCwd ?? '/tmp';
     const spawnOpts: SpawnOpts = {
-      cwd: spawnCwd ?? '/tmp',
+      cwd: this.spawnCwd,
       env: childEnv,
       executionId: this.session.id,
       timeoutSec: this.session.idleTimeoutSec,
@@ -852,14 +863,87 @@ export class SessionProcess {
       const resolver = this.pendingApprovals.get(control.approvalId);
       if (resolver) {
         this.pendingApprovals.delete(control.approvalId);
+
+        // ---------------------------------------------------------------
+        // ExitPlanMode Option 1: clear context + restart fresh
+        // Identical to the CLI TUI behavior: deny the tool, read plan
+        // content, kill process, restart with plan as initialPrompt.
+        // ---------------------------------------------------------------
+        if (control.clearContextRestart) {
+          resolver('deny');
+
+          // Read plan content from the stored plan_file_path in DB
+          const planContent = await this.readPlanFromFile();
+          const newMode = control.postApprovalMode ?? 'acceptEdits';
+          const initialPrompt = planContent
+            ? `Implement the following plan:\n\n${planContent}`
+            : 'Continue implementing the plan from the previous conversation.';
+
+          // Update DB: clear sessionRef so re-enqueue spawns fresh (not resume),
+          // set new initialPrompt and permissionMode.
+          await db
+            .update(sessions)
+            .set({
+              sessionRef: null,
+              initialPrompt,
+              permissionMode: newMode,
+            })
+            .where(eq(sessions.id, this.session.id));
+
+          await this.emitEvent({
+            type: 'system:info',
+            message: `Plan approved — clearing context and restarting with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
+          });
+
+          // Kill process → onExit will re-enqueue without resumeRef.
+          this.clearContextRestart = true;
+          this.terminateKilled = true;
+          this.drainPendingApprovals('deny');
+          this.managedProcess?.kill('SIGTERM');
+          const t = setTimeout(() => {
+            this.managedProcess?.kill('SIGKILL');
+          }, SIGKILL_DELAY_MS);
+          this.sigkillTimers.push(t);
+          return;
+        }
+
         // If the user edited the tool input before approving, pass through updatedInput.
         const decision: PermissionDecision =
           control.decision === 'allow' && control.updatedInput
             ? { behavior: 'allow', updatedInput: control.updatedInput }
             : control.decision;
         resolver(decision);
+
         if (control.decision === 'allow-session') {
           await this.persistAllowedTool(control.toolName);
+        }
+
+        // ExitPlanMode side-effects: apply AFTER resolving the approval so the
+        // control_response reaches Claude first (otherwise set_permission_mode
+        // control_request times out while Claude waits for the tool response).
+        if (control.decision === 'allow') {
+          if (control.postApprovalMode) {
+            // Small delay to let the allow response reach Claude before sending
+            // the set_permission_mode control_request on the same stdin pipe.
+            setTimeout(() => {
+              this.handleSetPermissionMode(
+                control.postApprovalMode as 'default' | 'acceptEdits',
+              ).catch((err: unknown) => {
+                console.warn('[session-process] post-approval mode change failed:', err);
+              });
+            }, 500);
+          }
+          if (control.postApprovalCompact) {
+            // Compact after a delay to let both the allow response and mode change settle.
+            setTimeout(
+              () => {
+                this.pushMessage('/compact').catch((err: unknown) => {
+                  console.warn('[session-process] post-approval compact failed:', err);
+                });
+              },
+              control.postApprovalMode ? 2000 : 500,
+            );
+          }
         }
       }
     } else if (control.type === 'tool-result') {
@@ -1091,6 +1175,54 @@ export class SessionProcess {
   }
 
   // ---------------------------------------------------------------------------
+  // Private: plan file path capture for clearContextRestart
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Eagerly find the plan file in ~/.claude/plans/ (most recently modified .md)
+   * and persist its path to the DB. Called when ExitPlanMode fires (session is
+   * still active) so the plan path is available even if the session goes idle
+   * before the user clicks "clear context".
+   */
+  private async capturePlanFilePath(): Promise<void> {
+    const homePlansDir = join(process.env.HOME ?? '/home/ubuntu', '.claude', 'plans');
+    try {
+      const files = readdirSync(homePlansDir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => ({ name: f, mtime: statSync(join(homePlansDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+      if (files.length === 0) return;
+      const planFilePath = join(homePlansDir, files[0].name);
+      await db.update(sessions).set({ planFilePath }).where(eq(sessions.id, this.session.id));
+      console.log(
+        `[session-process] Stored plan_file_path for session ${this.session.id}: ${planFilePath}`,
+      );
+    } catch (err) {
+      console.warn(`[session-process] Failed to capture plan file path:`, err);
+    }
+  }
+
+  /**
+   * Read plan content from the stored plan_file_path in the DB.
+   */
+  private async readPlanFromFile(): Promise<string | null> {
+    try {
+      const [row] = await db
+        .select({ planFilePath: sessions.planFilePath })
+        .from(sessions)
+        .where(eq(sessions.id, this.session.id));
+      if (!row?.planFilePath) return null;
+      const content = readFileSync(row.planFilePath, 'utf-8').trim();
+      if (!content) return null;
+      console.log(`[session-process] Read plan from ${row.planFilePath} (${content.length} chars)`);
+      return content;
+    } catch (err) {
+      console.warn(`[session-process] Failed to read plan from DB path:`, err);
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Private: soft interrupt (Stop — process stays alive)
   // ---------------------------------------------------------------------------
 
@@ -1173,6 +1305,9 @@ export class SessionProcess {
       console.log(
         `[session-process] awaiting_input session ${this.session.id} elapsed=${elapsedSec}s — slot released`,
       );
+      // Session completed a turn — reset the zombie recovery counter so it
+      // doesn't count previous restarts against future auto-recovery attempts.
+      resetRecoveryCount(this.session.id);
       // Resolve the slot future so the pg-boss slot frees while the process
       // stays alive in-memory awaiting the next user message.
       this.slotReleaseFuture.resolve();
@@ -1332,6 +1467,19 @@ export class SessionProcess {
           );
         },
       );
+    }
+
+    // Clear-context restart (ExitPlanMode option 1): re-enqueue WITHOUT resumeRef
+    // so the session-runner calls adapter.spawn() (not resume) → fresh conversation.
+    // DB was already updated (sessionRef=null, new initialPrompt, new permissionMode)
+    // in the tool-approval handler before killing the process.
+    if (this.clearContextRestart) {
+      enqueueSession({ sessionId: this.session.id }).catch((err: unknown) => {
+        console.error(
+          `[session-process] Failed to re-enqueue session ${this.session.id} after clear-context restart:`,
+          err,
+        );
+      });
     }
 
     if (this.logWriter) {
@@ -1548,6 +1696,14 @@ export class SessionProcess {
       this.pendingApprovalsByTool.delete(toolName);
     }
     this.pendingApprovalsByTool.set(toolName, approvalId);
+
+    // When ExitPlanMode fires, eagerly capture the plan content and persist it
+    // so clearContextRestart works even if the session goes idle before the user
+    // clicks. The plan file is in ~/.claude/plans/ with a random hash name;
+    // we grab the most recently modified one while the session is still active.
+    if (SessionProcess.APPROVAL_GATED_TOOLS.has(toolName)) {
+      await this.capturePlanFilePath();
+    }
 
     // Emit approval request event to frontend and block until user responds.
     await this.emitEvent({
