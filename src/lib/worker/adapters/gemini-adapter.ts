@@ -134,6 +134,24 @@ export class GeminiAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
+  async setPermissionMode(mode: string): Promise<boolean> {
+    if (!this.sessionId) return false;
+    const modeMap: Record<string, string> = {
+      plan: 'plan',
+      default: 'default',
+      acceptEdits: 'auto-edit',
+      bypassPermissions: 'yolo',
+      dontAsk: 'yolo',
+    };
+    const geminiMode = modeMap[mode];
+    if (!geminiMode) return false;
+    await this.sendRequest('session/set_mode', {
+      sessionId: this.sessionId,
+      mode: geminiMode,
+    });
+    return true;
+  }
+
   async setModel(model: string): Promise<boolean> {
     if (!this.storedOpts || !this.sessionId) return false;
 
@@ -327,14 +345,28 @@ export class GeminiAdapter implements AgentAdapter {
       }
       // Kill the entire process group (not just the main process) — Gemini CLI
       // spawns with detached:true, so cp.kill() alone leaves orphan children.
+      // Use SIGKILL fallback because Gemini may ignore SIGTERM during init.
       if (cp.pid) {
         try {
           process.kill(-cp.pid, 'SIGTERM');
         } catch {
-          cp.kill();
+          try {
+            cp.kill('SIGTERM');
+          } catch {
+            /* already dead */
+          }
         }
+        // SIGKILL fallback after 2s — Gemini sometimes ignores SIGTERM
+        const pid = cp.pid;
+        setTimeout(() => {
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }, 2000);
       } else {
-        cp.kill();
+        cp.kill('SIGKILL');
       }
     });
 

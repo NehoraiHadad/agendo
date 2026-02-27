@@ -3,6 +3,19 @@ import { executions, sessions } from '@/lib/db/schema';
 import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
 
+function killPid(pid: number): void {
+  try {
+    // Kill entire process group (handles detached children like Gemini CLI)
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Already dead — fine
+    }
+  }
+}
+
 export class StaleReaper {
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -47,9 +60,9 @@ export class StaleReaper {
     }
 
     // --- Reap stale sessions (heartbeat lost while active/awaiting_input) ---
-    // Transition to 'idle' so they can be cold-resumed rather than permanently ended.
+    // Kill orphaned OS processes, then transition to 'idle' for cold-resume.
     const staleSessions = await db
-      .select({ id: sessions.id })
+      .select({ id: sessions.id, pid: sessions.pid })
       .from(sessions)
       .where(
         and(
@@ -62,16 +75,21 @@ export class StaleReaper {
       );
 
     if (staleSessions.length > 0) {
+      // Kill orphaned OS processes before updating DB
+      for (const row of staleSessions) {
+        if (row.pid != null) {
+          console.log(`[stale-reaper] Killing orphaned PID ${row.pid} for session ${row.id}`);
+          killPid(row.pid);
+        }
+      }
+
       await Promise.all(
         staleSessions.map((row) =>
           db
             .update(sessions)
-            .set({ status: 'idle', lastActiveAt: new Date() })
+            .set({ status: 'idle', pid: null, lastActiveAt: new Date() })
             .where(
-              and(
-                eq(sessions.id, row.id),
-                inArray(sessions.status, ['active', 'awaiting_input']),
-              ),
+              and(eq(sessions.id, row.id), inArray(sessions.status, ['active', 'awaiting_input'])),
             ),
         ),
       );

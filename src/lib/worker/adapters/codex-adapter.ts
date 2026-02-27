@@ -165,6 +165,12 @@ export class CodexAdapter implements AgentAdapter {
     this.sessionRefCallback = cb;
   }
 
+  async setPermissionMode(mode: string): Promise<boolean> {
+    if (!this.storedOpts) return false;
+    this.storedOpts = { ...this.storedOpts, permissionMode: mode as SpawnOpts['permissionMode'] };
+    return true;
+  }
+
   async setModel(model: string): Promise<boolean> {
     if (!this.storedOpts) return false;
     this.storedOpts = { ...this.storedOpts, model };
