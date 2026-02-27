@@ -442,3 +442,158 @@ describe('TeamInboxMonitor polling', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// isTeamDisbanded tests
+// ---------------------------------------------------------------------------
+
+describe('TeamInboxMonitor.isTeamDisbanded', () => {
+  let monitor: TeamInboxMonitor;
+  const teamName = 'disband-team';
+  const configPath = makeConfigPath(teamName);
+  const inboxPath = makeInboxPath(teamName);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    monitor = new TeamInboxMonitor(teamName);
+  });
+
+  it('returns true when config file does not exist', () => {
+    mockExistsSync.mockImplementation((p: string) => p !== configPath);
+    expect(monitor.isTeamDisbanded()).toBe(true);
+  });
+
+  it('returns false when there are no non-leader members (no teammates yet)', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) return JSON.stringify({ members: [{ name: 'team-lead' }] });
+      if (p === inboxPath) return '[]';
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns false when members is empty array', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) return JSON.stringify({ members: [] });
+      if (p === inboxPath) return '[]';
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns false when no shutdown_approved messages exist', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) {
+        return JSON.stringify({
+          members: [{ name: 'team-lead' }, { name: 'researcher' }, { name: 'coder' }],
+        });
+      }
+      if (p === inboxPath) {
+        return JSON.stringify([makeRawMessage({ from: 'researcher', text: 'Still working' })]);
+      }
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns false when only some members sent shutdown_approved', () => {
+    const shutdownMsg = JSON.stringify({ type: 'shutdown_approved' });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) {
+        return JSON.stringify({
+          members: [{ name: 'team-lead' }, { name: 'researcher' }, { name: 'coder' }],
+        });
+      }
+      if (p === inboxPath) {
+        return JSON.stringify([
+          makeRawMessage({ from: 'researcher', text: shutdownMsg }),
+          // coder has NOT sent shutdown_approved
+        ]);
+      }
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns true when all non-leader members sent shutdown_approved', () => {
+    const shutdownMsg = JSON.stringify({ type: 'shutdown_approved' });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) {
+        return JSON.stringify({
+          members: [{ name: 'team-lead' }, { name: 'researcher' }, { name: 'coder' }],
+        });
+      }
+      if (p === inboxPath) {
+        return JSON.stringify([
+          makeRawMessage({ from: 'researcher', text: shutdownMsg }),
+          makeRawMessage({ from: 'coder', text: shutdownMsg }),
+        ]);
+      }
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(true);
+  });
+
+  it('returns true with single non-leader member who sent shutdown_approved', () => {
+    const shutdownMsg = JSON.stringify({ type: 'shutdown_approved' });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) {
+        return JSON.stringify({
+          members: [{ name: 'team-lead' }, { name: 'solo-worker' }],
+        });
+      }
+      if (p === inboxPath) {
+        return JSON.stringify([makeRawMessage({ from: 'solo-worker', text: shutdownMsg })]);
+      }
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(true);
+  });
+
+  it('ignores non-shutdown_approved structured messages', () => {
+    const shutdownMsg = JSON.stringify({ type: 'shutdown_approved' });
+    const idleMsg = JSON.stringify({ type: 'idle_notification' });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) {
+        return JSON.stringify({
+          members: [{ name: 'team-lead' }, { name: 'researcher' }, { name: 'coder' }],
+        });
+      }
+      if (p === inboxPath) {
+        return JSON.stringify([
+          makeRawMessage({ from: 'researcher', text: shutdownMsg }),
+          makeRawMessage({ from: 'coder', text: idleMsg }), // idle, not shutdown
+        ]);
+      }
+      throw new Error(`unexpected path: ${p}`);
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns false when config is malformed JSON', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) return 'not valid json';
+      return '[]';
+    });
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+
+  it('returns false when members field is missing from config', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p === configPath) return JSON.stringify({ leadSessionId: 'abc' });
+      if (p === inboxPath) return '[]';
+      throw new Error(`unexpected path: ${p}`);
+    });
+    // members defaults to [] → nonLeaderMembers.length === 0 → false
+    expect(monitor.isTeamDisbanded()).toBe(false);
+  });
+});

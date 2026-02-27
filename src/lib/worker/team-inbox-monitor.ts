@@ -130,6 +130,35 @@ export class TeamInboxMonitor {
   }
 
   /**
+   * Check if the team has been disbanded.
+   * True when: config file is gone, OR all non-leader members sent shutdown_approved.
+   */
+  isTeamDisbanded(): boolean {
+    const configPath = this.inboxPath.replace(/\/inboxes\/.*$/, '/config.json');
+    if (!existsSync(configPath)) return true;
+
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+        members?: Array<{ name: string }>;
+      };
+      const nonLeaderMembers = (config.members ?? []).filter((m) => m.name !== 'team-lead');
+      if (nonLeaderMembers.length === 0) return false; // no teammates yet
+
+      const messages = this.readAllMessages();
+      const shutdownApproved = new Set<string>();
+      for (const msg of messages) {
+        if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
+          shutdownApproved.add(msg.from);
+        }
+      }
+
+      return nonLeaderMembers.every((m) => shutdownApproved.has(m.name));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Stop polling. Safe to call multiple times or when not polling.
    */
   stopPolling(): void {

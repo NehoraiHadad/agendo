@@ -132,6 +132,8 @@ export class SessionProcess {
   private static readonly DELTA_FLUSH_MS = 200;
   /** Team inbox monitor — non-null only when this session is a team leader. */
   private teamInboxMonitor: TeamInboxMonitor | null = null;
+  /** Periodic timer that scans for a team config until one is found. */
+  private teamDetectionTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private session: Session,
@@ -318,40 +320,102 @@ export class SessionProcess {
     this.startHeartbeat();
     this.startMcpHealthCheck();
 
-    // If this session is a team leader, start monitoring the team inbox for
-    // incoming agent messages and surface them as team:message events.
-    const teamName = TeamInboxMonitor.findTeamForSession(this.session.id);
-    if (teamName) {
-      this.teamInboxMonitor = new TeamInboxMonitor(teamName);
-      // Backfill: emit all messages that already existed in the inbox so they
-      // appear in the chat view on reconnect / cold-resume.
-      const existing = this.teamInboxMonitor.readAllMessages();
-      for (const msg of existing) {
-        await this.emitEvent({
-          type: 'team:message',
-          fromAgent: msg.from,
-          text: msg.text,
-          summary: msg.summary,
-          color: msg.color,
-          sourceTimestamp: msg.timestamp,
-          isStructured: msg.isStructured,
-          structuredPayload: msg.structuredPayload,
-        });
+    // Start periodic team detection — teams are created AFTER session start,
+    // so we poll until a team config is found (or the session exits).
+    this.startTeamDetection();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: team detection
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Start periodic team detection. Teams are created AFTER the session starts
+   * (during the agent's first turn), so we poll every 10s until a team config
+   * is found on disk. For cold-resume, the team may already exist — we try
+   * immediately first.
+   */
+  private startTeamDetection(): void {
+    // Try immediately (handles cold-resume where team already exists on disk)
+    if (this.tryAttachTeamMonitor()) return;
+
+    // Poll every 10s until a team is found or session exits
+    const timer = setInterval(() => {
+      if (this.tryAttachTeamMonitor()) {
+        clearInterval(timer);
+        this.teamDetectionTimer = null;
       }
-      // Poll for new messages every 4 seconds.
-      this.teamInboxMonitor.startPolling(4000, (msg) => {
-        void this.emitEvent({
-          type: 'team:message',
-          fromAgent: msg.from,
-          text: msg.text,
-          summary: msg.summary,
-          color: msg.color,
-          sourceTimestamp: msg.timestamp,
-          isStructured: msg.isStructured,
-          structuredPayload: msg.structuredPayload,
-        });
+    }, 10_000);
+    this.teamDetectionTimer = timer;
+  }
+
+  /**
+   * Attempt to find and attach a TeamInboxMonitor for this session.
+   * Returns true when a team is found (or was already attached).
+   */
+  private tryAttachTeamMonitor(): boolean {
+    if (this.teamInboxMonitor) return true; // already attached
+    const teamName = TeamInboxMonitor.findTeamForSession(this.session.id);
+    if (!teamName) return false;
+
+    console.log(`[session-process] Team detected: "${teamName}" for session ${this.session.id}`);
+    this.teamInboxMonitor = new TeamInboxMonitor(teamName);
+
+    // Backfill: emit all messages that already existed in the inbox so they
+    // appear in the chat view on reconnect / cold-resume.
+    const existing = this.teamInboxMonitor.readAllMessages();
+    for (const msg of existing) {
+      void this.emitEvent({
+        type: 'team:message',
+        fromAgent: msg.from,
+        text: msg.text,
+        summary: msg.summary,
+        color: msg.color,
+        sourceTimestamp: msg.timestamp,
+        isStructured: msg.isStructured,
+        structuredPayload: msg.structuredPayload,
       });
     }
+
+    // Poll for new messages every 4s — reset idle timer on each message
+    this.teamInboxMonitor.startPolling(4000, (msg) => {
+      void this.emitEvent({
+        type: 'team:message',
+        fromAgent: msg.from,
+        text: msg.text,
+        summary: msg.summary,
+        color: msg.color,
+        sourceTimestamp: msg.timestamp,
+        isStructured: msg.isStructured,
+        structuredPayload: msg.structuredPayload,
+      });
+
+      // Team inbox activity proves teammates are working — reset idle timer
+      this.resetIdleTimer();
+
+      // Check if this shutdown_approved completes the full set
+      if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
+        if (this.teamInboxMonitor?.isTeamDisbanded()) {
+          console.log(`[session-process] Team disbanded for session ${this.session.id}`);
+          void this.emitEvent({
+            type: 'system:info',
+            message: 'All teammates shut down — normal idle timeout restored.',
+          });
+          this.teamInboxMonitor.stopPolling();
+          this.teamInboxMonitor = null;
+          this.resetIdleTimer(); // resets with normal (non-team) timeout
+        }
+      }
+    });
+
+    void this.emitEvent({
+      type: 'system:info',
+      message: `Team "${teamName}" detected — idle timeout extended while teammates are active.`,
+    });
+
+    // Reset idle timer with the new team-aware timeout
+    this.resetIdleTimer();
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1334,11 +1398,19 @@ export class SessionProcess {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+
+    // Team sessions get a much longer timeout — teammate messages reset it continuously
+    const timeoutSec = this.teamInboxMonitor
+      ? 3600 // 1 hour
+      : this.session.idleTimeoutSec;
+
     this.idleTimer = setTimeout(() => {
       if (this.status !== 'awaiting_input') return;
       this.emitEvent({
         type: 'system:info',
-        message: `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
+        message: this.teamInboxMonitor
+          ? `Team idle timeout after ${timeoutSec}s with no teammate activity. Suspending session.`
+          : `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
       })
         .then(() => {
           this.idleTimeoutKilled = true;
@@ -1361,7 +1433,7 @@ export class SessionProcess {
           }, SIGKILL_DELAY_MS);
           this.sigkillTimers.push(t);
         });
-    }, this.session.idleTimeoutSec * 1_000);
+    }, timeoutSec * 1_000);
   }
 
   // ---------------------------------------------------------------------------
@@ -1407,7 +1479,11 @@ export class SessionProcess {
     this.sigkillTimers = [];
     // Drain any approval promises so blocked adapters unblock immediately.
     this.drainPendingApprovals('deny');
-    // Stop team inbox polling if active.
+    // Stop team detection polling and inbox monitoring.
+    if (this.teamDetectionTimer) {
+      clearInterval(this.teamDetectionTimer);
+      this.teamDetectionTimer = null;
+    }
     this.teamInboxMonitor?.stopPolling();
     this.teamInboxMonitor = null;
     // Unsubscribe from the control channel to release the pg pool connection.
