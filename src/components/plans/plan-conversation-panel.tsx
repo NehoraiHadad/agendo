@@ -86,9 +86,10 @@ export function PlanConversationPanel({
   const [startError, setStartError] = useState<string | null>(null);
 
   // Edit state: maps edit id -> 'applied' | 'skipped'
-  // Persisted to localStorage so it survives page refreshes
+  // Persisted to localStorage so it survives page refreshes.
+  // typeof window guard ensures this is skipped during SSR.
   const [editStates, setEditStates] = useState<Record<string, 'applied' | 'skipped'>>(() => {
-    if (!conversationSessionId) return {};
+    if (typeof window === 'undefined' || !conversationSessionId) return {};
     try {
       const stored = localStorage.getItem(`plan-edits-${conversationSessionId}`);
       return stored ? (JSON.parse(stored) as Record<string, 'applied' | 'skipped'>) : {};
@@ -99,17 +100,18 @@ export function PlanConversationPanel({
 
   const persistEditState = useCallback(
     (editId: string, state: 'applied' | 'skipped') => {
-      setEditStates((prev) => {
-        const next = { ...prev, [editId]: state };
-        if (conversationSessionId) {
-          try {
-            localStorage.setItem(`plan-edits-${conversationSessionId}`, JSON.stringify(next));
-          } catch {
-            // localStorage unavailable (SSR, private mode quota)
-          }
-        }
-        return next;
-      });
+      setEditStates((prev) => ({ ...prev, [editId]: state }));
+      if (typeof window === 'undefined' || !conversationSessionId) return;
+      try {
+        const raw = localStorage.getItem(`plan-edits-${conversationSessionId}`) ?? '{}';
+        const current = JSON.parse(raw) as Record<string, 'applied' | 'skipped'>;
+        localStorage.setItem(
+          `plan-edits-${conversationSessionId}`,
+          JSON.stringify({ ...current, [editId]: state }),
+        );
+      } catch {
+        // localStorage unavailable
+      }
     },
     [conversationSessionId],
   );

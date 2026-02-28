@@ -39,7 +39,8 @@ export function WorkspaceAddPanel() {
   const [sessions, setSessions] = useState<SessionOption[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const addPanel = useWorkspaceStore((s) => s.addPanel);
-  const existingSessionIds = useWorkspaceStore((s) => s.getSessionIds());
+  const panels = useWorkspaceStore((s) => s.panels);
+  const existingSessionIds = Object.keys(panels);
 
   useEffect(() => {
     if (!open) return;
