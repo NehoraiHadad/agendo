@@ -14,6 +14,7 @@ import {
   Sparkles,
   Brain,
   Code,
+  Pencil,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,7 +26,9 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { ContextSnapshot, SnapshotFindings, Agent } from '@/lib/types';
@@ -213,15 +216,188 @@ function DeleteConfirm({ open, onOpenChange, onConfirm, isDeleting }: DeleteConf
   );
 }
 
+interface EditDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  snapshot: ContextSnapshot;
+  onUpdated: (updated: ContextSnapshot) => void;
+}
+
+function EditDialog({ open, onOpenChange, snapshot, onUpdated }: EditDialogProps) {
+  const kf = snapshot.keyFindings as SnapshotFindings | null;
+  const [name, setName] = useState(snapshot.name);
+  const [summary, setSummary] = useState(snapshot.summary);
+  const [filesExplored, setFilesExplored] = useState((kf?.filesExplored ?? []).join('\n'));
+  const [findings, setFindings] = useState((kf?.findings ?? []).join('\n'));
+  const [hypotheses, setHypotheses] = useState((kf?.hypotheses ?? []).join('\n'));
+  const [nextSteps, setNextSteps] = useState((kf?.nextSteps ?? []).join('\n'));
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Reset form when snapshot changes or dialog opens
+  useEffect(() => {
+    if (!open) return;
+    const f = snapshot.keyFindings as SnapshotFindings | null;
+    setName(snapshot.name);
+    setSummary(snapshot.summary);
+    setFilesExplored((f?.filesExplored ?? []).join('\n'));
+    setFindings((f?.findings ?? []).join('\n'));
+    setHypotheses((f?.hypotheses ?? []).join('\n'));
+    setNextSteps((f?.nextSteps ?? []).join('\n'));
+  }, [open, snapshot]);
+
+  function splitLines(text: string): string[] {
+    return text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+  }
+
+  async function handleSave() {
+    if (!name.trim() || !summary.trim() || isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await apiFetch<ApiResponse<ContextSnapshot>>(`/api/snapshots/${snapshot.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: name.trim(),
+          summary: summary.trim(),
+          keyFindings: {
+            filesExplored: splitLines(filesExplored),
+            findings: splitLines(findings),
+            hypotheses: splitLines(hypotheses),
+            nextSteps: splitLines(nextSteps),
+          },
+        }),
+      });
+      toast.success('Snapshot updated');
+      onUpdated(res.data);
+      onOpenChange(false);
+    } catch {
+      toast.error('Failed to update snapshot');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base">Edit Snapshot</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Name</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Snapshot name"
+              className="text-sm"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Summary</Label>
+            <Textarea
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              placeholder="What was investigated and discovered"
+              rows={4}
+              className="text-sm font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Files explored (one per line)</Label>
+            <Textarea
+              value={filesExplored}
+              onChange={(e) => setFilesExplored(e.target.value)}
+              placeholder="src/auth/token.ts&#10;src/middleware.ts"
+              rows={3}
+              className="text-xs font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Findings (one per line)</Label>
+            <Textarea
+              value={findings}
+              onChange={(e) => setFindings(e.target.value)}
+              placeholder="Token expiry not checked before refresh"
+              rows={3}
+              className="text-xs font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Hypotheses (one per line)</Label>
+            <Textarea
+              value={hypotheses}
+              onChange={(e) => setHypotheses(e.target.value)}
+              placeholder="Race condition between refresh and new request"
+              rows={2}
+              className="text-xs font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Next steps (one per line)</Label>
+            <Textarea
+              value={nextSteps}
+              onChange={(e) => setNextSteps(e.target.value)}
+              placeholder="Add mutex around refresh&#10;Test with expired tokens"
+              rows={2}
+              className="text-xs font-mono"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={!name.trim() || !summary.trim() || isSaving}
+            className="gap-1.5"
+          >
+            {isSaving && <Loader2 className="size-3 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface SnapshotCardProps {
   snapshot: ContextSnapshot;
   onDeleted: (id: string) => void;
+  onUpdated?: (updated: ContextSnapshot) => void;
 }
 
-export function SnapshotCard({ snapshot, onDeleted }: SnapshotCardProps) {
+export function SnapshotCard({
+  snapshot: initialSnapshot,
+  onDeleted,
+  onUpdated,
+}: SnapshotCardProps) {
+  const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [showResume, setShowResume] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Sync if parent re-renders with new data
+  useEffect(() => {
+    setSnapshot(initialSnapshot);
+  }, [initialSnapshot]);
+
+  function handleUpdated(updated: ContextSnapshot) {
+    setSnapshot(updated);
+    onUpdated?.(updated);
+  }
 
   const findings = snapshot.keyFindings as SnapshotFindings | null;
 
@@ -317,6 +493,15 @@ export function SnapshotCard({ snapshot, onDeleted }: SnapshotCardProps) {
             <Button
               variant="ghost"
               size="sm"
+              onClick={() => setShowEdit(true)}
+              className="h-7 w-7 p-0 text-muted-foreground/30 hover:text-foreground/70 hover:bg-white/[0.06] transition-colors"
+              aria-label="Edit snapshot"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowDelete(true)}
               className="h-7 w-7 p-0 text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10 transition-colors"
               aria-label="Delete snapshot"
@@ -336,6 +521,12 @@ export function SnapshotCard({ snapshot, onDeleted }: SnapshotCardProps) {
         </div>
       </div>
 
+      <EditDialog
+        open={showEdit}
+        onOpenChange={setShowEdit}
+        snapshot={snapshot}
+        onUpdated={handleUpdated}
+      />
       <ResumeDialog open={showResume} onOpenChange={setShowResume} snapshot={snapshot} />
       <DeleteConfirm
         open={showDelete}
