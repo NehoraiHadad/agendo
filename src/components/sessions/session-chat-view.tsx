@@ -190,6 +190,7 @@ const ToolCard = memo(function ToolCard({
     return (
       <InteractiveTool
         toolName={tool.toolName}
+        sessionId={sessionId}
         input={tool.input}
         isAnswered={tool.result !== undefined}
         respond={async (payload) => {
@@ -839,6 +840,8 @@ interface SessionChatViewProps {
   currentStatus: SessionStatus | null | string;
   initialPrompt?: string | null;
   agentBinaryPath?: string;
+  /** When true, renders a compact version for workspace panels (smaller text, less padding) */
+  compact?: boolean;
 }
 
 export function SessionChatView({
@@ -847,6 +850,7 @@ export function SessionChatView({
   currentStatus,
   initialPrompt,
   agentBinaryPath,
+  compact = false,
 }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -987,6 +991,7 @@ export function SessionChatView({
           <ToolApprovalCard
             key={item.id}
             sessionId={sessionId}
+            sessionStatus={currentStatus}
             approvalId={item.approvalId}
             toolName={item.toolName}
             toolInput={item.toolInput}
@@ -1005,21 +1010,25 @@ export function SessionChatView({
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
-          : 'flex flex-col rounded-xl border border-white/[0.07] flex-1 min-h-0'
+          : compact
+            ? 'flex flex-col flex-1 min-h-0'
+            : 'flex flex-col rounded-xl border border-white/[0.07] flex-1 min-h-0'
       }
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07] shrink-0 bg-[oklch(0.09_0_0)] rounded-t-xl">
-        <span className="text-xs text-muted-foreground/50">Session Chat</span>
-        <button
-          type="button"
-          onClick={() => setFullscreen((v) => !v)}
-          className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
-          aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        >
-          {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-        </button>
-      </div>
+      {/* Header — hidden in compact mode (workspace panel has its own header) */}
+      {!compact && (
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07] shrink-0 bg-[oklch(0.09_0_0)] rounded-t-xl">
+          <span className="text-xs text-muted-foreground/50">Session Chat</span>
+          <button
+            type="button"
+            onClick={() => setFullscreen((v) => !v)}
+            className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          >
+            {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          </button>
+        </div>
+      )}
 
       {/* Chat area */}
       <div
@@ -1028,7 +1037,9 @@ export function SessionChatView({
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
-            : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+            : compact
+              ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
+              : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
         }
         role="log"
         aria-live="polite"
@@ -1074,8 +1085,8 @@ export function SessionChatView({
         <div ref={bottomRef} />
       </div>
 
-      {/* Stop button — soft interrupt, only when agent is actively running */}
-      {isActive && (
+      {/* Stop button — soft interrupt, only when agent is actively running (hidden in compact) */}
+      {isActive && !compact && (
         <div className="flex justify-center px-3 py-1.5 border-t border-white/[0.05] bg-[oklch(0.085_0_0)]">
           <button
             type="button"
@@ -1094,14 +1105,17 @@ export function SessionChatView({
         </div>
       )}
 
-      <SessionMessageInput
-        sessionId={sessionId}
-        status={currentStatus as SessionStatus}
-        onSent={handleSent}
-        slashCommands={slashCommands}
-        mcpServers={mcpServers}
-        agentBinaryPath={agentBinaryPath}
-      />
+      {/* Message input — hidden in compact mode (WorkspacePanel renders its own) */}
+      {!compact && (
+        <SessionMessageInput
+          sessionId={sessionId}
+          status={currentStatus as SessionStatus}
+          onSent={handleSent}
+          slashCommands={slashCommands}
+          mcpServers={mcpServers}
+          agentBinaryPath={agentBinaryPath}
+        />
+      )}
     </div>
   );
 }

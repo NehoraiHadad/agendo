@@ -14,6 +14,9 @@ import {
   X,
   Wrench,
   FolderOpen,
+  FileText,
+  PanelTop,
+  Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
@@ -43,6 +46,9 @@ const navItems = [
     badgeKey: 'activeSessions' as const,
   },
   { href: '/executions', label: 'Executions', icon: Play, badgeKey: 'runningExecutions' as const },
+  { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
+  { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
+  { href: '/config', label: 'Config', icon: Settings, badgeKey: null },
 ];
 
 const SIDEBAR_KEY = 'sidebar-collapsed';

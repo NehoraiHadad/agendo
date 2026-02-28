@@ -23,6 +23,9 @@ import type {
   AgentSessionConfig,
   TaskInputContext,
   JsonSchemaObject,
+  PlanMetadata,
+  SnapshotFindings,
+  WorkspaceLayout,
 } from '../types';
 
 /** Shape of a parsed CLI flag from --help output */
@@ -361,9 +364,11 @@ export const sessions = pgTable(
   'sessions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    taskId: uuid('task_id')
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    kind: text('kind', { enum: ['conversation', 'execution'] })
       .notNull()
-      .references(() => tasks.id, { onDelete: 'cascade' }),
+      .default('execution'),
     agentId: uuid('agent_id')
       .notNull()
       .references(() => agents.id),
@@ -401,6 +406,8 @@ export const sessions = pgTable(
     title: text('title'),
     // AI model reported by the agent CLI (e.g. "claude-sonnet-4-5-20250514").
     model: text('model'),
+    // Full path to the plan file captured when ExitPlanMode fires.
+    planFilePath: text('plan_file_path'),
     totalDurationMs: integer('total_duration_ms'),
     tmuxSessionName: text('tmux_session_name'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -409,6 +416,7 @@ export const sessions = pgTable(
     index('idx_sessions_task').on(table.taskId, table.createdAt),
     index('idx_sessions_active').on(table.status, table.workerId),
     index('idx_sessions_heartbeat').on(table.heartbeatAt),
+    index('idx_sessions_project').on(table.projectId, table.kind, table.createdAt),
   ],
 );
 
@@ -421,3 +429,87 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
   auth: text('auth').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ============================================================================
+// Agent IDE Tables
+// ============================================================================
+
+export const planStatusEnum = pgEnum('plan_status', [
+  'draft',
+  'ready',
+  'stale',
+  'executing',
+  'done',
+  'archived',
+]);
+
+// --- Plans ------------------------------------------------------------------
+// Implementation plans that can be validated against the codebase and executed
+// by an agent session.
+
+export const plans = pgTable(
+  'plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    content: text('content').notNull(),
+    status: planStatusEnum('status').notNull().default('draft'),
+    sourceSessionId: uuid('source_session_id').references(() => sessions.id, {
+      onDelete: 'set null',
+    }),
+    executingSessionId: uuid('executing_session_id').references(() => sessions.id, {
+      onDelete: 'set null',
+    }),
+    lastValidatedAt: timestamp('last_validated_at', { withTimezone: true }),
+    codebaseHash: text('codebase_hash'),
+    metadata: jsonb('metadata').notNull().$type<PlanMetadata>().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_plans_project').on(table.projectId, table.status, table.createdAt)],
+);
+
+// --- Context Snapshots ------------------------------------------------------
+// Save investigation context from sessions for later resumption.
+
+export const contextSnapshots = pgTable(
+  'context_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    summary: text('summary').notNull(),
+    keyFindings: jsonb('key_findings').notNull().$type<SnapshotFindings>().default({
+      filesExplored: [],
+      findings: [],
+      hypotheses: [],
+      nextSteps: [],
+    }),
+    metadata: jsonb('metadata').notNull().$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_snapshots_project').on(table.projectId, table.createdAt)],
+);
+
+// --- Workspaces -------------------------------------------------------------
+// Multi-agent grid layout for viewing multiple sessions simultaneously.
+
+export const agentWorkspaces = pgTable(
+  'workspaces',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    layout: jsonb('layout').notNull().$type<WorkspaceLayout>().default({ panels: [], gridCols: 2 }),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_workspaces_project').on(table.projectId, table.isActive)],
+);
