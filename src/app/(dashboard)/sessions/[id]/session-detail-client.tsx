@@ -17,6 +17,7 @@ import {
   Check,
   X,
   Cpu,
+  Camera,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,6 +34,7 @@ import { SessionChatView } from '@/components/sessions/session-chat-view';
 import { SessionEventLog } from '@/components/sessions/session-event-log';
 import { SessionInfoPanel } from '@/components/sessions/session-info-panel';
 import { ExecutionLogViewer } from '@/components/executions/execution-log-viewer';
+import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 
@@ -133,6 +135,7 @@ interface SessionDetailClientProps {
   agentBinaryPath: string;
   capLabel: string;
   taskTitle: string;
+  projectName: string;
 }
 
 interface StatusConfig {
@@ -201,6 +204,7 @@ export function SessionDetailClient({
   agentBinaryPath,
   capLabel,
   taskTitle,
+  projectName,
 }: SessionDetailClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -210,6 +214,7 @@ export function SessionDetailClient({
   const logStream = useSessionLogStream(session.id);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
+  const [showSaveSnapshot, setShowSaveSnapshot] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(
     (session.permissionMode as PermissionMode) ?? 'bypassPermissions',
   );
@@ -436,13 +441,31 @@ export function SessionDetailClient({
               <span className="text-muted-foreground/60">{agentName}</span>
               <span className="text-muted-foreground/20">·</span>
               <span>{capLabel}</span>
-              <span className="text-muted-foreground/20">·</span>
-              <span className="truncate max-w-[200px]">{taskTitle}</span>
+              {projectName && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <span>{projectName}</span>
+                </>
+              )}
+              {taskTitle && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <span className="truncate max-w-[200px]">{taskTitle}</span>
+                </>
+              )}
+              {session.kind === 'conversation' && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <span className="text-muted-foreground/50">Conversation</span>
+                </>
+              )}
             </div>
           </div>
 
           {/* Action buttons */}
-          {currentStatus !== 'ended' && (
+          {(currentStatus === 'active' ||
+            currentStatus === 'awaiting_input' ||
+            currentStatus === 'idle') && (
             <div className="flex items-center gap-1.5 shrink-0">
               {/* Model selector */}
               <div className="relative" ref={modelMenuRef}>
@@ -494,6 +517,19 @@ export function SessionDetailClient({
                   </div>
                 )}
               </div>
+              {/* Save snapshot button */}
+              {session.projectId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowSaveSnapshot(true)}
+                  title="Save context snapshot"
+                  className="h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 border-teal-500/20"
+                >
+                  <Camera className="size-3" />
+                  <span className="hidden sm:inline">Snapshot</span>
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -580,9 +616,18 @@ export function SessionDetailClient({
             stream={stream}
             agentName={agentName}
             agentSlug={agentSlug}
+            projectName={projectName}
           />
         </TabsContent>
       </Tabs>
+
+      {/* Save snapshot dialog */}
+      <SaveSnapshotDialog
+        open={showSaveSnapshot}
+        onOpenChange={setShowSaveSnapshot}
+        sessionId={session.id}
+        projectId={session.projectId ?? null}
+      />
 
       {/* End session confirmation */}
       <Dialog open={showEndConfirm} onOpenChange={(v) => !v && setShowEndConfirm(false)}>

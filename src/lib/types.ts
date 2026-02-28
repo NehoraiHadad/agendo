@@ -17,6 +17,12 @@ export type NewTask = InferInsertModel<typeof schema.tasks>;
 export type NewExecution = InferInsertModel<typeof schema.executions>;
 export type NewSession = InferInsertModel<typeof schema.sessions>;
 export type NewProject = InferInsertModel<typeof schema.projects>;
+export type Plan = InferSelectModel<typeof schema.plans>;
+export type NewPlan = InferInsertModel<typeof schema.plans>;
+export type ContextSnapshot = InferSelectModel<typeof schema.contextSnapshots>;
+export type NewContextSnapshot = InferInsertModel<typeof schema.contextSnapshots>;
+export type AgentWorkspace = InferSelectModel<typeof schema.agentWorkspaces>;
+export type NewAgentWorkspace = InferInsertModel<typeof schema.agentWorkspaces>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];
@@ -26,6 +32,7 @@ export type AgentKind = (typeof schema.agentKindEnum.enumValues)[number];
 export type CapabilitySource = (typeof schema.capabilitySourceEnum.enumValues)[number];
 export type DiscoveryMethod = (typeof schema.discoveryMethodEnum.enumValues)[number];
 export type SessionStatus = (typeof schema.sessionStatusEnum.enumValues)[number];
+export type PlanStatus = (typeof schema.planStatusEnum.enumValues)[number];
 
 // ---- Domain types ----
 
@@ -88,4 +95,35 @@ export interface ExecutionWithDetails extends Execution {
   agent: Agent;
   capability: AgentCapability;
   task: Task;
+}
+
+// ---- Agent IDE types ----
+
+/** plans.metadata */
+export interface PlanMetadata {
+  tags?: string[];
+  notes?: string;
+}
+
+/** context_snapshots.key_findings */
+export interface SnapshotFindings {
+  filesExplored: string[];
+  findings: string[];
+  hypotheses: string[];
+  nextSteps: string[];
+}
+
+/** workspaces.layout panel entry */
+export interface WorkspacePanel {
+  sessionId: string;
+  row: number;
+  col: number;
+  rowSpan?: number;
+  colSpan?: number;
+}
+
+/** workspaces.layout */
+export interface WorkspaceLayout {
+  panels: WorkspacePanel[];
+  gridCols: 2 | 3;
 }

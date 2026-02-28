@@ -62,6 +62,12 @@ export class SafetyViolationError extends AppError {
   }
 }
 
+export class ForbiddenError extends AppError {
+  constructor(message: string, context?: Record<string, unknown>) {
+    super(message, 403, 'FORBIDDEN', context);
+  }
+}
+
 export class TimeoutError extends AppError {
   constructor(message: string, context?: Record<string, unknown>) {
     super(message, 408, 'TIMEOUT', context);
