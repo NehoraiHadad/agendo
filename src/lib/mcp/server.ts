@@ -196,7 +196,10 @@ export async function handleCreateSubtask(args: {
 export async function handleGetMyTask(): Promise<unknown> {
   const taskId = process.env.AGENDO_TASK_ID;
   if (!taskId) {
-    throw new Error('No task assigned to this session (AGENDO_TASK_ID not set)');
+    return {
+      message:
+        'This is a planning conversation with no assigned task. Use create_task to create tasks.',
+    };
   }
   return apiCall(`/api/tasks/${taskId}`);
 }
@@ -264,6 +267,38 @@ export async function handleStartAgentSession(args: {
   })) as { id: string };
 
   return { sessionId: session.id, agentId, taskId: args.taskId, agent: args.agent };
+}
+
+export async function handleSaveSnapshot(args: {
+  name: string;
+  summary: string;
+  filesExplored?: string[];
+  findings?: string[];
+  hypotheses?: string[];
+  nextSteps?: string[];
+}): Promise<unknown> {
+  const projectId = process.env.AGENDO_PROJECT_ID;
+  if (!projectId) {
+    throw new Error('AGENDO_PROJECT_ID not set — snapshots require a project context');
+  }
+  const sessionId = process.env.AGENDO_SESSION_ID;
+
+  const body: Record<string, unknown> = {
+    projectId,
+    name: args.name,
+    summary: args.summary,
+  };
+  if (sessionId) body.sessionId = sessionId;
+
+  const keyFindings: Record<string, string[]> = {
+    filesExplored: args.filesExplored ?? [],
+    findings: args.findings ?? [],
+    hypotheses: args.hypotheses ?? [],
+    nextSteps: args.nextSteps ?? [],
+  };
+  body.keyFindings = keyFindings;
+
+  return apiCall('/api/snapshots', { method: 'POST', body });
 }
 
 export async function handleListProjects(args: { isActive?: boolean }): Promise<unknown> {
@@ -592,6 +627,53 @@ function createServer(): McpServer {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- save_snapshot --
+  server.tool(
+    'save_snapshot',
+    'Save a snapshot of your current investigation context. Use this to preserve your findings, hypotheses, and next steps so the investigation can be resumed later by you or another agent.',
+    {
+      name: z
+        .string()
+        .describe(
+          'Short descriptive name for the snapshot (e.g. "Auth token refresh bug investigation")',
+        ),
+      summary: z.string().describe('Markdown summary of what you investigated and discovered'),
+      filesExplored: z
+        .array(z.string())
+        .optional()
+        .describe('List of file paths you examined during this investigation'),
+      findings: z
+        .array(z.string())
+        .optional()
+        .describe('Key findings and observations from the investigation'),
+      hypotheses: z
+        .array(z.string())
+        .optional()
+        .describe('Current hypotheses about the issue or feature'),
+      nextSteps: z
+        .array(z.string())
+        .optional()
+        .describe('Recommended next steps for whoever resumes this investigation'),
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    async (args) => {
+      try {
+        const result = await handleSaveSnapshot(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
           content: [
