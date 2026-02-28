@@ -301,6 +301,47 @@ export async function handleSaveSnapshot(args: {
   return apiCall('/api/snapshots', { method: 'POST', body });
 }
 
+export async function handleUpdateSnapshot(args: {
+  snapshotId: string;
+  name?: string;
+  summary?: string;
+  filesExplored?: string[];
+  findings?: string[];
+  hypotheses?: string[];
+  nextSteps?: string[];
+}): Promise<unknown> {
+  const body: Record<string, unknown> = {};
+  if (args.name !== undefined) body.name = args.name;
+  if (args.summary !== undefined) body.summary = args.summary;
+
+  // Only send keyFindings if any array field was provided
+  if (
+    args.filesExplored !== undefined ||
+    args.findings !== undefined ||
+    args.hypotheses !== undefined ||
+    args.nextSteps !== undefined
+  ) {
+    // Fetch current snapshot to merge with existing findings
+    const current = (await apiCall(`/api/snapshots/${args.snapshotId}`)) as {
+      keyFindings?: {
+        filesExplored?: string[];
+        findings?: string[];
+        hypotheses?: string[];
+        nextSteps?: string[];
+      };
+    };
+    const existing = current.keyFindings ?? {};
+    body.keyFindings = {
+      filesExplored: args.filesExplored ?? existing.filesExplored ?? [],
+      findings: args.findings ?? existing.findings ?? [],
+      hypotheses: args.hypotheses ?? existing.hypotheses ?? [],
+      nextSteps: args.nextSteps ?? existing.nextSteps ?? [],
+    };
+  }
+
+  return apiCall(`/api/snapshots/${args.snapshotId}`, { method: 'PATCH', body });
+}
+
 export async function handleListProjects(args: { isActive?: boolean }): Promise<unknown> {
   const params = new URLSearchParams();
   if (args.isActive === false) params.set('isActive', 'false');
@@ -673,6 +714,41 @@ function createServer(): McpServer {
     async (args) => {
       try {
         const result = await handleSaveSnapshot(args);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -- update_snapshot --
+  server.tool(
+    'update_snapshot',
+    'Update an existing context snapshot. Use this to refine findings, add new discoveries, or update next steps as your investigation progresses.',
+    {
+      snapshotId: z.string().describe('UUID of the snapshot to update'),
+      name: z.string().optional().describe('Updated name for the snapshot'),
+      summary: z.string().optional().describe('Updated markdown summary'),
+      filesExplored: z
+        .array(z.string())
+        .optional()
+        .describe('Updated list of explored file paths (replaces existing)'),
+      findings: z.array(z.string()).optional().describe('Updated findings (replaces existing)'),
+      hypotheses: z.array(z.string()).optional().describe('Updated hypotheses (replaces existing)'),
+      nextSteps: z.array(z.string()).optional().describe('Updated next steps (replaces existing)'),
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    async (args) => {
+      try {
+        const result = await handleUpdateSnapshot(args);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {

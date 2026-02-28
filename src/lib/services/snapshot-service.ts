@@ -68,6 +68,28 @@ export async function listSnapshots(filters?: {
     .limit(limit);
 }
 
+export async function updateSnapshot(
+  id: string,
+  patch: { name?: string; summary?: string; keyFindings?: SnapshotFindings },
+): Promise<ContextSnapshot> {
+  const updates: Record<string, unknown> = {};
+  if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.summary !== undefined) updates.summary = patch.summary;
+  if (patch.keyFindings !== undefined) updates.keyFindings = patch.keyFindings;
+
+  if (Object.keys(updates).length === 0) {
+    return getSnapshot(id);
+  }
+
+  const [updated] = await db
+    .update(contextSnapshots)
+    .set(updates)
+    .where(eq(contextSnapshots.id, id))
+    .returning();
+  if (!updated) throw new NotFoundError('ContextSnapshot', id);
+  return updated;
+}
+
 export async function deleteSnapshot(id: string): Promise<void> {
   const [deleted] = await db
     .delete(contextSnapshots)
