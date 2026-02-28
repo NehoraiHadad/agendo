@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useEffect, useRef, useCallback } from 'react';
+import { useReducer, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 
 const MAX_EVENTS_PER_PANEL = 500;
@@ -239,8 +239,10 @@ export function useMultiSessionStreams(sessionIds: string[]): UseMultiSessionStr
     openConnection(ctx, sessionId);
   }, []);
 
-  // Build the Map from the record state for the return API
-  const streams = new Map<string, PanelStreamState>(Object.entries(state));
+  // Build the Map from the record state for the return API.
+  // useMemo ensures a stable reference — only recreated when state changes,
+  // preventing infinite loops in effects that depend on streams.
+  const streams = useMemo(() => new Map<string, PanelStreamState>(Object.entries(state)), [state]);
 
   return { streams, resetStream };
 }
