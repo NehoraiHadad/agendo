@@ -86,7 +86,33 @@ export function PlanConversationPanel({
   const [startError, setStartError] = useState<string | null>(null);
 
   // Edit state: maps edit id -> 'applied' | 'skipped'
-  const [editStates, setEditStates] = useState<Record<string, 'applied' | 'skipped'>>({});
+  // Persisted to localStorage so it survives page refreshes
+  const [editStates, setEditStates] = useState<Record<string, 'applied' | 'skipped'>>(() => {
+    if (!conversationSessionId) return {};
+    try {
+      const stored = localStorage.getItem(`plan-edits-${conversationSessionId}`);
+      return stored ? (JSON.parse(stored) as Record<string, 'applied' | 'skipped'>) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const persistEditState = useCallback(
+    (editId: string, state: 'applied' | 'skipped') => {
+      setEditStates((prev) => {
+        const next = { ...prev, [editId]: state };
+        if (conversationSessionId) {
+          try {
+            localStorage.setItem(`plan-edits-${conversationSessionId}`, JSON.stringify(next));
+          } catch {
+            // localStorage unavailable (SSR, private mode quota)
+          }
+        }
+        return next;
+      });
+    },
+    [conversationSessionId],
+  );
 
   // Session stream
   const stream = useSessionStream(conversationSessionId);
@@ -173,15 +199,18 @@ export function PlanConversationPanel({
 
   const handleApply = useCallback(
     (editId: string, newContent: string) => {
-      setEditStates((prev) => ({ ...prev, [editId]: 'applied' }));
+      persistEditState(editId, 'applied');
       onContentChange(newContent);
     },
-    [onContentChange],
+    [persistEditState, onContentChange],
   );
 
-  const handleSkip = useCallback((editId: string) => {
-    setEditStates((prev) => ({ ...prev, [editId]: 'skipped' }));
-  }, []);
+  const handleSkip = useCallback(
+    (editId: string) => {
+      persistEditState(editId, 'skipped');
+    },
+    [persistEditState],
+  );
 
   // Pending edits not yet acted on
   const pendingEdits = planEdits.filter((edit) => !editStates[edit.id]);
