@@ -20,6 +20,13 @@ export interface UpdatePlanPatch {
   content?: string;
   status?: PlanStatus;
   metadata?: PlanMetadata;
+  conversationSessionId?: string | null;
+}
+
+export interface StartPlanConversationOpts {
+  agentId: string;
+  capabilityId: string;
+  model?: string;
 }
 
 export interface ExecutePlanOpts {
@@ -78,6 +85,8 @@ export async function updatePlan(id: string, patch: UpdatePlanPatch): Promise<Pl
   if (patch.content !== undefined) updateValues.content = patch.content;
   if (patch.status !== undefined) updateValues.status = patch.status;
   if (patch.metadata !== undefined) updateValues.metadata = patch.metadata;
+  if (patch.conversationSessionId !== undefined)
+    updateValues.conversationSessionId = patch.conversationSessionId;
 
   const [updated] = await db.update(plans).set(updateValues).where(eq(plans.id, id)).returning();
   if (!updated) throw new NotFoundError('Plan', id);
@@ -127,6 +136,50 @@ export async function executePlan(
   await db
     .update(plans)
     .set({ executingSessionId: session.id, updatedAt: new Date() })
+    .where(eq(plans.id, planId));
+
+  await enqueueSession({ sessionId: session.id });
+
+  return { sessionId: session.id };
+}
+
+/**
+ * Start a collaborative conversation session for a plan. The agent reviews
+ * and helps improve the plan, outputting suggested edits in a structured
+ * format that the frontend can parse and apply.
+ */
+export async function startPlanConversation(
+  planId: string,
+  opts: StartPlanConversationOpts,
+): Promise<{ sessionId: string }> {
+  const plan = await getPlan(planId);
+
+  const initialPrompt = `You are a collaborative plan editor. Review and help improve this implementation plan.
+
+When you want to suggest changes to the plan, output your suggestion wrapped in:
+<<<PLAN_EDIT
+[the complete new plan content here]
+PLAN_EDIT>>>
+
+The user can apply or skip your suggestion directly in the editor.
+
+Here is the current plan:
+
+${plan.content}`;
+
+  const session = await createSession({
+    projectId: plan.projectId,
+    kind: 'conversation',
+    agentId: opts.agentId,
+    capabilityId: opts.capabilityId,
+    initialPrompt,
+    permissionMode: 'acceptEdits',
+    model: opts.model,
+  });
+
+  await db
+    .update(plans)
+    .set({ conversationSessionId: session.id, updatedAt: new Date() })
     .where(eq(plans.id, planId));
 
   await enqueueSession({ sessionId: session.id });

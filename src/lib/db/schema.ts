@@ -463,6 +463,9 @@ export const plans = pgTable(
     executingSessionId: uuid('executing_session_id').references(() => sessions.id, {
       onDelete: 'set null',
     }),
+    conversationSessionId: uuid('conversation_session_id').references(() => sessions.id, {
+      onDelete: 'set null',
+    }),
     lastValidatedAt: timestamp('last_validated_at', { withTimezone: true }),
     codebaseHash: text('codebase_hash'),
     metadata: jsonb('metadata').notNull().$type<PlanMetadata>().default({}),

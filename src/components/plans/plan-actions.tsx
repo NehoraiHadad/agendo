@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Play, Archive, Loader2, Bot } from 'lucide-react';
+import { CheckCircle, Play, Archive, Loader2, Bot, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
+import { cn } from '@/lib/utils';
 import type { Agent, AgentCapability } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -50,9 +51,17 @@ interface PlanActionsProps {
   planId: string;
   planStatus: string;
   onArchived?: () => void;
+  onToggleConversation?: () => void;
+  conversationActive?: boolean;
 }
 
-export function PlanActions({ planId, planStatus, onArchived }: PlanActionsProps) {
+export function PlanActions({
+  planId,
+  planStatus,
+  onArchived,
+  onToggleConversation,
+  conversationActive,
+}: PlanActionsProps) {
   const router = useRouter();
   const [agents, setAgents] = useState<AgentWithCapabilities[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
@@ -80,7 +89,7 @@ export function PlanActions({ planId, planStatus, onArchived }: PlanActionsProps
     setError(null);
     let cancelled = false;
 
-    apiFetch<AgentsApiResponse>('/api/agents?capabilities=true')
+    apiFetch<AgentsApiResponse>('/api/agents?capabilities=true&group=ai')
       .then((res) => {
         if (cancelled) return;
         const promptAgents = res.data.filter((a) => findFirstPromptCapability(a));
@@ -170,6 +179,23 @@ export function PlanActions({ planId, planStatus, onArchived }: PlanActionsProps
     <>
       {/* Action buttons */}
       <div className="flex items-center gap-2 flex-wrap">
+        {onToggleConversation && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onToggleConversation}
+            disabled={isArchived}
+            className={cn(
+              'h-7 px-3 text-xs border gap-1.5',
+              conversationActive
+                ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/30 bg-amber-500/10'
+                : 'text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/10 border-amber-500/15',
+            )}
+          >
+            <MessageSquare className="size-3" />
+            <span className="hidden sm:inline">Chat</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
