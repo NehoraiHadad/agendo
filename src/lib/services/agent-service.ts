@@ -4,7 +4,7 @@ import { agents, agentCapabilities } from '@/lib/db/schema';
 import type { ParsedFlag } from '@/lib/db/schema';
 import { eq, ne, desc } from 'drizzle-orm';
 import { NotFoundError, ValidationError } from '@/lib/errors';
-import type { Agent, NewAgent } from '@/lib/types';
+import type { Agent, AgentCapability, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
 
@@ -207,6 +207,38 @@ export async function listAgents(options?: ListAgentsOptions): Promise<Agent[]> 
     return query.where(ne(agents.toolType, 'ai-agent')).orderBy(desc(agents.createdAt));
   }
   return query.orderBy(desc(agents.createdAt));
+}
+
+export type AgentWithCapabilities = Agent & { capabilities: AgentCapability[] };
+
+/** Fetch all agents with their capabilities joined. Used for agent picker UIs. */
+export async function listAgentsWithCapabilities(
+  options?: ListAgentsOptions,
+): Promise<AgentWithCapabilities[]> {
+  const rows = await db
+    .select({ agent: agents, capability: agentCapabilities })
+    .from(agents)
+    .leftJoin(agentCapabilities, eq(agentCapabilities.agentId, agents.id))
+    .orderBy(desc(agents.createdAt));
+
+  // Group capabilities by agent
+  const agentMap = new Map<string, AgentWithCapabilities>();
+  for (const row of rows) {
+    if (!agentMap.has(row.agent.id)) {
+      agentMap.set(row.agent.id, { ...row.agent, capabilities: [] });
+    }
+    if (row.capability) {
+      agentMap.get(row.agent.id)?.capabilities.push(row.capability);
+    }
+  }
+
+  let result = [...agentMap.values()];
+  if (options?.group === 'ai') {
+    result = result.filter((a) => a.toolType === 'ai-agent');
+  } else if (options?.group === 'tools') {
+    result = result.filter((a) => a.toolType !== 'ai-agent');
+  }
+  return result;
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {
