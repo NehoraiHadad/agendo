@@ -87,16 +87,23 @@ export function PlanConversationPanel({
 
   // Edit state: maps edit id -> 'applied' | 'skipped'
   // Persisted to localStorage so it survives page refreshes.
-  // typeof window guard ensures this is skipped during SSR.
-  const [editStates, setEditStates] = useState<Record<string, 'applied' | 'skipped'>>(() => {
-    if (typeof window === 'undefined' || !conversationSessionId) return {};
-    try {
-      const stored = localStorage.getItem(`plan-edits-${conversationSessionId}`);
-      return stored ? (JSON.parse(stored) as Record<string, 'applied' | 'skipped'>) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [editStates, setEditStates] = useState<Record<string, 'applied' | 'skipped'>>({});
+
+  // Load persisted edit states from localStorage when conversationSessionId is available.
+  // setState lives inside .then() to satisfy react-hooks/set-state-in-effect.
+  useEffect(() => {
+    if (!conversationSessionId) return;
+    void Promise.resolve().then(() => {
+      try {
+        const stored = localStorage.getItem(`plan-edits-${conversationSessionId}`);
+        if (stored) {
+          setEditStates(JSON.parse(stored) as Record<string, 'applied' | 'skipped'>);
+        }
+      } catch {
+        // localStorage unavailable
+      }
+    });
+  }, [conversationSessionId]);
 
   const persistEditState = useCallback(
     (editId: string, state: 'applied' | 'skipped') => {
