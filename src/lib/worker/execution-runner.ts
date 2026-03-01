@@ -167,6 +167,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   let sessionId: string | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   let resultKillTimer: ReturnType<typeof setTimeout> | null = null;
+  let totalCostUsd: string | null = null;
+  let totalTurns: number | null = null;
+  let totalDurationMs: number | null = null;
 
   managedProcess.onData((chunk) => {
     logWriter.write(chunk, 'stdout');
@@ -189,11 +192,19 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     // Workaround for GitHub #25629: Claude sometimes never closes stdout after emitting
     // the final result event. Schedule a SIGKILL after a grace period so the execution
     // doesn't stay stuck as 'running' for 45 minutes waiting for an exit that never comes.
+    // Also capture cost/turns/duration from the result event here to avoid re-reading the
+    // log file after close.
     if (!resultKillTimer) {
       for (const line of chunk.split('\n')) {
         if (!line.trim().startsWith('{')) continue;
         try {
-          const ev = JSON.parse(line) as { type?: string };
+          const ev = JSON.parse(line) as {
+            type?: string;
+            subtype?: string;
+            total_cost_usd?: number;
+            num_turns?: number;
+            duration_ms?: number;
+          };
           if (ev.type === 'result') {
             resultKillTimer = setTimeout(() => {
               logWriter.writeSystem(
@@ -201,6 +212,11 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
               );
               managedProcess.kill('SIGKILL');
             }, RESULT_EXIT_GRACE_MS);
+            if (ev.subtype === 'success') {
+              if (ev.total_cost_usd != null) totalCostUsd = String(ev.total_cost_usd);
+              if (ev.num_turns != null) totalTurns = ev.num_turns;
+              if (ev.duration_ms != null) totalDurationMs = ev.duration_ms;
+            }
             break;
           }
         } catch {
@@ -234,42 +250,6 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
 
   logWriter.writeSystem(`Process exited with code ${exitCode}`);
   const logStats = await logWriter.close();
-
-  // Scan log for cost/turns/duration from Claude result event
-  let totalCostUsd: string | null = null;
-  let totalTurns: number | null = null;
-  let totalDurationMs: number | null = null;
-
-  if (logPath) {
-    try {
-      const { readFileSync: readLogFile, existsSync: existsSyncLocal } = await import('node:fs');
-      if (existsSyncLocal(logPath)) {
-        const logContent = readLogFile(logPath, 'utf-8');
-        for (const rawLine of logContent.split('\n')) {
-          const line = rawLine.replace(/^\[(stdout|stderr|system)\] /, '');
-          if (!line.startsWith('{')) continue;
-          try {
-            const ev = JSON.parse(line) as {
-              type?: string;
-              subtype?: string;
-              total_cost_usd?: number;
-              num_turns?: number;
-              duration_ms?: number;
-            };
-            if (ev.type === 'result' && ev.subtype === 'success') {
-              if (ev.total_cost_usd != null) totalCostUsd = String(ev.total_cost_usd);
-              if (ev.num_turns != null) totalTurns = ev.num_turns;
-              if (ev.duration_ms != null) totalDurationMs = ev.duration_ms;
-            }
-          } catch {
-            /* not JSON */
-          }
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
 
   // --- 9. Finalize with race guard ---
   const finalStatus = determineFinalStatus(exitCode, logStats.byteSize, capability.maxOutputBytes);
