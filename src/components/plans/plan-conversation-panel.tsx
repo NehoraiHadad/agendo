@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, Loader2, Bot } from 'lucide-react';
+import { X, Loader2, Bot, Square } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -75,6 +75,41 @@ interface PlanConversationPanelProps {
   onContentChange: (newContent: string) => void;
   onClose: () => void;
   onSessionCreated: (sessionId: string) => void;
+}
+
+// ---------------------------------------------------------------------------
+// PlanStopButton — soft interrupt for plan conversation panel
+// ---------------------------------------------------------------------------
+
+function PlanStopButton({ sessionId }: { sessionId: string }) {
+  const [isInterrupting, setIsInterrupting] = useState(false);
+
+  const handleInterrupt = useCallback(async () => {
+    if (isInterrupting) return;
+    setIsInterrupting(true);
+    try {
+      await fetch(`/api/sessions/${sessionId}/interrupt`, { method: 'POST' });
+    } finally {
+      setIsInterrupting(false);
+    }
+  }, [sessionId, isInterrupting]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleInterrupt()}
+      disabled={isInterrupting}
+      className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+      aria-label="Stop current agent action"
+    >
+      {isInterrupting ? (
+        <Loader2 className="size-3 animate-spin" />
+      ) : (
+        <Square className="size-3 fill-current" />
+      )}
+      Stop
+    </button>
+  );
 }
 
 export function PlanConversationPanel({
@@ -365,6 +400,13 @@ export function PlanConversationPanel({
                 compact={true}
               />
             </div>
+
+            {/* Stop button — only when agent is actively running */}
+            {currentStatus === 'active' && (
+              <div className="flex justify-center px-3 py-1 border-t border-white/[0.05] shrink-0">
+                <PlanStopButton sessionId={conversationSessionId} />
+              </div>
+            )}
 
             {/* Pending diff cards */}
             {pendingEdits.length > 0 && (

@@ -24,10 +24,11 @@ export type AssistantPart =
   | { kind: 'tool'; tool: ToolState };
 
 export type DisplayItem =
-  | { kind: 'assistant'; id: number; parts: AssistantPart[] }
+  | { kind: 'assistant'; id: number; ts?: number; parts: AssistantPart[] }
   | {
       kind: 'turn-complete';
       id: number;
+      ts?: number;
       text: string;
       costUsd: number | null;
       sessionCostUsd: number | null;
@@ -35,7 +36,14 @@ export type DisplayItem =
       errors?: string[];
     }
   | { kind: 'thinking'; id: number; text: string }
-  | { kind: 'user'; id: number; text: string; hasImage?: boolean; imageDataUrl?: string }
+  | {
+      kind: 'user';
+      id: number;
+      ts?: number;
+      text: string;
+      hasImage?: boolean;
+      imageDataUrl?: string;
+    }
   | { kind: 'info'; id: number; text: string }
   | { kind: 'error'; id: number; text: string }
   | {
@@ -128,7 +136,12 @@ export function buildDisplayItems(
             last.parts.push({ kind: 'text', text: ev.text });
           }
         } else {
-          items.push({ kind: 'assistant', id: ev.id, parts: [{ kind: 'text', text: ev.text }] });
+          items.push({
+            kind: 'assistant',
+            id: ev.id,
+            ts: ev.ts,
+            parts: [{ kind: 'text', text: ev.text }],
+          });
         }
         break;
       }
@@ -185,7 +198,12 @@ export function buildDisplayItems(
         if (last && last.kind === 'assistant') {
           last.parts.push({ kind: 'tool', tool: toolState });
         } else {
-          items.push({ kind: 'assistant', id: ev.id, parts: [{ kind: 'tool', tool: toolState }] });
+          items.push({
+            kind: 'assistant',
+            id: ev.id,
+            ts: ev.ts,
+            parts: [{ kind: 'tool', tool: toolState }],
+          });
         }
         break;
       }
@@ -239,6 +257,7 @@ export function buildDisplayItems(
         items.push({
           kind: 'turn-complete',
           id: ev.id,
+          ts: ev.ts,
           text: parts.join(' · '),
           costUsd: ev.costUsd ?? null,
           sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
@@ -257,7 +276,7 @@ export function buildDisplayItems(
       }
 
       case 'user:message': {
-        items.push({ kind: 'user', id: ev.id, text: ev.text, hasImage: ev.hasImage });
+        items.push({ kind: 'user', id: ev.id, ts: ev.ts, text: ev.text, hasImage: ev.hasImage });
         break;
       }
 

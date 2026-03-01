@@ -25,7 +25,7 @@ import { MultiEditView } from '@/components/executions/tool-views/multi-edit-vie
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
-import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
 // creating a dynamic component reference during render (react-hooks/static-components).
@@ -126,6 +126,26 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
     </a>
   ),
 };
+
+// ---------------------------------------------------------------------------
+// Message timestamp formatter
+// ---------------------------------------------------------------------------
+
+function formatMessageTime(ts: number): string {
+  const date = new Date(ts);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 60_000) return 'just now';
+  const isToday = date.toDateString() === now.toDateString();
+  if (isToday) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return (
+    date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+    ' ' +
+    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Tool result display
@@ -476,12 +496,16 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
       result.push(
         <div
           key={`t-${startIdx}`}
-          className="rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
+          className="group/textbubble relative rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
           style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
             {part.text}
           </ReactMarkdown>
+          <CopyButton
+            text={part.text}
+            className="absolute top-1 right-1 opacity-0 group-hover/textbubble:opacity-100 transition-opacity"
+          />
         </div>,
       );
       i++;
@@ -519,14 +543,35 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
   return result;
 }
 
-function AssistantBubble({ parts, sessionId }: { parts: AssistantPart[]; sessionId: string }) {
+function AssistantBubble({
+  parts,
+  sessionId,
+  showAvatar = true,
+  ts,
+}: {
+  parts: AssistantPart[];
+  sessionId: string;
+  showAvatar?: boolean;
+  ts?: number;
+}) {
   return (
-    <div className="flex gap-2.5 items-start w-full animate-fade-in-up">
-      {/* Agent avatar */}
-      <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/[0.10] border border-primary/20 p-1.5 shadow-[0_0_8px_oklch(0.7_0.18_280/0.12)]">
-        <Bot className="size-3.5 text-primary/80" />
+    <div className="flex gap-2.5 items-start w-full animate-fade-in-up group/assistantrow">
+      {/* Agent avatar — only shown on first in a consecutive run */}
+      {showAvatar ? (
+        <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/[0.10] border border-primary/20 p-1.5 shadow-[0_0_8px_oklch(0.7_0.18_280/0.12)]">
+          <Bot className="size-3.5 text-primary/80" />
+        </div>
+      ) : (
+        <div className="mt-0.5 flex-shrink-0 w-[28px]" />
+      )}
+      <div className="space-y-1.5 min-w-0 flex-1">
+        {renderAssistantParts(parts, sessionId)}
+        {ts && (
+          <span className="block text-[10px] text-muted-foreground/25 opacity-0 group-hover/assistantrow:opacity-100 transition-opacity pl-0.5">
+            {formatMessageTime(ts)}
+          </span>
+        )}
       </div>
-      <div className="space-y-1.5 min-w-0 flex-1">{renderAssistantParts(parts, sessionId)}</div>
     </div>
   );
 }
@@ -567,38 +612,55 @@ function UserBubble({
   text,
   hasImage,
   imageDataUrl,
+  ts,
 }: {
   text: string;
   hasImage?: boolean;
   imageDataUrl?: string;
+  ts?: number;
 }) {
   return (
-    <div className="flex gap-2.5 items-start justify-end animate-fade-in-up">
-      <div
-        dir="auto"
-        className="rounded-2xl rounded-tr-sm ml-auto px-3.5 py-2.5 text-sm max-w-[85%] space-y-2 shadow-sm"
-        style={{
-          background:
-            'linear-gradient(135deg, oklch(0.7 0.18 280 / 0.18) 0%, oklch(0.65 0.2 260 / 0.12) 100%)',
-          border: '1px solid oklch(0.7 0.18 280 / 0.25)',
-          boxShadow: '0 2px 12px oklch(0.7 0.18 280 / 0.08)',
-        }}
-      >
-        {imageDataUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={imageDataUrl}
-            alt="attachment"
-            className="max-h-48 max-w-full rounded-lg object-contain"
-          />
-        ) : hasImage ? (
-          <div className="flex items-center gap-1.5 text-xs text-primary/70">
-            <Paperclip className="size-3 shrink-0" />
-            <span>Image attached</span>
-          </div>
-        ) : null}
-        {text && (
-          <span className="whitespace-pre-wrap break-words block text-foreground/90">{text}</span>
+    <div className="flex gap-2.5 items-start justify-end animate-fade-in-up group/userrow">
+      <div className="flex flex-col items-end gap-1 min-w-0">
+        <div
+          dir="auto"
+          className="group/userbubble relative rounded-2xl rounded-tr-sm ml-auto px-3.5 py-2.5 text-sm max-w-[85%] space-y-2 shadow-sm"
+          style={{
+            background:
+              'linear-gradient(135deg, oklch(0.7 0.18 280 / 0.18) 0%, oklch(0.65 0.2 260 / 0.12) 100%)',
+            border: '1px solid oklch(0.7 0.18 280 / 0.25)',
+            boxShadow: '0 2px 12px oklch(0.7 0.18 280 / 0.08)',
+          }}
+        >
+          {imageDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageDataUrl}
+              alt="attachment"
+              className="max-h-48 max-w-full rounded-lg object-contain"
+            />
+          ) : hasImage ? (
+            <div className="flex items-center gap-1.5 text-xs text-primary/70">
+              <Paperclip className="size-3 shrink-0" />
+              <span>Image attached</span>
+            </div>
+          ) : null}
+          {text && (
+            <span className="whitespace-pre-wrap break-words block text-foreground/90 pr-5">
+              {text}
+            </span>
+          )}
+          {text && (
+            <CopyButton
+              text={text}
+              className="absolute bottom-1.5 right-1 opacity-0 group-hover/userbubble:opacity-100 transition-opacity"
+            />
+          )}
+        </div>
+        {ts && (
+          <span className="text-[10px] text-muted-foreground/25 opacity-0 group-hover/userrow:opacity-100 transition-opacity pr-0.5">
+            {formatMessageTime(ts)}
+          </span>
         )}
       </div>
       {/* User avatar */}
@@ -972,13 +1034,7 @@ export function SessionChatView({
 
   // Drive typing indicator from session status OR from agent:activity thinking events.
   // findLast is available in Node 18+ / modern browsers; fall back to reverse iteration.
-  const lastActivityEvent = [...stream.events]
-    .reverse()
-    .find((e) => e.type === 'agent:activity') as
-    | (AgendoEvent & { type: 'agent:activity' })
-    | undefined;
-  const isThinking = lastActivityEvent?.thinking ?? false;
-  const showTyping = (isActive || isThinking) && stream.isConnected;
+  const showTyping = isActive && stream.isConnected;
 
   // Re-hydrate user items that have images: stream events only carry hasImage:boolean,
   // so we correlate them (in order) with the URLs we buffered at send time.
@@ -992,10 +1048,24 @@ export function SessionChatView({
     });
   })();
 
-  function renderDisplayItem(item: DisplayItem, idx: number): React.ReactNode {
+  function renderDisplayItem(
+    item: DisplayItem,
+    idx: number,
+    prevItem?: DisplayItem,
+  ): React.ReactNode {
     switch (item.kind) {
-      case 'assistant':
-        return <AssistantBubble key={idx} parts={item.parts} sessionId={sessionId} />;
+      case 'assistant': {
+        const showAvatar = prevItem?.kind !== 'assistant' && prevItem?.kind !== 'thinking';
+        return (
+          <AssistantBubble
+            key={idx}
+            parts={item.parts}
+            sessionId={sessionId}
+            showAvatar={showAvatar}
+            ts={item.ts}
+          />
+        );
+      }
       case 'thinking':
         return <ThinkingBubble key={idx} text={item.text} />;
       case 'user':
@@ -1005,6 +1075,7 @@ export function SessionChatView({
             text={item.text}
             hasImage={item.hasImage}
             imageDataUrl={item.imageDataUrl}
+            ts={item.ts}
           />
         );
       case 'turn-complete':
@@ -1102,7 +1173,9 @@ export function SessionChatView({
         {/* Initial prompt banner — shown once at the top if present */}
         {initialPrompt && <InitialPromptBanner prompt={initialPrompt} />}
 
-        {augmentedDisplayItems.map((item, i) => renderDisplayItem(item, i))}
+        {augmentedDisplayItems.map((item, i) =>
+          renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
+        )}
 
         {/* Optimistic user messages shown while real event is in-flight */}
         {optimisticMessages.map((msg) => (
