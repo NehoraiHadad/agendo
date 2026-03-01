@@ -5,6 +5,13 @@ import { Badge } from '@/components/ui/badge';
 import type { Session } from '@/lib/types';
 import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
 import type { AgendoEvent } from '@/lib/realtime/events';
+import {
+  getLatestContextStats,
+  fmtPct,
+  ctxBarWidth,
+  ctxBarColor,
+  ctxTrackColor,
+} from '@/lib/utils/context-stats';
 
 interface SessionInfoPanelProps {
   session: Session;
@@ -123,6 +130,8 @@ export function SessionInfoPanel({
   const slashCommands = initEvent?.slashCommands ?? [];
   const stats = getResultStats(stream.events);
   const rateLimit = getLatestRateLimitEvent(stream.events);
+  // Use latest-turn stats for context window (cumulative sum is semantically wrong for fill %)
+  const latestCtx = getLatestContextStats(stream.events);
 
   return (
     <div className="flex flex-col gap-6">
@@ -284,30 +293,43 @@ export function SessionInfoPanel({
                 <p className="mt-0.5 text-sm font-mono">{formatTokens(stats.totalOutputTokens)}</p>
               </div>
             )}
-            {stats.contextWindow != null && stats.totalInputTokens > 0 && (
+            {latestCtx && (
               <div>
                 <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
                   Context Window
                 </p>
                 <p className="mt-0.5 text-sm font-mono">
-                  {formatTokens(stats.totalInputTokens)}
-                  <span className="text-muted-foreground/50">
-                    {' '}
-                    / {formatTokens(stats.contextWindow)}
-                  </span>
+                  {formatTokens(latestCtx.inputTokens)}
+                  {latestCtx.contextWindow && (
+                    <span className="text-muted-foreground/50">
+                      {' '}
+                      / {formatTokens(latestCtx.contextWindow)}
+                    </span>
+                  )}
                 </p>
-                <div className="mt-1 h-1 bg-white/[0.05] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${Math.min(100, (stats.totalInputTokens / stats.contextWindow) * 100)}%`,
-                      background:
-                        stats.totalInputTokens / stats.contextWindow > 0.8
-                          ? 'oklch(0.65 0.22 25)'
-                          : 'oklch(0.7 0.18 280)',
-                    }}
-                  />
-                </div>
+                {latestCtx.contextWindow &&
+                  (() => {
+                    const ratio = latestCtx.inputTokens / latestCtx.contextWindow;
+                    return (
+                      <>
+                        <div
+                          className="mt-1 h-1 rounded-full overflow-hidden"
+                          style={{ backgroundColor: ctxTrackColor(ratio) }}
+                        >
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                              width: ctxBarWidth(ratio),
+                              backgroundColor: ctxBarColor(ratio),
+                            }}
+                          />
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground/40">
+                          {fmtPct(ratio)} full · last turn
+                        </p>
+                      </>
+                    );
+                  })()}
               </div>
             )}
             {stats.totalCacheRead > 0 && (

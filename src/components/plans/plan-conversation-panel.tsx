@@ -18,7 +18,14 @@ import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { extractPlanEdits } from '@/lib/utils/plan-edit-parser';
 import type { Agent, AgentCapability } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
-import { getLatestContextStats, fmtTokens } from '@/lib/utils/context-stats';
+import {
+  getLatestContextStats,
+  fmtTokens,
+  fmtPct,
+  ctxBarWidth,
+  ctxBarColor,
+  ctxTrackColor,
+} from '@/lib/utils/context-stats';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -239,22 +246,26 @@ export function PlanConversationPanel({
             className="inline-flex items-center gap-1.5 ml-1"
             title={
               contextStats.contextWindow
-                ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${Math.round((contextStats.inputTokens / contextStats.contextWindow) * 100)}% full)`
+                ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${fmtPct(contextStats.inputTokens / contextStats.contextWindow)} full)`
                 : `Context: ${contextStats.inputTokens.toLocaleString()} tokens used`
             }
           >
             {contextStats.contextWindow && (
-              <span className="relative inline-block h-[4px] w-10 rounded-full bg-white/[0.08] overflow-hidden shrink-0">
+              <span
+                className="relative inline-block h-[4px] w-10 rounded-full overflow-hidden shrink-0"
+                style={{
+                  backgroundColor: ctxTrackColor(
+                    contextStats.inputTokens / contextStats.contextWindow,
+                  ),
+                }}
+              >
                 <span
                   className="absolute inset-y-0 left-0 rounded-full transition-[width]"
                   style={{
-                    width: `${Math.min(100, (contextStats.inputTokens / contextStats.contextWindow) * 100)}%`,
-                    backgroundColor:
-                      contextStats.inputTokens / contextStats.contextWindow > 0.8
-                        ? 'oklch(0.65 0.22 25)'
-                        : contextStats.inputTokens / contextStats.contextWindow > 0.6
-                          ? 'oklch(0.72 0.18 60)'
-                          : 'oklch(0.65 0.18 280)',
+                    width: ctxBarWidth(contextStats.inputTokens / contextStats.contextWindow),
+                    backgroundColor: ctxBarColor(
+                      contextStats.inputTokens / contextStats.contextWindow,
+                    ),
                   }}
                 />
               </span>
