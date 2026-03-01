@@ -173,8 +173,8 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
           )}
 
           {/* Title row */}
-          <div className="flex items-start gap-1.5">
-            <p className="flex-1 text-sm font-medium leading-snug text-foreground/90 group-hover:text-foreground transition-colors">
+          <div className="flex items-start gap-1.5 min-w-0">
+            <p className="flex-1 min-w-0 text-sm font-medium leading-snug text-foreground/90 group-hover:text-foreground transition-colors break-words">
               {task.title}
             </p>
             {execStatus && (
@@ -202,7 +202,7 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
 
           {/* Description snippet */}
           {task.description && (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground/50 leading-relaxed">
+            <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground/50 leading-relaxed">
               {task.description}
             </p>
           )}

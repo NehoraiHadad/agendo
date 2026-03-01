@@ -99,7 +99,7 @@ export const TaskColumn = memo(function TaskColumn({
   return (
     <div
       className={cn(
-        'relative flex min-w-[280px] w-[calc(85vw)] sm:w-auto flex-col min-h-0',
+        'relative flex min-w-[280px] w-[calc(85vw)] sm:w-72 shrink-0 flex-col min-h-0',
         'rounded-xl border border-white/[0.05] bg-[oklch(0.085_0_0)]',
         'transition-all duration-200',
         isOver &&
