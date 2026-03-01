@@ -1,7 +1,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentWorkspaces } from '@/lib/db/schema';
-import { NotFoundError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { AgentWorkspace, WorkspaceLayout } from '@/lib/types';
 
 export interface CreateWorkspaceInput {
@@ -34,8 +34,7 @@ export async function getWorkspace(id: string): Promise<AgentWorkspace> {
     .from(agentWorkspaces)
     .where(eq(agentWorkspaces.id, id))
     .limit(1);
-  if (!workspace) throw new NotFoundError('AgentWorkspace', id);
-  return workspace;
+  return requireFound(workspace, 'AgentWorkspace', id);
 }
 
 export async function listWorkspaces(filters?: { projectId?: string }): Promise<AgentWorkspace[]> {
@@ -64,8 +63,7 @@ export async function updateWorkspace(
     .set(updateValues)
     .where(eq(agentWorkspaces.id, id))
     .returning();
-  if (!updated) throw new NotFoundError('AgentWorkspace', id);
-  return updated;
+  return requireFound(updated, 'AgentWorkspace', id);
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
@@ -73,5 +71,5 @@ export async function deleteWorkspace(id: string): Promise<void> {
     .delete(agentWorkspaces)
     .where(eq(agentWorkspaces.id, id))
     .returning({ id: agentWorkspaces.id });
-  if (!deleted) throw new NotFoundError('AgentWorkspace', id);
+  requireFound(deleted, 'AgentWorkspace', id);
 }

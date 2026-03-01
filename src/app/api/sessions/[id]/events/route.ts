@@ -8,7 +8,11 @@ import { readEventsFromLog } from '@/lib/realtime/events';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import { withErrorBoundary } from '@/lib/api-handler';
 
-function makeSessionStateEvent(session: { id: string; status: string; eventSeq: number }): AgendoEvent {
+function makeSessionStateEvent(session: {
+  id: string;
+  status: string;
+  eventSeq: number;
+}): AgendoEvent {
   return {
     id: 0, // synthetic event, not counted in seq
     sessionId: session.id,
@@ -18,18 +22,17 @@ function makeSessionStateEvent(session: { id: string; status: string; eventSeq: 
   };
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const lastEventId = parseInt(req.headers.get('last-event-id') ?? '0', 10) || 0;
+  // On browser-auto-reconnect the Last-Event-ID header is set; on client-triggered
+  // reconnect (new EventSource instance) it isn't, so fall back to the query param.
+  const lastEventId =
+    parseInt(
+      req.headers.get('last-event-id') ?? req.nextUrl.searchParams.get('lastEventId') ?? '0',
+      10,
+    ) || 0;
 
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.id, id))
-    .limit(1);
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
 
   if (!session) {
     return new Response('Session not found', { status: 404 });
@@ -42,9 +45,7 @@ export async function GET(
     async start(controller) {
       function send(event: AgendoEvent) {
         try {
-          controller.enqueue(
-            encoder.encode(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`));
         } catch {
           // Client disconnected
         }
@@ -68,17 +69,14 @@ export async function GET(
 
       // 3. Subscribe to live events via PG NOTIFY
       try {
-        unsubscribe = await subscribe(
-          channelName('agendo_events', id),
-          (payload) => {
-            try {
-              const ev = JSON.parse(payload) as AgendoEvent;
-              send(ev);
-            } catch {
-              // Invalid payload — ignore
-            }
-          },
-        );
+        unsubscribe = await subscribe(channelName('agendo_events', id), (payload) => {
+          try {
+            const ev = JSON.parse(payload) as AgendoEvent;
+            send(ev);
+          } catch {
+            // Invalid payload — ignore
+          }
+        });
       } catch {
         // PG subscribe failed — close stream
         controller.close();

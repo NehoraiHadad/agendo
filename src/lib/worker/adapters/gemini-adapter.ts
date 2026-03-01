@@ -1,4 +1,3 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { AsyncLock } from '@/lib/utils/async-lock';
@@ -6,11 +5,11 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import type {
   AgentAdapter,
-  ApprovalHandler,
   ImageContent,
   ManagedProcess,
   SpawnOpts,
 } from '@/lib/worker/adapters/types';
+import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -29,16 +28,13 @@ interface AcpMessage {
 /** Auto-incrementing ID for synthetic tool-use events. */
 let toolUseCounter = 0;
 
-export class GeminiAdapter implements AgentAdapter {
-  private childProcess: ChildProcess | null = null;
+export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
+  private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   private requestId = 0;
   private pendingRequests = new Map<number | string, PendingRequest>();
   private sessionId: string | null = null;
   private currentTurn: Promise<void> = Promise.resolve();
   private lock = new AsyncLock();
-  private thinkingCallback: ((thinking: boolean) => void) | null = null;
-  private approvalHandler: ApprovalHandler | null = null;
-  private sessionRefCallback: ((ref: string) => void) | null = null;
   /** Stored image for the next sendPrompt call. */
   private pendingImage: ImageContent | null = null;
   /** Data callbacks from the ManagedProcess — used to emit synthetic NDJSON. */
@@ -122,18 +118,6 @@ export class GeminiAdapter implements AgentAdapter {
     return this.childProcess?.stdin?.writable ?? false;
   }
 
-  onThinkingChange(cb: (thinking: boolean) => void): void {
-    this.thinkingCallback = cb;
-  }
-
-  setApprovalHandler(handler: ApprovalHandler): void {
-    this.approvalHandler = handler;
-  }
-
-  onSessionRef(cb: (ref: string) => void): void {
-    this.sessionRefCallback = cb;
-  }
-
   async setPermissionMode(mode: string): Promise<boolean> {
     if (!this.sessionId) return false;
     const modeMap: Record<string, string> = {
@@ -186,15 +170,8 @@ export class GeminiAdapter implements AgentAdapter {
     }
     geminiArgs.push(...(opts.extraArgs ?? []));
 
-    const cp = nodeSpawn('gemini', geminiArgs, {
-      cwd: opts.cwd,
-      env: opts.env as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      detached: true,
-    });
+    const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
-    cp.unref();
 
     // Wire new stdout to readline parser → same dataCallbacks
     const rl = createInterface({ input: cp.stdout ?? process.stdin });
@@ -238,31 +215,7 @@ export class GeminiAdapter implements AgentAdapter {
         },
       );
 
-      const supportsLoad = !!(initResult?.agentCapabilities as Record<string, unknown> | undefined)
-        ?.loadSession;
-      let loaded = false;
-      if (supportsLoad) {
-        try {
-          await this.sendRequest('session/load', {
-            sessionId: this.sessionId,
-            cwd: opts.cwd,
-            mcpServers: opts.mcpServers ?? [],
-          });
-          loaded = true;
-        } catch (loadErr) {
-          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
-          console.warn(
-            `[GeminiAdapter] session/load failed during model switch, falling back: ${msg}`,
-          );
-        }
-      }
-      if (!loaded) {
-        const result = await this.sendRequest<{ sessionId: string }>('session/new', {
-          cwd: opts.cwd,
-          mcpServers: opts.mcpServers ?? [],
-        });
-        this.sessionId = result.sessionId;
-      }
+      await this.loadOrCreateSession(initResult?.agentCapabilities, opts, this.sessionId);
     } catch (err) {
       this.modelSwitching = false;
       const message = err instanceof Error ? err.message : String(err);
@@ -291,17 +244,10 @@ export class GeminiAdapter implements AgentAdapter {
     }
     geminiArgs.push(...(opts.extraArgs ?? []));
 
-    const cp = nodeSpawn('gemini', geminiArgs, {
-      cwd: opts.cwd,
-      env: opts.env as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      detached: true,
-    });
+    const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
-    cp.unref();
 
-    // Parse ndJSON from stdout line by line
+    // Parse ndJSON from stdout line by line (readline handles buffering — no processLineBuffer needed)
     const rl = createInterface({ input: cp.stdout ?? process.stdin });
     rl.on('line', (line: string) => {
       const trimmed = line.trim();
@@ -374,15 +320,7 @@ export class GeminiAdapter implements AgentAdapter {
       pid: cp.pid ?? 0,
       tmuxSession: '',
       stdin: null,
-      kill: (signal) => {
-        const p = this.childProcess;
-        if (!p?.pid) return;
-        try {
-          process.kill(-p.pid, signal);
-        } catch {
-          // Process group already dead
-        }
-      },
+      kill: BaseAgentAdapter.buildKill(() => this.childProcess),
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };
@@ -426,7 +364,6 @@ export class GeminiAdapter implements AgentAdapter {
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
-            // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
             result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
           });
           // Emit tool-end after approval
@@ -556,43 +493,8 @@ export class GeminiAdapter implements AgentAdapter {
         },
       );
 
-      if (resumeSessionId) {
-        // session/load: resume an existing session (requires loadSession capability).
-        // Gemini advertises loadSession:true but session/load can still fail
-        // (e.g. session checkpoint missing after a 429 crash). Fall back to
-        // session/new so the user can continue without history.
-        const supportsLoad = !!(
-          initResult?.agentCapabilities as Record<string, unknown> | undefined
-        )?.loadSession;
-        let loaded = false;
-        if (supportsLoad) {
-          try {
-            await this.sendRequest('session/load', {
-              sessionId: resumeSessionId,
-              cwd: opts.cwd,
-              mcpServers: opts.mcpServers ?? [],
-            });
-            loaded = true;
-          } catch (loadErr) {
-            const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
-            console.warn(
-              `[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`,
-            );
-          }
-        }
-        if (!loaded) {
-          const result = await this.sendRequest<{ sessionId: string }>('session/new', {
-            cwd: opts.cwd,
-            mcpServers: opts.mcpServers ?? [],
-          });
-          this.sessionId = result.sessionId;
-        }
-      } else {
-        const result = await this.sendRequest<{ sessionId: string }>('session/new', {
-          cwd: opts.cwd,
-          mcpServers: opts.mcpServers ?? [],
-        });
-        this.sessionId = result.sessionId;
+      await this.loadOrCreateSession(initResult?.agentCapabilities, opts, resumeSessionId);
+      if (!resumeSessionId && this.sessionId) {
         this.sessionRefCallback?.(this.sessionId);
       }
     } catch (err) {
@@ -608,6 +510,42 @@ export class GeminiAdapter implements AgentAdapter {
 
     // 3. First prompt — sendPrompt emits its own error events on failure.
     await this.sendPrompt(prompt);
+  }
+
+  /**
+   * Load an existing session (via session/load) or create a new one (via session/new).
+   *
+   * - If resumeSessionId is provided and the adapter supports loadSession:
+   *   tries session/load first; falls back to session/new on failure.
+   * - Otherwise (or on fallback): calls session/new and updates this.sessionId.
+   *
+   * Note: sessionRefCallback is NOT called here — callers are responsible for
+   * invoking it when a brand-new (non-resume) session is started.
+   */
+  private async loadOrCreateSession(
+    agentCaps: Record<string, unknown> | undefined,
+    opts: SpawnOpts,
+    resumeSessionId: string | null,
+  ): Promise<void> {
+    if (resumeSessionId && agentCaps?.loadSession) {
+      try {
+        await this.sendRequest('session/load', {
+          sessionId: resumeSessionId,
+          cwd: opts.cwd,
+          mcpServers: opts.mcpServers ?? [],
+        });
+        return; // session/load succeeded; this.sessionId already points to the resumed session
+      } catch (loadErr) {
+        const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+        console.warn(`[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`);
+      }
+    }
+
+    const result = await this.sendRequest<{ sessionId: string }>('session/new', {
+      cwd: opts.cwd,
+      mcpServers: opts.mcpServers ?? [],
+    });
+    this.sessionId = result.sessionId;
   }
 
   private async sendPrompt(text: string): Promise<void> {

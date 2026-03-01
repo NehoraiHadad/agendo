@@ -71,7 +71,7 @@ export interface ImageContent {
 }
 
 /** Callback type injected by SessionProcess to handle per-tool approval requests. */
-export type ApprovalHandler = (request: ApprovalRequest) => Promise<PermissionDecision>;
+export type ToolApprovalFn = (request: ApprovalRequest) => Promise<PermissionDecision>;
 
 export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
@@ -83,7 +83,7 @@ export interface AgentAdapter {
   interrupt(): Promise<void>;
   isAlive(): boolean;
   onThinkingChange(cb: (thinking: boolean) => void): void;
-  setApprovalHandler(handler: ApprovalHandler): void;
+  setApprovalHandler(handler: ToolApprovalFn): void;
   onSessionRef?(cb: (ref: string) => void): void;
   /** Change the permission mode in-place via control_request (no process restart). */
   setPermissionMode?(mode: string): Promise<boolean>;

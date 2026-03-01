@@ -30,8 +30,6 @@ interface ExecutionDetailClientProps {
   execution: ExecutionWithDetails;
 }
 
-const ACTIVE_STATUSES = new Set<ExecutionStatus>(['queued', 'running', 'cancelling']);
-
 function formatDuration(startedAt: Date | null, endedAt: Date | null): string {
   if (!startedAt) return 'Not started';
   const end = endedAt ?? new Date();
@@ -46,8 +44,8 @@ function formatTimestamp(date: Date | null): string {
 export function ExecutionDetailClient({ execution }: ExecutionDetailClientProps) {
   const executionStream = useExecutionStream(execution.id);
 
-  const currentStatus: ExecutionStatus =
-    (executionStream.status ?? execution.status) as ExecutionStatus;
+  const currentStatus: ExecutionStatus = (executionStream.status ??
+    execution.status) as ExecutionStatus;
 
   const showTerminal =
     execution.tmuxSessionName && (currentStatus === 'running' || currentStatus === 'cancelling');
@@ -96,9 +94,7 @@ export function ExecutionDetailClient({ execution }: ExecutionDetailClientProps)
       {/* Session link banner */}
       {execution.sessionId && (
         <div className="flex items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-4 py-2.5 text-sm">
-          <span className="text-muted-foreground">
-            This execution is part of a session.
-          </span>
+          <span className="text-muted-foreground">This execution is part of a session.</span>
           <Link
             href={`/sessions/${execution.sessionId}`}
             className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors ml-auto"

@@ -3,7 +3,9 @@ import { db } from '@/lib/db';
 import { tasks, executions } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
 import { listTasksBoardItems } from '@/lib/services/task-service';
+import { createLogger } from '@/lib/logger';
 
+const log = createLogger('sse-board');
 const POLL_INTERVAL_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 15000;
 
@@ -33,7 +35,7 @@ export async function GET(_req: NextRequest) {
         const allTasks = await listTasksBoardItems([]);
         send('snapshot', { tasks: allTasks });
       } catch (err) {
-        console.error('SSE snapshot error:', err);
+        log.error('SSE snapshot error:', err);
         send('error', { message: 'Failed to load snapshot' });
       }
 
@@ -45,9 +47,7 @@ export async function GET(_req: NextRequest) {
         }
 
         try {
-          const updatedTasks = await listTasksBoardItems([
-            sql`${tasks.updatedAt} > ${lastPoll}`,
-          ]);
+          const updatedTasks = await listTasksBoardItems([sql`${tasks.updatedAt} > ${lastPoll}`]);
 
           for (const task of updatedTasks) {
             send('task_updated', task);
@@ -70,7 +70,7 @@ export async function GET(_req: NextRequest) {
 
           lastPoll = new Date();
         } catch (err) {
-          console.error('SSE poll error:', err);
+          log.error('SSE poll error:', err);
         }
       }, POLL_INTERVAL_MS);
 

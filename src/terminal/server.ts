@@ -3,15 +3,18 @@ import { spawnSync } from 'node:child_process';
 import { Server as SocketIOServer } from 'socket.io';
 import * as pty from 'node-pty';
 import { verifyTerminalToken, type TerminalTokenPayload } from './auth';
+import { createLogger } from '../lib/logger';
 
 // --- Config ---
 
 const PORT = parseInt(process.env.TERMINAL_PORT ?? '4101', 10);
 const JWT_SECRET = process.env.TERMINAL_JWT_SECRET ?? process.env.JWT_SECRET ?? '';
-const NEXT_ORIGIN = process.env.NEXT_PUBLIC_URL ?? 'http://localhost:4100';
+
+const serverLog = createLogger('terminal-server');
+const log = createLogger('terminal');
 
 if (!JWT_SECRET) {
-  console.error('[terminal-server] TERMINAL_JWT_SECRET or JWT_SECRET is required');
+  serverLog.error('TERMINAL_JWT_SECRET or JWT_SECRET is required');
   process.exit(1);
 }
 
@@ -71,12 +74,18 @@ io.on('connection', (socket) => {
     try {
       const isShellMode = payload.mode === 'shell';
       const cwd = payload.cwd ?? process.env.HOME ?? '/tmp';
-      const fullEnv = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' } as NodeJS.ProcessEnv;
+      const fullEnv = {
+        ...process.env,
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+      } as NodeJS.ProcessEnv;
 
       if (isShellMode) {
         // Create tmux session if it doesn't already exist (e.g. after server restart).
         // On subsequent connections the session persists and we just re-attach.
-        const { status } = spawnSync('tmux', ['has-session', '-t', sessionName], { stdio: 'ignore' });
+        const { status } = spawnSync('tmux', ['has-session', '-t', sessionName], {
+          stdio: 'ignore',
+        });
         const tmuxExists = status === 0;
         if (!tmuxExists) {
           spawnSync('tmux', ['new-session', '-d', '-s', sessionName, '-c', cwd], {
@@ -87,15 +96,19 @@ io.on('connection', (socket) => {
             const hint = payload.initialHint.replace(/'/g, "'\\''");
             spawnSync(
               'tmux',
-              ['send-keys', '-t', sessionName,
+              [
+                'send-keys',
+                '-t',
+                sessionName,
                 `echo '--- Agendo Session Terminal ---'; echo '${hint}'; echo ''`,
-                'Enter'],
+                'Enter',
+              ],
               { env: fullEnv, stdio: 'ignore' },
             );
           }
-          console.log(`[terminal] Created tmux session for shell mode: ${sessionName} (cwd=${cwd})`);
+          log.info(`Created tmux session for shell mode: ${sessionName} (cwd=${cwd})`);
         } else {
-          console.log(`[terminal] Reusing existing tmux session: ${sessionName}`);
+          log.info(`Reusing existing tmux session: ${sessionName}`);
         }
       }
 
@@ -122,7 +135,7 @@ io.on('connection', (socket) => {
       });
 
       ptyProcess.onExit(({ exitCode }) => {
-        console.log(`[terminal] PTY exited for ${sessionName} (code: ${exitCode})`);
+        log.info(`PTY exited for ${sessionName} (code: ${exitCode})`);
         for (const viewerId of newEntry.viewers) {
           io.to(viewerId).emit('terminal:exit', { exitCode });
         }
@@ -130,7 +143,7 @@ io.on('connection', (socket) => {
       });
 
       sessions.set(sessionName, newEntry);
-      console.log(`[terminal] Attached PTY to tmux session: ${sessionName}`);
+      log.info(`Attached PTY to tmux session: ${sessionName}`);
     } catch (err) {
       socket.emit('terminal:error', {
         message: `Failed to attach to session: ${(err as Error).message}`,
@@ -141,9 +154,7 @@ io.on('connection', (socket) => {
   }
 
   entry.viewers.add(socket.id);
-  console.log(
-    `[terminal] Viewer connected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`,
-  );
+  log.info(`Viewer connected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`);
 
   socket.on('terminal:input', (data: string) => {
     entry?.ptyProcess.write(data);
@@ -158,12 +169,12 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (entry) {
       entry.viewers.delete(socket.id);
-      console.log(
-        `[terminal] Viewer disconnected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`,
+      log.info(
+        `Viewer disconnected: ${socket.id} -> ${sessionName} (${entry.viewers.size} viewers)`,
       );
 
       if (entry.viewers.size === 0) {
-        console.log(`[terminal] No viewers for ${sessionName}, killing PTY (tmux detaches)`);
+        log.info(`No viewers for ${sessionName}, killing PTY (tmux detaches)`);
         entry.ptyProcess.kill();
         sessions.delete(sessionName);
       }
@@ -174,23 +185,23 @@ io.on('connection', (socket) => {
 // --- Startup ---
 
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[terminal-server] Listening on 0.0.0.0:${PORT}`);
+  serverLog.info(`Listening on 0.0.0.0:${PORT}`);
 });
 
 // --- Graceful Shutdown ---
 
 function shutdown(signal: string): void {
-  console.log(`[terminal-server] Received ${signal}, shutting down...`);
+  serverLog.info(`Received ${signal}, shutting down...`);
 
   for (const [name, entry] of sessions) {
-    console.log(`[terminal] Killing PTY for ${name}`);
+    log.info(`Killing PTY for ${name}`);
     entry.ptyProcess.kill();
   }
   sessions.clear();
 
   io.close();
   httpServer.close(() => {
-    console.log('[terminal-server] Shut down cleanly');
+    serverLog.info('Shut down cleanly');
     process.exit(0);
   });
 
