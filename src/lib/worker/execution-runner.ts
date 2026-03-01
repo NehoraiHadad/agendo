@@ -13,7 +13,7 @@ import {
 import { FileLogWriter, resolveLogPath } from '@/lib/worker/log-writer';
 import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
-import type { ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
 
 // --- Constants ---
@@ -98,7 +98,8 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
       childEnv[k] = v;
     }
   }
-  const taskEnv = (taskRow?.inputContext as { envOverrides?: Record<string, string> } | null)?.envOverrides;
+  const taskEnv = (taskRow?.inputContext as { envOverrides?: Record<string, string> } | null)
+    ?.envOverrides;
   if (taskEnv) {
     for (const [k, v] of Object.entries(taskEnv)) {
       childEnv[k] = v;
@@ -107,29 +108,10 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   delete childEnv['CLAUDECODE'];
   delete childEnv['CLAUDE_CODE_ENTRYPOINT'];
 
-  // --- 3. Resolve prompt or command args ---
-  let resolvedPrompt: string | undefined;
-  let resolvedArgs: string[] | undefined;
-
-  if (execution.mode === 'prompt') {
-    // If promptOverride is set, use it directly (session continuation path)
-    if (execution.promptOverride) {
-      resolvedPrompt = execution.promptOverride;
-    } else {
-      const interpolationContext: Record<string, unknown> = {
-        task_title: taskRow?.title ?? '',
-        task_description: taskRow?.description ?? '',
-        ...execution.args,
-      };
-      resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);
-    }
-    await db
-      .update(executions)
-      .set({ prompt: resolvedPrompt })
-      .where(eq(executions.id, executionId));
-  } else {
-    resolvedArgs = buildCommandArgs(capability.commandTokens ?? [], execution.args);
-  }
+  // --- 3. Resolve command args ---
+  // Note: prompt-mode capabilities are rejected at the API layer (/api/executions) and
+  // can never reach this point. Executions are template-mode only.
+  const resolvedArgs = buildCommandArgs(capability.commandTokens ?? [], execution.args);
 
   // --- 3b. Build extra CLI flags argv ---
   const extraArgs = buildCliFlagsArgv(
@@ -170,16 +152,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     extraArgs,
   };
 
-  let managedProcess: ManagedProcess;
-
-  if (execution.mode === 'prompt' && execution.parentExecutionId && execution.sessionRef) {
-    logWriter.writeSystem(`Resuming session: ${execution.sessionRef}`);
-    managedProcess = adapter.resume(execution.sessionRef, resolvedPrompt ?? '', spawnOpts);
-  } else if (execution.mode === 'prompt') {
-    managedProcess = adapter.spawn(resolvedPrompt ?? '', spawnOpts);
-  } else {
-    managedProcess = adapter.spawn((resolvedArgs ?? []).join(' '), spawnOpts);
-  }
+  const managedProcess = adapter.spawn(resolvedArgs.join(' '), spawnOpts);
 
   // Store PID and tmux session name
   await db
@@ -223,7 +196,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
           const ev = JSON.parse(line) as { type?: string };
           if (ev.type === 'result') {
             resultKillTimer = setTimeout(() => {
-              logWriter.writeSystem('Claude result event seen but process did not exit. Sending SIGKILL.');
+              logWriter.writeSystem(
+                'Claude result event seen but process did not exit. Sending SIGKILL.',
+              );
               managedProcess.kill('SIGKILL');
             }, RESULT_EXIT_GRACE_MS);
             break;
@@ -357,20 +332,6 @@ function buildCliFlagsArgv(cliFlags: Record<string, string | boolean>): string[]
     }
   }
   return argv;
-}
-
-function interpolatePrompt(template: string, args: Record<string, unknown>): string {
-  return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path: string) => {
-    // Support dotted paths like {{input_context.prompt_additions}}
-    const parts = path.split('.');
-    let value: unknown = args;
-    for (const part of parts) {
-      if (value === null || value === undefined || typeof value !== 'object') return '';
-      value = (value as Record<string, unknown>)[part];
-    }
-    if (value === undefined || value === null) return '';
-    return String(value);
-  });
 }
 
 async function loadExecution(id: string): Promise<Execution> {
