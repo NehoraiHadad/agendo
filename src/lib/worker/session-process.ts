@@ -38,7 +38,7 @@ import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { handleSessionExit } from '@/lib/worker/session-exit-handler';
-import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
+import { routeParsedEvent } from '@/lib/worker/session-event-router';
 
 /**
  * Derive a log file path for a session.
@@ -397,122 +397,20 @@ export class SessionProcess {
       }
 
       try {
-        // Generic interactive tool detection: when Claude's own NDJSON output
-        // contains a type:'user' block with is_error:true tool_results, it means
-        // the CLI tried to handle an interactive tool (AskUserQuestion, ExitPlanMode,
-        // or any future tool) natively but failed in pipe mode. We detect this
-        // from the raw parsed object BEFORE emitting events, so the suppression
-        // check below can immediately catch the resulting agent:tool-end partial.
-        //
-        // This is fully generic — no hardcoded tool name list needed for the
-        // NDJSON path. The is_error flag in Claude's own output is the signal.
-        if (parsed.type === 'user') {
-          const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-          this.approvalHandler.checkForHumanResponseBlocks(
-            msg?.content ?? [],
-            this.activeToolUseIds,
-          );
-        }
-
-        let partials: AgendoEventPayload[];
-        try {
-          partials = this.adapter.mapJsonToEvents
-            ? this.adapter.mapJsonToEvents(parsed)
-            : mapClaudeJsonToEvents(parsed, {
-                clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
-                appendDelta: (text) => this.activityTracker.appendDelta(text),
-                appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
-                onResultStats: (costUsd, turns) => {
-                  void db
-                    .update(sessions)
-                    .set({
-                      ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-                      ...(turns !== null && { totalTurns: turns }),
-                    })
-                    .where(eq(sessions.id, this.session.id))
-                    .catch((err: unknown) => {
-                      console.error(
-                        `[session-process] cost stats update failed for session ${this.session.id}:`,
-                        err,
-                      );
-                    });
-                },
-              });
-        } catch (mapErr) {
-          console.warn(
-            `[session-process] mapJsonToEvents error for session ${this.session.id}:`,
-            mapErr,
-            'line:',
-            trimmed.slice(0, 200),
-          );
-          continue;
-        }
-
-        for (const partial of partials) {
-          // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
-          // These appear only as control_request approval cards — not as ToolCard widgets.
-          if (
-            partial.type === 'agent:tool-start' &&
-            ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
-          ) {
-            this.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
-            this.approvalHandler.suppressToolStart(partial.toolUseId);
-            continue;
-          }
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isSuppressedToolEnd(partial.toolUseId, this.activeToolUseIds)
-          ) {
-            continue;
-          }
-
-          // Suppress the error tool-end for any interactive tool: the UI card
-          // stays live and pushToolResult routes the human's answer when it arrives.
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isPendingHumanResponse(partial.toolUseId)
-          ) {
-            continue; // suppress — keep in activeToolUseIds until human responds
-          }
-
-          const event = await this.emitEvent(partial);
-
-          // Track in-flight tool calls to enable synthetic cleanup on cancel.
-          if (event.type === 'agent:tool-start') {
-            this.activeToolUseIds.add(event.toolUseId);
-          }
-          if (event.type === 'agent:tool-end') {
-            this.activeToolUseIds.delete(event.toolUseId);
-          }
-
-          // Detect TeamCreate / TeamDelete tool events for team lifecycle.
-          if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
-            this.teamManager.onToolEvent(event);
-          }
-
-          // Persist sessionRef and model once the agent announces its session ID.
-          if (event.type === 'session:init') {
-            const updates: Record<string, string> = {};
-            if (event.sessionRef) {
-              this.sessionRef = event.sessionRef;
-              updates.sessionRef = event.sessionRef;
-            }
-            if (event.model) {
-              updates.model = event.model;
-            }
-            if (Object.keys(updates).length > 0) {
-              await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
-            }
-          }
-
-          // After the agent finishes a result, transition to awaiting_input.
-          // Skip during an interrupt — handleInterrupt() manages the transition
-          // based on whether the process survived (warm vs cold resume).
-          if (event.type === 'agent:result' && !this.interruptInProgress) {
-            await this.transitionTo('awaiting_input');
-            this.activityTracker.recordActivity();
-          }
-        }
+        await routeParsedEvent(parsed, trimmed, {
+          sessionId: this.session.id,
+          adapter: this.adapter,
+          approvalHandler: this.approvalHandler,
+          activityTracker: this.activityTracker,
+          teamManager: this.teamManager,
+          activeToolUseIds: this.activeToolUseIds,
+          interruptInProgress: this.interruptInProgress,
+          emitEvent: (p) => this.emitEvent(p),
+          transitionTo: (s) => this.transitionTo(s),
+          setSessionRef: (ref) => {
+            this.sessionRef = ref;
+          },
+        });
       } catch (err) {
         // Event emission failed (transient DB/publish error). Log but don't
         // surface raw JSON to the user — it would appear as a broken UI element.
