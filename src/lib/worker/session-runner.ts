@@ -165,12 +165,16 @@ export async function runSession(
     const projectName = project?.name ?? 'unknown';
     let preamble: string;
     if (session.kind === 'conversation') {
-      // Planning conversation preamble — no task context
+      // Planning conversation preamble — no task context.
+      // Kept intentionally brief; the full agent-execution guidance lives in the
+      // initialPrompt constructed by plan-service.ts startPlanConversation().
       preamble =
         `[Agendo Context: project=${projectName}, mode=planning]\n` +
         `Agendo MCP tools are available. You are in a planning conversation.\n` +
-        `Use create_task to turn ideas into actionable tasks.\n` +
-        `Use list_tasks to see existing tasks in this project.\n` +
+        `- create_task / create_subtask — turn plan steps into actionable tasks\n` +
+        `- list_tasks / get_task — inspect existing tasks and their status\n` +
+        `- list_projects — list all projects (needed to resolve projectId for create_task)\n` +
+        `- start_agent_session — spawn an agent on a task when ready to execute\n` +
         `---\n`;
     } else {
       // Execution preamble — task context

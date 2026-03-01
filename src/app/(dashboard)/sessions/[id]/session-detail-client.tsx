@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useRouter } from 'next/navigation';
@@ -36,7 +36,7 @@ import { SessionInfoPanel } from '@/components/sessions/session-info-panel';
 import { ExecutionLogViewer } from '@/components/executions/execution-log-viewer';
 import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
 import type { Session } from '@/lib/types';
-import type { SessionStatus } from '@/lib/realtime/events';
+import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 
 const WebTerminal = dynamic(
   () => import('@/components/terminal/web-terminal').then((m) => m.WebTerminal),
@@ -182,6 +182,31 @@ const STATUS_CONFIGS: Record<SessionStatus, StatusConfig> = {
   },
 };
 
+function fmtCtx(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+/** Pick context window stats from the most recent agent:result event. */
+function getLatestContextStats(
+  events: AgendoEvent[],
+): { inputTokens: number; contextWindow: number | null } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'agent:result' && e.modelUsage) {
+      let inputTokens = 0;
+      let contextWindow: number | null = null;
+      for (const usage of Object.values(e.modelUsage)) {
+        inputTokens += usage.inputTokens;
+        if (usage.contextWindow) contextWindow = usage.contextWindow;
+      }
+      if (inputTokens > 0) return { inputTokens, contextWindow };
+    }
+  }
+  return null;
+}
+
 function SessionStatusIndicator({ status }: { status: SessionStatus | null }) {
   if (!status) return null;
   const cfg = STATUS_CONFIGS[status];
@@ -270,6 +295,8 @@ export function SessionDetailClient({
     .at(-1);
   const currentModel = modelFromInfo ?? modelInitEvent?.model ?? session.model ?? null;
   const modelLabel = currentModel ? modelDisplayLabel(currentModel) : null;
+
+  const contextStats = useMemo(() => getLatestContextStats(stream.events), [stream.events]);
 
   async function handleModelChange(modelId: string) {
     if (isModelChanging || currentStatus === 'ended') return;
@@ -457,6 +484,40 @@ export function SessionDetailClient({
                 <>
                   <span className="text-muted-foreground/20">·</span>
                   <span className="text-muted-foreground/50">Conversation</span>
+                </>
+              )}
+              {contextStats && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <span
+                    className="inline-flex items-center gap-1.5"
+                    title={
+                      contextStats.contextWindow
+                        ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${Math.round((contextStats.inputTokens / contextStats.contextWindow) * 100)}% full)`
+                        : `Context: ${contextStats.inputTokens.toLocaleString()} tokens used`
+                    }
+                  >
+                    {contextStats.contextWindow && (
+                      <span className="relative inline-block h-[5px] w-12 rounded-full bg-white/[0.08] overflow-hidden shrink-0">
+                        <span
+                          className="absolute inset-y-0 left-0 rounded-full transition-[width]"
+                          style={{
+                            width: `${Math.min(100, (contextStats.inputTokens / contextStats.contextWindow) * 100)}%`,
+                            backgroundColor:
+                              contextStats.inputTokens / contextStats.contextWindow > 0.8
+                                ? 'oklch(0.65 0.22 25)'
+                                : contextStats.inputTokens / contextStats.contextWindow > 0.6
+                                  ? 'oklch(0.72 0.18 60)'
+                                  : 'oklch(0.65 0.18 280)',
+                          }}
+                        />
+                      </span>
+                    )}
+                    <span className="text-muted-foreground/60 font-mono text-[10px]">
+                      {fmtCtx(contextStats.inputTokens)}
+                      {contextStats.contextWindow ? `/${fmtCtx(contextStats.contextWindow)}` : ''}
+                    </span>
+                  </span>
                 </>
               )}
             </div>
