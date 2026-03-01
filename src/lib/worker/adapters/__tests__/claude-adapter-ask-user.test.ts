@@ -107,7 +107,6 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
 
     expect(handlerCalls).toHaveLength(1);
     expect(handlerCalls[0].toolName).toBe('AskUserQuestion');
-    expect(handlerCalls[0].isAskUser).toBe(true);
     expect(handlerCalls[0].toolInput).toEqual({ questions });
   });
 
@@ -180,8 +179,7 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     const adapter = new ClaudeAdapter();
     adapter.spawn('prompt', opts);
 
-    adapter.setApprovalHandler(async (req): Promise<PermissionDecision> => {
-      expect(req.isAskUser).toBe(false);
+    adapter.setApprovalHandler(async (_req): Promise<PermissionDecision> => {
       return 'allow';
     });
 
@@ -290,7 +288,6 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     expect(capturedRequest!.approvalId).toBe('req-tool');
     expect(capturedRequest!.toolName).toBe('Read');
     expect(capturedRequest!.toolInput).toEqual({ path: '/tmp/test.txt' });
-    expect(capturedRequest!.isAskUser).toBe(false);
   });
 });
 

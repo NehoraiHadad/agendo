@@ -373,7 +373,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
         const approvalId = String(msg.id);
         const msgId = msg.id;
-        this.approvalHandler({ approvalId, toolName, toolInput, isAskUser: false })
+        this.approvalHandler({ approvalId, toolName, toolInput })
           .then((decision) => {
             const chosenOption =
               decision === 'deny'

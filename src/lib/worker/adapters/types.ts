@@ -11,8 +11,6 @@ export interface ApprovalRequest {
   approvalId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
-  /** True when this is an AskUserQuestion interactive prompt (not a permission gate). */
-  isAskUser: boolean;
 }
 
 /** MCP server descriptor for the ACP session/new protocol (used by Gemini).

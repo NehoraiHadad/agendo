@@ -290,15 +290,12 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
     const req = msg.request as Record<string, unknown>;
     const toolName = req.tool_name as string;
     const toolInput = (req.input as Record<string, unknown>) ?? {};
-    const isAskUser = toolName === 'AskUserQuestion';
-
     let decision: PermissionDecision = 'allow';
     if (this.approvalHandler) {
       decision = await this.approvalHandler({
         approvalId: requestId,
         toolName,
         toolInput,
-        isAskUser,
       });
     }
 

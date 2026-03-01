@@ -110,15 +110,23 @@ function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: Int
     setLoading(true);
     setError(null);
 
-    const answers: Record<string, string | string[]> = {};
+    // Build answers map: question text → selected label (or comma-joined for multiSelect)
+    const answers: Record<string, string> = {};
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       const selected = [...(selections[i] ?? [])];
-      answers[q.question] = q.multiSelect ? selected : (selected[0] ?? '');
+      answers[q.question] = q.multiSelect ? selected.join(', ') : (selected[0] ?? '');
     }
 
     try {
-      await respond({ kind: 'tool-result', content: JSON.stringify({ answers }) });
+      // Send the answers back to Claude via the approval control channel.
+      // Claude's AskUserQuestion.call() receives updatedInput.answers and
+      // returns a proper tool result, then continues with the user's choices.
+      await respond({
+        kind: 'approval',
+        decision: 'allow',
+        updatedInput: { answers },
+      });
       setSubmitted(true);
       onResolved?.();
     } catch (err) {
