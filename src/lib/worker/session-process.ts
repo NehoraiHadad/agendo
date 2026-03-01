@@ -19,13 +19,13 @@ import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
 import { capturePlanFilePath, readPlanFromFile } from '@/lib/worker/session-plan-utils';
 import {
-  SIGKILL_DELAY_MS,
   handleCancel,
   handleInterrupt,
   handleSetPermissionMode,
   handleSetModel,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import type {
   AgentAdapter,
   SpawnOpts,

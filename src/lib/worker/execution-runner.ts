@@ -15,7 +15,7 @@ import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import type { SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
-import { SIGKILL_DELAY_MS } from '@/lib/worker/session-control-handlers';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
 // --- Constants ---
 
