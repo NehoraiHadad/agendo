@@ -36,7 +36,8 @@ import { SessionInfoPanel } from '@/components/sessions/session-info-panel';
 import { ExecutionLogViewer } from '@/components/executions/execution-log-viewer';
 import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
 import type { Session } from '@/lib/types';
-import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import type { SessionStatus } from '@/lib/realtime/events';
+import { getLatestContextStats, fmtTokens } from '@/lib/utils/context-stats';
 
 const WebTerminal = dynamic(
   () => import('@/components/terminal/web-terminal').then((m) => m.WebTerminal),
@@ -181,31 +182,6 @@ const STATUS_CONFIGS: Record<SessionStatus, StatusConfig> = {
     animate: false,
   },
 };
-
-function fmtCtx(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
-}
-
-/** Pick context window stats from the most recent agent:result event. */
-function getLatestContextStats(
-  events: AgendoEvent[],
-): { inputTokens: number; contextWindow: number | null } | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type === 'agent:result' && e.modelUsage) {
-      let inputTokens = 0;
-      let contextWindow: number | null = null;
-      for (const usage of Object.values(e.modelUsage)) {
-        inputTokens += usage.inputTokens;
-        if (usage.contextWindow) contextWindow = usage.contextWindow;
-      }
-      if (inputTokens > 0) return { inputTokens, contextWindow };
-    }
-  }
-  return null;
-}
 
 function SessionStatusIndicator({ status }: { status: SessionStatus | null }) {
   if (!status) return null;
@@ -514,8 +490,10 @@ export function SessionDetailClient({
                       </span>
                     )}
                     <span className="text-muted-foreground/60 font-mono text-[10px]">
-                      {fmtCtx(contextStats.inputTokens)}
-                      {contextStats.contextWindow ? `/${fmtCtx(contextStats.contextWindow)}` : ''}
+                      {fmtTokens(contextStats.inputTokens)}
+                      {contextStats.contextWindow
+                        ? `/${fmtTokens(contextStats.contextWindow)}`
+                        : ''}
                     </span>
                   </span>
                 </>

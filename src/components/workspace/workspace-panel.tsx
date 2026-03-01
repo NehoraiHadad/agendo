@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import type { PanelStreamState } from '@/hooks/use-multi-session-streams';
 import type { SessionStatus } from '@/lib/realtime/events';
+import { getLatestContextStats } from '@/lib/utils/context-stats';
 import { SessionChatView } from '@/components/sessions/session-chat-view';
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
 import { WorkspacePanelHeader } from './workspace-panel-header';
@@ -61,6 +62,8 @@ export function WorkspacePanel({
 
   const currentStatus = stream.sessionStatus as SessionStatus | null;
 
+  const contextStats = useMemo(() => getLatestContextStats(stream.events), [stream.events]);
+
   const borderClass = needsAttention
     ? 'ring-1 ring-amber-500/40 shadow-[0_0_0_1px_oklch(0.78_0.17_65/0.35),0_0_16px_oklch(0.78_0.17_65/0.12)]'
     : isFocused
@@ -81,6 +84,7 @@ export function WorkspacePanel({
         sessionTitle={sessionTitle}
         status={currentStatus}
         needsAttention={needsAttention}
+        contextStats={contextStats}
         onExpand={onExpand}
         onRemove={onRemove}
       />
