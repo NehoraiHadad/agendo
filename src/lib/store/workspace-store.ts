@@ -220,6 +220,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout }),
+      keepalive: true, // survive page unload (beforeunload/visibilitychange flush)
     });
   },
 
