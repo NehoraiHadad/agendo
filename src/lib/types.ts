@@ -103,6 +103,7 @@ export interface ExecutionWithDetails extends Execution {
 export interface PlanMetadata {
   tags?: string[];
   notes?: string;
+  executingTaskId?: string;
 }
 
 /** context_snapshots.key_findings */
@@ -113,15 +114,17 @@ export interface SnapshotFindings {
   nextSteps: string[];
 }
 
-/** workspaces.layout panel entry */
+/** workspaces.layout panel entry (react-grid-layout format) */
 export interface WorkspacePanel {
   sessionId: string;
-  row: number;
-  col: number;
-  rowSpan?: number;
-  colSpan?: number;
-  /** User-set panel height in px (persisted with workspace layout) */
-  height?: number;
+  /** Column position (0-based) */
+  x: number;
+  /** Row position in grid units (0-based) */
+  y: number;
+  /** Width in grid-column units */
+  w: number;
+  /** Height in row units (1 unit = ROW_HEIGHT px) */
+  h: number;
 }
 
 /** workspaces.layout */

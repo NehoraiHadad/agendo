@@ -1,10 +1,17 @@
 'use client';
 
 import { create } from 'zustand';
+import type { LayoutItem } from 'react-grid-layout';
 import type { SessionStatus } from '@/lib/realtime/events';
 import type { WorkspaceLayout, WorkspacePanel } from '@/lib/types';
 
 const MAX_PANELS = 6;
+/** Height of one RGL row unit in pixels */
+const ROW_HEIGHT = 100;
+/** Default panel height in row units (= 500px) */
+const DEFAULT_H = 5;
+/** Minimum panel height in row units (= 300px) */
+const MIN_H = 3;
 
 interface PanelState {
   sessionId: string;
@@ -15,7 +22,7 @@ interface PanelState {
 interface WorkspaceState {
   workspaceId: string | null;
   panels: Record<string, PanelState>; // keyed by sessionId
-  panelHeights: Record<string, number>; // sessionId → px height (user-resized)
+  rglLayout: LayoutItem[]; // react-grid-layout positions
   focusedPanelId: string | null;
   gridCols: 2 | 3;
   expandedPanelId: string | null; // for full-screen overlay
@@ -60,8 +67,8 @@ interface WorkspaceActions {
   /** Switch between 2-column and 3-column grid layouts. */
   setGridCols: (cols: 2 | 3) => void;
 
-  /** Set a panel's user-defined height (in px). Pass null to clear (revert to default). */
-  setPanelHeight: (sessionId: string, height: number | null) => void;
+  /** Update the RGL layout array (called from onLayoutChange). */
+  setRglLayout: (layout: LayoutItem[]) => void;
 
   /** Return all session IDs currently registered in panels (for useMultiSessionStreams). */
   getSessionIds: () => string[];
@@ -81,37 +88,55 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 const initialState: WorkspaceState = {
   workspaceId: null,
   panels: {},
-  panelHeights: {},
+  rglLayout: [],
   focusedPanelId: null,
   gridCols: 2,
   expandedPanelId: null,
 };
+
+/**
+ * Convert a persisted WorkspacePanel to an RGL LayoutItem, migrating old
+ * row/col/height format to the new x/y/w/h format transparently.
+ */
+function panelToRglItem(panel: WorkspacePanel, index: number, cols: number): LayoutItem {
+  // New format — has x/y/w/h directly
+  if ('x' in panel && typeof (panel as { x?: unknown }).x === 'number') {
+    return { i: panel.sessionId, x: panel.x, y: panel.y, w: panel.w, h: panel.h, minH: MIN_H };
+  }
+
+  // Old format migration — row/col/height
+  const old = panel as unknown as { row?: number; col?: number; height?: number };
+  const col = old.col ?? index % cols;
+  const row = old.row ?? Math.floor(index / cols);
+  const h = old.height ? Math.max(MIN_H, Math.round(old.height / ROW_HEIGHT)) : DEFAULT_H;
+  return { i: panel.sessionId, x: col, y: row * DEFAULT_H, w: 1, h, minH: MIN_H };
+}
 
 export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
   ...initialState,
 
   setWorkspace: (id, layout) => {
     const panels: Record<string, PanelState> = {};
-    const panelHeights: Record<string, number> = {};
+    const cols = layout.gridCols ?? 2;
 
-    // Respect the MAX_PANELS cap when hydrating from the API
     const cappedPanels = layout.panels.slice(0, MAX_PANELS);
-    for (const panel of cappedPanels) {
+    const rglLayout: LayoutItem[] = [];
+
+    for (let i = 0; i < cappedPanels.length; i++) {
+      const panel = cappedPanels[i];
       panels[panel.sessionId] = {
         sessionId: panel.sessionId,
         needsAttention: false,
         status: null,
       };
-      if (panel.height) {
-        panelHeights[panel.sessionId] = panel.height;
-      }
+      rglLayout.push(panelToRglItem(panel, i, cols));
     }
 
     set({
       workspaceId: id,
       panels,
-      panelHeights,
-      gridCols: layout.gridCols,
+      rglLayout,
+      gridCols: cols,
       focusedPanelId: null,
       expandedPanelId: null,
     });
@@ -119,21 +144,21 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
   addPanel: (sessionId) => {
     set((state) => {
-      // Already present — no-op
       if (state.panels[sessionId]) return state;
-
-      // At the limit — no-op
       if (Object.keys(state.panels).length >= MAX_PANELS) return state;
+
+      // Place new panel below all existing ones
+      const maxY = state.rglLayout.reduce((m, item) => Math.max(m, item.y + item.h), 0);
 
       return {
         panels: {
           ...state.panels,
-          [sessionId]: {
-            sessionId,
-            needsAttention: false,
-            status: null,
-          },
+          [sessionId]: { sessionId, needsAttention: false, status: null },
         },
+        rglLayout: [
+          ...state.rglLayout,
+          { i: sessionId, x: 0, y: maxY, w: 1, h: DEFAULT_H, minH: MIN_H },
+        ],
       };
     });
   },
@@ -144,6 +169,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
       return {
         panels: remainingPanels,
+        rglLayout: state.rglLayout.filter((item) => item.i !== sessionId),
         focusedPanelId: state.focusedPanelId === sessionId ? null : state.focusedPanelId,
         expandedPanelId: state.expandedPanelId === sessionId ? null : state.expandedPanelId,
       };
@@ -172,7 +198,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
       const panel = state.panels[sessionId];
       if (!panel) return state;
 
-      // Automatically flag attention when the agent is waiting for input
       const needsAttention = status === 'awaiting_input' ? true : panel.needsAttention;
 
       return {
@@ -186,32 +211,22 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
   setGridCols: (cols) => set({ gridCols: cols }),
 
-  setPanelHeight: (sessionId, height) => {
-    set((state) => {
-      if (height === null) {
-        const { [sessionId]: _, ...rest } = state.panelHeights;
-        return { panelHeights: rest };
-      }
-      return { panelHeights: { ...state.panelHeights, [sessionId]: height } };
-    });
-  },
+  setRglLayout: (layout) => set({ rglLayout: layout }),
 
   getSessionIds: () => {
     return Object.keys(get().panels);
   },
 
   persistLayout: async () => {
-    const { workspaceId, panels, panelHeights, gridCols } = get();
+    const { workspaceId, rglLayout, gridCols } = get();
     if (!workspaceId) return;
 
-    // Build layout panels array, assigning positional row/col from insertion order
-    const panelEntries = Object.values(panels);
-    const cols = gridCols;
-    const layoutPanels: WorkspacePanel[] = panelEntries.map((panel, index) => ({
-      sessionId: panel.sessionId,
-      row: Math.floor(index / cols),
-      col: index % cols,
-      height: panelHeights[panel.sessionId],
+    const layoutPanels: WorkspacePanel[] = rglLayout.map((item) => ({
+      sessionId: item.i,
+      x: item.x,
+      y: item.y,
+      w: item.w,
+      h: item.h,
     }));
 
     const layout: WorkspaceLayout = { panels: layoutPanels, gridCols };
@@ -220,7 +235,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout }),
-      keepalive: true, // survive page unload (beforeunload/visibilitychange flush)
+      keepalive: true,
     });
   },
 

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { plans } from '@/lib/db/schema';
 import { NotFoundError } from '@/lib/errors';
 import { createSession } from '@/lib/services/session-service';
+import { createTask } from '@/lib/services/task-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Plan, PlanStatus, PlanMetadata } from '@/lib/types';
 
@@ -32,7 +33,6 @@ export interface StartPlanConversationOpts {
 export interface ExecutePlanOpts {
   agentId: string;
   capabilityId: string;
-  permissionMode?: string;
   model?: string;
 }
 
@@ -103,14 +103,42 @@ export async function archivePlan(id: string): Promise<void> {
 }
 
 /**
- * Execute a plan by creating and enqueueing an agent session seeded with the
- * plan content as the initial prompt. Transitions plan status to 'executing'.
+ * Execute a plan by:
+ * 1. Creating a parent kanban task for visibility ("Execute: {title}")
+ * 2. Creating and enqueueing an agent session seeded with task-creation instructions
+ * 3. Linking both to the plan and transitioning its status to 'executing'.
+ *
+ * The session uses bypassPermissions so the agent can call MCP tools to create
+ * subtasks and report progress.
  */
 export async function executePlan(
   planId: string,
   opts: ExecutePlanOpts,
-): Promise<{ sessionId: string }> {
+): Promise<{ sessionId: string; taskId: string }> {
   const plan = await getPlan(planId);
+
+  // Create a parent task so execution is visible on the kanban board.
+  const task = await createTask({
+    title: `Execute: ${plan.title}`,
+    description: `Executing implementation plan. Subtasks track individual steps.`,
+    status: 'in_progress',
+    projectId: plan.projectId,
+  });
+
+  const initialPrompt = `You are executing an implementation plan. Your job is to:
+
+1. Read the plan carefully
+2. Break it into subtasks using the mcp__agendo__create_task tool — one per major step
+3. Execute each step in order, updating task status via mcp__agendo__update_task as you go
+4. Report overall progress using mcp__agendo__add_progress_note on the parent task
+
+Your parent task ID is: ${task.id}
+Create all subtasks as children of this parent (set parentTaskId: "${task.id}").
+
+PLAN TO EXECUTE:
+${plan.content}
+
+Start by creating subtasks for each major step, then execute them one by one.`;
 
   await db
     .update(plans)
@@ -119,28 +147,27 @@ export async function executePlan(
 
   const session = await createSession({
     projectId: plan.projectId,
+    taskId: task.id,
     kind: 'execution',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
-    initialPrompt: plan.content,
-    permissionMode: opts.permissionMode as
-      | 'default'
-      | 'bypassPermissions'
-      | 'acceptEdits'
-      | 'plan'
-      | 'dontAsk'
-      | undefined,
+    initialPrompt,
+    permissionMode: 'bypassPermissions',
     model: opts.model,
   });
 
   await db
     .update(plans)
-    .set({ executingSessionId: session.id, updatedAt: new Date() })
+    .set({
+      executingSessionId: session.id,
+      metadata: { ...plan.metadata, executingTaskId: task.id },
+      updatedAt: new Date(),
+    })
     .where(eq(plans.id, planId));
 
   await enqueueSession({ sessionId: session.id });
 
-  return { sessionId: session.id };
+  return { sessionId: session.id, taskId: task.id };
 }
 
 /**
@@ -163,6 +190,9 @@ PLAN_EDIT>>>
 
 The user can apply or skip your suggestion directly in the editor.
 
+You also have access to MCP task management tools. If the user asks you to create tasks from the plan,
+use mcp__agendo__create_task to create them (one per major step).
+
 Here is the current plan:
 
 ${plan.content}`;
@@ -173,7 +203,7 @@ ${plan.content}`;
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt,
-    permissionMode: 'acceptEdits',
+    permissionMode: 'bypassPermissions',
     model: opts.model,
   });
 

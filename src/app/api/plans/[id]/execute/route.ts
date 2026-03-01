@@ -6,9 +6,6 @@ import { executePlan } from '@/lib/services/plan-service';
 const executePlanSchema = z.object({
   agentId: z.string().uuid(),
   capabilityId: z.string().uuid(),
-  permissionMode: z
-    .enum(['default', 'bypassPermissions', 'acceptEdits', 'plan', 'dontAsk'])
-    .optional(),
   model: z.string().optional(),
 });
 

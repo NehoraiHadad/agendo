@@ -313,21 +313,34 @@ export class ClaudeAdapter implements AgentAdapter {
       });
     }
 
-    const outcome = decision === 'deny' ? 'deny' : 'allow';
-    const response: Record<string, unknown> = { subtype: outcome };
-    if (typeof decision === 'object' && decision.updatedInput) {
-      response.updatedInput = decision.updatedInput;
-    }
+    // Claude CLI expects the response in this exact structure (confirmed via binary analysis):
+    // { type: 'control_response', response: { subtype: 'success', request_id, response: { behavior, ... } } }
+    // The request_id MUST be inside `response`, not at the top level — Claude's injectControlResponse()
+    // does `H.response?.request_id` and silently returns if not found.
+    const behavior = decision === 'deny' ? 'deny' : 'allow';
+    const innerResponse: Record<string, unknown> =
+      behavior === 'deny'
+        ? { behavior: 'deny', message: 'User denied', interrupt: false }
+        : {
+            behavior: 'allow',
+            updatedInput:
+              typeof decision === 'object' && decision.updatedInput ? decision.updatedInput : {},
+          };
 
     const stdin = this.childProcess?.stdin;
+    const payload = JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: requestId,
+        response: innerResponse,
+      },
+    });
+    console.log(
+      `[claude-adapter] tool-approval: tool=${toolName} decision=${JSON.stringify(decision)} behavior=${behavior} payload=${payload}`,
+    );
     if (stdin?.writable) {
-      stdin.write(
-        JSON.stringify({
-          request_id: requestId,
-          type: 'control_response',
-          response,
-        }) + '\n',
-      );
+      stdin.write(payload + '\n');
     }
   }
 
