@@ -5,10 +5,10 @@ import { createWorkspace, listWorkspaces } from '@/lib/services/workspace-servic
 
 const workspacePanelSchema = z.object({
   sessionId: z.string().uuid(),
-  row: z.number().int().min(0),
-  col: z.number().int().min(0),
-  rowSpan: z.number().int().min(1).optional(),
-  colSpan: z.number().int().min(1).optional(),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  w: z.number().int().min(1),
+  h: z.number().int().min(1),
 });
 
 const workspaceLayoutSchema = z.object({

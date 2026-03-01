@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { Minimize2, LayoutGrid, AlertCircle } from 'lucide-react';
 import { GridLayout, useContainerWidth } from 'react-grid-layout';
-import type { LayoutItem } from 'react-grid-layout';
+import type { Layout } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import { Button } from '@/components/ui/button';
 import { useWorkspaceStore } from '@/lib/store/workspace-store';
@@ -184,8 +184,8 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
 
   // Handle RGL layout changes — sync into store (triggers debounced persist)
   const handleLayoutChange = useCallback(
-    (newLayout: LayoutItem[]) => {
-      setRglLayout(newLayout);
+    (newLayout: Layout) => {
+      setRglLayout([...newLayout]);
     },
     [setRglLayout],
   );

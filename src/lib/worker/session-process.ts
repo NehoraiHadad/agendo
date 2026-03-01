@@ -23,12 +23,12 @@ import type {
   ManagedProcess,
   ImageContent,
   PermissionDecision,
-  ApprovalRequest,
   AcpMcpServer,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
+import { ApprovalHandler } from '@/lib/worker/approval-handler';
 
 const SIGKILL_DELAY_MS = 5_000;
 
@@ -91,38 +91,9 @@ export class SessionProcess {
   private slotReleaseFuture = new Future<void>();
   private exitHandled = false;
   private sessionStartTime = Date.now();
-  /**
-   * Tools that must always require human approval via the control_request path,
-   * regardless of permissionMode.
-   *
-   * These represent human-interaction gates (plan approval, etc.) rather than
-   * dangerous-action permissions.  The Claude Code CLI never auto-approves
-   * these even in bypassPermissions mode.
-   *
-   * Note: AskUserQuestion is NOT listed here because it arrives via the NDJSON
-   * tool_use path (not control_request) and is detected generically from
-   * is_error:true in Claude's stdout — no hardcoded name needed.
-   */
-  private static readonly APPROVAL_GATED_TOOLS = new Set(['ExitPlanMode', 'exit_plan_mode']);
-
   private activeToolUseIds = new Set<string>();
-  /** tool_use IDs for interactive tools awaiting a human response via the UI. */
-  private pendingHumanResponseIds = new Set<string>();
-  /** toolUseIds for APPROVAL_GATED_TOOLS — suppress their agent:tool-start/end events. */
-  private suppressedToolUseIds = new Set<string>();
-  private pendingApprovals = new Map<string, (decision: PermissionDecision) => void>();
-  /** Maps toolName → pending approvalId, so a duplicate call auto-denies the old one. */
-  private pendingApprovalsByTool = new Map<string, string>();
-  /** Stores AskUserQuestion questions indexed by requestId for use when the answer arrives. */
-  private pendingAskUserQuestions = new Map<
-    string,
-    Array<{
-      question: string;
-      header: string;
-      options: Array<{ label: string; description: string; markdown?: string }>;
-      multiSelect: boolean;
-    }>
-  >();
+  /** Manages per-tool approval gates, interactive tool responses, and suppressed tool tracking. */
+  private approvalHandler!: ApprovalHandler;
   /** Buffer for batching text deltas from stream_event messages (200ms flush interval). */
   private deltaBuffer = '';
   private deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -139,7 +110,17 @@ export class SessionProcess {
     private session: Session,
     private adapter: AgentAdapter,
     private workerId: string,
-  ) {}
+  ) {
+    this.approvalHandler = new ApprovalHandler(
+      session,
+      adapter,
+      (payload) => this.emitEvent(payload),
+      (status) => this.transitionTo(status),
+      () => this.resetIdleTimer(),
+      () => this.capturePlanFilePath(),
+      this.activeToolUseIds,
+    );
+  }
 
   /**
    * Claim the session row atomically, set up log writer, subscribe to the
@@ -269,7 +250,7 @@ export class SessionProcess {
     };
 
     // Wire approval handler so adapter can request per-tool approval
-    this.adapter.setApprovalHandler((req) => this.handleApprovalRequest(req));
+    this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
 
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
@@ -483,14 +464,10 @@ export class SessionProcess {
         // NDJSON path. The is_error flag in Claude's own output is the signal.
         if (parsed.type === 'user') {
           const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-          for (const block of msg?.content ?? []) {
-            if (block.type === 'tool_result' && block.is_error === true) {
-              const id = (block.tool_use_id as string | undefined) ?? '';
-              if (id && this.activeToolUseIds.has(id)) {
-                this.pendingHumanResponseIds.add(id);
-              }
-            }
-          }
+          this.approvalHandler.checkForHumanResponseBlocks(
+            msg?.content ?? [],
+            this.activeToolUseIds,
+          );
         }
 
         let partials: AgendoEventPayload[];
@@ -513,18 +490,16 @@ export class SessionProcess {
           // These appear only as control_request approval cards — not as ToolCard widgets.
           if (
             partial.type === 'agent:tool-start' &&
-            SessionProcess.APPROVAL_GATED_TOOLS.has(partial.toolName)
+            ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
           ) {
             this.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
-            this.suppressedToolUseIds.add(partial.toolUseId);
+            this.approvalHandler.suppressToolStart(partial.toolUseId);
             continue;
           }
           if (
             partial.type === 'agent:tool-end' &&
-            this.suppressedToolUseIds.has(partial.toolUseId)
+            this.approvalHandler.isSuppressedToolEnd(partial.toolUseId, this.activeToolUseIds)
           ) {
-            this.activeToolUseIds.delete(partial.toolUseId);
-            this.suppressedToolUseIds.delete(partial.toolUseId);
             continue;
           }
 
@@ -532,7 +507,7 @@ export class SessionProcess {
           // stays live and pushToolResult routes the human's answer when it arrives.
           if (
             partial.type === 'agent:tool-end' &&
-            this.pendingHumanResponseIds.has(partial.toolUseId)
+            this.approvalHandler.isPendingHumanResponse(partial.toolUseId)
           ) {
             continue; // suppress — keep in activeToolUseIds until human responds
           }
@@ -946,10 +921,8 @@ export class SessionProcess {
     } else if (control.type === 'redirect') {
       await this.pushMessage(control.newPrompt);
     } else if (control.type === 'tool-approval') {
-      const resolver = this.pendingApprovals.get(control.approvalId);
+      const resolver = this.approvalHandler.takeResolver(control.approvalId);
       if (resolver) {
-        this.pendingApprovals.delete(control.approvalId);
-
         // ---------------------------------------------------------------
         // ExitPlanMode Option 1: clear context + restart fresh
         // Identical to the CLI TUI behavior: deny the tool, read plan
@@ -984,7 +957,7 @@ export class SessionProcess {
           // Kill process → onExit will re-enqueue without resumeRef.
           this.clearContextRestart = true;
           this.terminateKilled = true;
-          this.drainPendingApprovals('deny');
+          this.approvalHandler.drain('deny');
           this.managedProcess?.kill('SIGTERM');
           const t = setTimeout(() => {
             this.managedProcess?.kill('SIGKILL');
@@ -1001,7 +974,7 @@ export class SessionProcess {
         resolver(decision);
 
         if (control.decision === 'allow-session') {
-          await this.persistAllowedTool(control.toolName);
+          await this.approvalHandler.persistAllowedTool(control.toolName);
         }
 
         // ExitPlanMode side-effects: apply AFTER resolving the approval so the
@@ -1033,12 +1006,17 @@ export class SessionProcess {
         }
       }
     } else if (control.type === 'tool-result') {
-      await this.pushToolResult(control.toolUseId, control.content);
+      if (!['active', 'awaiting_input'].includes(this.status)) {
+        console.warn(
+          `[session-process] tool-result ignored — session ${this.session.id} is ${this.status}`,
+        );
+        return;
+      }
+      await this.approvalHandler.pushToolResult(control.toolUseId, control.content);
     } else if (control.type === 'answer-question') {
-      const resolver = this.pendingApprovals.get(control.requestId);
+      const resolver = this.approvalHandler.takeResolver(control.requestId);
       if (resolver) {
-        this.pendingApprovals.delete(control.requestId);
-        const questions = this.pendingAskUserQuestions.get(control.requestId) ?? [];
+        const questions = this.approvalHandler.takeQuestions(control.requestId);
         resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
       } else {
         console.warn(
@@ -1079,55 +1057,6 @@ export class SessionProcess {
     await this.adapter.sendMessage(text, image);
   }
 
-  /**
-   * Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion).
-   * Only valid when the session is active or awaiting_input.
-   */
-  async pushToolResult(toolUseId: string, content: string): Promise<void> {
-    if (!['active', 'awaiting_input'].includes(this.status)) {
-      console.warn(
-        `[session-process] pushToolResult ignored — session ${this.session.id} is ${this.status}`,
-      );
-      return;
-    }
-
-    // AskUserQuestion special path: Claude already consumed an error tool_result
-    // automatically (non-interactive mode), so we can't use sendToolResult.
-    // Instead: emit agent:tool-end to mark the UI card as answered, then send
-    // the user's answer as a regular user message so Claude can act on it.
-    if (this.pendingHumanResponseIds.has(toolUseId)) {
-      this.pendingHumanResponseIds.delete(toolUseId);
-      this.activeToolUseIds.delete(toolUseId);
-      // Emit tool-end with full JSON so the UI can display the selected option.
-      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content });
-      // Extract just the answer values — Claude already has the question in
-      // context, so sending {"answers":{"Q":"A"}} is redundant and noisy.
-      let messageText = content;
-      try {
-        const parsed = JSON.parse(content) as { answers?: Record<string, string> };
-        if (parsed.answers) {
-          const values = Object.values(parsed.answers);
-          messageText = values.join(', ');
-        }
-      } catch {
-        // fall back to raw content
-      }
-      await this.emitEvent({ type: 'user:message', text: messageText });
-      await this.transitionTo('active');
-      this.resetIdleTimer();
-      await this.adapter.sendMessage(messageText);
-      return;
-    }
-
-    if (!this.adapter.sendToolResult) {
-      console.warn(`[session-process] adapter does not support sendToolResult`);
-      return;
-    }
-    await this.adapter.sendToolResult(toolUseId, content);
-    await this.transitionTo('active');
-    this.resetIdleTimer();
-  }
-
   // ---------------------------------------------------------------------------
   // Private: cancellation
   // ---------------------------------------------------------------------------
@@ -1146,9 +1075,9 @@ export class SessionProcess {
       });
     }
     this.activeToolUseIds.clear();
-    this.suppressedToolUseIds.clear();
+    this.approvalHandler.clearSuppressed();
     // Drain pending tool approvals so any adapter blocked on handleApprovalRequest unblocks.
-    this.drainPendingApprovals('deny');
+    this.approvalHandler.drain('deny');
     await this.adapter.interrupt();
     // Allow graceful shutdown; escalate to SIGKILL after grace period.
     const t = setTimeout(() => {
@@ -1213,7 +1142,7 @@ export class SessionProcess {
     this.modeChangeRestart = true;
     // terminateKilled=true ensures onExit transitions to 'idle' (not 'ended').
     this.terminateKilled = true;
-    this.drainPendingApprovals('deny');
+    this.approvalHandler.drain('deny');
     this.managedProcess?.kill('SIGTERM');
     const t = setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
@@ -1323,7 +1252,7 @@ export class SessionProcess {
       await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted]' });
     }
     this.activeToolUseIds.clear();
-    this.suppressedToolUseIds.clear();
+    this.approvalHandler.clearSuppressed();
 
     // Ask the adapter to send an interrupt signal. For Claude this writes a
     // control_request{subtype:'interrupt'} to stdin and waits up to 3s for a
@@ -1354,8 +1283,8 @@ export class SessionProcess {
       await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted by user]' });
     }
     this.activeToolUseIds.clear();
-    this.suppressedToolUseIds.clear();
-    this.drainPendingApprovals('deny');
+    this.approvalHandler.clearSuppressed();
+    this.approvalHandler.drain('deny');
     await this.adapter.interrupt();
     const t = setTimeout(() => {
       this.managedProcess?.kill('SIGKILL');
@@ -1500,7 +1429,7 @@ export class SessionProcess {
     }
     this.sigkillTimers = [];
     // Drain any approval promises so blocked adapters unblock immediately.
-    this.drainPendingApprovals('deny');
+    this.approvalHandler.drain('deny');
     // Stop team inbox monitoring.
     this.teamInboxMonitor?.stopPolling();
     this.teamInboxMonitor = null;
@@ -1693,174 +1622,6 @@ export class SessionProcess {
       clearInterval(this.mcpHealthTimer);
       this.mcpHealthTimer = null;
     }
-  }
-
-  /**
-   * Resolve all pending tool approval promises with the given decision so that
-   * any adapter blocked on `handleApprovalRequest` unblocks immediately. Called
-   * on cancel, terminate, and idle-timeout to prevent the process from hanging
-   * forever waiting for a human who will never respond.
-   */
-  private drainPendingApprovals(decision: 'allow' | 'deny' | 'allow-session'): void {
-    for (const [, resolver] of this.pendingApprovals) {
-      resolver(decision);
-    }
-    this.pendingApprovals.clear();
-    this.pendingApprovalsByTool.clear();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: tool approval
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Check whether a tool name is already on the session's persistent allowlist.
-   * Supports exact match and prefix-match patterns (e.g. "Bash(npm test)" pattern
-   * matches the tool name "Bash").
-   */
-  private isToolAllowed(toolName: string): boolean {
-    const allowed = this.session.allowedTools;
-    if (!allowed?.length) return false;
-    return allowed.some((pattern) => {
-      // exact match or prefix match (e.g. "Bash(npm test)" matches "Bash")
-      return toolName === pattern || toolName.startsWith(pattern.split('(')[0]);
-    });
-  }
-
-  /**
-   * Append a tool name to the session's allowedTools list and persist it to DB.
-   * Called when the user approves a tool with 'allow-session'.
-   */
-  private async persistAllowedTool(toolName: string): Promise<void> {
-    const allowed = this.session.allowedTools ?? [];
-    if (!allowed.includes(toolName)) {
-      const updated = [...allowed, toolName];
-      this.session.allowedTools = updated;
-      await db
-        .update(sessions)
-        .set({ allowedTools: updated })
-        .where(eq(sessions.id, this.session.id));
-    }
-  }
-
-  /**
-   * Handle a per-tool approval request from the adapter.
-   * If the tool is already on the session allowlist, returns 'allow' immediately.
-   * Otherwise, emits an agent:tool-approval event to the frontend and blocks
-   * until the user responds via the control channel.
-   */
-  private async handleApprovalRequest(req: ApprovalRequest): Promise<PermissionDecision> {
-    const { approvalId, toolName, toolInput, isAskUser } = req;
-
-    // AskUserQuestion is a human-interaction primitive: the agent is asking the
-    // user a question, not requesting permission for a dangerous action.
-    // Auto-approve the can_use_tool request — the tool will "fail" in pipe mode
-    // (error tool_result), then the interactive-tools renderer shows the question
-    // card, and pushToolResult routes the human's answer when it arrives.
-    if (isAskUser) {
-      return 'allow';
-    }
-
-    // Claude CLI enforces permissionMode itself: bypassPermissions means Claude
-    // never sends a control_request for regular tools; acceptEdits means Claude
-    // only sends control_requests for tools it won't auto-approve. So by the
-    // time a control_request reaches here, the CLI has already decided it needs
-    // human input — always show the prompt, except for APPROVAL_GATED_TOOLS
-    // (ExitPlanMode) which have their own interactive card renderer.
-
-    // Check per-session allowlist — no round-trip to the user needed.
-    if (this.isToolAllowed(toolName)) {
-      return 'allow';
-    }
-
-    // Auto-deny any previous pending approval for the same tool to prevent duplicate cards.
-    const existingApprovalId = this.pendingApprovalsByTool.get(toolName);
-    if (existingApprovalId) {
-      const existingResolver = this.pendingApprovals.get(existingApprovalId);
-      if (existingResolver) {
-        existingResolver('deny');
-        this.pendingApprovals.delete(existingApprovalId);
-      }
-      this.pendingApprovalsByTool.delete(toolName);
-    }
-    this.pendingApprovalsByTool.set(toolName, approvalId);
-
-    // When ExitPlanMode fires, eagerly capture the plan content and persist it
-    // so clearContextRestart works even if the session goes idle before the user
-    // clicks. The plan file is in ~/.claude/plans/ with a random hash name;
-    // we grab the most recently modified one while the session is still active.
-    if (SessionProcess.APPROVAL_GATED_TOOLS.has(toolName)) {
-      await this.capturePlanFilePath();
-    }
-
-    // Emit approval request event to frontend and block until user responds.
-    await this.emitEvent({
-      type: 'agent:tool-approval',
-      approvalId,
-      toolName,
-      toolInput,
-      dangerLevel: 0,
-    });
-
-    return new Promise((resolve) => {
-      this.pendingApprovals.set(approvalId, (decision) => {
-        this.pendingApprovalsByTool.delete(toolName);
-        resolve(decision);
-      });
-    });
-  }
-
-  /**
-   * Handle an AskUserQuestion control_request from Claude.
-   *
-   * Flow:
-   * 1. Emit an `agent:ask-user` event so the frontend renders a question card.
-   * 2. Wait up to 5 minutes for the user to send an `answer-question` control.
-   * 3. Return `{ behavior: 'allow', updatedInput: { questions, answers } }` so
-   *    the claude-adapter sends the correct control_response with updatedInput.
-   * 4. On timeout, deny the request so the agent can gracefully handle it.
-   */
-  private async handleAskUserQuestion(
-    requestId: string,
-    toolInput: Record<string, unknown>,
-  ): Promise<PermissionDecision> {
-    const questions =
-      (toolInput.questions as
-        | Array<{
-            question: string;
-            header: string;
-            options: Array<{ label: string; description: string; markdown?: string }>;
-            multiSelect: boolean;
-          }>
-        | undefined) ?? [];
-
-    // Store questions so the onControl answer-question handler can include them in updatedInput.
-    this.pendingAskUserQuestions.set(requestId, questions);
-
-    await this.emitEvent({
-      type: 'agent:ask-user',
-      requestId,
-      questions,
-    });
-
-    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pendingApprovals.delete(requestId);
-        this.pendingAskUserQuestions.delete(requestId);
-        console.warn(
-          `[session-process] AskUserQuestion requestId=${requestId} timed out after 5 minutes`,
-        );
-        resolve('deny');
-      }, TIMEOUT_MS);
-
-      this.pendingApprovals.set(requestId, (decision) => {
-        clearTimeout(timer);
-        this.pendingAskUserQuestions.delete(requestId);
-        resolve(decision);
-      });
-    });
   }
 
   // ---------------------------------------------------------------------------
