@@ -220,6 +220,16 @@ ${plan.content}`;
  * the current codebase. Records the git HEAD hash and validation timestamp.
  * Uses execFileSync with a hardcoded argument array — no shell injection risk.
  */
+/** Returns the current git HEAD hash, or undefined if git is unavailable. */
+function getGitHead(): string | undefined {
+  try {
+    // Hardcoded args array — no shell interpolation, no injection risk.
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function validatePlan(
   planId: string,
   opts: ValidatePlanOpts,
@@ -236,13 +246,7 @@ export async function validatePlan(
     initialPrompt,
   });
 
-  let codebaseHash: string | undefined;
-  try {
-    // Hardcoded args array — no shell interpolation, no injection risk.
-    codebaseHash = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-  } catch {
-    // git may not be available or the repo may have no commits — proceed without hash.
-  }
+  const codebaseHash = getGitHead();
 
   await db
     .update(plans)
