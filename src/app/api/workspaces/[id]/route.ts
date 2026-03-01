@@ -13,7 +13,7 @@ const workspacePanelSchema = z.object({
 
 const workspaceLayoutSchema = z.object({
   panels: z.array(workspacePanelSchema),
-  gridCols: z.union([z.literal(2), z.literal(3)]),
+  gridCols: z.number().int().min(1),
 });
 
 const patchWorkspaceSchema = z.object({
