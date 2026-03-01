@@ -3,8 +3,6 @@ import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 
-const SIGKILL_DELAY_MS = 5_000;
-
 /**
  * ActivityTracker manages all timer state, kill-flag state, and delta-buffer
  * state extracted from SessionProcess.
@@ -267,26 +265,6 @@ export class ActivityTracker {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-  }
-
-  /**
-   * Kill the managed process: SIGTERM now, SIGKILL after grace period.
-   * Schedules a SIGKILL escalation and calls the `onIdleKill` callback.
-   * Used by the idle timer handler to trigger process termination with escalation.
-   *
-   * @param kill - Function to send a signal to the process group.
-   * @param addSigkillTimer - Adds the escalation timer handle so it can be
-   *   cleared if the process exits early.
-   */
-  static scheduleKill(
-    kill: (signal: NodeJS.Signals) => void,
-    addSigkillTimer: (t: ReturnType<typeof setTimeout>) => void,
-  ): void {
-    kill('SIGTERM');
-    const t = setTimeout(() => {
-      kill('SIGKILL');
-    }, SIGKILL_DELAY_MS);
-    addSigkillTimer(t);
   }
 
   // -------------------------------------------------------------------------
