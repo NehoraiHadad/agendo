@@ -16,9 +16,10 @@ with the Claude CLI's `--permission-prompt-tool stdio` protocol.
 2. [The stdio Protocol](#2-the-stdio-protocol)
 3. [ExitPlanMode — Full Behavior](#3-exitplanmode--full-behavior)
 4. [EnterPlanMode — Full Behavior](#4-enterplanmode--full-behavior)
-5. [Permission Modes & Side Effects](#5-permission-modes--side-effects)
-6. [Agendo Implementation Strategy](#6-agendo-implementation-strategy)
-7. [Known Limitations & Workarounds](#7-known-limitations--workarounds)
+5. [AskUserQuestion — Full Behavior](#5-askuserquestion--full-behavior)
+6. [Permission Modes & Side Effects](#6-permission-modes--side-effects)
+7. [Agendo Implementation Strategy](#7-agendo-implementation-strategy)
+8. [Known Limitations & Workarounds](#8-known-limitations--workarounds)
 
 ---
 
@@ -338,7 +339,126 @@ approval card (2 buttons). Could be upgraded to match the CLI labels.
 
 ---
 
-## 5. Permission Modes & Side Effects
+## 5. AskUserQuestion — Full Behavior
+
+> Source: Binary analysis of Claude Code CLI v2.1.63
+
+`AskUserQuestion` is an internal Claude Code tool that lets agents ask the user structured
+multiple-choice questions. Despite looking like a tool call, **it is a permission gate** —
+the answers are delivered back to the tool via `updatedInput` in the `control_response`.
+
+### How It Works (from binary analysis)
+
+```javascript
+// Simplified from CLI binary
+async call({ questions, answers = {}, annotations }, ctx) {
+  return { data: { questions, answers, ...annotations && { annotations } } };
+}
+
+checkPermissions() {
+  return { behavior: 'ask' }; // Always gates on the permission prompt tool
+}
+```
+
+`checkPermissions()` always returns `{behavior: "ask"}`, which triggers a
+`control_request: can_use_tool`. The `call()` method then receives `answers` from
+`updatedInput` in the allow response.
+
+**This means**: if you approve with `updatedInput: {}` (empty), `answers = {}` and Claude
+sees "User has answered nothing" and continues immediately without waiting.
+
+### Tool Input Schema
+
+```json
+{
+  "questions": [
+    {
+      "question": "Which approach do you prefer?",
+      "header": "Approach",
+      "options": [
+        { "label": "Option A", "description": "Explanation of A" },
+        { "label": "Option B", "description": "Explanation of B" }
+      ],
+      "multiSelect": false
+    }
+  ]
+}
+```
+
+### Correct Allow Response
+
+The `updatedInput` **must** include the user's answers keyed by question text:
+
+```json
+{
+  "type": "control_response",
+  "response": {
+    "subtype": "success",
+    "request_id": "req-...",
+    "response": {
+      "behavior": "allow",
+      "updatedInput": {
+        "questions": [
+          /* original questions array */
+        ],
+        "answers": {
+          "Which approach do you prefer?": "Option A"
+        }
+      }
+    }
+  }
+}
+```
+
+For `multiSelect: true` questions, join selected answers with `", "`:
+
+```json
+"answers": { "Which features?": "Feature A, Feature B" }
+```
+
+### Agendo Implementation
+
+AskUserQuestion is in `APPROVAL_GATED_TOOLS` — it is **suppressed** from the normal
+tool-start/tool-end event stream and displayed as a `ToolApprovalCard` instead.
+
+Flow:
+
+1. Claude calls `AskUserQuestion` → CLI sends `control_request: can_use_tool`
+2. Adapter emits `agent:tool-approval` event (blocked, waiting for resolver)
+3. `ToolApprovalCard` renders → delegates to `AskUserQuestionRenderer` in `interactive-tools.tsx`
+4. User selects answers and clicks Submit
+5. `AskUserQuestionRenderer.handleSubmit` calls:
+   ```typescript
+   respond({ kind: 'approval', decision: 'allow', updatedInput: { answers } });
+   ```
+6. `ToolApprovalCard` sends `POST /api/sessions/{id}/control`:
+   ```json
+   { "type": "tool-approval", "approvalId": "req-...", "decision": "allow", "updatedInput": { "answers": {...} } }
+   ```
+7. Worker resolver called with `{ behavior: 'allow', updatedInput: { answers } }`
+8. Adapter sends the `control_response` with answers populated
+9. Claude's `call()` runs with `answers = { "question": "answer" }` → returns proper result
+
+### Key Files
+
+- `src/lib/worker/approval-handler.ts` — `APPROVAL_GATED_TOOLS` set (includes `AskUserQuestion`)
+- `src/components/sessions/interactive-tools.tsx` — `AskUserQuestionRenderer` component
+- `src/lib/worker/adapters/claude-adapter.ts` — `handleToolApprovalRequest` sends `updatedInput`
+
+### Common Bug: Auto-Approval with Empty Answers
+
+**Symptom**: Claude asks a question, UI renders briefly, then Claude immediately continues
+as if the user gave no answer.
+
+**Cause**: Approving with `updatedInput: {}` (empty). The `call()` method defaults
+`answers` to `{}` and returns immediately.
+
+**Fix**: Never auto-approve `AskUserQuestion`. It must always block and wait for the user
+to submit answers via the `updatedInput` path.
+
+---
+
+## 6. Permission Modes & Side Effects
 
 ### Mode Change via control_request
 
@@ -448,7 +568,7 @@ the Zod schema expects `{ behavior: "allow"|"deny" }`. The CLI accepts both (the
 
 ---
 
-## 7. Plan File Storage
+## 8. Plan File Storage
 
 ### Directory & Naming
 
@@ -489,7 +609,7 @@ Fallback: if no plan file is found, uses a generic prompt:
 
 ---
 
-## 8. Known Limitations & Workarounds
+## 9. Known Limitations & Workarounds
 
 ### Context Clearing
 
@@ -541,7 +661,7 @@ stopping an agent, but is currently not used by agendo.
 
 ---
 
-## 9. Key Insights for Future Agendo Improvements
+## 10. Key Insights for Future Agendo Improvements
 
 ### Protocol vs TUI Split
 

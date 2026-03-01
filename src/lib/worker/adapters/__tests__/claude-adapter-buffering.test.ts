@@ -131,7 +131,6 @@ describe('ClaudeAdapter line buffering', () => {
       approvalId: 'test-req-1',
       toolName: 'Bash',
       toolInput: { command: 'ls' },
-      isAskUser: false,
     });
   });
 

@@ -26,17 +26,22 @@ type AskUserQuestion = {
 export class ApprovalHandler {
   /**
    * Tools that must always require human approval via the control_request path,
-   * regardless of permissionMode.
+   * regardless of permissionMode. These represent human-interaction gates.
    *
-   * These represent human-interaction gates (plan approval, etc.) rather than
-   * dangerous-action permissions. The Claude Code CLI never auto-approves
-   * these even in bypassPermissions mode.
+   * - ExitPlanMode / exit_plan_mode: plan approval gate
+   * - AskUserQuestion: must block until user selects answers; the answers are
+   *   returned in updatedInput of the control_response so Claude's call()
+   *   receives them and produces a proper tool result (instead of empty answers).
    *
-   * Note: AskUserQuestion is NOT listed here because it arrives via the NDJSON
-   * tool_use path (not control_request) and is detected generically from
-   * is_error:true in Claude's stdout — no hardcoded name needed.
+   * NOTE: AskUserQuestion sends `can_use_tool` like every other tool. We must
+   * NOT auto-approve it — blocking here keeps Claude waiting while the UI card
+   * collects the user's selections.
    */
-  static readonly APPROVAL_GATED_TOOLS = new Set(['ExitPlanMode', 'exit_plan_mode']);
+  static readonly APPROVAL_GATED_TOOLS = new Set([
+    'ExitPlanMode',
+    'exit_plan_mode',
+    'AskUserQuestion',
+  ]);
 
   // ---------------------------------------------------------------------------
   // State
@@ -167,16 +172,7 @@ export class ApprovalHandler {
    * until the user responds via the control channel.
    */
   async handleApprovalRequest(req: ApprovalRequest): Promise<PermissionDecision> {
-    const { approvalId, toolName, toolInput, isAskUser } = req;
-
-    // AskUserQuestion is a human-interaction primitive: the agent is asking the
-    // user a question, not requesting permission for a dangerous action.
-    // Auto-approve the can_use_tool request — the tool will "fail" in pipe mode
-    // (error tool_result), then the interactive-tools renderer shows the question
-    // card, and pushToolResult routes the human's answer when it arrives.
-    if (isAskUser) {
-      return 'allow';
-    }
+    const { approvalId, toolName, toolInput } = req;
 
     // Check per-session allowlist — no round-trip to the user needed.
     if (this.isToolAllowed(toolName)) {
@@ -199,7 +195,8 @@ export class ApprovalHandler {
     // so clearContextRestart works even if the session goes idle before the user
     // clicks. The plan file is in ~/.claude/plans/ with a random hash name;
     // we grab the most recently modified one while the session is still active.
-    if (ApprovalHandler.APPROVAL_GATED_TOOLS.has(toolName)) {
+    // (AskUserQuestion does not need plan capture — only ExitPlanMode does.)
+    if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {
       await this.capturePlanFilePath();
     }
 
