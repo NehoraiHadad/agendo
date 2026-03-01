@@ -1067,10 +1067,16 @@ export function SessionChatView({
       >
         {stream.events.length === 0 && !stream.error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
-            <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs">
-              {stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}
-            </span>
+            {currentStatus === 'idle' ? (
+              <span className="text-xs">Send a message to start the conversation</span>
+            ) : (
+              <>
+                <Loader2 className="size-5 animate-spin" />
+                <span className="text-xs">
+                  {stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}
+                </span>
+              </>
+            )}
           </div>
         )}
 
@@ -1140,6 +1146,7 @@ export function SessionChatView({
             slashCommands={slashCommands}
             mcpServers={mcpServers}
             agentBinaryPath={agentBinaryPath}
+            neverStarted={currentStatus === 'idle' && stream.events.length === 0}
           />
         </div>
       )}

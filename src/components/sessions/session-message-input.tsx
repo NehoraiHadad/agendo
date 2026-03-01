@@ -204,6 +204,8 @@ interface SessionMessageInputProps {
   mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>;
   /** Agent binary path — used to derive provider for model picker */
   agentBinaryPath?: string;
+  /** True when the session has never been started (lazy-start mode) */
+  neverStarted?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +254,7 @@ export function SessionMessageInput({
   slashCommands,
   mcpServers,
   agentBinaryPath,
+  neverStarted,
 }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -554,7 +557,11 @@ export function SessionMessageInput({
   if (!isAccepting) return null;
 
   const isIdle = status === 'idle' || status === 'ended';
-  const placeholder = isIdle ? 'Resume session…' : 'Message agent… or / for commands';
+  const placeholder = neverStarted
+    ? 'Start a conversation…'
+    : isIdle
+      ? 'Resume session…'
+      : 'Message agent… or / for commands';
 
   return (
     <>

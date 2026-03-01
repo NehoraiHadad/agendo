@@ -71,7 +71,9 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     model: body.model,
   });
 
-  await enqueueSession({ sessionId: session.id });
+  if (body.initialPrompt) {
+    await enqueueSession({ sessionId: session.id });
+  }
 
   return NextResponse.json({ data: { id: session.id } }, { status: 201 });
 });
