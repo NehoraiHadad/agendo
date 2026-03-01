@@ -1,23 +1,20 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import * as tmux from '@/lib/worker/tmux-manager';
 import type {
   AgentAdapter,
   ManagedProcess,
   SpawnOpts,
   ImageContent,
-  ApprovalHandler,
   PermissionDecision,
 } from '@/lib/worker/adapters/types';
 import { AsyncLock } from '@/lib/utils/async-lock';
+import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 
-export class ClaudeAdapter implements AgentAdapter {
-  private childProcess: ChildProcess | null = null;
+export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
+  private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   private tmuxSessionName = '';
   private sessionId: string | null = null;
   private lock = new AsyncLock();
-  private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private hasEmittedThinking = false;
-  private approvalHandler: ApprovalHandler | null = null;
   /** Carryover buffer for incomplete NDJSON lines split across stdout chunks. */
   private adapterDataBuffer = '';
 
@@ -42,14 +39,6 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     }
     return null;
-  }
-
-  onThinkingChange(cb: (thinking: boolean) => void): void {
-    this.thinkingCallback = cb;
-  }
-
-  setApprovalHandler(handler: ApprovalHandler): void {
-    this.approvalHandler = handler;
   }
 
   // Claude Code built-in slash commands that must be written as raw text to stdin
@@ -386,16 +375,8 @@ export class ClaudeAdapter implements AgentAdapter {
 
     tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
 
-    this.childProcess = nodeSpawn('claude', claudeArgs, {
-      cwd: opts.cwd,
-      env: opts.env as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      detached: true,
-    });
-
+    this.childProcess = BaseAgentAdapter.spawnDetached('claude', claudeArgs, opts);
     const cp = this.childProcess;
-    cp.unref();
 
     // Build initial message: include an image content block when provided (cold resume with attachment).
     const initialContent: unknown = opts.initialImage
@@ -435,9 +416,8 @@ export class ClaudeAdapter implements AgentAdapter {
       // Buffer incomplete NDJSON lines split across chunks.
       // The last element of split('\n') is either '' (line ended with \n)
       // or a partial line — save it as the carryover buffer.
-      const combined = this.adapterDataBuffer + text;
-      const lines = combined.split('\n');
-      this.adapterDataBuffer = lines.pop() ?? '';
+      const { lines, remainder } = BaseAgentAdapter.processLineBuffer(this.adapterDataBuffer, text);
+      this.adapterDataBuffer = remainder;
 
       // Scan each complete line for result (thinking=false) and tool approval requests
       for (const line of lines) {
@@ -488,15 +468,7 @@ export class ClaudeAdapter implements AgentAdapter {
       pid: cp.pid ?? 0,
       tmuxSession: this.tmuxSessionName,
       stdin: cp.stdin,
-      kill: (signal) => {
-        const p = this.childProcess;
-        if (!p?.pid) return;
-        try {
-          process.kill(-p.pid, signal);
-        } catch {
-          // Process group already dead
-        }
-      },
+      kill: BaseAgentAdapter.buildKill(() => this.childProcess),
       onData: (cb) => dataCallbacks.push(cb),
       onExit: (cb) => exitCallbacks.push(cb),
     };
