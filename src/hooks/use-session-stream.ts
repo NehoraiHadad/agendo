@@ -29,14 +29,23 @@ const initialState: SessionStreamState = {
 function reducer(state: SessionStreamState, action: StreamAction): SessionStreamState {
   switch (action.type) {
     case 'APPEND_EVENT': {
+      // Guard against duplicate delivery (e.g. SSE reconnect replaying already-seen events)
+      if (action.event.id > 0 && state.events.some((e) => e.id === action.event.id)) {
+        return state;
+      }
       const events = [...state.events, action.event];
-      const trimmed = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
+      const trimmed =
+        events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
       return { ...state, events: trimmed };
     }
     case 'SET_STATUS':
       return { ...state, sessionStatus: action.status };
     case 'SET_CONNECTED':
-      return { ...state, isConnected: action.connected, error: action.connected ? null : state.error };
+      return {
+        ...state,
+        isConnected: action.connected,
+        error: action.connected ? null : state.error,
+      };
     case 'SET_ERROR':
       return { ...state, error: action.error, isConnected: false };
     case 'RESET':

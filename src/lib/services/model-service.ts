@@ -15,19 +15,6 @@ export interface ModelOption {
 export type Provider = 'anthropic' | 'openai' | 'google';
 
 // ---------------------------------------------------------------------------
-// Provider detection
-// ---------------------------------------------------------------------------
-
-/** Derive the provider from an agent's binaryPath basename. */
-export function detectProvider(binaryPath: string): Provider | null {
-  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
-  if (base.startsWith('claude')) return 'anthropic';
-  if (base.startsWith('codex')) return 'openai';
-  if (base.startsWith('gemini')) return 'google';
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // In-memory cache (1 hour TTL)
 // ---------------------------------------------------------------------------
 

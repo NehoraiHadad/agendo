@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { allowedWorkingDirs } from '@/lib/config';
 import { projects, tasks } from '@/lib/db/schema';
 import { NotFoundError, ValidationError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { Project } from '@/lib/types';
 
 // --- Types ---
@@ -116,7 +117,7 @@ export async function deleteProject(id: string): Promise<void> {
     .from(projects)
     .where(eq(projects.id, id))
     .limit(1);
-  if (!existing) throw new NotFoundError('Project', id);
+  requireFound(existing, 'Project', id);
   await db
     .update(projects)
     .set({ isActive: false, updatedAt: new Date() })
@@ -129,7 +130,7 @@ export async function restoreProject(id: string): Promise<Project> {
     .from(projects)
     .where(eq(projects.id, id))
     .limit(1);
-  if (!existing) throw new NotFoundError('Project', id);
+  requireFound(existing, 'Project', id);
   const [restored] = await db
     .update(projects)
     .set({ isActive: true, updatedAt: new Date() })
@@ -148,7 +149,7 @@ export async function purgeProject(id: string, options: PurgeProjectOptions = {}
     .from(projects)
     .where(eq(projects.id, id))
     .limit(1);
-  if (!existing) throw new NotFoundError('Project', id);
+  requireFound(existing, 'Project', id);
   if (options.withTasks) {
     await db.delete(tasks).where(eq(tasks.projectId, id));
   }

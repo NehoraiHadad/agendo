@@ -2,7 +2,8 @@ import { eq, and, desc, sql, count, getTableColumns } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { executions, tasks, agents, agentCapabilities, taskEvents } from '@/lib/db/schema';
 import { isValidExecutionTransition } from '@/lib/state-machines';
-import { NotFoundError, ConflictError } from '@/lib/errors';
+import { ConflictError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import { checkLoopGuards } from '@/lib/services/loop-prevention';
 import type { Execution, ExecutionStatus, Agent, AgentCapability } from '@/lib/types';
 
@@ -43,7 +44,7 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
   });
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
-  if (!agent) throw new NotFoundError('Agent', input.agentId);
+  requireFound(agent, 'Agent', input.agentId);
 
   const [capability] = await db
     .select()
@@ -55,10 +56,10 @@ export async function createExecution(input: CreateExecutionInput): Promise<Exec
       ),
     )
     .limit(1);
-  if (!capability) throw new NotFoundError('Capability', input.capabilityId);
+  requireFound(capability, 'Capability', input.capabilityId);
 
   const [task] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
-  if (!task) throw new NotFoundError('Task', input.taskId);
+  requireFound(task, 'Task', input.taskId);
 
   const [{ runningCount }] = await db
     .select({ runningCount: count() })
@@ -117,7 +118,7 @@ export async function cancelExecution(executionId: string): Promise<Execution> {
     .from(executions)
     .where(eq(executions.id, executionId))
     .limit(1);
-  if (!execution) throw new NotFoundError('Execution', executionId);
+  requireFound(execution, 'Execution', executionId);
 
   if (!isValidExecutionTransition(execution.status, 'cancelling')) {
     throw new ConflictError(`Cannot cancel execution in "${execution.status}" status`);
@@ -150,9 +151,7 @@ export async function getExecutionById(executionId: string): Promise<ExecutionWi
     .where(eq(executions.id, executionId))
     .limit(1);
 
-  if (rows.length === 0) throw new NotFoundError('Execution', executionId);
-
-  const row = rows[0];
+  const row = requireFound(rows[0], 'Execution', executionId);
   return {
     ...row.execution,
     agent: { id: row.agentId, name: row.agentName, slug: row.agentSlug },

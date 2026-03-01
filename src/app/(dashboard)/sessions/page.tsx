@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { SessionListClient } from './session-list-client';
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const metadata = { title: 'Sessions — agenDo' };
 
 export default function SessionsPage() {

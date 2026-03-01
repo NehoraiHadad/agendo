@@ -13,12 +13,12 @@ import {
 import { FileLogWriter, resolveLogPath } from '@/lib/worker/log-writer';
 import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
-import type { ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
 // --- Constants ---
 
-const SIGKILL_DELAY_MS = 5_000;
 const RESULT_EXIT_GRACE_MS = 10_000; // max wait after result event before force-killing (GitHub #25629)
 const DEFAULT_TIMEOUT_SEC = 300;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
@@ -98,7 +98,8 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
       childEnv[k] = v;
     }
   }
-  const taskEnv = (taskRow?.inputContext as { envOverrides?: Record<string, string> } | null)?.envOverrides;
+  const taskEnv = (taskRow?.inputContext as { envOverrides?: Record<string, string> } | null)
+    ?.envOverrides;
   if (taskEnv) {
     for (const [k, v] of Object.entries(taskEnv)) {
       childEnv[k] = v;
@@ -107,29 +108,10 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   delete childEnv['CLAUDECODE'];
   delete childEnv['CLAUDE_CODE_ENTRYPOINT'];
 
-  // --- 3. Resolve prompt or command args ---
-  let resolvedPrompt: string | undefined;
-  let resolvedArgs: string[] | undefined;
-
-  if (execution.mode === 'prompt') {
-    // If promptOverride is set, use it directly (session continuation path)
-    if (execution.promptOverride) {
-      resolvedPrompt = execution.promptOverride;
-    } else {
-      const interpolationContext: Record<string, unknown> = {
-        task_title: taskRow?.title ?? '',
-        task_description: taskRow?.description ?? '',
-        ...execution.args,
-      };
-      resolvedPrompt = interpolatePrompt(capability.promptTemplate ?? '', interpolationContext);
-    }
-    await db
-      .update(executions)
-      .set({ prompt: resolvedPrompt })
-      .where(eq(executions.id, executionId));
-  } else {
-    resolvedArgs = buildCommandArgs(capability.commandTokens ?? [], execution.args);
-  }
+  // --- 3. Resolve command args ---
+  // Note: prompt-mode capabilities are rejected at the API layer (/api/executions) and
+  // can never reach this point. Executions are template-mode only.
+  const resolvedArgs = buildCommandArgs(capability.commandTokens ?? [], execution.args);
 
   // --- 3b. Build extra CLI flags argv ---
   const extraArgs = buildCliFlagsArgv(
@@ -170,16 +152,7 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     extraArgs,
   };
 
-  let managedProcess: ManagedProcess;
-
-  if (execution.mode === 'prompt' && execution.parentExecutionId && execution.sessionRef) {
-    logWriter.writeSystem(`Resuming session: ${execution.sessionRef}`);
-    managedProcess = adapter.resume(execution.sessionRef, resolvedPrompt ?? '', spawnOpts);
-  } else if (execution.mode === 'prompt') {
-    managedProcess = adapter.spawn(resolvedPrompt ?? '', spawnOpts);
-  } else {
-    managedProcess = adapter.spawn((resolvedArgs ?? []).join(' '), spawnOpts);
-  }
+  const managedProcess = adapter.spawn(resolvedArgs.join(' '), spawnOpts);
 
   // Store PID and tmux session name
   await db
@@ -194,6 +167,9 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
   let sessionId: string | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   let resultKillTimer: ReturnType<typeof setTimeout> | null = null;
+  let totalCostUsd: string | null = null;
+  let totalTurns: number | null = null;
+  let totalDurationMs: number | null = null;
 
   managedProcess.onData((chunk) => {
     logWriter.write(chunk, 'stdout');
@@ -216,16 +192,31 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
     // Workaround for GitHub #25629: Claude sometimes never closes stdout after emitting
     // the final result event. Schedule a SIGKILL after a grace period so the execution
     // doesn't stay stuck as 'running' for 45 minutes waiting for an exit that never comes.
+    // Also capture cost/turns/duration from the result event here to avoid re-reading the
+    // log file after close.
     if (!resultKillTimer) {
       for (const line of chunk.split('\n')) {
         if (!line.trim().startsWith('{')) continue;
         try {
-          const ev = JSON.parse(line) as { type?: string };
+          const ev = JSON.parse(line) as {
+            type?: string;
+            subtype?: string;
+            total_cost_usd?: number;
+            num_turns?: number;
+            duration_ms?: number;
+          };
           if (ev.type === 'result') {
             resultKillTimer = setTimeout(() => {
-              logWriter.writeSystem('Claude result event seen but process did not exit. Sending SIGKILL.');
+              logWriter.writeSystem(
+                'Claude result event seen but process did not exit. Sending SIGKILL.',
+              );
               managedProcess.kill('SIGKILL');
             }, RESULT_EXIT_GRACE_MS);
+            if (ev.subtype === 'success') {
+              if (ev.total_cost_usd != null) totalCostUsd = String(ev.total_cost_usd);
+              if (ev.num_turns != null) totalTurns = ev.num_turns;
+              if (ev.duration_ms != null) totalDurationMs = ev.duration_ms;
+            }
             break;
           }
         } catch {
@@ -259,42 +250,6 @@ export async function runExecution({ executionId, workerId }: RunExecutionInput)
 
   logWriter.writeSystem(`Process exited with code ${exitCode}`);
   const logStats = await logWriter.close();
-
-  // Scan log for cost/turns/duration from Claude result event
-  let totalCostUsd: string | null = null;
-  let totalTurns: number | null = null;
-  let totalDurationMs: number | null = null;
-
-  if (logPath) {
-    try {
-      const { readFileSync: readLogFile, existsSync: existsSyncLocal } = await import('node:fs');
-      if (existsSyncLocal(logPath)) {
-        const logContent = readLogFile(logPath, 'utf-8');
-        for (const rawLine of logContent.split('\n')) {
-          const line = rawLine.replace(/^\[(stdout|stderr|system)\] /, '');
-          if (!line.startsWith('{')) continue;
-          try {
-            const ev = JSON.parse(line) as {
-              type?: string;
-              subtype?: string;
-              total_cost_usd?: number;
-              num_turns?: number;
-              duration_ms?: number;
-            };
-            if (ev.type === 'result' && ev.subtype === 'success') {
-              if (ev.total_cost_usd != null) totalCostUsd = String(ev.total_cost_usd);
-              if (ev.num_turns != null) totalTurns = ev.num_turns;
-              if (ev.duration_ms != null) totalDurationMs = ev.duration_ms;
-            }
-          } catch {
-            /* not JSON */
-          }
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
 
   // --- 9. Finalize with race guard ---
   const finalStatus = determineFinalStatus(exitCode, logStats.byteSize, capability.maxOutputBytes);
@@ -357,20 +312,6 @@ function buildCliFlagsArgv(cliFlags: Record<string, string | boolean>): string[]
     }
   }
   return argv;
-}
-
-function interpolatePrompt(template: string, args: Record<string, unknown>): string {
-  return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path: string) => {
-    // Support dotted paths like {{input_context.prompt_additions}}
-    const parts = path.split('.');
-    let value: unknown = args;
-    for (const part of parts) {
-      if (value === null || value === undefined || typeof value !== 'object') return '';
-      value = (value as Record<string, unknown>)[part];
-    }
-    if (value === undefined || value === null) return '';
-    return String(value);
-  });
 }
 
 async function loadExecution(id: string): Promise<Execution> {

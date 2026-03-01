@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
-import type { AICapabilitySuggestion } from '@/lib/actions/capability-actions';
+import type { AICapabilitySuggestion } from '@/lib/actions/capability-analysis-action';
 import type { AgentCapability } from '@/lib/types';
 
 interface AICapabilitiesReviewProps {
@@ -58,31 +58,39 @@ export function AICapabilitiesReview({ agentId, onCreated }: AICapabilitiesRevie
       try {
         // Start job
         const startRes = await fetch(`/api/agents/${agentId}/analyze`, { method: 'POST' });
-        const { jobId } = await startRes.json() as { jobId: string };
+        const { jobId } = (await startRes.json()) as { jobId: string };
 
         // Poll until done (max 3 minutes)
-        const result = await new Promise<{ status: string; suggestions?: AICapabilitySuggestion[]; error?: string }>(
-          (resolve) => {
-            const deadline = Date.now() + 3 * 60 * 1000;
-            const poll = () => {
-              if (Date.now() > deadline) {
-                resolve({ status: 'error', error: 'Analysis timed out. Try again.' });
-                return;
-              }
-              fetch(`/api/agents/${agentId}/analyze?job=${jobId}`)
-                .then((r) => r.json())
-                .then((data: { status: string; suggestions?: AICapabilitySuggestion[]; error?: string }) => {
+        const result = await new Promise<{
+          status: string;
+          suggestions?: AICapabilitySuggestion[];
+          error?: string;
+        }>((resolve) => {
+          const deadline = Date.now() + 3 * 60 * 1000;
+          const poll = () => {
+            if (Date.now() > deadline) {
+              resolve({ status: 'error', error: 'Analysis timed out. Try again.' });
+              return;
+            }
+            fetch(`/api/agents/${agentId}/analyze?job=${jobId}`)
+              .then((r) => r.json())
+              .then(
+                (data: {
+                  status: string;
+                  suggestions?: AICapabilitySuggestion[];
+                  error?: string;
+                }) => {
                   if (data.status === 'pending') {
                     setTimeout(poll, 2000);
                   } else {
                     resolve(data);
                   }
-                })
-                .catch(() => setTimeout(poll, 2000));
-            };
-            setTimeout(poll, 2000);
-          }
-        );
+                },
+              )
+              .catch(() => setTimeout(poll, 2000));
+          };
+          setTimeout(poll, 2000);
+        });
 
         if (result.status === 'error' || !result.suggestions?.length) {
           setError(result.error ?? 'No suggestions returned.');
@@ -163,7 +171,12 @@ export function AICapabilitiesReview({ agentId, onCreated }: AICapabilitiesRevie
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="px-2 sm:px-3 text-purple-400 border-purple-500/30 hover:bg-purple-500/10" title="AI Analyze">
+        <Button
+          size="sm"
+          variant="outline"
+          className="px-2 sm:px-3 text-purple-400 border-purple-500/30 hover:bg-purple-500/10"
+          title="AI Analyze"
+        >
           <Sparkles className="size-4" />
           <span className="hidden sm:inline ml-1.5">AI Analyze</span>
         </Button>
@@ -281,10 +294,7 @@ export function AICapabilitiesReview({ agentId, onCreated }: AICapabilitiesRevie
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${dangerColor}`}
-                          >
+                          <Badge variant="outline" className={`text-xs ${dangerColor}`}>
                             {dangerLabel}
                           </Badge>
                           {argCount > 0 && (

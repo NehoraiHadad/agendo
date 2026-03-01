@@ -1,15 +1,9 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import * as tmux from '@/lib/worker/tmux-manager';
 import { mapCodexJsonToEvents, type CodexEvent } from '@/lib/worker/adapters/codex-event-mapper';
-import type {
-  AgentAdapter,
-  ApprovalHandler,
-  ManagedProcess,
-  SpawnOpts,
-} from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
-
-const SIGKILL_DELAY_MS = 5_000;
+import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
 /**
  * Permission mode → Codex exec flags.
@@ -55,10 +49,10 @@ function resumePermissionFlags(mode?: string): string[] {
  * process is cleaned up and a new `codex exec resume <threadId>` process
  * is spawned wired to the same callbacks.
  */
-export class CodexAdapter implements AgentAdapter {
+export class CodexAdapter extends BaseAgentAdapter implements AgentAdapter {
   private threadId: string | null = null;
   private storedOpts: SpawnOpts | null = null;
-  private currentChild: ChildProcess | null = null;
+  private currentChild: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   private alive = false;
   private tmuxSessionName = '';
 
@@ -66,10 +60,6 @@ export class CodexAdapter implements AgentAdapter {
   // The virtual ManagedProcess returned by spawn() references these.
   private dataCallbacks: Array<(chunk: string) => void> = [];
   private exitCallbacks: Array<(code: number | null) => void> = [];
-
-  private thinkingCallback: ((thinking: boolean) => void) | null = null;
-  private approvalHandler: ApprovalHandler | null = null;
-  private sessionRefCallback: ((ref: string) => void) | null = null;
 
   /** NDJSON line buffer for partial lines split across data chunks. */
   private lineBuffer = '';
@@ -123,46 +113,11 @@ export class CodexAdapter implements AgentAdapter {
   async interrupt(): Promise<void> {
     const cp = this.currentChild;
     if (!cp?.pid) return;
-
-    // SIGTERM the process group
-    try {
-      process.kill(-cp.pid, 'SIGTERM');
-    } catch {
-      // Already dead
-      return;
-    }
-
-    // Wait for exit or escalate to SIGKILL
-    const exited = await Promise.race([
-      new Promise<boolean>((resolve) => {
-        cp.once('exit', () => resolve(true));
-      }),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), SIGKILL_DELAY_MS)),
-    ]);
-
-    if (!exited) {
-      try {
-        process.kill(-cp.pid, 'SIGKILL');
-      } catch {
-        // Already dead
-      }
-    }
+    await BaseAgentAdapter.killWithGrace(cp, SIGKILL_DELAY_MS);
   }
 
   isAlive(): boolean {
     return this.alive;
-  }
-
-  onThinkingChange(cb: (thinking: boolean) => void): void {
-    this.thinkingCallback = cb;
-  }
-
-  setApprovalHandler(handler: ApprovalHandler): void {
-    this.approvalHandler = handler;
-  }
-
-  onSessionRef(cb: (ref: string) => void): void {
-    this.sessionRefCallback = cb;
   }
 
   async setPermissionMode(mode: string): Promise<boolean> {
@@ -215,15 +170,7 @@ export class CodexAdapter implements AgentAdapter {
       args.push(...opts.extraArgs);
     }
 
-    const cp = nodeSpawn('codex', args, {
-      cwd: opts.cwd,
-      env: opts.env as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      detached: true,
-    });
-    cp.unref();
-
+    const cp = BaseAgentAdapter.spawnDetached('codex', args, opts);
     this.currentChild = cp;
     this.alive = true;
 
@@ -264,15 +211,7 @@ export class CodexAdapter implements AgentAdapter {
       pid: this.currentChild?.pid ?? 0,
       tmuxSession: this.tmuxSessionName,
       stdin: null, // Codex exec does not accept stdin
-      kill: (signal) => {
-        const cp = this.currentChild;
-        if (!cp?.pid) return;
-        try {
-          process.kill(-cp.pid, signal);
-        } catch {
-          // Process group already dead
-        }
-      },
+      kill: BaseAgentAdapter.buildKill(() => this.currentChild),
       onData: (cb) => this.dataCallbacks.push(cb),
       onExit: (cb) => this.exitCallbacks.push(cb),
     };
@@ -282,9 +221,8 @@ export class CodexAdapter implements AgentAdapter {
    * Process buffered NDJSON lines, extracting thread ID and thinking state.
    */
   private processLines(text: string): void {
-    const combined = this.lineBuffer + text;
-    const lines = combined.split('\n');
-    this.lineBuffer = lines.pop() ?? '';
+    const { lines, remainder } = BaseAgentAdapter.processLineBuffer(this.lineBuffer, text);
+    this.lineBuffer = remainder;
 
     for (const line of lines) {
       const trimmed = line.trim();

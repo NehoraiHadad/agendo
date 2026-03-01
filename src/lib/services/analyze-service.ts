@@ -2,7 +2,17 @@
  * Shared analysis helpers used by both the route (GET/POST) and the worker.
  */
 
-import type { AICapabilitySuggestion } from '@/lib/actions/capability-actions';
+export interface AICapabilitySuggestion {
+  key: string;
+  label: string;
+  description: string;
+  commandTokens: string[];
+  argsSchema: {
+    properties?: Record<string, { type: string; description: string }>;
+    required?: string[];
+  };
+  dangerLevel: 0 | 1 | 2 | 3;
+}
 
 export function buildAnalysisPrompt(toolName: string, helpText: string | null): string {
   const helpSection = helpText
@@ -42,7 +52,9 @@ export function extractJsonArray(raw: string): AICapabilitySuggestion[] {
     const wrapper = JSON.parse(raw) as { result?: string; response?: string };
     const inner = wrapper.result ?? wrapper.response;
     if (typeof inner === 'string') return extractJsonArray(inner);
-  } catch { /* not a JSON wrapper */ }
+  } catch {
+    /* not a JSON wrapper */
+  }
 
   // Strip markdown code fences
   const stripped = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
@@ -51,7 +63,9 @@ export function extractJsonArray(raw: string): AICapabilitySuggestion[] {
   try {
     const parsed = JSON.parse(stripped);
     if (Array.isArray(parsed)) return parsed as AICapabilitySuggestion[];
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
 
   // Try extracting a JSON array with regex
   const match = stripped.match(/\[[\s\S]*\]/);
@@ -59,7 +73,9 @@ export function extractJsonArray(raw: string): AICapabilitySuggestion[] {
     try {
       const parsed = JSON.parse(match[0]);
       if (Array.isArray(parsed)) return parsed as AICapabilitySuggestion[];
-    } catch { /* not valid JSON */ }
+    } catch {
+      /* not valid JSON */
+    }
   }
 
   throw new Error('No JSON array found in AI response');
