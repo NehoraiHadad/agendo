@@ -14,8 +14,7 @@ import type { Session } from '@/lib/types';
 import type { AgentAdapter, ManagedProcess } from '@/lib/worker/adapters/types';
 import type { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ActivityTracker } from '@/lib/worker/activity-tracker';
-
-export const SIGKILL_DELAY_MS = 5_000;
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
 /** Human-readable labels for permission modes. */
 export const MODE_LABELS: Record<string, string> = {

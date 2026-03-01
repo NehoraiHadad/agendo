@@ -56,9 +56,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   // Protected static utilities (shared across adapters)
   // -------------------------------------------------------------------------
 
-  /** Grace period before SIGKILL escalation (5 seconds — Codex standard). */
-  protected static readonly SIGKILL_DELAY_MS = 5_000;
-
   /**
    * Splits a partial NDJSON line buffer + new data into complete lines.
    *

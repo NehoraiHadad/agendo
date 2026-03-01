@@ -3,6 +3,7 @@ import { mapCodexJsonToEvents, type CodexEvent } from '@/lib/worker/adapters/cod
 import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
 /**
  * Permission mode → Codex exec flags.
@@ -112,7 +113,7 @@ export class CodexAdapter extends BaseAgentAdapter implements AgentAdapter {
   async interrupt(): Promise<void> {
     const cp = this.currentChild;
     if (!cp?.pid) return;
-    await BaseAgentAdapter.killWithGrace(cp, BaseAgentAdapter.SIGKILL_DELAY_MS);
+    await BaseAgentAdapter.killWithGrace(cp, SIGKILL_DELAY_MS);
   }
 
   isAlive(): boolean {
