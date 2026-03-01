@@ -1067,7 +1067,7 @@ export function SessionChatView({
       >
         {stream.events.length === 0 && !stream.error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
-            {currentStatus === 'idle' ? (
+            {currentStatus === 'idle' && !initialPrompt ? (
               <span className="text-xs">Send a message to start the conversation</span>
             ) : (
               <>
