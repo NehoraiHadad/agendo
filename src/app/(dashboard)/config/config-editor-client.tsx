@@ -5,6 +5,7 @@ import { Settings, Loader2, AlertCircle } from 'lucide-react';
 import { ConfigScopeSelector } from '@/components/config/config-scope-selector';
 import { ConfigFileTree, type TreeNode } from '@/components/config/config-file-tree';
 import { ConfigEditorTextarea } from '@/components/config/config-editor-textarea';
+import { TokenBudgetPanel } from '@/components/config/token-budget-panel';
 import { cn } from '@/lib/utils';
 
 interface ProjectOption {
@@ -78,6 +79,12 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
   );
 
   const isProjectScope = scope !== 'global';
+
+  // Combined always-loaded total: system + (global if project scope) + current scope config.
+  const combined = useMemo(
+    () => SYSTEM_OVERHEAD + (isProjectScope ? (globalTokens ?? 0) : 0) + totalTokens,
+    [isProjectScope, globalTokens, totalTokens],
+  );
 
   // Live token estimates for the currently open file — updates as the user types.
   // For skills/commands, split into frontmatter (always loaded) and body (on invoke).
@@ -261,7 +268,6 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
           {(totalTokens > 0 || (isProjectScope && (globalTokens ?? 0) > 0)) &&
             (() => {
               const gTokens = globalTokens ?? 0;
-              const combined = SYSTEM_OVERHEAD + (isProjectScope ? gTokens : 0) + totalTokens;
               const breakdownParts = ['~15K system'];
               if (isProjectScope && gTokens > 0)
                 breakdownParts.push(`${fmtTokens(gTokens)} global`);
@@ -354,6 +360,13 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
                 </button>
               </div>
             </div>
+          ) : !selectedFile ? (
+            <TokenBudgetPanel
+              tree={tree}
+              isProjectScope={isProjectScope}
+              globalTokens={globalTokens}
+              alwaysTotal={combined}
+            />
           ) : (
             <ConfigEditorTextarea
               content={fileContent}
