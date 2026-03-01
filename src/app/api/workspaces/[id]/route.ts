@@ -9,6 +9,7 @@ const workspacePanelSchema = z.object({
   col: z.number().int().min(0),
   rowSpan: z.number().int().min(1).optional(),
   colSpan: z.number().int().min(1).optional(),
+  height: z.number().int().min(1).max(2000).optional(),
 });
 
 const workspaceLayoutSchema = z.object({

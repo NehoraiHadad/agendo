@@ -9,15 +9,19 @@ import { SessionMessageInput } from '@/components/sessions/session-message-input
 import { WorkspacePanelHeader } from './workspace-panel-header';
 
 const MIN_PANEL_HEIGHT = 280;
-const MAX_PANEL_HEIGHT = 2000;
+const MAX_PANEL_HEIGHT = 1200;
 
-function getDefaultHeight() {
+function getDefaultHeight(): number | string {
   if (typeof window === 'undefined') return 520;
-  return Math.max(MIN_PANEL_HEIGHT, Math.round(window.innerHeight * 0.72));
+  if (window.innerWidth < 640) return '50vh';
+  return Math.max(
+    MIN_PANEL_HEIGHT,
+    Math.min(MAX_PANEL_HEIGHT, Math.round(window.innerHeight * 0.65)),
+  );
 }
 
 function clamp(v: number) {
-  return Math.max(MIN_PANEL_HEIGHT, Math.min(MAX_PANEL_HEIGHT, v));
+  return Math.max(MIN_PANEL_HEIGHT, Math.min(MAX_PANEL_HEIGHT, Math.round(v)));
 }
 
 interface WorkspacePanelProps {
@@ -88,7 +92,9 @@ export function WorkspacePanel({
       e.stopPropagation();
       isDragging.current = true;
       startY.current = e.clientY;
-      startH.current = resolvedHeight;
+      // resolvedHeight may be a CSS string (e.g. '50vh') before any drag; convert to px for math
+      startH.current =
+        typeof resolvedHeight === 'number' ? resolvedHeight : clamp(window.innerHeight * 0.5);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
     [resolvedHeight],
