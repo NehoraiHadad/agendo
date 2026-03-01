@@ -1761,18 +1761,12 @@ export class SessionProcess {
       return 'allow';
     }
 
-    // Interactive tools always require human input regardless of permissionMode.
-    // permissionMode bypasses safety prompts for dangerous tools (Bash, Write…),
-    // but ExitPlanMode is a human-interaction primitive —
-    // the agent is asking the human something, not requesting permission for a
-    // risky action. The Claude Code CLI itself never auto-approves these even in
-    // bypassPermissions mode, and we must match that behaviour.
-    if (
-      this.session.permissionMode !== 'default' &&
-      !SessionProcess.APPROVAL_GATED_TOOLS.has(toolName)
-    ) {
-      return 'allow';
-    }
+    // Claude CLI enforces permissionMode itself: bypassPermissions means Claude
+    // never sends a control_request for regular tools; acceptEdits means Claude
+    // only sends control_requests for tools it won't auto-approve. So by the
+    // time a control_request reaches here, the CLI has already decided it needs
+    // human input — always show the prompt, except for APPROVAL_GATED_TOOLS
+    // (ExitPlanMode) which have their own interactive card renderer.
 
     // Check per-session allowlist — no round-trip to the user needed.
     if (this.isToolAllowed(toolName)) {

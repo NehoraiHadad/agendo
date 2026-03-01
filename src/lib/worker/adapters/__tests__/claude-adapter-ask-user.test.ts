@@ -161,14 +161,19 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     });
 
     const response = writes.find(
-      (w) => w !== null && w.type === 'control_response' && w.request_id === 'req-456',
+      (w) =>
+        w !== null &&
+        w.type === 'control_response' &&
+        (w.response as Record<string, unknown>)?.request_id === 'req-456',
     );
 
     expect(response).toBeDefined();
-    expect(response!.request_id).toBe('req-456');
     const resp = response!.response as Record<string, unknown>;
-    expect(resp.subtype).toBe('allow');
-    expect(resp.updatedInput).toEqual(updatedInput);
+    expect(resp.request_id).toBe('req-456');
+    expect(resp.subtype).toBe('success');
+    const inner = resp.response as Record<string, unknown>;
+    expect(inner.behavior).toBe('allow');
+    expect(inner.updatedInput).toEqual(updatedInput);
   });
 
   it('sends standard allow response for regular (non-AskUserQuestion) tool approvals', async () => {
@@ -203,12 +208,17 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     });
 
     const response = writes.find(
-      (w) => w !== null && w.type === 'control_response' && w.request_id === 'req-bash',
+      (w) =>
+        w !== null &&
+        w.type === 'control_response' &&
+        (w.response as Record<string, unknown>)?.request_id === 'req-bash',
     );
     expect(response).toBeDefined();
     const resp = response!.response as Record<string, unknown>;
-    expect(resp.subtype).toBe('allow');
-    expect(resp.updatedInput).toBeUndefined();
+    expect(resp.subtype).toBe('success');
+    const inner = resp.response as Record<string, unknown>;
+    expect(inner.behavior).toBe('allow');
+    expect(inner.updatedInput).toEqual({});
   });
 
   it('sends deny response when handler returns deny', async () => {
@@ -240,11 +250,16 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     });
 
     const response = writes.find(
-      (w) => w !== null && w.type === 'control_response' && w.request_id === 'req-deny',
+      (w) =>
+        w !== null &&
+        w.type === 'control_response' &&
+        (w.response as Record<string, unknown>)?.request_id === 'req-deny',
     );
     expect(response).toBeDefined();
     const resp = response!.response as Record<string, unknown>;
-    expect(resp.subtype).toBe('deny');
+    expect(resp.subtype).toBe('success');
+    const inner = resp.response as Record<string, unknown>;
+    expect(inner.behavior).toBe('deny');
   });
 
   it('passes approvalId and toolName in ApprovalRequest for regular tools', async () => {

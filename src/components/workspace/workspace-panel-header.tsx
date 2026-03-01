@@ -52,7 +52,7 @@ export function WorkspacePanelHeader({
   const displayTitle = sessionTitle || `Session ${sessionId.slice(0, 8)}`;
 
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1.5 shrink-0 border-b border-white/[0.05] bg-[oklch(0.095_0.005_240)]">
+    <div className="panel-drag-handle flex items-center gap-2 px-2.5 py-1.5 shrink-0 border-b border-white/[0.05] bg-[oklch(0.095_0.005_240)] cursor-grab active:cursor-grabbing select-none">
       {/* Status dot */}
       <StatusDot status={status} />
 
