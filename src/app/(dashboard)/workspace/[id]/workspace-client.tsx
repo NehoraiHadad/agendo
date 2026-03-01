@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { Minimize2, LayoutGrid, AlertCircle } from 'lucide-react';
+import { Minimize2, AlertCircle } from 'lucide-react';
 import { GridLayout, useContainerWidth } from 'react-grid-layout';
 import type { Layout } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import { Button } from '@/components/ui/button';
-import { useWorkspaceStore } from '@/lib/store/workspace-store';
+import { useWorkspaceStore, GRID_COLS } from '@/lib/store/workspace-store';
 import { useMultiSessionStreams } from '@/hooks/use-multi-session-streams';
 import { WorkspacePanel } from '@/components/workspace/workspace-panel';
 import { WorkspaceAddPanel } from '@/components/workspace/workspace-add-panel';
@@ -46,13 +46,11 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   const setExpanded = useWorkspaceStore((s) => s.setExpanded);
   const setNeedsAttention = useWorkspaceStore((s) => s.setNeedsAttention);
   const setPanelStatus = useWorkspaceStore((s) => s.setPanelStatus);
-  const setGridCols = useWorkspaceStore((s) => s.setGridCols);
   const setRglLayout = useWorkspaceStore((s) => s.setRglLayout);
   const persistLayout = useWorkspaceStore((s) => s.persistLayout);
 
   const panels = useWorkspaceStore((s) => s.panels);
   const rglLayout = useWorkspaceStore((s) => s.rglLayout);
-  const gridCols = useWorkspaceStore((s) => s.gridCols);
   const expandedPanelId = useWorkspaceStore((s) => s.expandedPanelId);
   const focusedPanelId = useWorkspaceStore((s) => s.focusedPanelId);
 
@@ -63,7 +61,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
-    setWorkspace(workspace.id, layout ?? { panels: [], gridCols: 2 });
+    setWorkspace(workspace.id, layout ?? { panels: [] });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Connect SSE streams for all panels
@@ -92,7 +90,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   }, [persistLayout]);
   const debouncedPersist = useDebounce(persistAndClear, 500);
 
-  // Persist layout whenever panels, gridCols, or rglLayout changes (after initial hydration)
+  // Persist layout whenever panels or rglLayout changes (after initial hydration)
   const isFirstRenderRef = useRef(true);
   useEffect(() => {
     if (isFirstRenderRef.current) {
@@ -101,7 +99,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
     }
     hasPendingPersist.current = true;
     debouncedPersist();
-  }, [panels, gridCols, rglLayout, debouncedPersist]);
+  }, [panels, rglLayout, debouncedPersist]);
 
   // Flush pending persist on page close/refresh or tab background (mobile)
   useEffect(() => {
@@ -180,7 +178,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
 
   // On mobile (< 640px), use a single column with no dragging
   const isMobile = containerWidth > 0 && containerWidth < 640;
-  const effectiveCols = isMobile ? 1 : gridCols;
+  const effectiveCols = isMobile ? 1 : GRID_COLS;
 
   // Handle RGL layout changes — sync into store (triggers debounced persist)
   const handleLayoutChange = useCallback(
@@ -195,39 +193,15 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
       {/* ------------------------------------------------------------------ */}
       {/* Workspace toolbar                                                    */}
       {/* ------------------------------------------------------------------ */}
-      <div className="flex items-center gap-3 shrink-0">
-        {/* Workspace name + attention count */}
-        <div className="flex items-center gap-2.5 flex-1 min-w-0">
-          <h1 className="text-base font-semibold text-foreground/90 truncate">{workspace.name}</h1>
-          {attentionCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400">
-              <AlertCircle className="size-3" />
-              {attentionCount} need{attentionCount !== 1 ? 's' : ''} attention
-            </span>
-          )}
-        </div>
-
-        {/* Grid column toggle (desktop only) */}
-        {!isMobile && (
-          <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5 shrink-0">
-            {([2, 3] as const).map((cols) => (
-              <button
-                key={cols}
-                type="button"
-                onClick={() => setGridCols(cols)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                  gridCols === cols
-                    ? 'bg-white/[0.10] text-foreground/90'
-                    : 'text-muted-foreground/40 hover:text-muted-foreground/70'
-                }`}
-                aria-pressed={gridCols === cols}
-                aria-label={`${cols} column grid`}
-              >
-                <LayoutGrid className="size-3" />
-                <span>{cols}</span>
-              </button>
-            ))}
-          </div>
+      <div className="flex items-center gap-2.5 shrink-0">
+        <h1 className="text-base font-semibold text-foreground/90 truncate flex-1 min-w-0">
+          {workspace.name}
+        </h1>
+        {attentionCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 shrink-0">
+            <AlertCircle className="size-3" />
+            {attentionCount} need{attentionCount !== 1 ? 's' : ''} attention
+          </span>
         )}
       </div>
 

@@ -119,7 +119,9 @@ export class SessionProcess {
 
     this.teamManager = new SessionTeamManager({
       sessionId: session.id,
-      emitEvent: (p) => this.emitEvent(p),
+      emitEvent: async (p) => {
+        await this.emitEvent(p);
+      },
       recordActivity: () => this.activityTracker.recordActivity(),
       pushMessage: (text) => this.pushMessage(text),
       getStatus: () => this.status,

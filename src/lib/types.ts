@@ -130,5 +130,6 @@ export interface WorkspacePanel {
 /** workspaces.layout */
 export interface WorkspaceLayout {
   panels: WorkspacePanel[];
-  gridCols: 2 | 3;
+  /** RGL column count used when saved — kept for migration to GRID_COLS. */
+  gridCols?: number;
 }

@@ -918,7 +918,13 @@ export function SessionChatView({
   }, []);
 
   const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollContainerRef.current;
+    if (el) {
+      // Use direct container scroll to avoid propagating to page-level scrollers
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
     setUserScrolledUp(false);
     isNearBottomRef.current = true;
   }, []);
@@ -939,7 +945,12 @@ export function SessionChatView({
 
   // Auto-scroll only when the user hasn't scrolled up
   useEffect(() => {
-    if (isNearBottomRef.current) {
+    if (!isNearBottomRef.current) return;
+    const el = scrollContainerRef.current;
+    if (el) {
+      // Scroll within the container to avoid propagating to page-level scrollers
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [stream.events.length, optimisticMessages.length]);
@@ -1059,11 +1070,12 @@ export function SessionChatView({
       <div
         ref={!(compact && autoGrow) ? scrollContainerRef : undefined}
         onScroll={!(compact && autoGrow) ? handleScroll : undefined}
+        style={compact && !autoGrow ? { touchAction: 'pan-y' } : undefined}
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
             : compact && !autoGrow
-              ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
+              ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain bg-[oklch(0.07_0_0)] p-2 space-y-2'
               : compact && autoGrow
                 ? 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
                 : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
