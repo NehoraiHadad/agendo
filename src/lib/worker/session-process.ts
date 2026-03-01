@@ -29,6 +29,7 @@ import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
+import { ActivityTracker } from '@/lib/worker/activity-tracker';
 
 const SIGKILL_DELAY_MS = 5_000;
 
@@ -62,11 +63,7 @@ export class SessionProcess {
   private managedProcess: ManagedProcess | null = null;
   private logWriter: FileLogWriter | null = null;
   private unsubscribeControl: (() => void) | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private idleTimeoutKilled = false;
   private interruptInProgress = false;
-  private interruptKilled = false;
   /** Set by terminate() so onExit transitions to 'idle' (resumable) instead of 'ended'. */
   private terminateKilled = false;
   /** Set by handleCancel() so onExit skips the "unexpected exit" error message. */
@@ -79,8 +76,6 @@ export class SessionProcess {
   private spawnCwd: string | null = null;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
   private sigkillTimers: ReturnType<typeof setTimeout>[] = [];
-  /** Periodic MCP health check timer — checks for disconnected MCP servers. */
-  private mcpHealthTimer: ReturnType<typeof setInterval> | null = null;
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
@@ -94,13 +89,8 @@ export class SessionProcess {
   private activeToolUseIds = new Set<string>();
   /** Manages per-tool approval gates, interactive tool responses, and suppressed tool tracking. */
   private approvalHandler!: ApprovalHandler;
-  /** Buffer for batching text deltas from stream_event messages (200ms flush interval). */
-  private deltaBuffer = '';
-  private deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Buffer for batching thinking deltas (same interval as text deltas). */
-  private thinkingDeltaBuffer = '';
-  private thinkingDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly DELTA_FLUSH_MS = 200;
+  /** Manages idle timer, heartbeat, MCP health check, and delta buffers. */
+  private activityTracker!: ActivityTracker;
   /** Team inbox monitor — non-null only when this session is a team leader. */
   private teamInboxMonitor: TeamInboxMonitor | null = null;
   /** tool_use ID of a pending TeamCreate call — attach monitor when it completes. */
@@ -116,9 +106,58 @@ export class SessionProcess {
       adapter,
       (payload) => this.emitEvent(payload),
       (status) => this.transitionTo(status),
-      () => this.resetIdleTimer(),
+      () => this.activityTracker.recordActivity(),
       () => this.capturePlanFilePath(),
       this.activeToolUseIds,
+    );
+
+    this.activityTracker = new ActivityTracker(
+      session.id,
+      // getIdleTimeoutSec: team sessions get 1 hour; regular sessions use idleTimeoutSec
+      () => (this.teamInboxMonitor ? 3600 : this.session.idleTimeoutSec),
+      // getIdleTimeoutMessage: team-aware message
+      (timeoutSec) =>
+        this.teamInboxMonitor
+          ? `Team idle timeout after ${timeoutSec}s with no teammate activity. Suspending session.`
+          : `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
+      () => this.status,
+      (payload) => this.emitEvent(payload),
+      // onIdleKill: SIGTERM + schedule SIGKILL escalation
+      () => {
+        this.managedProcess?.kill('SIGTERM');
+        const t = setTimeout(() => {
+          this.managedProcess?.kill('SIGKILL');
+        }, SIGKILL_DELAY_MS);
+        this.sigkillTimers.push(t);
+      },
+      () => this.managedProcess?.pid,
+      // onSilentCrash: treat as process exit with code -1
+      () => {
+        void this.onExit(-1);
+      },
+      this.adapter.getMcpStatus?.bind(this.adapter),
+      // publishTextDelta: emit agent:text-delta directly to PG NOTIFY (no log write)
+      async (text) => {
+        const event: AgendoEvent = {
+          id: ++this.eventSeq,
+          sessionId: this.session.id,
+          ts: Date.now(),
+          type: 'agent:text-delta',
+          text,
+        };
+        await publish(channelName('agendo_events', this.session.id), event);
+      },
+      // publishThinkingDelta: emit agent:thinking-delta directly to PG NOTIFY
+      async (text) => {
+        const event: AgendoEvent = {
+          id: ++this.eventSeq,
+          sessionId: this.session.id,
+          ts: Date.now(),
+          type: 'agent:thinking-delta',
+          text,
+        };
+        await publish(channelName('agendo_events', this.session.id), event);
+      },
     );
   }
 
@@ -273,7 +312,7 @@ export class SessionProcess {
       // When thinking stops, transition to awaiting_input (works for all adapters:
       // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
       if (!thinking && !this.interruptInProgress) {
-        void this.transitionTo('awaiting_input').then(() => this.resetIdleTimer());
+        void this.transitionTo('awaiting_input').then(() => this.activityTracker.recordActivity());
       }
     });
 
@@ -298,8 +337,8 @@ export class SessionProcess {
     this.managedProcess.onData((chunk) => void this.onData(chunk));
     this.managedProcess.onExit((code) => void this.onExit(code));
 
-    this.startHeartbeat();
-    this.startMcpHealthCheck();
+    this.activityTracker.startHeartbeat();
+    this.activityTracker.startMcpHealthCheck();
 
     // Start periodic team detection — teams are created AFTER session start,
     // so we poll until a team config is found (or the session exits).
@@ -342,7 +381,7 @@ export class SessionProcess {
         });
         this.teamInboxMonitor.stopPolling();
         this.teamInboxMonitor = null;
-        this.resetIdleTimer();
+        this.activityTracker.recordActivity();
       }
     }
   }
@@ -389,7 +428,7 @@ export class SessionProcess {
       });
 
       // Team inbox activity proves teammates are working — reset idle timer
-      this.resetIdleTimer();
+      this.activityTracker.recordActivity();
 
       // Check if this shutdown_approved completes the full set
       if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
@@ -401,7 +440,7 @@ export class SessionProcess {
           });
           this.teamInboxMonitor.stopPolling();
           this.teamInboxMonitor = null;
-          this.resetIdleTimer(); // resets with normal (non-team) timeout
+          this.activityTracker.recordActivity(); // resets with normal (non-team) timeout
         }
       }
     });
@@ -412,7 +451,7 @@ export class SessionProcess {
     });
 
     // Reset idle timer with the new team-aware timeout
-    this.resetIdleTimer();
+    this.activityTracker.recordActivity();
     return true;
   }
 
@@ -547,7 +586,7 @@ export class SessionProcess {
           // based on whether the process survived (warm vs cold resume).
           if (event.type === 'agent:result' && !this.interruptInProgress) {
             await this.transitionTo('awaiting_input');
-            this.resetIdleTimer();
+            this.activityTracker.recordActivity();
           }
         }
       } catch (err) {
@@ -605,16 +644,7 @@ export class SessionProcess {
     // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)
     // Clear any pending delta buffer — the complete text is the source of truth.
     if (type === 'assistant') {
-      if (this.deltaFlushTimer) {
-        clearTimeout(this.deltaFlushTimer);
-        this.deltaFlushTimer = null;
-      }
-      this.deltaBuffer = '';
-      if (this.thinkingDeltaFlushTimer) {
-        clearTimeout(this.thinkingDeltaFlushTimer);
-        this.thinkingDeltaFlushTimer = null;
-      }
-      this.thinkingDeltaBuffer = '';
+      this.activityTracker.clearDeltaBuffers();
       const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
       const events: AgendoEventPayload[] = [];
       for (const block of message?.content ?? []) {
@@ -808,19 +838,9 @@ export class SessionProcess {
       if (event?.type === 'content_block_delta') {
         const delta = event.delta as Record<string, unknown> | undefined;
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          this.deltaBuffer += delta.text;
-          if (!this.deltaFlushTimer) {
-            this.deltaFlushTimer = setTimeout(() => {
-              void this.flushDeltaBuffer();
-            }, SessionProcess.DELTA_FLUSH_MS);
-          }
+          this.activityTracker.appendDelta(delta.text);
         } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-          this.thinkingDeltaBuffer += delta.thinking;
-          if (!this.thinkingDeltaFlushTimer) {
-            this.thinkingDeltaFlushTimer = setTimeout(() => {
-              void this.flushThinkingDeltaBuffer();
-            }, SessionProcess.DELTA_FLUSH_MS);
-          }
+          this.activityTracker.appendThinkingDelta(delta.thinking);
         }
       }
       // All other stream_event subtypes (message_start, content_block_start/stop,
@@ -830,55 +850,6 @@ export class SessionProcess {
     }
 
     return [];
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: text delta batching (token-level streaming)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Flush accumulated text deltas as a single agent:text-delta event.
-   * Called on a 200ms timer to limit PG NOTIFY throughput to ~5 events/sec
-   * instead of the raw 20-50 events/sec from content_block_delta.
-   *
-   * Text-delta events are NOT persisted to the log file (the complete
-   * agent:text event from the `assistant` message is the source of truth).
-   */
-  private async flushDeltaBuffer(): Promise<void> {
-    this.deltaFlushTimer = null;
-    const text = this.deltaBuffer;
-    if (!text) return;
-    this.deltaBuffer = '';
-
-    const event: AgendoEvent = {
-      id: ++this.eventSeq,
-      sessionId: this.session.id,
-      ts: Date.now(),
-      type: 'agent:text-delta',
-      text,
-    };
-
-    // Publish directly to PG NOTIFY without writing to log file.
-    // Deltas are redundant with the complete agent:text event.
-    await publish(channelName('agendo_events', this.session.id), event);
-  }
-
-  /** Flush accumulated thinking deltas as a single agent:thinking-delta event. */
-  private async flushThinkingDeltaBuffer(): Promise<void> {
-    this.thinkingDeltaFlushTimer = null;
-    const text = this.thinkingDeltaBuffer;
-    if (!text) return;
-    this.thinkingDeltaBuffer = '';
-
-    const event: AgendoEvent = {
-      id: ++this.eventSeq,
-      sessionId: this.session.id,
-      ts: Date.now(),
-      type: 'agent:thinking-delta',
-      text,
-    };
-
-    await publish(channelName('agendo_events', this.session.id), event);
   }
 
   // ---------------------------------------------------------------------------
@@ -1053,7 +1024,7 @@ export class SessionProcess {
     // be a no-op — leaving the session stuck in 'active' forever.
     await this.emitEvent({ type: 'user:message', text, hasImage: !!image });
     await this.transitionTo('active');
-    this.resetIdleTimer();
+    this.activityTracker.recordActivity();
     await this.adapter.sendMessage(text, image);
   }
 
@@ -1245,7 +1216,7 @@ export class SessionProcess {
     this.interruptInProgress = true;
     // Pre-set interruptKilled so that if the process dies during the interrupt,
     // onExit transitions to 'idle' (resumable) instead of 'ended'.
-    this.interruptKilled = true;
+    this.activityTracker.interruptKilled = true;
 
     await this.emitEvent({ type: 'system:info', message: 'Stopping...' });
     for (const toolUseId of this.activeToolUseIds) {
@@ -1265,9 +1236,9 @@ export class SessionProcess {
     if (this.adapter.isAlive()) {
       // Claude stopped the current action but is still running — warm session,
       // user can send another message immediately without a cold resume.
-      this.interruptKilled = false; // process survived, clear the pre-set flag
+      this.activityTracker.interruptKilled = false; // process survived, clear the pre-set flag
       await this.transitionTo('awaiting_input');
-      this.resetIdleTimer();
+      this.activityTracker.recordActivity();
     }
     // else: process died during interrupt — interruptKilled=true so onExit will
     // transition to 'idle' (not 'ended'), keeping the session cold-resumable.
@@ -1336,58 +1307,6 @@ export class SessionProcess {
   }
 
   // ---------------------------------------------------------------------------
-  // Private: idle timeout
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Reset (or start) the idle timeout countdown.
-   * If the agent hasn't received a message within idleTimeoutSec after
-   * entering awaiting_input, the session is forcefully terminated.
-   */
-  private resetIdleTimer(): void {
-    if (this.idleTimer !== null) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-
-    // Team sessions get a much longer timeout — teammate messages reset it continuously
-    const timeoutSec = this.teamInboxMonitor
-      ? 3600 // 1 hour
-      : this.session.idleTimeoutSec;
-
-    this.idleTimer = setTimeout(() => {
-      if (this.status !== 'awaiting_input') return;
-      this.emitEvent({
-        type: 'system:info',
-        message: this.teamInboxMonitor
-          ? `Team idle timeout after ${timeoutSec}s with no teammate activity. Suspending session.`
-          : `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
-      })
-        .then(() => {
-          this.idleTimeoutKilled = true;
-          this.managedProcess?.kill('SIGTERM');
-          const t = setTimeout(() => {
-            this.managedProcess?.kill('SIGKILL');
-          }, SIGKILL_DELAY_MS);
-          this.sigkillTimers.push(t);
-        })
-        .catch((err: unknown) => {
-          console.error(
-            `[session-process] Failed to emit idle timeout event for session ${this.session.id}:`,
-            err,
-          );
-          // Still kill the process even if event emission fails.
-          this.idleTimeoutKilled = true;
-          this.managedProcess?.kill('SIGTERM');
-          const t = setTimeout(() => {
-            this.managedProcess?.kill('SIGKILL');
-          }, SIGKILL_DELAY_MS);
-          this.sigkillTimers.push(t);
-        });
-    }, timeoutSec * 1_000);
-  }
-
-  // ---------------------------------------------------------------------------
   // Private: process exit
   // ---------------------------------------------------------------------------
 
@@ -1406,23 +1325,7 @@ export class SessionProcess {
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
 
-    this.stopHeartbeat();
-    this.stopMcpHealthCheck();
-    // Flush any pending deltas before teardown.
-    if (this.deltaFlushTimer) {
-      clearTimeout(this.deltaFlushTimer);
-      this.deltaFlushTimer = null;
-    }
-    this.deltaBuffer = '';
-    if (this.thinkingDeltaFlushTimer) {
-      clearTimeout(this.thinkingDeltaFlushTimer);
-      this.thinkingDeltaFlushTimer = null;
-    }
-    this.thinkingDeltaBuffer = '';
-    if (this.idleTimer !== null) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
+    this.activityTracker.stopAllTimers();
     // Clear any pending SIGKILL escalation timers — the process has already exited.
     for (const t of this.sigkillTimers) {
       clearTimeout(t);
@@ -1453,8 +1356,8 @@ export class SessionProcess {
         spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
       } else if (
         exitCode === 0 ||
-        this.idleTimeoutKilled ||
-        this.interruptKilled ||
+        this.activityTracker.idleTimeoutKilled ||
+        this.activityTracker.interruptKilled ||
         this.terminateKilled
       ) {
         await this.transitionTo('idle');
@@ -1547,81 +1450,6 @@ export class SessionProcess {
     }
 
     return event;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: heartbeat
-  // ---------------------------------------------------------------------------
-
-  private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(async () => {
-      try {
-        await db
-          .update(sessions)
-          .set({ heartbeatAt: new Date() })
-          .where(eq(sessions.id, this.session.id));
-        // Liveness check: kill(pid, 0) throws ESRCH if the process is already dead.
-        // This catches silent crashes where the exit handler never fired.
-        if (this.managedProcess?.pid) {
-          try {
-            process.kill(this.managedProcess.pid, 0);
-          } catch {
-            console.warn(
-              `[session-process] Session ${this.session.id}: process ${this.managedProcess.pid} died silently, recovering`,
-            );
-            void this.onExit(-1);
-          }
-        }
-      } catch (err) {
-        console.error(`[session-process] Heartbeat failed for session ${this.session.id}:`, err);
-      }
-    }, 30_000);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: MCP health check
-  // ---------------------------------------------------------------------------
-
-  private startMcpHealthCheck(): void {
-    const getMcpStatus = this.adapter.getMcpStatus?.bind(this.adapter);
-    if (!getMcpStatus) return;
-    this.mcpHealthTimer = setInterval(async () => {
-      try {
-        const resp = await getMcpStatus();
-        if (!resp) return; // timeout or process dead — skip silently
-        const servers = Array.isArray(resp.servers)
-          ? (resp.servers as Array<{ name: string; status: string }>)
-          : [];
-        const disconnected = servers.filter(
-          (s) => s.status && s.status !== 'connected' && s.status !== 'ready',
-        );
-        if (disconnected.length > 0) {
-          await this.emitEvent({
-            type: 'system:mcp-status',
-            servers: disconnected,
-          });
-        }
-      } catch (err) {
-        console.warn(
-          `[session-process] MCP health check failed for session ${this.session.id}:`,
-          err,
-        );
-      }
-    }, 60_000);
-  }
-
-  private stopMcpHealthCheck(): void {
-    if (this.mcpHealthTimer !== null) {
-      clearInterval(this.mcpHealthTimer);
-      this.mcpHealthTimer = null;
-    }
   }
 
   // ---------------------------------------------------------------------------
