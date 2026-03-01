@@ -18,6 +18,7 @@ import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { extractPlanEdits } from '@/lib/utils/plan-edit-parser';
 import type { Agent, AgentCapability } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
+import { getLatestContextStats, fmtTokens } from '@/lib/utils/context-stats';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,6 +151,9 @@ export function PlanConversationPanel({
   // Extract plan edits from streamed events
   const planEdits = useMemo(() => extractPlanEdits(stream.events), [stream.events]);
 
+  // Context window stats from latest agent:result
+  const contextStats = useMemo(() => getLatestContextStats(stream.events), [stream.events]);
+
   // Fetch agents on mount if no active session
   useEffect(() => {
     if (conversationSessionId) return;
@@ -230,6 +234,37 @@ export function PlanConversationPanel({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06] shrink-0">
         <span className="text-sm font-medium text-foreground/80">Plan Chat</span>
         {conversationSessionId && <StatusDot status={currentStatus} />}
+        {contextStats && (
+          <span
+            className="inline-flex items-center gap-1.5 ml-1"
+            title={
+              contextStats.contextWindow
+                ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${Math.round((contextStats.inputTokens / contextStats.contextWindow) * 100)}% full)`
+                : `Context: ${contextStats.inputTokens.toLocaleString()} tokens used`
+            }
+          >
+            {contextStats.contextWindow && (
+              <span className="relative inline-block h-[4px] w-10 rounded-full bg-white/[0.08] overflow-hidden shrink-0">
+                <span
+                  className="absolute inset-y-0 left-0 rounded-full transition-[width]"
+                  style={{
+                    width: `${Math.min(100, (contextStats.inputTokens / contextStats.contextWindow) * 100)}%`,
+                    backgroundColor:
+                      contextStats.inputTokens / contextStats.contextWindow > 0.8
+                        ? 'oklch(0.65 0.22 25)'
+                        : contextStats.inputTokens / contextStats.contextWindow > 0.6
+                          ? 'oklch(0.72 0.18 60)'
+                          : 'oklch(0.65 0.18 280)',
+                  }}
+                />
+              </span>
+            )}
+            <span className="text-muted-foreground/50 font-mono text-[10px]">
+              {fmtTokens(contextStats.inputTokens)}
+              {contextStats.contextWindow ? `/${fmtTokens(contextStats.contextWindow)}` : ''}
+            </span>
+          </span>
+        )}
         <button
           type="button"
           onClick={onClose}
