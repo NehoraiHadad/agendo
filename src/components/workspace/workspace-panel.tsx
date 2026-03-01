@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { Square, Loader2 } from 'lucide-react';
 import type { PanelStreamState } from '@/hooks/use-multi-session-streams';
 import type { SessionStatus } from '@/lib/realtime/events';
 import { getLatestContextStats } from '@/lib/utils/context-stats';
@@ -38,6 +39,43 @@ function usePanelStreamAdapter(stream: PanelStreamState) {
       },
     }),
     [stream.events, stream.sessionStatus, stream.isConnected, stream.error],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StopButton — soft interrupt for compact panels
+// ---------------------------------------------------------------------------
+
+function StopButton({ sessionId }: { sessionId: string }) {
+  const [isInterrupting, setIsInterrupting] = useState(false);
+
+  const handleInterrupt = useCallback(async () => {
+    if (isInterrupting) return;
+    setIsInterrupting(true);
+    try {
+      await fetch(`/api/sessions/${sessionId}/interrupt`, { method: 'POST' });
+    } finally {
+      setIsInterrupting(false);
+    }
+  }, [sessionId, isInterrupting]);
+
+  return (
+    <div className="flex justify-center px-2 py-1 border-t border-white/[0.05]">
+      <button
+        type="button"
+        onClick={() => void handleInterrupt()}
+        disabled={isInterrupting}
+        className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+        aria-label="Stop current agent action"
+      >
+        {isInterrupting ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <Square className="size-3 fill-current" />
+        )}
+        Stop
+      </button>
+    </div>
   );
 }
 
@@ -99,6 +137,9 @@ export function WorkspacePanel({
           autoGrow={autoGrow}
         />
       </div>
+
+      {/* Stop button — only when session is actively running */}
+      {currentStatus === 'active' && <StopButton sessionId={sessionId} />}
 
       {/* Panel footer — message input */}
       <SessionMessageInput
