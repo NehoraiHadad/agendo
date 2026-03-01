@@ -267,55 +267,6 @@ export class ApprovalHandler {
   }
 
   // ---------------------------------------------------------------------------
-  // AskUserQuestion (wired to adapter's AskUserQuestion handling if needed)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Handle an AskUserQuestion control_request from Claude.
-   *
-   * Flow:
-   * 1. Emit an `agent:ask-user` event so the frontend renders a question card.
-   * 2. Wait up to 5 minutes for the user to send an `answer-question` control.
-   * 3. Return `{ behavior: 'allow', updatedInput: { questions, answers } }` so
-   *    the claude-adapter sends the correct control_response with updatedInput.
-   * 4. On timeout, deny the request so the agent can gracefully handle it.
-   */
-  async handleAskUserQuestion(
-    requestId: string,
-    toolInput: Record<string, unknown>,
-  ): Promise<PermissionDecision> {
-    const questions = (toolInput.questions as AskUserQuestion[] | undefined) ?? [];
-
-    // Store questions so the onControl answer-question handler can include them in updatedInput.
-    this.pendingAskUserQuestions.set(requestId, questions);
-
-    await this.emitEvent({
-      type: 'agent:ask-user',
-      requestId,
-      questions,
-    });
-
-    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pendingApprovals.delete(requestId);
-        this.pendingAskUserQuestions.delete(requestId);
-        console.warn(
-          `[approval-handler] AskUserQuestion requestId=${requestId} timed out after 5 minutes`,
-        );
-        resolve('deny');
-      }, TIMEOUT_MS);
-
-      this.pendingApprovals.set(requestId, (decision) => {
-        clearTimeout(timer);
-        this.pendingAskUserQuestions.delete(requestId);
-        resolve(decision);
-      });
-    });
-  }
-
-  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
