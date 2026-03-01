@@ -39,6 +39,7 @@ interface QuickLaunchDialogProps {
   projectId: string;
   open: boolean;
   defaultAgentId?: string;
+  defaultKind?: 'conversation' | 'execution';
   onOpenChange: (open: boolean) => void;
 }
 
@@ -50,6 +51,7 @@ export function QuickLaunchDialog({
   projectId,
   open,
   defaultAgentId,
+  defaultKind = 'conversation',
   onOpenChange,
 }: QuickLaunchDialogProps) {
   const router = useRouter();
@@ -76,7 +78,7 @@ export function QuickLaunchDialog({
     setIsLaunching(true);
     setError(null);
     try {
-      const res = await apiFetch<ApiResponse<{ sessionId: string; taskId: string }>>(
+      const res = await apiFetch<ApiResponse<{ sessionId: string; taskId?: string }>>(
         `/api/projects/${projectId}/sessions`,
         {
           method: 'POST',
@@ -84,6 +86,7 @@ export function QuickLaunchDialog({
             agentId: selectedAgentId,
             initialPrompt: prompt.trim() || undefined,
             view,
+            kind: defaultKind,
           }),
         },
       );
@@ -99,7 +102,9 @@ export function QuickLaunchDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Launch Agent</DialogTitle>
+          <DialogTitle>
+            {defaultKind === 'conversation' ? 'New Conversation' : 'Launch Agent'}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 pt-2">

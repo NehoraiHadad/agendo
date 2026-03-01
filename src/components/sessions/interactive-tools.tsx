@@ -15,7 +15,7 @@
  */
 
 import React, { useState } from 'react';
-import { Check, X, Loader2, BookOpen, CheckCircle2, Terminal } from 'lucide-react';
+import { Check, Loader2, BookOpen, CheckCircle2, Terminal, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -30,9 +30,23 @@ import { Button } from '@/components/ui/button';
  */
 export type ToolResponsePayload =
   | { kind: 'tool-result'; content: string }
-  | { kind: 'approval'; decision: 'allow' | 'deny' | 'allow-session' };
+  | {
+      kind: 'approval';
+      decision: 'allow' | 'deny' | 'allow-session';
+      updatedInput?: Record<string, unknown>;
+      /** ExitPlanMode: switch permission mode before allowing (avoids race). */
+      postApprovalMode?: 'default' | 'acceptEdits';
+      /** ExitPlanMode: compact conversation after allowing. */
+      postApprovalCompact?: boolean;
+      /** ExitPlanMode option 1: deny tool, kill process, restart fresh with plan as context. */
+      clearContextRestart?: boolean;
+    };
 
 export interface InteractiveToolProps {
+  /** Session ID — needed by some renderers (e.g. ExitPlanMode) for side-effect API calls. */
+  sessionId: string;
+  /** Current session status — renderers use this to detect stale cards (idle/ended). */
+  sessionStatus?: string | null;
   /** The tool_use input sent by the model. */
   input: Record<string, unknown>;
   /** True once any response has been received/submitted (disables the UI). */
@@ -232,20 +246,84 @@ interface AllowedPrompt {
   prompt?: string;
 }
 
-function ExitPlanModeRenderer({ input, isAnswered, respond, onResolved }: InteractiveToolProps) {
-  const [pending, setPending] = useState<'allow' | 'deny' | null>(null);
+/**
+ * Matches the 4 options shown by the Claude Code CLI when ExitPlanMode is called:
+ *  1. Yes, clear context and auto-accept edits  (shift+tab default)
+ *  2. Yes, auto-accept edits
+ *  3. Yes, manually approve edits
+ *  4. Type here to tell Claude what to change   (free-form feedback → deny)
+ */
+type PlanExitOption = 'clear-auto' | 'auto' | 'manual' | null;
+
+function ExitPlanModeRenderer({
+  sessionId,
+  sessionStatus,
+  input,
+  isAnswered,
+  respond,
+  onResolved,
+}: InteractiveToolProps) {
+  const [pending, setPending] = useState<PlanExitOption>(null);
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const isSessionLive = sessionStatus === 'active' || sessionStatus === 'awaiting_input';
   const isDisabled = isAnswered || pending !== null;
 
   const allowedPrompts = Array.isArray(input.allowedPrompts)
     ? (input.allowedPrompts as AllowedPrompt[])
     : [];
 
-  async function handleDecision(decision: 'allow' | 'deny') {
+  async function handleApprove(option: PlanExitOption) {
     setError(null);
-    setPending(decision);
+    setPending(option);
     try {
-      await respond({ kind: 'approval', decision });
+      if (option === 'clear-auto') {
+        // CLI option 1 ("yes-accept-edits"): deny tool, kill process, restart
+        // fresh with plan injected as initialPrompt — identical to the TUI.
+        await respond({
+          kind: 'approval',
+          decision: 'deny',
+          clearContextRestart: true,
+          postApprovalMode: 'acceptEdits',
+        });
+      } else {
+        // Options 2/3: allow tool + in-place mode change
+        const modeMap: Record<string, 'acceptEdits' | 'default'> = {
+          auto: 'acceptEdits',
+          manual: 'default',
+        };
+        await respond({
+          kind: 'approval',
+          decision: 'allow',
+          postApprovalMode: modeMap[option ?? ''],
+        });
+      }
+      // Don't call onResolved() — the compact "Plan approved" view stays visible.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Request failed');
+      setPending(null);
+    }
+  }
+
+  async function handleFeedback() {
+    if (!feedbackText.trim()) return;
+    setError(null);
+    setPending('manual'); // reuse as loading indicator
+    try {
+      // For live sessions, deny the ExitPlanMode approval first so the agent
+      // returns to plan mode and receives the feedback.
+      if (isSessionLive) {
+        await respond({ kind: 'approval', decision: 'deny' });
+      }
+      // Send the feedback as a follow-up message. For idle sessions this also
+      // cold-resumes the session (the /message route handles that).
+      await fetch(`/api/sessions/${sessionId}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: feedbackText.trim() }),
+      });
       onResolved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
@@ -253,7 +331,7 @@ function ExitPlanModeRenderer({ input, isAnswered, respond, onResolved }: Intera
     }
   }
 
-  if (isAnswered && pending !== 'deny') {
+  if (isAnswered && !feedbackMode) {
     return (
       <div className="rounded-md border border-violet-500/15 bg-violet-500/[0.03] px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground/60">
         <CheckCircle2 className="size-3.5 text-violet-400/60 shrink-0" />
@@ -271,7 +349,7 @@ function ExitPlanModeRenderer({ input, isAnswered, respond, onResolved }: Intera
       </div>
 
       {/* Plan steps (allowedPrompts) */}
-      {allowedPrompts.length > 0 && (
+      {!feedbackMode && allowedPrompts.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground/50 mb-1.5">Planned actions:</p>
           {allowedPrompts.map((p, i) => (
@@ -287,10 +365,26 @@ function ExitPlanModeRenderer({ input, isAnswered, respond, onResolved }: Intera
         </div>
       )}
 
-      {allowedPrompts.length === 0 && (
+      {!feedbackMode && allowedPrompts.length === 0 && (
         <p className="text-xs text-muted-foreground/60">
           Review the plan in the conversation above, then approve or ask Claude to revise.
         </p>
+      )}
+
+      {/* Feedback text area (option 4) */}
+      {feedbackMode && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground/50">Tell Claude what to change:</p>
+          <textarea
+            value={feedbackText}
+            onChange={(e) => setFeedbackText(e.target.value)}
+            disabled={isDisabled}
+            rows={3}
+            placeholder="Describe the changes you want..."
+            className="w-full text-sm bg-black/40 border border-violet-500/20 rounded-lg px-2.5 py-2 text-foreground/80 focus:outline-none focus:border-violet-500/40 resize-y placeholder:text-muted-foreground/30"
+            autoFocus
+          />
+        </div>
       )}
 
       {error && (
@@ -299,35 +393,120 @@ function ExitPlanModeRenderer({ input, isAnswered, respond, onResolved }: Intera
         </p>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          disabled={isDisabled}
-          onClick={() => void handleDecision('allow')}
-          className="bg-violet-600/80 hover:bg-violet-600 text-white border-0"
-        >
-          {pending === 'allow' ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Check className="size-3.5" />
-          )}
-          Proceed
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={isDisabled}
-          onClick={() => void handleDecision('deny')}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          {pending === 'deny' ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <X className="size-3.5" />
-          )}
-          Revise plan
-        </Button>
+      {/* Stale session warning — options 1-3 can't reach the agent */}
+      {!isSessionLive && !isAnswered && (
+        <p className="text-xs text-amber-400/80 bg-amber-500/[0.08] border border-amber-700/30 rounded px-2 py-1.5">
+          Session is idle — &quot;clear context&quot; and &quot;tell Claude what to change&quot;
+          work. Other options require an active session.
+        </p>
+      )}
+
+      {/* Actions — matches the 4 CLI options */}
+      <div className="flex flex-col gap-1.5">
+        {!feedbackMode ? (
+          <>
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={() => void handleApprove('clear-auto')}
+              className={cn(
+                'w-full text-left rounded-lg border px-3 py-2 transition-all duration-150',
+                'flex items-center gap-2.5 text-sm',
+                isDisabled
+                  ? 'opacity-50 cursor-default border-white/[0.05] bg-white/[0.01]'
+                  : 'border-violet-500/30 bg-violet-500/[0.08] hover:bg-violet-500/[0.15] hover:border-violet-500/50',
+              )}
+            >
+              {pending === 'clear-auto' ? (
+                <Loader2 className="size-3.5 animate-spin text-violet-400 shrink-0" />
+              ) : (
+                <Check className="size-3.5 text-violet-400 shrink-0" />
+              )}
+              <span className="text-foreground/90">Yes, clear context and auto-accept edits</span>
+            </button>
+            <button
+              type="button"
+              disabled={isDisabled || !isSessionLive}
+              onClick={() => void handleApprove('auto')}
+              className={cn(
+                'w-full text-left rounded-lg border px-3 py-2 transition-all duration-150',
+                'flex items-center gap-2.5 text-sm',
+                isDisabled || !isSessionLive
+                  ? 'opacity-50 cursor-default border-white/[0.05] bg-white/[0.01]'
+                  : 'border-white/[0.07] bg-white/[0.02] hover:border-violet-500/25 hover:bg-violet-500/[0.05]',
+              )}
+            >
+              {pending === 'auto' ? (
+                <Loader2 className="size-3.5 animate-spin text-violet-400 shrink-0" />
+              ) : (
+                <Check className="size-3.5 text-muted-foreground/40 shrink-0" />
+              )}
+              <span className="text-foreground/70">Yes, auto-accept edits</span>
+            </button>
+            <button
+              type="button"
+              disabled={isDisabled || !isSessionLive}
+              onClick={() => void handleApprove('manual')}
+              className={cn(
+                'w-full text-left rounded-lg border px-3 py-2 transition-all duration-150',
+                'flex items-center gap-2.5 text-sm',
+                isDisabled || !isSessionLive
+                  ? 'opacity-50 cursor-default border-white/[0.05] bg-white/[0.01]'
+                  : 'border-white/[0.07] bg-white/[0.02] hover:border-violet-500/25 hover:bg-violet-500/[0.05]',
+              )}
+            >
+              {pending === 'manual' ? (
+                <Loader2 className="size-3.5 animate-spin text-violet-400 shrink-0" />
+              ) : (
+                <Check className="size-3.5 text-muted-foreground/40 shrink-0" />
+              )}
+              <span className="text-foreground/70">Yes, manually approve edits</span>
+            </button>
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={() => setFeedbackMode(true)}
+              className={cn(
+                'w-full text-left rounded-lg border px-3 py-2 transition-all duration-150',
+                'flex items-center gap-2.5 text-sm',
+                isDisabled
+                  ? 'opacity-50 cursor-default border-white/[0.05] bg-white/[0.01]'
+                  : 'border-white/[0.07] bg-white/[0.02] hover:border-violet-500/25 hover:bg-violet-500/[0.05]',
+              )}
+            >
+              <MessageSquare className="size-3.5 text-muted-foreground/40 shrink-0" />
+              <span className="text-foreground/70">Tell Claude what to change</span>
+            </button>
+          </>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={isDisabled || !feedbackText.trim()}
+              onClick={() => void handleFeedback()}
+              className="bg-violet-600/80 hover:bg-violet-600 text-white border-0"
+            >
+              {pending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Check className="size-3.5" />
+              )}
+              Send feedback
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={isDisabled}
+              onClick={() => {
+                setFeedbackMode(false);
+                setFeedbackText('');
+              }}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              Back
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

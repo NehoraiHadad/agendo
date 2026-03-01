@@ -144,6 +144,12 @@ export type AgendoControl =
       decision: 'allow' | 'deny' | 'allow-session';
       /** Modified tool input to send back to Claude (only for 'allow' decisions with edits). */
       updatedInput?: Record<string, unknown>;
+      /** ExitPlanMode: switch permission mode AFTER allowing the tool. */
+      postApprovalMode?: 'default' | 'acceptEdits';
+      /** ExitPlanMode: compact conversation after allowing the tool. */
+      postApprovalCompact?: boolean;
+      /** ExitPlanMode option 1: deny tool, kill process, restart fresh with plan as context. */
+      clearContextRestart?: boolean;
     }
   | {
       /** Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion). */

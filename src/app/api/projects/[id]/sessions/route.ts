@@ -15,6 +15,7 @@ const quickLaunchSchema = z.object({
   agentId: z.string().uuid(),
   initialPrompt: z.string().optional(),
   view: z.enum(['chat', 'terminal']).optional().default('chat'),
+  kind: z.enum(['conversation', 'execution']).optional().default('conversation'),
 });
 
 export const POST = withErrorBoundary(
@@ -44,7 +45,23 @@ export const POST = withErrorBoundary(
       throw new BadRequestError('Agent has no prompt-mode capability');
     }
 
-    // Create scratch task (isAdHoc=true so it is excluded from the Kanban board)
+    if (body.kind === 'conversation') {
+      // Conversation mode: create session directly with projectId, no task
+      const session = await createSession({
+        projectId: id,
+        kind: 'conversation',
+        agentId: body.agentId,
+        capabilityId: cap.id,
+        initialPrompt: body.initialPrompt,
+        permissionMode: 'bypassPermissions',
+      });
+
+      await enqueueSession({ sessionId: session.id });
+
+      return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
+    }
+
+    // Execution mode: create scratch task (isAdHoc=true so it is excluded from the Kanban board)
     const task = await createTask({
       title: `Ad-hoc · ${format(new Date(), 'MMM d, HH:mm')}`,
       description: 'Auto-created for quick agent launch.',
@@ -57,6 +74,8 @@ export const POST = withErrorBoundary(
     // Create and enqueue session
     const session = await createSession({
       taskId: task.id,
+      projectId: id,
+      kind: 'execution',
       agentId: body.agentId,
       capabilityId: cap.id,
       initialPrompt: body.initialPrompt,

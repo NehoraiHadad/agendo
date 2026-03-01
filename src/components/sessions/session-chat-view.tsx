@@ -842,6 +842,8 @@ interface SessionChatViewProps {
   agentBinaryPath?: string;
   /** When true, renders a compact version for workspace panels (smaller text, less padding) */
   compact?: boolean;
+  /** When true (compact mode only), panel grows with content instead of fixed height */
+  autoGrow?: boolean;
 }
 
 export function SessionChatView({
@@ -851,6 +853,7 @@ export function SessionChatView({
   initialPrompt,
   agentBinaryPath,
   compact = false,
+  autoGrow = false,
 }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -911,6 +914,21 @@ export function SessionChatView({
     setUserScrolledUp(false);
     isNearBottomRef.current = true;
   }, []);
+
+  // Window scroll tracking for page-scroll mode (non-compact, non-fullscreen, or compact+autoGrow)
+  useEffect(() => {
+    if (fullscreen) return;
+    if (compact && !autoGrow) return;
+    const onWindowScroll = () => {
+      const distFromBottom =
+        document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+      const near = distFromBottom < 80;
+      isNearBottomRef.current = near;
+      setUserScrolledUp(!near);
+    };
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onWindowScroll);
+  }, [compact, autoGrow, fullscreen]);
 
   // Auto-scroll only when the user hasn't scrolled up
   useEffect(() => {
@@ -1010,9 +1028,9 @@ export function SessionChatView({
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
-          : compact
+          : compact && !autoGrow
             ? 'flex flex-col flex-1 min-h-0'
-            : 'flex flex-col rounded-xl border border-white/[0.07] flex-1 min-h-0'
+            : 'flex flex-col rounded-xl border border-white/[0.07]'
       }
     >
       {/* Header — hidden in compact mode (workspace panel has its own header) */}
@@ -1032,14 +1050,16 @@ export function SessionChatView({
 
       {/* Chat area */}
       <div
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
+        ref={(compact && !autoGrow) || fullscreen ? scrollContainerRef : undefined}
+        onScroll={(compact && !autoGrow) || fullscreen ? handleScroll : undefined}
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
-            : compact
+            : compact && !autoGrow
               ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
-              : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+              : compact && autoGrow
+                ? 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
+                : 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
         }
         role="log"
         aria-live="polite"
@@ -1085,36 +1105,43 @@ export function SessionChatView({
         <div ref={bottomRef} />
       </div>
 
-      {/* Stop button — soft interrupt, only when agent is actively running (hidden in compact) */}
-      {isActive && !compact && (
-        <div className="flex justify-center px-3 py-1.5 border-t border-white/[0.05] bg-[oklch(0.085_0_0)]">
-          <button
-            type="button"
-            onClick={() => void handleInterrupt()}
-            disabled={isInterrupting}
-            className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
-            aria-label="Stop current agent action"
-          >
-            {isInterrupting ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Square className="size-3 fill-current" />
-            )}
-            Stop
-          </button>
-        </div>
-      )}
-
-      {/* Message input — hidden in compact mode (WorkspacePanel renders its own) */}
+      {/* Stop button + message input — sticky at bottom in page-scroll mode */}
       {!compact && (
-        <SessionMessageInput
-          sessionId={sessionId}
-          status={currentStatus as SessionStatus}
-          onSent={handleSent}
-          slashCommands={slashCommands}
-          mcpServers={mcpServers}
-          agentBinaryPath={agentBinaryPath}
-        />
+        <div
+          className={
+            fullscreen
+              ? 'shrink-0'
+              : 'sticky bottom-0 rounded-b-xl bg-[oklch(0.085_0_0)]/95 backdrop-blur-sm border-t border-white/[0.05]'
+          }
+        >
+          {/* Stop button — soft interrupt, only when agent is actively running */}
+          {isActive && (
+            <div className="flex justify-center px-3 pt-1.5">
+              <button
+                type="button"
+                onClick={() => void handleInterrupt()}
+                disabled={isInterrupting}
+                className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+                aria-label="Stop current agent action"
+              >
+                {isInterrupting ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Square className="size-3 fill-current" />
+                )}
+                Stop
+              </button>
+            </div>
+          )}
+          <SessionMessageInput
+            sessionId={sessionId}
+            status={currentStatus as SessionStatus}
+            onSent={handleSent}
+            slashCommands={slashCommands}
+            mcpServers={mcpServers}
+            agentBinaryPath={agentBinaryPath}
+          />
+        </div>
       )}
     </div>
   );

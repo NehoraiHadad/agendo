@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
-import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';
+import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError } from '@/lib/errors';
 
@@ -18,11 +18,13 @@ export const GET = withErrorBoundary(
         agentSlug: agents.slug,
         capLabel: agentCapabilities.label,
         taskTitle: tasks.title,
+        projectName: projects.name,
       })
       .from(sessions)
       .leftJoin(agents, eq(sessions.agentId, agents.id))
       .leftJoin(agentCapabilities, eq(sessions.capabilityId, agentCapabilities.id))
       .leftJoin(tasks, eq(sessions.taskId, tasks.id))
+      .leftJoin(projects, eq(projects.id, sessions.projectId))
       .where(eq(sessions.id, id))
       .limit(1);
 
@@ -35,6 +37,7 @@ export const GET = withErrorBoundary(
         agentSlug: row.agentSlug,
         capLabel: row.capLabel,
         taskTitle: row.taskTitle,
+        projectName: row.projectName,
       },
     });
   },

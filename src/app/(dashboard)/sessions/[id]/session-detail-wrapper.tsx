@@ -25,6 +25,7 @@ interface Props {
   agentBinaryPath: string;
   capLabel: string;
   taskTitle: string;
+  projectName: string;
 }
 
 export function SessionDetailWrapper(props: Props) {

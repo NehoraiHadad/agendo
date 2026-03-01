@@ -359,7 +359,7 @@ export function SessionDetailClient({
   const ModeIcon = modeCfg.icon;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col">
       {/* Header card */}
       <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] overflow-visible shrink-0 mb-4 sm:mb-5">
         {/* Status accent top bar */}
@@ -565,7 +565,7 @@ export function SessionDetailClient({
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+      <Tabs defaultValue={defaultTab} className="flex flex-col">
         <TabsList className="flex w-full overflow-x-auto shrink-0">
           <TabsTrigger value="chat" className="shrink-0">
             Chat
@@ -587,7 +587,7 @@ export function SessionDetailClient({
         <TabsContent
           value="chat"
           forceMount
-          className="mt-4 data-[state=inactive]:hidden flex flex-col min-h-0"
+          className="mt-4 data-[state=inactive]:hidden flex flex-col"
         >
           <SessionChatView
             sessionId={session.id}
