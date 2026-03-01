@@ -1,7 +1,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { contextSnapshots } from '@/lib/db/schema';
-import { NotFoundError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import { createSession } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { ContextSnapshot, SnapshotFindings } from '@/lib/types';
@@ -46,8 +46,7 @@ export async function getSnapshot(id: string): Promise<ContextSnapshot> {
     .from(contextSnapshots)
     .where(eq(contextSnapshots.id, id))
     .limit(1);
-  if (!snapshot) throw new NotFoundError('ContextSnapshot', id);
-  return snapshot;
+  return requireFound(snapshot, 'ContextSnapshot', id);
 }
 
 export async function listSnapshots(filters?: {
@@ -86,8 +85,7 @@ export async function updateSnapshot(
     .set(updates)
     .where(eq(contextSnapshots.id, id))
     .returning();
-  if (!updated) throw new NotFoundError('ContextSnapshot', id);
-  return updated;
+  return requireFound(updated, 'ContextSnapshot', id);
 }
 
 export async function deleteSnapshot(id: string): Promise<void> {
@@ -95,7 +93,7 @@ export async function deleteSnapshot(id: string): Promise<void> {
     .delete(contextSnapshots)
     .where(eq(contextSnapshots.id, id))
     .returning({ id: contextSnapshots.id });
-  if (!deleted) throw new NotFoundError('ContextSnapshot', id);
+  requireFound(deleted, 'ContextSnapshot', id);
 }
 
 /**

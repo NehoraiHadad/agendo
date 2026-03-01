@@ -2,7 +2,8 @@ import { eq, and, sql, desc, asc, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/schema';
 import { isValidTaskTransition } from '@/lib/state-machines';
-import { NotFoundError, ConflictError } from '@/lib/errors';
+import { ConflictError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import type { Task, TaskStatus } from '@/lib/types';
@@ -269,8 +270,7 @@ export async function deleteTask(id: string): Promise<void> {
 export async function getTaskById(id: string): Promise<Task> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
 
-  if (!task) throw new NotFoundError('Task', id);
-  return task;
+  return requireFound(task, 'Task', id);
 }
 
 export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {

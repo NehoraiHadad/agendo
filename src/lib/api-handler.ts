@@ -13,6 +13,15 @@ type RouteHandler = (
  * - ZodError returns 422 with field-level details
  * - Unknown errors return 500 with no internal details exposed
  */
+/**
+ * Assert that a nullable DB result is non-null, throwing NotFoundError otherwise.
+ * Eliminates the repeated `if (!x) throw new NotFoundError(...)` pattern.
+ */
+export function requireFound<T>(item: T | null | undefined, resource: string, id: string): T {
+  if (!item) throw new NotFoundError(resource, id);
+  return item;
+}
+
 export function assertUUID(id: string, resource: string): void {
   if (!z.string().uuid().safeParse(id).success) {
     throw new NotFoundError(resource, id);

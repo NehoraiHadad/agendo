@@ -1,7 +1,7 @@
 import { eq, and, inArray, desc, count, getTableColumns } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
-import { NotFoundError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
 
 export type SessionKind = 'conversation' | 'execution';
@@ -53,8 +53,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 
 export async function getSession(id: string): Promise<Session> {
   const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
-  if (!session) throw new NotFoundError('Session', id);
-  return session;
+  return requireFound(session, 'Session', id);
 }
 
 export async function updateSession(id: string, patch: Partial<Session>): Promise<void> {
