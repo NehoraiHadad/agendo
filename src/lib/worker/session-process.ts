@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
@@ -16,7 +16,16 @@ import type {
 import { FileLogWriter } from '@/lib/worker/log-writer';
 import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
-import { TeamInboxMonitor } from '@/lib/worker/team-inbox-monitor';
+import { SessionTeamManager } from '@/lib/worker/session-team-manager';
+import { capturePlanFilePath, readPlanFromFile } from '@/lib/worker/session-plan-utils';
+import {
+  SIGKILL_DELAY_MS,
+  handleCancel,
+  handleInterrupt,
+  handleSetPermissionMode,
+  handleSetModel,
+  type SessionControlCtx,
+} from '@/lib/worker/session-control-handlers';
 import type {
   AgentAdapter,
   SpawnOpts,
@@ -30,8 +39,7 @@ import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
-
-const SIGKILL_DELAY_MS = 5_000;
+import { mapClaudeJsonToEvents } from '@/lib/worker/claude-event-mapper';
 
 /**
  * Derive a log file path for a session.
@@ -91,10 +99,8 @@ export class SessionProcess {
   private approvalHandler!: ApprovalHandler;
   /** Manages idle timer, heartbeat, MCP health check, and delta buffers. */
   private activityTracker!: ActivityTracker;
-  /** Team inbox monitor — non-null only when this session is a team leader. */
-  private teamInboxMonitor: TeamInboxMonitor | null = null;
-  /** tool_use ID of a pending TeamCreate call — attach monitor when it completes. */
-  private pendingTeamCreateId: string | null = null;
+  /** Manages team inbox monitoring and TeamCreate/Delete lifecycle. */
+  private teamManager!: SessionTeamManager;
 
   constructor(
     private session: Session,
@@ -107,17 +113,25 @@ export class SessionProcess {
       (payload) => this.emitEvent(payload),
       (status) => this.transitionTo(status),
       () => this.activityTracker.recordActivity(),
-      () => this.capturePlanFilePath(),
+      () => capturePlanFilePath(session.id),
       this.activeToolUseIds,
     );
+
+    this.teamManager = new SessionTeamManager({
+      sessionId: session.id,
+      emitEvent: (p) => this.emitEvent(p),
+      recordActivity: () => this.activityTracker.recordActivity(),
+      pushMessage: (text) => this.pushMessage(text),
+      getStatus: () => this.status,
+    });
 
     this.activityTracker = new ActivityTracker(
       session.id,
       // getIdleTimeoutSec: team sessions get 1 hour; regular sessions use idleTimeoutSec
-      () => (this.teamInboxMonitor ? 3600 : this.session.idleTimeoutSec),
+      () => (this.teamManager.isActive ? 3600 : this.session.idleTimeoutSec),
       // getIdleTimeoutMessage: team-aware message
       (timeoutSec) =>
-        this.teamInboxMonitor
+        this.teamManager.isActive
           ? `Team idle timeout after ${timeoutSec}s with no teammate activity. Suspending session.`
           : `Idle timeout after ${this.session.idleTimeoutSec}s. Suspending session.`,
       () => this.status,
@@ -340,131 +354,9 @@ export class SessionProcess {
     this.activityTracker.startHeartbeat();
     this.activityTracker.startMcpHealthCheck();
 
-    // Start periodic team detection — teams are created AFTER session start,
-    // so we poll until a team config is found (or the session exits).
-    this.startTeamDetection();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: team detection
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Called once at session start. Attaches a team monitor immediately if a team
-   * already exists on disk (cold-resume). Otherwise, team detection is event-driven:
-   * `onToolEvent()` watches for TeamCreate/TeamDelete in the agent's NDJSON stream.
-   */
-  private startTeamDetection(): void {
-    this.tryAttachTeamMonitor();
-  }
-
-  /**
-   * React to team-related tool events from the agent's NDJSON output.
-   * Called from the event processing loop for every tool-start and tool-end.
-   */
-  private onToolEvent(event: AgendoEventPayload): void {
-    if (event.type === 'agent:tool-start' && event.toolName === 'TeamCreate') {
-      this.pendingTeamCreateId = event.toolUseId;
-    }
-    if (event.type === 'agent:tool-end' && this.pendingTeamCreateId === event.toolUseId) {
-      this.pendingTeamCreateId = null;
-      this.tryAttachTeamMonitor();
-    }
-    if (event.type === 'agent:tool-start' && event.toolName === 'TeamDelete') {
-      if (this.teamInboxMonitor) {
-        console.log(
-          `[session-process] TeamDelete detected — detaching team monitor for session ${this.session.id}`,
-        );
-        void this.emitEvent({
-          type: 'system:info',
-          message: 'Team deleted — normal idle timeout restored.',
-        });
-        this.teamInboxMonitor.stopPolling();
-        this.teamInboxMonitor = null;
-        this.activityTracker.recordActivity();
-      }
-    }
-  }
-
-  /**
-   * Attempt to find and attach a TeamInboxMonitor for this session.
-   * Returns true when a team is found (or was already attached).
-   */
-  private tryAttachTeamMonitor(): boolean {
-    if (this.teamInboxMonitor) return true; // already attached
-    const teamName = TeamInboxMonitor.findTeamForSession(this.session.id);
-    if (!teamName) return false;
-
-    console.log(`[session-process] Team detected: "${teamName}" for session ${this.session.id}`);
-    this.teamInboxMonitor = new TeamInboxMonitor(teamName);
-
-    // Backfill: emit all messages that already existed in the inbox so they
-    // appear in the chat view on reconnect / cold-resume.
-    const existing = this.teamInboxMonitor.readAllMessages();
-    for (const msg of existing) {
-      void this.emitEvent({
-        type: 'team:message',
-        fromAgent: msg.from,
-        text: msg.text,
-        summary: msg.summary,
-        color: msg.color,
-        sourceTimestamp: msg.timestamp,
-        isStructured: msg.isStructured,
-        structuredPayload: msg.structuredPayload,
-      });
-    }
-
-    // Poll for new messages every 4s — reset idle timer on each message
-    this.teamInboxMonitor.startPolling(4000, (msg) => {
-      void this.emitEvent({
-        type: 'team:message',
-        fromAgent: msg.from,
-        text: msg.text,
-        summary: msg.summary,
-        color: msg.color,
-        sourceTimestamp: msg.timestamp,
-        isStructured: msg.isStructured,
-        structuredPayload: msg.structuredPayload,
-      });
-
-      // Team inbox activity proves teammates are working — reset idle timer
-      this.activityTracker.recordActivity();
-
-      // In stream-json mode (agendo sessions) team messages do NOT arrive as a
-      // new stdin turn automatically (unlike TUI mode). Inject real content
-      // messages into the agent's stdin so the lead agent wakes up and processes
-      // the teammate's report. Structured protocol messages (idle_notification,
-      // shutdown_approved, etc.) are internal bookkeeping — skip them.
-      if (!msg.isStructured && this.status === 'awaiting_input') {
-        const teamText = `[Message from teammate ${msg.from}]:\n${msg.text}`;
-        this.pushMessage(teamText).catch((err: unknown) => {
-          console.error(`[session-process] Failed to inject team message from ${msg.from}:`, err);
-        });
-      }
-
-      // Check if this shutdown_approved completes the full set
-      if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
-        if (this.teamInboxMonitor?.isTeamDisbanded()) {
-          console.log(`[session-process] Team disbanded for session ${this.session.id}`);
-          void this.emitEvent({
-            type: 'system:info',
-            message: 'All teammates shut down — normal idle timeout restored.',
-          });
-          this.teamInboxMonitor.stopPolling();
-          this.teamInboxMonitor = null;
-          this.activityTracker.recordActivity(); // resets with normal (non-team) timeout
-        }
-      }
-    });
-
-    void this.emitEvent({
-      type: 'system:info',
-      message: `Team "${teamName}" detected — idle timeout extended while teammates are active.`,
-    });
-
-    // Reset idle timer with the new team-aware timeout
-    this.activityTracker.recordActivity();
-    return true;
+    // Attach team monitor immediately if a team exists on disk (cold-resume),
+    // or wait for TeamCreate tool event (event-driven path).
+    this.teamManager.start();
   }
 
   // ---------------------------------------------------------------------------
@@ -525,7 +417,26 @@ export class SessionProcess {
         try {
           partials = this.adapter.mapJsonToEvents
             ? this.adapter.mapJsonToEvents(parsed)
-            : this.mapClaudeJsonToEvents(parsed);
+            : mapClaudeJsonToEvents(parsed, {
+                clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
+                appendDelta: (text) => this.activityTracker.appendDelta(text),
+                appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
+                onResultStats: (costUsd, turns) => {
+                  void db
+                    .update(sessions)
+                    .set({
+                      ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
+                      ...(turns !== null && { totalTurns: turns }),
+                    })
+                    .where(eq(sessions.id, this.session.id))
+                    .catch((err: unknown) => {
+                      console.error(
+                        `[session-process] cost stats update failed for session ${this.session.id}:`,
+                        err,
+                      );
+                    });
+                },
+              });
         } catch (mapErr) {
           console.warn(
             `[session-process] mapJsonToEvents error for session ${this.session.id}:`,
@@ -575,7 +486,7 @@ export class SessionProcess {
 
           // Detect TeamCreate / TeamDelete tool events for team lifecycle.
           if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
-            this.onToolEvent(event);
+            this.teamManager.onToolEvent(event);
           }
 
           // Persist sessionRef and model once the agent announces its session ID.
@@ -612,258 +523,6 @@ export class SessionProcess {
     }
   }
 
-  /**
-   * Map a parsed Claude stream-json object to zero or more AgendoEvent partials.
-   *
-   * Claude's --output-format stream-json emits NDJSON where tool_use and
-   * tool_result blocks are nested inside message.content arrays, NOT as
-   * top-level types. Each call may return multiple events (e.g. one assistant
-   * message containing both a text block and a tool_use block).
-   */
-  private mapClaudeJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
-    const type = parsed.type as string | undefined;
-
-    // Claude CLI system/init — announces the session ID and available slash commands
-    if (type === 'system' && parsed.subtype === 'init' && parsed.session_id) {
-      const slashCommands = Array.isArray(parsed.slash_commands)
-        ? (parsed.slash_commands as string[])
-        : [];
-      const mcpServers = Array.isArray(parsed.mcp_servers)
-        ? (parsed.mcp_servers as Array<{ name: string; status?: string; tools?: string[] }>)
-        : [];
-      const model = typeof parsed.model === 'string' ? parsed.model : undefined;
-      const apiKeySource =
-        typeof parsed.apiKeySource === 'string' ? parsed.apiKeySource : undefined;
-      const cwd = typeof parsed.cwd === 'string' ? parsed.cwd : undefined;
-      const tools = Array.isArray(parsed.tools) ? (parsed.tools as string[]) : undefined;
-      const permissionMode =
-        typeof parsed.permissionMode === 'string' ? parsed.permissionMode : undefined;
-      return [
-        {
-          type: 'session:init',
-          sessionRef: parsed.session_id as string,
-          slashCommands,
-          mcpServers,
-          model,
-          apiKeySource,
-          cwd,
-          tools,
-          permissionMode,
-        },
-      ];
-    }
-
-    // Assistant turn: content is an array of blocks (text, tool_use, thinking, etc.)
-    // Clear any pending delta buffer — the complete text is the source of truth.
-    if (type === 'assistant') {
-      this.activityTracker.clearDeltaBuffers();
-      const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-      const events: AgendoEventPayload[] = [];
-      for (const block of message?.content ?? []) {
-        if (block.type === 'text' && typeof block.text === 'string') {
-          events.push({ type: 'agent:text', text: block.text });
-        } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
-          events.push({ type: 'agent:thinking', text: block.thinking });
-        } else if (block.type === 'tool_use') {
-          events.push({
-            type: 'agent:tool-start',
-            toolUseId: (block.id as string | undefined) ?? '',
-            toolName: (block.name as string | undefined) ?? '',
-            input: (block.input as Record<string, unknown> | undefined) ?? {},
-          });
-        }
-      }
-      return events;
-    }
-
-    // User turn: content is an array of blocks (tool_result, etc.)
-    if (type === 'user') {
-      const message = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-      const toolUseResult = parsed.tool_use_result as Record<string, unknown> | undefined;
-      const events: AgendoEventPayload[] = [];
-      for (const block of message?.content ?? []) {
-        if (block.type === 'tool_result') {
-          events.push({
-            type: 'agent:tool-end',
-            toolUseId: (block.tool_use_id as string | undefined) ?? '',
-            content: block.content ?? null,
-            durationMs: toolUseResult?.durationMs as number | undefined,
-            numFiles: toolUseResult?.numFiles as number | undefined,
-            truncated: toolUseResult?.truncated as boolean | undefined,
-          });
-        }
-      }
-      return events;
-    }
-
-    // Agent thinking output (top-level, extended thinking mode)
-    if (type === 'thinking') {
-      return [{ type: 'agent:thinking', text: (parsed.thinking as string | undefined) ?? '' }];
-    }
-
-    // Final result with cost/duration stats
-    if (type === 'result') {
-      const costUsd = (parsed.total_cost_usd as number | null | undefined) ?? null;
-      const turns = (parsed.num_turns as number | null | undefined) ?? null;
-      const durationMs = (parsed.duration_ms as number | null | undefined) ?? null;
-      const durationApiMs = (parsed.duration_api_ms as number | null | undefined) ?? null;
-      const isError = parsed.is_error === true;
-      const subtype = typeof parsed.subtype === 'string' ? parsed.subtype : undefined;
-      const rawErrors = Array.isArray(parsed.errors)
-        ? (parsed.errors as string[]).filter((e) => typeof e === 'string')
-        : undefined;
-      const errors = rawErrors && rawErrors.length > 0 ? rawErrors : undefined;
-
-      // Per-model usage breakdown
-      const rawModelUsage = parsed.modelUsage as
-        | Record<string, Record<string, unknown>>
-        | undefined;
-      const modelUsage = rawModelUsage
-        ? Object.fromEntries(
-            Object.entries(rawModelUsage).map(([m, u]) => [
-              m,
-              {
-                inputTokens: (u.inputTokens as number) ?? 0,
-                outputTokens: (u.outputTokens as number) ?? 0,
-                cacheReadInputTokens: u.cacheReadInputTokens as number | undefined,
-                cacheCreationInputTokens: u.cacheCreationInputTokens as number | undefined,
-                costUSD: (u.costUSD as number) ?? 0,
-                contextWindow: u.contextWindow as number | undefined,
-                maxOutputTokens: u.maxOutputTokens as number | undefined,
-              },
-            ]),
-          )
-        : undefined;
-
-      // Permission denials
-      const rawDenials = Array.isArray(parsed.permission_denials)
-        ? (parsed.permission_denials as Array<Record<string, unknown>>)
-        : undefined;
-      const permissionDenials = rawDenials?.map((d) => ({
-        toolName: (d.tool_name as string) ?? '',
-        toolUseId: (d.tool_use_id as string) ?? '',
-        toolInput: d.tool_input as Record<string, unknown> | undefined,
-      }));
-
-      // Service tier and inference geo
-      const rawUsage = parsed.usage as Record<string, unknown> | undefined;
-      const serviceTier =
-        typeof rawUsage?.service_tier === 'string' ? rawUsage.service_tier : undefined;
-      const inferenceGeo =
-        typeof rawUsage?.inference_geo === 'string' && rawUsage.inference_geo !== ''
-          ? rawUsage.inference_geo
-          : undefined;
-
-      // Server-side tool usage (web search, fetch)
-      const rawServerToolUse = rawUsage?.server_tool_use as Record<string, unknown> | undefined;
-      const serverToolUse = rawServerToolUse
-        ? {
-            webSearchRequests: rawServerToolUse.web_search_requests as number | undefined,
-            webFetchRequests: rawServerToolUse.web_fetch_requests as number | undefined,
-          }
-        : undefined;
-
-      // Persist cumulative cost/turn stats to the session row.
-      void db
-        .update(sessions)
-        .set({
-          ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-          ...(turns !== null && { totalTurns: turns }),
-        })
-        .where(eq(sessions.id, this.session.id))
-        .catch((err: unknown) => {
-          console.error(
-            `[session-process] cost stats update failed for session ${this.session.id}:`,
-            err,
-          );
-        });
-
-      const events: AgendoEventPayload[] = [
-        {
-          type: 'agent:result',
-          costUsd,
-          turns,
-          durationMs,
-          durationApiMs,
-          isError,
-          subtype,
-          errors,
-          modelUsage,
-          serviceTier,
-          inferenceGeo,
-          permissionDenials,
-          serverToolUse,
-        },
-      ];
-
-      // Emit a system:error so error results appear as red pills in the chat
-      if (isError && errors && errors.length > 0) {
-        events.push({ type: 'system:error', message: errors.join('; ') });
-      }
-
-      return events;
-    }
-
-    // compact_boundary — conversation compaction with metadata (new protocol)
-    if (type === 'system' && parsed.subtype === 'compact_boundary') {
-      const compactMeta = parsed.compact_metadata as
-        | { trigger?: string; pre_tokens?: number }
-        | undefined;
-      const trigger = compactMeta?.trigger === 'manual' ? ('manual' as const) : ('auto' as const);
-      const preTokens = typeof compactMeta?.pre_tokens === 'number' ? compactMeta.pre_tokens : 0;
-      return [
-        {
-          type: 'system:info',
-          message: `Conversation compacted (${trigger}, ${preTokens.toLocaleString()} tokens)`,
-          compactMeta: { trigger, preTokens },
-        },
-      ];
-    }
-
-    // Claude emits a 'compact' message when it compacts the conversation history (legacy).
-    if (type === 'compact') {
-      return [{ type: 'system:info', message: 'Conversation history compacted' }];
-    }
-
-    // rate_limit_event — account rate limit status from Claude Code
-    if (type === 'rate_limit_event') {
-      const info = parsed.rate_limit_info as Record<string, unknown> | undefined;
-      if (info) {
-        return [
-          {
-            type: 'system:rate-limit',
-            status: (info.status as string) ?? 'unknown',
-            rateLimitType: (info.rateLimitType as string) ?? 'unknown',
-            resetsAt: (info.resetsAt as number) ?? 0,
-            isUsingOverage: (info.isUsingOverage as boolean) ?? false,
-            overageStatus: info.overageStatus as string | undefined,
-          },
-        ];
-      }
-      return [];
-    }
-
-    // stream_event — token-level streaming from --include-partial-messages.
-    // Batch text_delta and thinking_delta events to limit PG NOTIFY throughput (~5 events/sec).
-    if (type === 'stream_event') {
-      const event = parsed.event as Record<string, unknown> | undefined;
-      if (event?.type === 'content_block_delta') {
-        const delta = event.delta as Record<string, unknown> | undefined;
-        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          this.activityTracker.appendDelta(delta.text);
-        } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-          this.activityTracker.appendThinkingDelta(delta.thinking);
-        }
-      }
-      // All other stream_event subtypes (message_start, content_block_start/stop,
-      // message_delta, message_stop) are ignored — the complete messages provide
-      // the same data in a more reliable form.
-      return [];
-    }
-
-    return [];
-  }
-
   // ---------------------------------------------------------------------------
   // Private: control channel handling
   // ---------------------------------------------------------------------------
@@ -877,10 +536,12 @@ export class SessionProcess {
       return;
     }
 
+    const ctrl = this.makeCtrl();
+
     if (control.type === 'cancel') {
-      await this.handleCancel();
+      await handleCancel(ctrl);
     } else if (control.type === 'interrupt') {
-      await this.handleInterrupt();
+      await handleInterrupt(ctrl);
     } else if (control.type === 'message') {
       let image: ImageContent | undefined;
       if (control.imageRef) {
@@ -915,7 +576,7 @@ export class SessionProcess {
           resolver('deny');
 
           // Read plan content from the stored plan_file_path in DB
-          const planContent = await this.readPlanFromFile();
+          const planContent = await readPlanFromFile(this.session.id);
           const newMode = control.postApprovalMode ?? 'acceptEdits';
           const initialPrompt = planContent
             ? `Implement the following plan:\n\n${planContent}`
@@ -968,8 +629,9 @@ export class SessionProcess {
             // Small delay to let the allow response reach Claude before sending
             // the set_permission_mode control_request on the same stdin pipe.
             setTimeout(() => {
-              this.handleSetPermissionMode(
+              handleSetPermissionMode(
                 control.postApprovalMode as 'default' | 'acceptEdits',
+                this.makeCtrl(),
               ).catch((err: unknown) => {
                 console.warn('[session-process] post-approval mode change failed:', err);
               });
@@ -1007,9 +669,9 @@ export class SessionProcess {
         );
       }
     } else if (control.type === 'set-permission-mode') {
-      await this.handleSetPermissionMode(control.mode);
+      await handleSetPermissionMode(control.mode, ctrl);
     } else if (control.type === 'set-model') {
-      await this.handleSetModel(control.model);
+      await handleSetModel(control.model, ctrl);
     }
   }
 
@@ -1041,219 +703,33 @@ export class SessionProcess {
   }
 
   // ---------------------------------------------------------------------------
-  // Private: cancellation
+  // Private: control context factory
   // ---------------------------------------------------------------------------
 
-  private async handleCancel(): Promise<void> {
-    // Set flag BEFORE sending the interrupt so onExit doesn't emit "Session ended
-    // unexpectedly" — a user-initiated cancel is not a crash.
-    this.cancelKilled = true;
-    await this.emitEvent({ type: 'system:info', message: 'Cancellation requested' });
-    // Emit synthetic tool-end for every in-flight tool call to prevent forever-spinners
-    for (const toolUseId of this.activeToolUseIds) {
-      await this.emitEvent({
-        type: 'agent:tool-end',
-        toolUseId,
-        content: '[Interrupted by user]',
-      });
-    }
-    this.activeToolUseIds.clear();
-    this.approvalHandler.clearSuppressed();
-    // Drain pending tool approvals so any adapter blocked on handleApprovalRequest unblocks.
-    this.approvalHandler.drain('deny');
-    await this.adapter.interrupt();
-    // Allow graceful shutdown; escalate to SIGKILL after grace period.
-    const t = setTimeout(() => {
-      this.managedProcess?.kill('SIGKILL');
-    }, SIGKILL_DELAY_MS);
-    this.sigkillTimers.push(t);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: permission mode change (graceful restart with new mode)
-  // ---------------------------------------------------------------------------
-
-  /** Human-readable labels for permission modes. */
-  private static readonly MODE_LABELS: Record<string, string> = {
-    plan: 'Plan — agent presents a plan before executing',
-    default: 'Approve — each tool requires your approval',
-    acceptEdits: 'Edit Only — file edits auto-approved, bash needs approval',
-    bypassPermissions: 'Auto — all tools auto-approved',
-    dontAsk: 'Auto — all tools auto-approved',
-  };
-
-  /**
-   * Handle a set-permission-mode control: update in-memory session state and DB,
-   * emit a system:info event visible in the chat. If the adapter supports
-   * in-place mode switching, use it (no restart). Otherwise fall back to
-   * killing and cold-resuming with the new flags.
-   */
-  private async handleSetPermissionMode(
-    mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
-  ): Promise<void> {
-    this.session.permissionMode = mode;
-    const label = SessionProcess.MODE_LABELS[mode] ?? mode;
-
-    // Try in-place mode change via control_request (no process restart).
-    if (this.adapter.setPermissionMode) {
-      try {
-        const success = await this.adapter.setPermissionMode(mode);
-        if (success) {
-          await db
-            .update(sessions)
-            .set({ permissionMode: mode })
-            .where(eq(sessions.id, this.session.id));
-          await this.emitEvent({
-            type: 'system:info',
-            message: `Permission mode \u2192 ${label}.`,
-          });
-          return;
-        }
-      } catch (err) {
-        console.warn(
-          `[session-process] In-place setPermissionMode failed for session ${this.session.id}, falling back to restart:`,
-          err,
-        );
-      }
-    }
-
-    // Fallback: kill and restart with new mode.
-    await this.emitEvent({
-      type: 'system:info',
-      message: `Permission mode \u2192 ${label}. Session will restart automatically.`,
-    });
-    this.modeChangeRestart = true;
-    // terminateKilled=true ensures onExit transitions to 'idle' (not 'ended').
-    this.terminateKilled = true;
-    this.approvalHandler.drain('deny');
-    this.managedProcess?.kill('SIGTERM');
-    const t = setTimeout(() => {
-      this.managedProcess?.kill('SIGKILL');
-    }, SIGKILL_DELAY_MS);
-    this.sigkillTimers.push(t);
-  }
-
-  private async handleSetModel(model: string): Promise<void> {
-    if (!this.adapter.setModel) {
-      await this.emitEvent({
-        type: 'system:error',
-        message: 'Model switching is not supported by this agent.',
-      });
-      return;
-    }
-
-    try {
-      const success = await this.adapter.setModel(model);
-      if (success) {
-        await db.update(sessions).set({ model }).where(eq(sessions.id, this.session.id));
-        // Emit session:init so the frontend info panel updates the displayed model.
-        await this.emitEvent({
-          type: 'session:init',
-          sessionRef: '',
-          slashCommands: [],
-          mcpServers: [],
-          model,
-        });
-        await this.emitEvent({
-          type: 'system:info',
-          message: `Model switched to "${model}".`,
-        });
-      } else {
-        await this.emitEvent({
-          type: 'system:error',
-          message: `Failed to switch model to "${model}" — CLI did not respond.`,
-        });
-      }
-    } catch (err) {
-      await this.emitEvent({
-        type: 'system:error',
-        message: `Failed to switch model: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: plan file path capture for clearContextRestart
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Eagerly find the plan file in ~/.claude/plans/ (most recently modified .md)
-   * and persist its path to the DB. Called when ExitPlanMode fires (session is
-   * still active) so the plan path is available even if the session goes idle
-   * before the user clicks "clear context".
-   */
-  private async capturePlanFilePath(): Promise<void> {
-    const homePlansDir = join(process.env.HOME ?? '/home/ubuntu', '.claude', 'plans');
-    try {
-      const files = readdirSync(homePlansDir)
-        .filter((f) => f.endsWith('.md'))
-        .map((f) => ({ name: f, mtime: statSync(join(homePlansDir, f)).mtimeMs }))
-        .sort((a, b) => b.mtime - a.mtime);
-      if (files.length === 0) return;
-      const planFilePath = join(homePlansDir, files[0].name);
-      await db.update(sessions).set({ planFilePath }).where(eq(sessions.id, this.session.id));
-      console.log(
-        `[session-process] Stored plan_file_path for session ${this.session.id}: ${planFilePath}`,
-      );
-    } catch (err) {
-      console.warn(`[session-process] Failed to capture plan file path:`, err);
-    }
-  }
-
-  /**
-   * Read plan content from the stored plan_file_path in the DB.
-   */
-  private async readPlanFromFile(): Promise<string | null> {
-    try {
-      const [row] = await db
-        .select({ planFilePath: sessions.planFilePath })
-        .from(sessions)
-        .where(eq(sessions.id, this.session.id));
-      if (!row?.planFilePath) return null;
-      const content = readFileSync(row.planFilePath, 'utf-8').trim();
-      if (!content) return null;
-      console.log(`[session-process] Read plan from ${row.planFilePath} (${content.length} chars)`);
-      return content;
-    } catch (err) {
-      console.warn(`[session-process] Failed to read plan from DB path:`, err);
-      return null;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private: soft interrupt (Stop — process stays alive)
-  // ---------------------------------------------------------------------------
-
-  private async handleInterrupt(): Promise<void> {
-    this.interruptInProgress = true;
-    // Pre-set interruptKilled so that if the process dies during the interrupt,
-    // onExit transitions to 'idle' (resumable) instead of 'ended'.
-    this.activityTracker.interruptKilled = true;
-
-    await this.emitEvent({ type: 'system:info', message: 'Stopping...' });
-    for (const toolUseId of this.activeToolUseIds) {
-      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted]' });
-    }
-    this.activeToolUseIds.clear();
-    this.approvalHandler.clearSuppressed();
-
-    // Ask the adapter to send an interrupt signal. For Claude this writes a
-    // control_request{subtype:'interrupt'} to stdin and waits up to 3s for a
-    // 'result' event. If Claude handles it gracefully the process stays alive;
-    // if it dies or times out, adapter.isAlive() will be false afterwards.
-    await this.adapter.interrupt();
-
-    this.interruptInProgress = false;
-
-    if (this.adapter.isAlive()) {
-      // Claude stopped the current action but is still running — warm session,
-      // user can send another message immediately without a cold resume.
-      this.activityTracker.interruptKilled = false; // process survived, clear the pre-set flag
-      await this.transitionTo('awaiting_input');
-      this.activityTracker.recordActivity();
-    }
-    // else: process died during interrupt — interruptKilled=true so onExit will
-    // transition to 'idle' (not 'ended'), keeping the session cold-resumable.
+  private makeCtrl(): SessionControlCtx {
+    return {
+      session: this.session,
+      adapter: this.adapter,
+      managedProcess: this.managedProcess,
+      sigkillTimers: this.sigkillTimers,
+      approvalHandler: this.approvalHandler,
+      activityTracker: this.activityTracker,
+      activeToolUseIds: this.activeToolUseIds,
+      emitEvent: (p) => this.emitEvent(p),
+      transitionTo: (s) => this.transitionTo(s),
+      setCancelKilled: (v) => {
+        this.cancelKilled = v;
+      },
+      setTerminateKilled: (v) => {
+        this.terminateKilled = v;
+      },
+      setModeChangeRestart: (v) => {
+        this.modeChangeRestart = v;
+      },
+      setInterruptInProgress: (v) => {
+        this.interruptInProgress = v;
+      },
+    };
   }
 
   /**
@@ -1346,8 +822,7 @@ export class SessionProcess {
     // Drain any approval promises so blocked adapters unblock immediately.
     this.approvalHandler.drain('deny');
     // Stop team inbox monitoring.
-    this.teamInboxMonitor?.stopPolling();
-    this.teamInboxMonitor = null;
+    this.teamManager.stop();
     // Unsubscribe from the control channel to release the pg pool connection.
     // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
