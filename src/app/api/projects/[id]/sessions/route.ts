@@ -56,7 +56,9 @@ export const POST = withErrorBoundary(
         permissionMode: 'bypassPermissions',
       });
 
-      await enqueueSession({ sessionId: session.id });
+      if (body.initialPrompt) {
+        await enqueueSession({ sessionId: session.id });
+      }
 
       return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
     }
@@ -82,7 +84,9 @@ export const POST = withErrorBoundary(
       permissionMode: 'bypassPermissions',
     });
 
-    await enqueueSession({ sessionId: session.id });
+    if (body.initialPrompt) {
+      await enqueueSession({ sessionId: session.id });
+    }
 
     return NextResponse.json({ data: { sessionId: session.id, taskId: task.id } }, { status: 201 });
   },
