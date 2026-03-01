@@ -5,6 +5,7 @@ import { ActiveExecutionsList } from '@/components/dashboard/active-executions-l
 import { RecentTasksFeed } from '@/components/dashboard/recent-tasks-feed';
 import { AgentHealthGrid } from '@/components/dashboard/agent-health-grid';
 import { ClaudeUsageCard } from '@/components/dashboard/claude-usage-card';
+import { SystemResourcesCard } from '@/components/dashboard/system-resources-card';
 import { DashboardSkeleton } from '@/components/dashboard/dashboard-skeleton';
 
 async function DashboardContent() {
@@ -20,6 +21,7 @@ async function DashboardContent() {
         <RecentTasksFeed events={stats.recentEvents} />
       </div>
       <AgentHealthGrid agents={stats.agentHealth} workerStatus={stats.workerStatus} />
+      <SystemResourcesCard />
     </div>
   );
 }
