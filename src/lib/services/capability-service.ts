@@ -3,7 +3,8 @@ import { promisify } from 'node:util';
 import { db } from '@/lib/db';
 import { agentCapabilities, agents } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { NotFoundError, ValidationError, TimeoutError } from '@/lib/errors';
+import { ValidationError, TimeoutError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { AgentCapability } from '@/lib/types';
 
 const execFileAsync = promisify(execFile);
@@ -94,8 +95,7 @@ export async function getCapabilityById(id: string): Promise<AgentCapability> {
     .where(eq(agentCapabilities.id, id))
     .limit(1);
 
-  if (!capability) throw new NotFoundError('Capability', id);
-  return capability;
+  return requireFound(capability, 'Capability', id);
 }
 
 export async function updateCapability(
@@ -116,8 +116,7 @@ export async function updateCapability(
     .where(eq(agentCapabilities.id, id))
     .returning();
 
-  if (!capability) throw new NotFoundError('Capability', id);
-  return capability;
+  return requireFound(capability, 'Capability', id);
 }
 
 export async function deleteCapability(id: string): Promise<void> {
@@ -126,7 +125,7 @@ export async function deleteCapability(id: string): Promise<void> {
     .where(eq(agentCapabilities.id, id))
     .returning({ id: agentCapabilities.id });
 
-  if (!deleted) throw new NotFoundError('Capability', id);
+  requireFound(deleted, 'Capability', id);
 }
 
 export async function toggleApproval(id: string): Promise<AgentCapability> {
@@ -146,7 +145,7 @@ export async function testCapability(id: string): Promise<{ success: boolean; ou
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, capability.agentId)).limit(1);
 
-  if (!agent) throw new NotFoundError('Agent', capability.agentId);
+  requireFound(agent, 'Agent', capability.agentId);
 
   try {
     const { stdout } = await execFileAsync(agent.binaryPath, ['--version'], {

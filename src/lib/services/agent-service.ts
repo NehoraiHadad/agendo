@@ -3,7 +3,8 @@ import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import type { ParsedFlag } from '@/lib/db/schema';
 import { eq, ne, desc } from 'drizzle-orm';
-import { NotFoundError, ValidationError } from '@/lib/errors';
+import { ValidationError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { Agent, AgentCapability, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
@@ -190,8 +191,7 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
 export async function getAgentById(id: string): Promise<Agent> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
 
-  if (!agent) throw new NotFoundError('Agent', id);
-  return agent;
+  return requireFound(agent, 'Agent', id);
 }
 
 interface ListAgentsOptions {
@@ -251,14 +251,12 @@ export async function updateAgent(id: string, data: UpdateAgentInput): Promise<A
     .where(eq(agents.id, id))
     .returning();
 
-  if (!agent) throw new NotFoundError('Agent', id);
-  return agent;
+  return requireFound(agent, 'Agent', id);
 }
 
 export async function deleteAgent(id: string): Promise<void> {
   const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning({ id: agents.id });
-
-  if (!deleted) throw new NotFoundError('Agent', id);
+  requireFound(deleted, 'Agent', id);
 }
 
 export async function getAgentBySlug(slug: string): Promise<Agent | null> {

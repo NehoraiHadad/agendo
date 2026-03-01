@@ -2,7 +2,7 @@ import { execFileSync } from 'child_process';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { plans } from '@/lib/db/schema';
-import { NotFoundError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import { createSession } from '@/lib/services/session-service';
 import { createTask } from '@/lib/services/task-service';
 import { enqueueSession } from '@/lib/worker/queue';
@@ -57,8 +57,7 @@ export async function createPlan(input: CreatePlanInput): Promise<Plan> {
 
 export async function getPlan(id: string): Promise<Plan> {
   const [plan] = await db.select().from(plans).where(eq(plans.id, id)).limit(1);
-  if (!plan) throw new NotFoundError('Plan', id);
-  return plan;
+  return requireFound(plan, 'Plan', id);
 }
 
 export async function listPlans(filters?: {
@@ -89,8 +88,7 @@ export async function updatePlan(id: string, patch: UpdatePlanPatch): Promise<Pl
     updateValues.conversationSessionId = patch.conversationSessionId;
 
   const [updated] = await db.update(plans).set(updateValues).where(eq(plans.id, id)).returning();
-  if (!updated) throw new NotFoundError('Plan', id);
-  return updated;
+  return requireFound(updated, 'Plan', id);
 }
 
 export async function archivePlan(id: string): Promise<void> {
@@ -99,7 +97,7 @@ export async function archivePlan(id: string): Promise<void> {
     .set({ status: 'archived', updatedAt: new Date() })
     .where(eq(plans.id, id))
     .returning({ id: plans.id });
-  if (!updated) throw new NotFoundError('Plan', id);
+  requireFound(updated, 'Plan', id);
 }
 
 /**
