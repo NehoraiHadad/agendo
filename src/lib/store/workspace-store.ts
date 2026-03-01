@@ -12,6 +12,8 @@ const ROW_HEIGHT = 100;
 const DEFAULT_H = 5;
 /** Minimum panel height in row units (= 300px) */
 const MIN_H = 3;
+/** Fixed RGL grid resolution — panels can span 1–GRID_COLS columns freely */
+export const GRID_COLS = 12;
 
 interface PanelState {
   sessionId: string;
@@ -24,7 +26,6 @@ interface WorkspaceState {
   panels: Record<string, PanelState>; // keyed by sessionId
   rglLayout: LayoutItem[]; // react-grid-layout positions
   focusedPanelId: string | null;
-  gridCols: 2 | 3;
   expandedPanelId: string | null; // for full-screen overlay
 }
 
@@ -64,9 +65,6 @@ interface WorkspaceActions {
   /** Update the live status of a panel (driven by SSE session:state events). */
   setPanelStatus: (sessionId: string, status: SessionStatus) => void;
 
-  /** Switch between 2-column and 3-column grid layouts. */
-  setGridCols: (cols: 2 | 3) => void;
-
   /** Update the RGL layout array (called from onLayoutChange). */
   setRglLayout: (layout: LayoutItem[]) => void;
 
@@ -90,26 +88,44 @@ const initialState: WorkspaceState = {
   panels: {},
   rglLayout: [],
   focusedPanelId: null,
-  gridCols: 2,
   expandedPanelId: null,
 };
 
 /**
- * Convert a persisted WorkspacePanel to an RGL LayoutItem, migrating old
- * row/col/height format to the new x/y/w/h format transparently.
+ * Convert a persisted WorkspacePanel to an RGL LayoutItem.
+ *
+ * Handles two migrations:
+ * 1. Old row/col/height format → new x/y/w/h format
+ * 2. Old low-resolution grid (e.g. cols=2) → GRID_COLS=12 by scaling x and w
  */
-function panelToRglItem(panel: WorkspacePanel, index: number, cols: number): LayoutItem {
-  // New format — has x/y/w/h directly
+function panelToRglItem(panel: WorkspacePanel, index: number, savedCols: number): LayoutItem {
+  const scale = GRID_COLS / savedCols;
+
+  // New x/y/w/h format
   if ('x' in panel && typeof (panel as { x?: unknown }).x === 'number') {
-    return { i: panel.sessionId, x: panel.x, y: panel.y, w: panel.w, h: panel.h, minH: MIN_H };
+    return {
+      i: panel.sessionId,
+      x: savedCols === GRID_COLS ? panel.x : Math.round(panel.x * scale),
+      y: panel.y,
+      w: savedCols === GRID_COLS ? panel.w : Math.max(1, Math.round(panel.w * scale)),
+      h: panel.h,
+      minH: MIN_H,
+    };
   }
 
   // Old format migration — row/col/height
   const old = panel as unknown as { row?: number; col?: number; height?: number };
-  const col = old.col ?? index % cols;
-  const row = old.row ?? Math.floor(index / cols);
+  const col = old.col ?? index % savedCols;
+  const row = old.row ?? Math.floor(index / savedCols);
   const h = old.height ? Math.max(MIN_H, Math.round(old.height / ROW_HEIGHT)) : DEFAULT_H;
-  return { i: panel.sessionId, x: col, y: row * DEFAULT_H, w: 1, h, minH: MIN_H };
+  return {
+    i: panel.sessionId,
+    x: Math.round(col * scale),
+    y: row * DEFAULT_H,
+    w: Math.max(1, Math.round(scale)),
+    h,
+    minH: MIN_H,
+  };
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
@@ -117,7 +133,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
   setWorkspace: (id, layout) => {
     const panels: Record<string, PanelState> = {};
-    const cols = layout.gridCols ?? 2;
+    // Use the saved gridCols only for migration scaling; default 2 for legacy layouts
+    const savedCols = layout.gridCols ?? 2;
 
     const cappedPanels = layout.panels.slice(0, MAX_PANELS);
     const rglLayout: LayoutItem[] = [];
@@ -129,14 +146,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
         needsAttention: false,
         status: null,
       };
-      rglLayout.push(panelToRglItem(panel, i, cols));
+      rglLayout.push(panelToRglItem(panel, i, savedCols));
     }
 
     set({
       workspaceId: id,
       panels,
       rglLayout,
-      gridCols: cols,
       focusedPanelId: null,
       expandedPanelId: null,
     });
@@ -157,7 +173,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
         },
         rglLayout: [
           ...state.rglLayout,
-          { i: sessionId, x: 0, y: maxY, w: 1, h: DEFAULT_H, minH: MIN_H },
+          { i: sessionId, x: 0, y: maxY, w: GRID_COLS, h: DEFAULT_H, minH: MIN_H },
         ],
       };
     });
@@ -209,8 +225,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
     });
   },
 
-  setGridCols: (cols) => set({ gridCols: cols }),
-
   setRglLayout: (layout) => set({ rglLayout: layout }),
 
   getSessionIds: () => {
@@ -218,7 +232,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
   },
 
   persistLayout: async () => {
-    const { workspaceId, rglLayout, gridCols } = get();
+    const { workspaceId, rglLayout } = get();
     if (!workspaceId) return;
 
     const layoutPanels: WorkspacePanel[] = rglLayout.map((item) => ({
@@ -229,7 +243,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
       h: item.h,
     }));
 
-    const layout: WorkspaceLayout = { panels: layoutPanels, gridCols };
+    const layout: WorkspaceLayout = { panels: layoutPanels, gridCols: GRID_COLS };
 
     await fetch(`/api/workspaces/${workspaceId}`, {
       method: 'PATCH',
