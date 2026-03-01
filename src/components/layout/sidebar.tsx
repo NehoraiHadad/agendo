@@ -23,6 +23,32 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
+interface SystemStats {
+  cpu: number;
+  mem: number;
+  swap: number;
+  disk: number;
+  load: string;
+}
+
+function resourceColor(pct: number): string {
+  if (pct >= 85) return 'text-red-400';
+  if (pct >= 65) return 'text-amber-400';
+  return 'text-emerald-400/70';
+}
+
+function MiniResourceBar({ pct }: { pct: number }) {
+  const bg = pct >= 85 ? 'bg-red-400' : pct >= 65 ? 'bg-amber-400' : 'bg-emerald-400/60';
+  return (
+    <div className="h-0.5 w-full bg-white/[0.06] rounded-full overflow-hidden">
+      <div
+        className={cn('h-full rounded-full transition-all duration-700', bg)}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 interface SidebarStats {
   runningExecutions: number;
   todoTasks: number;
@@ -72,6 +98,7 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
     window.dispatchEvent(new StorageEvent('storage', { key: SIDEBAR_KEY }));
   }, []);
   const [stats, setStats] = useState<SidebarStats | null>(null);
+  const [sysStats, setSysStats] = useState<SystemStats | null>(null);
 
   useEffect(() => {
     async function fetchStats() {
@@ -85,6 +112,22 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
     }
     fetchStats();
     const interval = setInterval(fetchStats, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    async function fetchSysStats() {
+      try {
+        const res = await fetch('/api/system-stats');
+        if (!res.ok) return;
+        const json = await res.json();
+        setSysStats(json.data);
+      } catch {
+        /* ignore */
+      }
+    }
+    fetchSysStats();
+    const interval = setInterval(fetchSysStats, 30_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -261,19 +304,106 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
       {/* Footer */}
       <div className="relative border-t border-white/[0.04] p-3 mt-auto">
         {!isCollapsed ? (
-          <div className="flex items-center gap-2 px-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/60 animate-pulse shrink-0" />
-            <span className="text-[9px] text-muted-foreground/25 uppercase tracking-widest">
-              v0.1 · Online
-            </span>
+          <div className="space-y-2 px-1">
+            <div className="flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/60 animate-pulse shrink-0" />
+              <span className="text-[9px] text-muted-foreground/25 uppercase tracking-widest">
+                v0.1 · Online
+              </span>
+            </div>
+            {sysStats && (
+              <Link href="/" className="block group">
+                <div className="space-y-1.5 rounded-lg px-1 py-1 hover:bg-white/[0.03] transition-colors">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-muted-foreground/20 uppercase tracking-widest">
+                      RAM
+                    </span>
+                    <span
+                      className={cn(
+                        'text-[9px] font-mono tabular-nums',
+                        resourceColor(sysStats.mem),
+                      )}
+                    >
+                      {sysStats.mem}%
+                    </span>
+                  </div>
+                  <MiniResourceBar pct={sysStats.mem} />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-muted-foreground/20 uppercase tracking-widest">
+                      Disk
+                    </span>
+                    <span
+                      className={cn(
+                        'text-[9px] font-mono tabular-nums',
+                        resourceColor(sysStats.disk),
+                      )}
+                    >
+                      {sysStats.disk}%
+                    </span>
+                  </div>
+                  <MiniResourceBar pct={sysStats.disk} />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-muted-foreground/20 uppercase tracking-widest">
+                      Load
+                    </span>
+                    <span className="text-[9px] font-mono tabular-nums text-muted-foreground/30">
+                      {sysStats.load.split(' ')[0]}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            )}
           </div>
         ) : (
-          <div className="flex justify-center">
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-emerald-400/50 animate-pulse"
-              title="Online"
-            />
-          </div>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <div className="flex flex-col items-center gap-2">
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-emerald-400/50 animate-pulse"
+                  title="Online"
+                />
+                {sysStats && (
+                  <div className="flex flex-col items-center gap-1 w-full px-1">
+                    <div className="w-full h-0.5 bg-white/[0.06] rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full',
+                          sysStats.mem >= 85
+                            ? 'bg-red-400'
+                            : sysStats.mem >= 65
+                              ? 'bg-amber-400'
+                              : 'bg-emerald-400/60',
+                        )}
+                        style={{ width: `${sysStats.mem}%` }}
+                      />
+                    </div>
+                    <div className="w-full h-0.5 bg-white/[0.06] rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full',
+                          sysStats.disk >= 85
+                            ? 'bg-red-400'
+                            : sysStats.disk >= 65
+                              ? 'bg-amber-400'
+                              : 'bg-emerald-400/60',
+                        )}
+                        style={{ width: `${sysStats.disk}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TooltipTrigger>
+            {sysStats && (
+              <TooltipContent side="right" className="text-xs space-y-1">
+                <p>CPU: {sysStats.cpu}%</p>
+                <p>RAM: {sysStats.mem}%</p>
+                <p>Swap: {sysStats.swap}%</p>
+                <p>Disk: {sysStats.disk}%</p>
+                <p>Load: {sysStats.load.split(' ')[0]}</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
         )}
       </div>
     </aside>

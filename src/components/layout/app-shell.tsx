@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Menu } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -10,6 +10,54 @@ import { IosInstallHint } from '@/components/pwa/ios-install-hint';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { cn } from '@/lib/utils';
 
+interface SystemStats {
+  cpu: number;
+  mem: number;
+  disk: number;
+}
+
+function metricBarColor(pct: number) {
+  if (pct >= 85) return 'bg-red-400';
+  if (pct >= 65) return 'bg-amber-400';
+  return 'bg-emerald-400/60';
+}
+
+function MobileNavTrigger({ onClick, stats }: { onClick: () => void; stats: SystemStats | null }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label="Open navigation"
+      className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/50 animate-pulse" />
+      {stats ? (
+        <div className="flex flex-col gap-0.5 w-5">
+          <div className="w-full h-0.5 bg-white/[0.06] rounded-full overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-700',
+                metricBarColor(stats.mem),
+              )}
+              style={{ width: `${stats.mem}%` }}
+            />
+          </div>
+          <div className="w-full h-0.5 bg-white/[0.06] rounded-full overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-700',
+                metricBarColor(stats.disk),
+              )}
+              style={{ width: `${stats.disk}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <Menu className="h-4 w-4 text-muted-foreground/50" />
+      )}
+    </button>
+  );
+}
+
 const CommandPalette = dynamic(
   () => import('@/components/command-palette').then((m) => ({ default: m.CommandPalette })),
   { ssr: false },
@@ -17,6 +65,23 @@ const CommandPalette = dynamic(
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sysStats, setSysStats] = useState<SystemStats | null>(null);
+
+  useEffect(() => {
+    async function fetchSysStats() {
+      try {
+        const res = await fetch('/api/system-stats');
+        if (!res.ok) return;
+        const json = await res.json();
+        setSysStats({ cpu: json.data.cpu, mem: json.data.mem, disk: json.data.disk });
+      } catch {
+        /* ignore */
+      }
+    }
+    fetchSysStats();
+    const interval = setInterval(fetchSysStats, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <TooltipProvider>
@@ -45,13 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
           {/* Mobile top bar */}
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.05] bg-[--sidebar] px-3 sm:hidden">
-            <button
-              onClick={() => setMobileOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground/60 hover:text-foreground/80 hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
-              aria-label="Open navigation"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
+            <MobileNavTrigger onClick={() => setMobileOpen(true)} stats={sysStats} />
             <span className="flex-1 text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
               agenDo
             </span>
