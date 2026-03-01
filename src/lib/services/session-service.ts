@@ -1,4 +1,4 @@
-import { eq, and, inArray, desc, count, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, count, getTableColumns } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -54,10 +54,6 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 export async function getSession(id: string): Promise<Session> {
   const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
   return requireFound(session, 'Session', id);
-}
-
-export async function updateSession(id: string, patch: Partial<Session>): Promise<void> {
-  await db.update(sessions).set(patch).where(eq(sessions.id, id));
 }
 
 export async function listSessionsByTask(taskId: string): Promise<Session[]> {
@@ -178,36 +174,4 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
   ]);
 
   return { data, total, page, pageSize };
-}
-
-/**
- * Atomically claim a session for a worker.
- * Returns the claimed session or null if already claimed by another worker.
- */
-export async function claimSession(sessionId: string, workerId: string): Promise<Session | null> {
-  const [claimed] = await db
-    .update(sessions)
-    .set({ workerId, status: 'active', startedAt: new Date() })
-    .where(and(eq(sessions.id, sessionId), inArray(sessions.status, ['idle', 'active'])))
-    .returning();
-  return claimed ?? null;
-}
-
-/**
- * Get the active/awaiting_input/idle session for a task+agent combination.
- * Used to check for existing sessions before creating new ones.
- */
-export async function getActiveSession(taskId: string, agentId: string): Promise<Session | null> {
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.taskId, taskId),
-        eq(sessions.agentId, agentId),
-        inArray(sessions.status, ['active', 'awaiting_input', 'idle']),
-      ),
-    )
-    .limit(1);
-  return session ?? null;
 }
