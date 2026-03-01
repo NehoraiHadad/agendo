@@ -13,8 +13,10 @@ import { promisify } from 'node:util';
 import { db } from '@/lib/db';
 import { agents } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { createLogger } from '@/lib/logger';
 
 const execFileAsync = promisify(execFile);
+const log = createLogger('ai-query');
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,13 +60,23 @@ interface ProviderAdapter {
 const PROVIDER_ADAPTERS: Record<string, ProviderAdapter> = {
   claude: {
     displayName: 'Claude Code',
-    buildArgs: (prompt) => ['--model', 'haiku', '--no-session-persistence', '--output-format', 'json', '-p', prompt],
+    buildArgs: (prompt) => [
+      '--model',
+      'haiku',
+      '--no-session-persistence',
+      '--output-format',
+      'json',
+      '-p',
+      prompt,
+    ],
     extractText: (stdout) => {
       // --output-format json wraps response in { "result": "..." }
       try {
         const wrapper = JSON.parse(stdout.trim()) as { result?: string };
         if (typeof wrapper.result === 'string') return wrapper.result;
-      } catch { /* fall through */ }
+      } catch {
+        /* fall through */
+      }
       return stdout;
     },
     stripEnvKeys: ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'],
@@ -128,8 +140,15 @@ export async function queryAI(opts: AiQueryOptions): Promise<AiQueryResult> {
       } catch (execErr: unknown) {
         // Some CLIs (e.g. claude) exit non-zero even when stdout contains valid output.
         // Only use stdout from the error — stderr contains startup metrics / noise.
-        const e = execErr as { stdout?: string; stderr?: string; message?: string; code?: number | string };
-        console.error(`[queryAI] ${displayName} exit non-zero (code=${e.code})\nstdout=${(e.stdout ?? '').slice(0, 300)}\nstderr_tail=${(e.stderr ?? '').slice(-500)}`);
+        const e = execErr as {
+          stdout?: string;
+          stderr?: string;
+          message?: string;
+          code?: number | string;
+        };
+        log.error(
+          `${displayName} exit non-zero (code=${e.code})\nstdout=${(e.stdout ?? '').slice(0, 300)}\nstderr_tail=${(e.stderr ?? '').slice(-500)}`,
+        );
         const fallback = e.stdout ?? '';
         if (fallback.trim().length > 20) {
           stdout = fallback;
@@ -203,9 +222,8 @@ async function findCandidates(preferredSlug?: string): Promise<Candidate[]> {
 }
 
 function buildEnv(stripKeys: string[]): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of stripKeys) {
-    delete env[key];
-  }
-  return env;
+  const stripSet = new Set(stripKeys);
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !stripSet.has(key)),
+  ) as NodeJS.ProcessEnv;
 }
