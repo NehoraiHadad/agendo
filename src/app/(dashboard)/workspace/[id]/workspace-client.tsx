@@ -180,12 +180,16 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   const isMobile = containerWidth > 0 && containerWidth < 640;
   const effectiveCols = isMobile ? 1 : GRID_COLS;
 
-  // Handle RGL layout changes — sync into store (triggers debounced persist)
+  // Handle RGL layout changes — sync into store (triggers debounced persist).
+  // Skip on mobile: RGL compacts panels to 1 column, which would corrupt the
+  // saved desktop layout positions.
   const handleLayoutChange = useCallback(
     (newLayout: Layout) => {
-      setRglLayout([...newLayout]);
+      if (!isMobile) {
+        setRglLayout([...newLayout]);
+      }
     },
-    [setRglLayout],
+    [setRglLayout, isMobile],
   );
 
   return (
