@@ -24,7 +24,7 @@ export interface EventRouterCtx {
   activityTracker: ActivityTracker;
   teamManager: SessionTeamManager;
   activeToolUseIds: Set<string>;
-  interruptInProgress: boolean;
+  isInterruptInProgress(): boolean;
 
   emitEvent(payload: AgendoEventPayload): Promise<AgendoEvent>;
   transitionTo(status: SessionStatus): Promise<void>;
@@ -153,7 +153,7 @@ export async function routeParsedEvent(
     // After the agent finishes a result, transition to awaiting_input.
     // Skip during an interrupt — handleInterrupt() manages the transition
     // based on whether the process survived (warm vs cold resume).
-    if (event.type === 'agent:result' && !ctx.interruptInProgress) {
+    if (event.type === 'agent:result' && !ctx.isInterruptInProgress()) {
       await ctx.transitionTo('awaiting_input');
       ctx.activityTracker.recordActivity();
     }

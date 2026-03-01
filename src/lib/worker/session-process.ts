@@ -404,7 +404,7 @@ export class SessionProcess {
           activityTracker: this.activityTracker,
           teamManager: this.teamManager,
           activeToolUseIds: this.activeToolUseIds,
-          interruptInProgress: this.interruptInProgress,
+          isInterruptInProgress: () => this.interruptInProgress,
           emitEvent: (p) => this.emitEvent(p),
           transitionTo: (s) => this.transitionTo(s),
           setSessionRef: (ref) => {
