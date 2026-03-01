@@ -143,10 +143,12 @@ export function mapClaudeJsonToEvents(
     const rawDenials = Array.isArray(parsed.permission_denials)
       ? (parsed.permission_denials as Array<Record<string, unknown>>)
       : undefined;
+    // toolInput intentionally omitted — already sent in agent:tool-approval, and including it
+    // here can push agent:result over PG NOTIFY's 7500-byte limit, causing a {type:'ref'} stub
+    // that makes context stats and other result data appear frozen in the UI.
     const permissionDenials = rawDenials?.map((d) => ({
       toolName: (d.tool_name as string) ?? '',
       toolUseId: (d.tool_use_id as string) ?? '',
-      toolInput: d.tool_input as Record<string, unknown> | undefined,
     }));
 
     // Service tier and inference geo

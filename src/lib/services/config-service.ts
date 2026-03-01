@@ -181,21 +181,27 @@ function buildTree(dirPath: string): TreeNode[] {
       if (ALLOWED_EXTENSIONS.has(ext)) {
         let tokenEstimate: number | undefined;
         let invokeTokenEstimate: number | undefined;
-        try {
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          if (isInvokeOnlyFile(fullPath)) {
-            // Only the YAML frontmatter is injected on every message.
-            const fm = extractFrontmatter(content);
-            const fmEst = Math.ceil(fm.length / 4);
-            const bodyEst = Math.ceil((content.length - fm.length) / 4);
-            if (fmEst > 0) tokenEstimate = fmEst;
-            if (bodyEst > 0) invokeTokenEstimate = bodyEst;
-          } else {
-            const est = Math.ceil(content.length / 4);
-            if (est > 0) tokenEstimate = est;
+        // Only .md files are injected as raw text into Claude's context window.
+        // JSON/YAML files are configuration data (settings, keybindings, internal
+        // state) — they are NOT loaded as text into the model, so they have no
+        // token cost worth reporting.
+        if (ext === '.md') {
+          try {
+            const content = fs.readFileSync(fullPath, 'utf-8');
+            if (isInvokeOnlyFile(fullPath)) {
+              // Only the YAML frontmatter is injected on every message.
+              const fm = extractFrontmatter(content);
+              const fmEst = Math.ceil(fm.length / 4);
+              const bodyEst = Math.ceil((content.length - fm.length) / 4);
+              if (fmEst > 0) tokenEstimate = fmEst;
+              if (bodyEst > 0) invokeTokenEstimate = bodyEst;
+            } else {
+              const est = Math.ceil(content.length / 4);
+              if (est > 0) tokenEstimate = est;
+            }
+          } catch {
+            // Ignore unreadable files — they still appear in the tree.
           }
-        } catch {
-          // Ignore unreadable files — they still appear in the tree.
         }
         nodes.push({
           path: fullPath,

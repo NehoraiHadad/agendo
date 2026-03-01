@@ -57,7 +57,6 @@ export type AgendoEvent =
       permissionDenials?: Array<{
         toolName: string;
         toolUseId: string;
-        toolInput?: Record<string, unknown>;
       }>;
       serverToolUse?: { webSearchRequests?: number; webFetchRequests?: number };
     })
