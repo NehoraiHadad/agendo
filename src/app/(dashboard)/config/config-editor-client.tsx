@@ -63,12 +63,21 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
   const [treeError, setTreeError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /**
+   * Background copy of the global token total. Always fetched on mount so that
+   * project scopes can show the real combined cost:
+   *   ~15K system + ~{globalTokens} global + ~{totalTokens} project
+   * Claude loads BOTH global and project config files every session.
+   */
+  const [globalTokens, setGlobalTokens] = useState<number | null>(null);
 
   // Sum tokenEstimate across all root-level nodes. Directories already carry subtotals.
   const totalTokens = useMemo(
     () => tree.reduce((acc, node) => acc + (node.tokenEstimate ?? 0), 0),
     [tree],
   );
+
+  const isProjectScope = scope !== 'global';
 
   // Live token estimates for the currently open file — updates as the user types.
   // For skills/commands, split into frontmatter (always loaded) and body (on invoke).
@@ -85,6 +94,20 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
     const est = Math.ceil(fileContent.length / 4);
     return { liveTokenEstimate: est > 0 ? est : undefined, liveInvokeEstimate: undefined };
   }, [fileContent, selectedFile]);
+
+  // Fetch global token total once on mount so project scopes can show the combined cost.
+  useEffect(() => {
+    fetch('/api/config/tree?scope=global')
+      .then((res) => res.json() as Promise<{ data: TreeNode[] }>)
+      .then((body) => {
+        const total = body.data.reduce(
+          (acc: number, node: TreeNode) => acc + (node.tokenEstimate ?? 0),
+          0,
+        );
+        setGlobalTokens(total);
+      })
+      .catch(() => setGlobalTokens(0));
+  }, []);
 
   // Fetch file tree when scope changes.
   useEffect(() => {
@@ -167,7 +190,17 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
         scope === 'global' ? 'scope=global' : `projectPath=${encodeURIComponent(scope)}`;
       fetch(`/api/config/tree?${query}`)
         .then((r) => r.json() as Promise<{ data: TreeNode[] }>)
-        .then((body) => setTree(body.data))
+        .then((body) => {
+          setTree(body.data);
+          // Keep the background global copy in sync after edits to global files.
+          if (scope === 'global') {
+            const total = body.data.reduce(
+              (acc: number, node: TreeNode) => acc + (node.tokenEstimate ?? 0),
+              0,
+            );
+            setGlobalTokens(total);
+          }
+        })
         .catch(() => {}); // Non-critical — stale counts are acceptable.
     } catch (err) {
       setSaveError('Failed to save file');
@@ -225,22 +258,34 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
           </div>
 
           {/* Session token overhead summary */}
-          {totalTokens > 0 && (
-            <div
-              className="ml-auto shrink-0 text-right"
-              title={`Total session baseline: ~${SYSTEM_OVERHEAD + totalTokens} tokens.\n~${SYSTEM_OVERHEAD} fixed (Claude system prompt + built-in tools) + ~${totalTokens} from your config files.\nTrimming config files frees up context for actual work.`}
-            >
-              <p
-                className="text-sm font-mono font-semibold leading-none"
-                style={{ color: tokenOverheadColor(SYSTEM_OVERHEAD + totalTokens) }}
-              >
-                {fmtTokens(SYSTEM_OVERHEAD + totalTokens)}
-              </p>
-              <p className="text-[10px] text-muted-foreground/25 mt-0.5 leading-none">
-                ~15K system · {fmtTokens(totalTokens)} config
-              </p>
-            </div>
-          )}
+          {(totalTokens > 0 || (isProjectScope && (globalTokens ?? 0) > 0)) &&
+            (() => {
+              const gTokens = globalTokens ?? 0;
+              const combined = SYSTEM_OVERHEAD + (isProjectScope ? gTokens : 0) + totalTokens;
+              const breakdownParts = ['~15K system'];
+              if (isProjectScope && gTokens > 0)
+                breakdownParts.push(`${fmtTokens(gTokens)} global`);
+              if (totalTokens > 0)
+                breakdownParts.push(
+                  `${fmtTokens(totalTokens)} ${isProjectScope ? 'project' : 'config'}`,
+                );
+              const tooltip = isProjectScope
+                ? `Total for this project session: ~${combined} tokens.\nClaude loads BOTH global (~${gTokens}) and project (~${totalTokens}) config files every session.\nTrimming either scope frees up context for actual work.`
+                : `Total session baseline: ~${combined} tokens.\n~15K system + ~${totalTokens} config.\nTrimming config files frees up context for actual work.`;
+              return (
+                <div className="ml-auto shrink-0 text-right" title={tooltip}>
+                  <p
+                    className="text-sm font-mono font-semibold leading-none"
+                    style={{ color: tokenOverheadColor(combined) }}
+                  >
+                    {fmtTokens(combined)}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/25 mt-0.5 leading-none">
+                    {breakdownParts.join(' · ')}
+                  </p>
+                </div>
+              );
+            })()}
         </div>
       </div>
 
