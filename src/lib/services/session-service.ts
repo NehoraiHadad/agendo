@@ -56,36 +56,9 @@ export async function getSession(id: string): Promise<Session> {
   return requireFound(session, 'Session', id);
 }
 
-export async function listSessionsByTask(taskId: string): Promise<Session[]> {
-  return db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.taskId, taskId))
-    .orderBy(desc(sessions.createdAt));
-}
-
 export interface SessionWithAgent extends Session {
   agentName: string;
   taskTitle: string | null;
-}
-
-export async function listSessionsByProject(
-  projectId: string,
-  limit = 10,
-): Promise<SessionWithAgent[]> {
-  const rows = await db
-    .select({
-      ...getTableColumns(sessions),
-      agentName: agents.name,
-      taskTitle: tasks.title,
-    })
-    .from(sessions)
-    .leftJoin(tasks, eq(sessions.taskId, tasks.id))
-    .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .where(eq(sessions.projectId, projectId))
-    .orderBy(desc(sessions.createdAt))
-    .limit(limit);
-  return rows as SessionWithAgent[];
 }
 
 export async function listConversationsByProject(
