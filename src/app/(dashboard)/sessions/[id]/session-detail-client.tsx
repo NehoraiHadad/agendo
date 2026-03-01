@@ -359,7 +359,7 @@ export function SessionDetailClient({
   const ModeIcon = modeCfg.icon;
 
   return (
-    <div className="flex flex-col">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       {/* Header card */}
       <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] overflow-visible shrink-0 mb-4 sm:mb-5">
         {/* Status accent top bar */}
@@ -565,7 +565,7 @@ export function SessionDetailClient({
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue={defaultTab} className="flex flex-col">
+      <Tabs defaultValue={defaultTab} className="flex-1 min-h-0 flex flex-col overflow-hidden">
         <TabsList className="flex w-full overflow-x-auto shrink-0">
           <TabsTrigger value="chat" className="shrink-0">
             Chat
@@ -587,7 +587,7 @@ export function SessionDetailClient({
         <TabsContent
           value="chat"
           forceMount
-          className="mt-4 data-[state=inactive]:hidden flex flex-col"
+          className="mt-3 data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col overflow-hidden"
         >
           <SessionChatView
             sessionId={session.id}
@@ -602,15 +602,15 @@ export function SessionDetailClient({
           <WebTerminal sessionId={session.id} className="h-[300px] sm:h-[500px]" />
         </TabsContent>
 
-        <TabsContent value="logs" className="mt-4">
+        <TabsContent value="logs" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <ExecutionLogViewer executionId={session.id} externalStream={logStream} />
         </TabsContent>
 
-        <TabsContent value="events" className="mt-4">
+        <TabsContent value="events" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <SessionEventLog events={stream.events} />
         </TabsContent>
 
-        <TabsContent value="info" className="mt-4">
+        <TabsContent value="info" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <SessionInfoPanel
             session={session}
             stream={stream}
