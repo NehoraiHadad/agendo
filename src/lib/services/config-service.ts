@@ -12,6 +12,18 @@ export interface TreeNode {
   path: string;
   name: string;
   isDirectory: boolean;
+  /**
+   * Tokens loaded on every message.
+   * - For most files (CLAUDE.md, MEMORY.md, settings.json…): full file content.
+   * - For skills/ and commands/ files: frontmatter only (~100 tokens typical).
+   * - For directories: sum of all descendant always-loaded tokens.
+   */
+  tokenEstimate?: number;
+  /**
+   * Body tokens loaded only when the skill/command is explicitly invoked.
+   * Only present for files inside skills/ or commands/ directories.
+   */
+  invokeTokenEstimate?: number;
   children?: TreeNode[];
 }
 
@@ -104,9 +116,39 @@ async function assertPathAllowed(filePath: string): Promise<void> {
   }
 }
 
+/** Sums the always-loaded tokenEstimate across a flat list of nodes (directories already carry their subtotal). */
+function sumNodeTokens(nodes: TreeNode[]): number {
+  return nodes.reduce((acc, n) => acc + (n.tokenEstimate ?? 0), 0);
+}
+
+/**
+ * Returns true when the file's immediate parent directory is `skills` or `commands`.
+ * These files only load their YAML frontmatter on every message; the body loads on invoke.
+ */
+function isInvokeOnlyFile(filePath: string): boolean {
+  const parentName = path.basename(path.dirname(filePath));
+  return parentName === 'skills' || parentName === 'commands';
+}
+
+/**
+ * Extracts the frontmatter block (content between the first `---` pair) from a markdown file.
+ * Returns an empty string if the file does not begin with a frontmatter block.
+ */
+function extractFrontmatter(content: string): string {
+  if (!content.startsWith('---')) return '';
+  const endIdx = content.indexOf('\n---', 3);
+  return endIdx === -1 ? '' : content.slice(0, endIdx + 4);
+}
+
 /**
  * Recursively builds a `TreeNode[]` for the given directory.
  * Only includes files whose extension is in `ALLOWED_EXTENSIONS`.
+ *
+ * Token estimation (chars / 4):
+ * - Regular files: full content → tokenEstimate (always loaded).
+ * - skills/ and commands/ files: frontmatter → tokenEstimate (always loaded),
+ *   body → invokeTokenEstimate (loaded only on invocation).
+ * - Directories: sum of descendant tokenEstimate values.
  */
 function buildTree(dirPath: string): TreeNode[] {
   let entries: fs.Dirent[];
@@ -124,18 +166,44 @@ function buildTree(dirPath: string): TreeNode[] {
 
     if (entry.isDirectory()) {
       const children = buildTree(fullPath);
+      const tokenEstimate = sumNodeTokens(children);
       // Include directory nodes even if currently empty (the directory itself
       // might be meaningful to the user, e.g. `commands/` or `hooks/`).
       nodes.push({
         path: fullPath,
         name: entry.name,
         isDirectory: true,
+        tokenEstimate: tokenEstimate > 0 ? tokenEstimate : undefined,
         children,
       });
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase();
       if (ALLOWED_EXTENSIONS.has(ext)) {
-        nodes.push({ path: fullPath, name: entry.name, isDirectory: false });
+        let tokenEstimate: number | undefined;
+        let invokeTokenEstimate: number | undefined;
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          if (isInvokeOnlyFile(fullPath)) {
+            // Only the YAML frontmatter is injected on every message.
+            const fm = extractFrontmatter(content);
+            const fmEst = Math.ceil(fm.length / 4);
+            const bodyEst = Math.ceil((content.length - fm.length) / 4);
+            if (fmEst > 0) tokenEstimate = fmEst;
+            if (bodyEst > 0) invokeTokenEstimate = bodyEst;
+          } else {
+            const est = Math.ceil(content.length / 4);
+            if (est > 0) tokenEstimate = est;
+          }
+        } catch {
+          // Ignore unreadable files — they still appear in the tree.
+        }
+        nodes.push({
+          path: fullPath,
+          name: entry.name,
+          isDirectory: false,
+          tokenEstimate,
+          invokeTokenEstimate,
+        });
       }
     }
   }

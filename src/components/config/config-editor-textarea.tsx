@@ -13,6 +13,15 @@ interface ConfigEditorTextareaProps {
   isSaving: boolean;
   onSave: () => void;
   onRevert: () => void;
+  /** Tokens always loaded per message (full content for CLAUDE.md/MEMORY.md, frontmatter for skills/commands). */
+  tokenEstimate?: number;
+  /** Body tokens for skills/commands, loaded only when invoked. undefined for regular files. */
+  invokeTokenEstimate?: number;
+}
+
+function fmtTokens(n: number): string {
+  if (n < 1000) return `~${n}`;
+  return `~${(n / 1000).toFixed(1)}K`;
 }
 
 /** Derives a short display label from an absolute file path. */
@@ -30,6 +39,8 @@ export function ConfigEditorTextarea({
   isSaving,
   onSave,
   onRevert,
+  tokenEstimate,
+  invokeTokenEstimate,
 }: ConfigEditorTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -88,6 +99,29 @@ export function ConfigEditorTextarea({
           >
             {shortPath(filePath)}
           </span>
+
+          {/* Token estimate badge */}
+          {tokenEstimate !== undefined && tokenEstimate > 0 && (
+            <span
+              className="text-[10px] font-mono shrink-0 px-1.5 py-px rounded flex items-center gap-1"
+              title={
+                invokeTokenEstimate !== undefined
+                  ? `Frontmatter: ~${tokenEstimate} tokens loaded every message · Body: ~${invokeTokenEstimate} tokens loaded on invoke only`
+                  : `~${tokenEstimate} tokens. Claude loads this file at the start of every session — smaller files leave more context for actual work.`
+              }
+              style={{
+                background: 'oklch(0.15 0.03 280 / 0.5)',
+                color: 'oklch(0.62 0.12 280 / 0.75)',
+              }}
+            >
+              {fmtTokens(tokenEstimate)} always
+              {invokeTokenEstimate !== undefined && invokeTokenEstimate > 0 && (
+                <span style={{ color: 'oklch(0.5 0 0 / 0.5)' }}>
+                  · +{fmtTokens(invokeTokenEstimate)}↗ on invoke
+                </span>
+              )}
+            </span>
+          )}
 
           {/* Unsaved indicator */}
           {isDirty && (

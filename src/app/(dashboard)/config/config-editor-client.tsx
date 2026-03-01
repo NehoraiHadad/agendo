@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Settings, Loader2, AlertCircle } from 'lucide-react';
 import { ConfigScopeSelector } from '@/components/config/config-scope-selector';
 import { ConfigFileTree, type TreeNode } from '@/components/config/config-file-tree';
@@ -11,6 +11,39 @@ interface ProjectOption {
   id: string;
   name: string;
   rootPath: string;
+}
+
+/** Claude Code's fixed system prompt + 18+ built-in tools, present in every session. */
+const SYSTEM_OVERHEAD = 15_000;
+
+function fmtTokens(n: number): string {
+  if (n < 1000) return `~${n}`;
+  return `~${(n / 1000).toFixed(1)}K`;
+}
+
+/** Color-codes a total token count relative to a 200K Claude context window. */
+function tokenOverheadColor(n: number): string {
+  const pct = n / 200_000;
+  if (pct > 0.15) return 'oklch(0.65 0.22 25 / 0.85)'; // orange — >15% of context
+  if (pct > 0.05) return 'oklch(0.72 0.18 60 / 0.85)'; // yellow — 5–15%
+  return 'oklch(0.65 0.15 140 / 0.75)'; // green — <5%
+}
+
+/** Returns true if the file path is inside a skills/ or commands/ directory. */
+function isInvokeOnlyPath(filePath: string): boolean {
+  return /[/\\](?:skills|commands)[/\\]/.test(filePath);
+}
+
+/**
+ * Splits content into frontmatter length and body length.
+ * Frontmatter is the YAML block between the first `---` pair.
+ */
+function splitFrontmatter(content: string): { frontmatterLen: number; bodyLen: number } {
+  if (!content.startsWith('---')) return { frontmatterLen: 0, bodyLen: content.length };
+  const endIdx = content.indexOf('\n---', 3);
+  if (endIdx === -1) return { frontmatterLen: 0, bodyLen: content.length };
+  const frontmatterLen = endIdx + 4;
+  return { frontmatterLen, bodyLen: content.length - frontmatterLen };
 }
 
 interface ConfigEditorClientProps {
@@ -30,6 +63,28 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
   const [treeError, setTreeError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Sum tokenEstimate across all root-level nodes. Directories already carry subtotals.
+  const totalTokens = useMemo(
+    () => tree.reduce((acc, node) => acc + (node.tokenEstimate ?? 0), 0),
+    [tree],
+  );
+
+  // Live token estimates for the currently open file — updates as the user types.
+  // For skills/commands, split into frontmatter (always loaded) and body (on invoke).
+  const { liveTokenEstimate, liveInvokeEstimate } = useMemo(() => {
+    if (!fileContent || !selectedFile)
+      return { liveTokenEstimate: undefined, liveInvokeEstimate: undefined };
+    if (isInvokeOnlyPath(selectedFile)) {
+      const { frontmatterLen, bodyLen } = splitFrontmatter(fileContent);
+      return {
+        liveTokenEstimate: frontmatterLen > 0 ? Math.ceil(frontmatterLen / 4) : undefined,
+        liveInvokeEstimate: bodyLen > 0 ? Math.ceil(bodyLen / 4) : undefined,
+      };
+    }
+    const est = Math.ceil(fileContent.length / 4);
+    return { liveTokenEstimate: est > 0 ? est : undefined, liveInvokeEstimate: undefined };
+  }, [fileContent, selectedFile]);
 
   // Fetch file tree when scope changes.
   useEffect(() => {
@@ -107,13 +162,20 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setOriginalContent(fileContent);
       setIsDirty(false);
+      // Refresh tree so token counts reflect the saved content.
+      const query =
+        scope === 'global' ? 'scope=global' : `projectPath=${encodeURIComponent(scope)}`;
+      fetch(`/api/config/tree?${query}`)
+        .then((r) => r.json() as Promise<{ data: TreeNode[] }>)
+        .then((body) => setTree(body.data))
+        .catch(() => {}); // Non-critical — stale counts are acceptable.
     } catch (err) {
       setSaveError('Failed to save file');
       console.error('[config] save failed', err);
     } finally {
       setIsSaving(false);
     }
-  }, [selectedFile, isDirty, isSaving, fileContent]);
+  }, [selectedFile, isDirty, isSaving, fileContent, scope]);
 
   const handleRevert = useCallback(() => {
     setFileContent(originalContent);
@@ -155,12 +217,30 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
           >
             <Settings className="h-4 w-4 text-primary/70" />
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-foreground/90">Config Editor</h1>
             <p className="text-[11px] text-muted-foreground/35 mt-0.5">
               Edit Claude configuration files across scopes
             </p>
           </div>
+
+          {/* Session token overhead summary */}
+          {totalTokens > 0 && (
+            <div
+              className="ml-auto shrink-0 text-right"
+              title={`Total session baseline: ~${SYSTEM_OVERHEAD + totalTokens} tokens.\n~${SYSTEM_OVERHEAD} fixed (Claude system prompt + built-in tools) + ~${totalTokens} from your config files.\nTrimming config files frees up context for actual work.`}
+            >
+              <p
+                className="text-sm font-mono font-semibold leading-none"
+                style={{ color: tokenOverheadColor(SYSTEM_OVERHEAD + totalTokens) }}
+              >
+                {fmtTokens(SYSTEM_OVERHEAD + totalTokens)}
+              </p>
+              <p className="text-[10px] text-muted-foreground/25 mt-0.5 leading-none">
+                ~15K system · {fmtTokens(totalTokens)} config
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -238,6 +318,8 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
               isSaving={isSaving}
               onSave={() => void handleSave()}
               onRevert={handleRevert}
+              tokenEstimate={liveTokenEstimate}
+              invokeTokenEstimate={liveInvokeEstimate}
             />
           )}
 

@@ -8,6 +8,18 @@ export interface TreeNode {
   path: string;
   name: string;
   isDirectory: boolean;
+  /**
+   * Tokens loaded on every message.
+   * - Regular files: full content.
+   * - skills/ and commands/ files: frontmatter only.
+   * - Directories: sum of all descendant always-loaded tokens.
+   */
+  tokenEstimate?: number;
+  /**
+   * Body tokens loaded only when the skill/command is invoked.
+   * Only present for files inside skills/ or commands/ directories.
+   */
+  invokeTokenEstimate?: number;
   children?: TreeNode[];
 }
 
@@ -31,6 +43,11 @@ function containsSelected(node: TreeNode, selectedPath: string | null): boolean 
   if (!node.isDirectory) return node.path === selectedPath;
   if (!node.children) return false;
   return node.children.some((child) => containsSelected(child, selectedPath));
+}
+
+function fmtTokens(n: number): string {
+  if (n < 1000) return `~${n}`;
+  return `~${(n / 1000).toFixed(1)}K`;
 }
 
 function TreeNodeItem({ node, selectedPath, onSelect, depth, autoExpand }: TreeNodeItemProps) {
@@ -75,7 +92,16 @@ function TreeNodeItem({ node, selectedPath, onSelect, depth, autoExpand }: TreeN
               hasSelectedChild ? 'text-amber-400/70' : 'text-muted-foreground/35',
             )}
           />
-          <span className="truncate">{node.name}</span>
+          <span className="truncate flex-1">{node.name}</span>
+          {node.tokenEstimate !== undefined && node.tokenEstimate > 0 && (
+            <span
+              className="text-[10px] font-mono shrink-0 ml-1"
+              style={{ color: 'oklch(0.55 0 0 / 0.5)' }}
+              title={`~${node.tokenEstimate} tokens always loaded across all files in this directory`}
+            >
+              {fmtTokens(node.tokenEstimate)}
+            </span>
+          )}
         </button>
         {isOpen && node.children && node.children.length > 0 && (
           <div>
@@ -104,6 +130,8 @@ function TreeNodeItem({ node, selectedPath, onSelect, depth, autoExpand }: TreeN
   }
 
   // File node
+  const hasInvokeBody = node.invokeTokenEstimate !== undefined && node.invokeTokenEstimate > 0;
+
   return (
     <button
       type="button"
@@ -124,7 +152,30 @@ function TreeNodeItem({ node, selectedPath, onSelect, depth, autoExpand }: TreeN
       ) : (
         <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground/30" />
       )}
-      <span className="truncate">{node.name}</span>
+      <span className="truncate flex-1">{node.name}</span>
+
+      {/* Token count badge */}
+      {node.tokenEstimate !== undefined && (
+        <span
+          className="text-[10px] font-mono shrink-0 ml-1 flex items-center gap-0.5"
+          style={{
+            color: isSelected ? 'oklch(0.65 0.18 280 / 0.6)' : 'oklch(0.5 0 0 / 0.45)',
+          }}
+          title={
+            hasInvokeBody
+              ? `Frontmatter: ~${node.tokenEstimate} tokens (loaded every message) · Body: ~${node.invokeTokenEstimate} tokens (loaded on invoke only)`
+              : `~${node.tokenEstimate} tokens — loaded by Claude every session`
+          }
+        >
+          {fmtTokens(node.tokenEstimate)}
+          {hasInvokeBody && node.invokeTokenEstimate !== undefined && (
+            <span style={{ color: 'oklch(0.45 0 0 / 0.35)' }}>
+              {' '}
+              +{fmtTokens(node.invokeTokenEstimate)}↗
+            </span>
+          )}
+        </span>
+      )}
     </button>
   );
 }
