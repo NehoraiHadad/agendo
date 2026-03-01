@@ -79,8 +79,15 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
     }
   }, [streams, setPanelStatus, setNeedsAttention]);
 
+  // Track whether a persist is pending (debounce hasn't fired yet)
+  const hasPendingPersist = useRef(false);
+
   // Debounced layout persist (500ms)
-  const debouncedPersist = useDebounce(persistLayout, 500);
+  const persistAndClear = useCallback(() => {
+    hasPendingPersist.current = false;
+    persistLayout();
+  }, [persistLayout]);
+  const debouncedPersist = useDebounce(persistAndClear, 500);
 
   // Persist layout whenever panels, gridCols, or panelHeights change (after initial hydration)
   const isFirstRenderRef = useRef(true);
@@ -89,8 +96,28 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
       isFirstRenderRef.current = false;
       return;
     }
+    hasPendingPersist.current = true;
     debouncedPersist();
   }, [panels, gridCols, panelHeights, debouncedPersist]);
+
+  // Flush pending persist on page close/refresh or tab background (mobile)
+  useEffect(() => {
+    const flush = () => {
+      if (hasPendingPersist.current) {
+        hasPendingPersist.current = false;
+        persistLayout();
+      }
+    };
+    const onVisChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisChange);
+    };
+  }, [persistLayout]);
 
   // Count panels needing attention for the page title
   const attentionCount = Object.values(panels).filter((p) => p.needsAttention).length;
