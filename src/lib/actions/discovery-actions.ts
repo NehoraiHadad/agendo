@@ -4,11 +4,16 @@ import path from 'node:path';
 import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+
 import { runDiscovery } from '@/lib/discovery';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
-import { getExistingSlugs, getExistingBinaryPaths, createFromDiscovery, getAgentById } from '@/lib/services/agent-service';
+import {
+  getExistingSlugs,
+  getExistingBinaryPaths,
+  createFromDiscovery,
+  getAgentById,
+} from '@/lib/services/agent-service';
 import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
 import type { Agent, AgentCapability } from '@/lib/types';
 
@@ -58,7 +63,10 @@ export async function syncCapabilities(agentId: string): Promise<{
 
     const schema = quickParseHelp(helpText);
     if (!schema.subcommands.length) {
-      return { success: false, error: 'No subcommands found in --help output. Add commands manually.' };
+      return {
+        success: false,
+        error: 'No subcommands found in --help output. Add commands manually.',
+      };
     }
 
     const newCaps: AgentCapability[] = [];
