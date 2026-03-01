@@ -266,8 +266,9 @@ export function PlansListClient({ plans: initialPlans, projects }: PlansListClie
     [router],
   );
 
-  // Client-side filtering
+  // Client-side filtering — archived plans are hidden by default (only shown when explicitly selected)
   const filtered = plans.filter((plan) => {
+    if (statusFilter === 'all' && plan.status === 'archived') return false;
     if (statusFilter !== 'all' && plan.status !== statusFilter) return false;
     if (projectFilter !== 'all' && plan.projectId !== projectFilter) return false;
     if (

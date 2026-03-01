@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Play, Archive, Loader2, Bot, MessageSquare } from 'lucide-react';
+import { CheckCircle, Play, Loader2, Bot, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -50,7 +50,6 @@ function findFirstPromptCapability(agent: AgentWithCapabilities): AgentCapabilit
 interface PlanActionsProps {
   planId: string;
   planStatus: string;
-  onArchived?: () => void;
   onToggleConversation?: () => void;
   conversationActive?: boolean;
 }
@@ -58,7 +57,6 @@ interface PlanActionsProps {
 export function PlanActions({
   planId,
   planStatus,
-  onArchived,
   onToggleConversation,
   conversationActive,
 }: PlanActionsProps) {
@@ -69,7 +67,6 @@ export function PlanActions({
   // Dialog state
   const [validateOpen, setValidateOpen] = useState(false);
   const [executeOpen, setExecuteOpen] = useState(false);
-  const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Selection state for agent dialogs
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -78,7 +75,6 @@ export function PlanActions({
   // Action states
   const [isValidating, setIsValidating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [isArchiving, setIsArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isArchived = planStatus === 'archived';
@@ -160,21 +156,6 @@ export function PlanActions({
     }
   }
 
-  async function handleArchive() {
-    if (isArchiving) return;
-    setIsArchiving(true);
-    setError(null);
-    try {
-      await apiFetch(`/api/plans/${planId}`, { method: 'DELETE' });
-      setArchiveOpen(false);
-      onArchived?.();
-      router.push('/plans');
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Archive failed');
-      setIsArchiving(false);
-    }
-  }
-
   return (
     <>
       {/* Action buttons */}
@@ -226,19 +207,6 @@ export function PlanActions({
           <span className="hidden sm:inline">Execute</span>
         </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setError(null);
-            setArchiveOpen(true);
-          }}
-          disabled={isArchived}
-          className="h-7 px-3 text-xs border gap-1.5 text-zinc-400 hover:text-zinc-300 hover:bg-zinc-500/10 border-zinc-500/20"
-        >
-          <Archive className="size-3" />
-          <span className="hidden sm:inline">Archive</span>
-        </Button>
       </div>
 
       {/* Validate dialog */}
@@ -412,48 +380,6 @@ export function PlanActions({
         </DialogContent>
       </Dialog>
 
-      {/* Archive confirmation dialog */}
-      <Dialog
-        open={archiveOpen}
-        onOpenChange={(v) => {
-          if (!isArchiving) setArchiveOpen(v);
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Archive plan?</DialogTitle>
-            <DialogDescription>
-              The plan will be marked as archived. This cannot be undone from the UI.
-            </DialogDescription>
-          </DialogHeader>
-
-          {error && (
-            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setArchiveOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => void handleArchive()}
-              disabled={isArchiving}
-              className="gap-1.5"
-            >
-              {isArchiving ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Archive className="size-3" />
-              )}
-              Archive
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

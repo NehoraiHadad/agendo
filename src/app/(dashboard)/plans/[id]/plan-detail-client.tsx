@@ -17,22 +17,128 @@ import {
   AlignLeft,
   Loader2,
   ExternalLink,
+  ChevronDown,
+  Archive,
 } from 'lucide-react';
+import { Select as SelectPrimitive } from 'radix-ui';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
-import { PlanStatusBadge } from '@/components/plans/plan-status-badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { PlanActions } from '@/components/plans/plan-actions';
 import { PlanConversationPanel } from '@/components/plans/plan-conversation-panel';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
-import type { Plan, Project } from '@/lib/types';
+import type { Plan, PlanStatus, Project } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types & constants
 // ---------------------------------------------------------------------------
 
 type ViewMode = 'edit' | 'preview' | 'split';
+
+const PLAN_STATUS_CONFIG: Record<
+  PlanStatus,
+  { label: string; dotColor: string; pillBg: string; pillBorder: string; textColor: string; pulse: boolean }
+> = {
+  draft:     { label: 'Draft',     dotColor: 'bg-zinc-400',    pillBg: 'bg-zinc-500/10',    pillBorder: 'border-zinc-500/20',    textColor: 'text-zinc-400',    pulse: false },
+  ready:     { label: 'Ready',     dotColor: 'bg-blue-400',    pillBg: 'bg-blue-500/10',    pillBorder: 'border-blue-500/25',    textColor: 'text-blue-400',    pulse: false },
+  stale:     { label: 'Stale',     dotColor: 'bg-amber-400',   pillBg: 'bg-amber-500/10',   pillBorder: 'border-amber-500/25',   textColor: 'text-amber-400',   pulse: false },
+  executing: { label: 'Executing', dotColor: 'bg-violet-400',  pillBg: 'bg-violet-500/10',  pillBorder: 'border-violet-500/25',  textColor: 'text-violet-400',  pulse: true  },
+  done:      { label: 'Done',      dotColor: 'bg-emerald-400', pillBg: 'bg-emerald-500/10', pillBorder: 'border-emerald-500/25', textColor: 'text-emerald-400', pulse: false },
+  archived:  { label: 'Archived',  dotColor: 'bg-zinc-600',    pillBg: 'bg-zinc-700/10',    pillBorder: 'border-zinc-700/20',    textColor: 'text-zinc-500',    pulse: false },
+};
+
+const STATUS_ACCENT: Record<PlanStatus, string> = {
+  draft:     'linear-gradient(90deg, oklch(0.5 0 0 / 0.25) 0%, transparent 70%)',
+  ready:     'linear-gradient(90deg, oklch(0.6 0.18 250 / 0.7) 0%, transparent 70%)',
+  stale:     'linear-gradient(90deg, oklch(0.65 0.14 85 / 0.6) 0%, transparent 70%)',
+  executing: 'linear-gradient(90deg, oklch(0.65 0.2 280 / 0.85) 0%, transparent 70%)',
+  done:      'linear-gradient(90deg, oklch(0.65 0.2 145 / 0.7) 0%, transparent 70%)',
+  archived:  'linear-gradient(90deg, oklch(0.35 0 0 / 0.2) 0%, transparent 70%)',
+};
+
+// ---------------------------------------------------------------------------
+// PlanStatusSelect
+// ---------------------------------------------------------------------------
+
+interface PlanStatusSelectProps {
+  status: PlanStatus;
+  disabled?: boolean;
+  onChange: (status: PlanStatus) => void;
+}
+
+function PlanStatusSelect({ status, disabled, onChange }: PlanStatusSelectProps) {
+  const cfg = PLAN_STATUS_CONFIG[status];
+  return (
+    <SelectPrimitive.Root value={status} onValueChange={(v) => onChange(v as PlanStatus)}>
+      <SelectPrimitive.Trigger
+        disabled={disabled}
+        aria-label="Change plan status"
+        className={cn(
+          'inline-flex items-center gap-1.5 text-[11px] font-medium rounded-full px-2 py-0.5 border',
+          'cursor-pointer outline-none select-none',
+          'transition-all duration-150 hover:brightness-125',
+          'focus-visible:ring-1 focus-visible:ring-white/20 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent',
+          'disabled:opacity-40 disabled:cursor-wait',
+          cfg.pillBg,
+          cfg.pillBorder,
+          cfg.textColor,
+        )}
+      >
+        <span
+          className={cn('inline-block size-1.5 rounded-full shrink-0', cfg.dotColor, {
+            'animate-pulse': cfg.pulse,
+          })}
+        />
+        <SelectPrimitive.Value />
+        <ChevronDown className="size-2 opacity-40 shrink-0" />
+      </SelectPrimitive.Trigger>
+
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Content
+          position="popper"
+          align="start"
+          sideOffset={5}
+          className="z-50 min-w-[130px] overflow-hidden rounded-lg border border-white/[0.1] bg-[oklch(0.12_0.005_240)] shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+        >
+          <SelectPrimitive.Viewport className="p-1">
+            {(Object.entries(PLAN_STATUS_CONFIG) as [PlanStatus, (typeof PLAN_STATUS_CONFIG)[PlanStatus]][]).map(
+              ([s, scfg]) => (
+                <SelectPrimitive.Item
+                  key={s}
+                  value={s}
+                  className={cn(
+                    'relative flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs cursor-pointer outline-none select-none',
+                    'data-[highlighted]:bg-white/[0.07]',
+                    scfg.textColor,
+                  )}
+                >
+                  <span
+                    className={cn('inline-block size-1.5 rounded-full shrink-0', scfg.dotColor, {
+                      'animate-pulse': scfg.pulse,
+                    })}
+                  />
+                  <SelectPrimitive.ItemText>{scfg.label}</SelectPrimitive.ItemText>
+                  <SelectPrimitive.ItemIndicator className="ml-auto opacity-60 text-[10px]">
+                    ✓
+                  </SelectPrimitive.ItemIndicator>
+                </SelectPrimitive.Item>
+              ),
+            )}
+          </SelectPrimitive.Viewport>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Markdown renderer
@@ -144,11 +250,20 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
   const router = useRouter();
   const [plan, setPlan] = useState<Plan>(initialPlan);
   const [viewMode, setViewMode] = useState<ViewMode>('split');
+
+  // Switch to 'edit' on mobile after mount (avoids SSR/client hydration mismatch)
+  useEffect(() => {
+    if (window.innerWidth < 640) setViewMode('edit');
+  }, []);
   const [content, setContent] = useState(initialPlan.content);
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
+  // Status change state
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
 
   // Conversation panel state
   const [conversationOpen, setConversationOpen] = useState(false);
@@ -258,9 +373,37 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     }
   }, [editTitle, plan.id, title]);
 
-  const handlePlanArchived = useCallback(() => {
-    router.push('/plans');
-  }, [router]);
+  const handleStatusChange = useCallback(
+    (newStatus: PlanStatus) => {
+      if (newStatus === plan.status) return;
+      if (newStatus === 'archived') {
+        setArchiveConfirmOpen(true);
+        return;
+      }
+      void applyStatusChange(newStatus);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan.status],
+  );
+
+  const applyStatusChange = useCallback(
+    async (newStatus: PlanStatus) => {
+      setIsChangingStatus(true);
+      try {
+        const result = await apiFetch<ApiResponse<Plan>>(`/api/plans/${plan.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: newStatus }),
+        });
+        setPlan(result.data);
+        if (newStatus === 'archived') {
+          router.push('/plans');
+        }
+      } finally {
+        setIsChangingStatus(false);
+      }
+    },
+    [plan.id, router],
+  );
 
   const handleSessionCreated = useCallback((sessionId: string) => {
     setConversationSessionId(sessionId);
@@ -279,40 +422,31 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
         )}
       >
         {/* Header card */}
-        <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] shrink-0 overflow-visible">
+        <div className="rounded-xl border border-white/[0.06] bg-[oklch(0.09_0_0)] shrink-0">
           {/* Status accent top bar */}
           <div
             className="h-[2px] w-full rounded-t-xl"
-            style={{
-              background:
-                plan.status === 'executing'
-                  ? 'linear-gradient(90deg, oklch(0.65 0.2 280 / 0.8) 0%, oklch(0.65 0.2 280 / 0.1) 100%)'
-                  : plan.status === 'ready'
-                    ? 'linear-gradient(90deg, oklch(0.6 0.2 250 / 0.8) 0%, oklch(0.6 0.2 250 / 0.1) 100%)'
-                    : plan.status === 'done'
-                      ? 'linear-gradient(90deg, oklch(0.65 0.2 145 / 0.8) 0%, oklch(0.65 0.2 145 / 0.1) 100%)'
-                      : 'linear-gradient(90deg, oklch(0.4 0 0 / 0.4) 0%, transparent 100%)',
-            }}
+            style={{ background: STATUS_ACCENT[plan.status] }}
           />
 
-          <div className="flex items-center gap-3 px-4 py-3 flex-wrap">
-            {/* Back button */}
-            <Link href="/plans">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-muted-foreground/50 hover:text-foreground hover:bg-white/[0.05]"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
+          <div className="px-3 pt-2.5 pb-3 flex flex-col gap-2">
+            {/* Row 1: back · title · toolbar */}
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Back */}
+              <Link href="/plans" className="shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground/40 hover:text-foreground/70 hover:bg-white/[0.05]"
+                >
+                  <ArrowLeft className="size-3.5" />
+                </Button>
+              </Link>
 
-            {/* Title + meta */}
-            <div className="flex-1 min-w-0">
-              {/* Title row */}
-              <div className="flex items-center gap-2 flex-wrap">
+              {/* Title */}
+              <div className="flex-1 min-w-0">
                 {isEditingTitle ? (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 min-w-0">
                     <input
                       ref={titleInputRef}
                       autoFocus
@@ -322,18 +456,18 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                         if (e.key === 'Enter') void saveTitle();
                         if (e.key === 'Escape') cancelEditingTitle();
                       }}
-                      className="text-base font-semibold bg-white/[0.06] border border-white/[0.15] rounded-lg px-2.5 py-1 focus:outline-none focus:border-primary/50 min-w-0 w-52 sm:w-80"
+                      className="flex-1 min-w-0 text-sm font-semibold bg-white/[0.06] border border-white/[0.12] rounded-md px-2.5 py-1 focus:outline-none focus:border-primary/40"
                     />
                     <button
                       onClick={() => void saveTitle()}
-                      className="p-1.5 text-emerald-400 hover:text-emerald-300 transition-colors rounded"
+                      className="shrink-0 p-1 text-emerald-400 hover:text-emerald-300 transition-colors rounded"
                       aria-label="Save title"
                     >
                       <Check className="size-3.5" />
                     </button>
                     <button
                       onClick={cancelEditingTitle}
-                      className="p-1.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors rounded"
+                      className="shrink-0 p-1 text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors rounded"
                       aria-label="Cancel"
                     >
                       <X className="size-3.5" />
@@ -342,131 +476,125 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 ) : (
                   <button
                     onClick={startEditingTitle}
-                    className="group flex items-center gap-1.5 text-base font-semibold hover:text-foreground/80 transition-colors text-left"
-                    title="Click to rename plan"
+                    className="group flex items-center gap-1.5 text-sm font-semibold text-foreground/90 hover:text-foreground transition-colors text-left max-w-full"
+                    title="Click to rename"
                   >
-                    <span className="text-foreground/90">{title}</span>
-                    <Pencil className="size-3 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors shrink-0" />
+                    <span className="truncate">{title}</span>
+                    <Pencil className="size-2.5 shrink-0 opacity-0 group-hover:opacity-40 transition-opacity" />
                   </button>
                 )}
-
-                <PlanStatusBadge status={plan.status} />
               </div>
 
-              {/* Meta breadcrumb */}
-              <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
-                {project && (
-                  <>
-                    <span className="flex items-center gap-1">
-                      <FolderOpen className="size-3" />
-                      {project.name}
+              {/* Toolbar: save · view toggle · actions */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Save indicator */}
+                <div className="text-[10px] hidden sm:flex items-center gap-1 w-12 justify-end">
+                  {isSaving && (
+                    <>
+                      <Loader2 className="size-2.5 animate-spin text-muted-foreground/30" />
+                      <span className="text-muted-foreground/30">saving</span>
+                    </>
+                  )}
+                  {!isSaving && isDirty && (
+                    <span className="text-amber-400/50">unsaved</span>
+                  )}
+                  {!isSaving && !isDirty && lastSavedAt && (
+                    <span className="text-muted-foreground/25" suppressHydrationWarning>
+                      saved
                     </span>
-                    <span className="text-muted-foreground/20">·</span>
-                  </>
-                )}
-                <span className="flex items-center gap-1" suppressHydrationWarning>
-                  <CalendarDays className="size-3" />
-                  {formatDistanceToNow(new Date(plan.createdAt), { addSuffix: true })}
-                </span>
-                {plan.lastValidatedAt && (
-                  <>
-                    <span className="text-muted-foreground/20">·</span>
-                    <span className="flex items-center gap-1" suppressHydrationWarning>
-                      <Clock className="size-3" />
-                      validated{' '}
-                      {formatDistanceToNow(new Date(plan.lastValidatedAt), { addSuffix: true })}
+                  )}
+                  {saveError && (
+                    <span className="text-red-400/60" title={saveError}>
+                      error
                     </span>
-                  </>
-                )}
-                {plan.executingSessionId && (
-                  <>
-                    <span className="text-muted-foreground/20">·</span>
-                    <Link
-                      href={`/sessions/${plan.executingSessionId}`}
-                      className="flex items-center gap-0.5 text-violet-400/70 hover:text-violet-400 transition-colors"
-                    >
-                      <ExternalLink className="size-3" />
-                      <span>View session</span>
-                    </Link>
-                  </>
-                )}
+                  )}
+                </div>
+
+                {/* View toggle — icon only, segmented */}
+                <div className="flex items-center h-7 rounded-md border border-white/[0.07] bg-white/[0.02] overflow-hidden divide-x divide-white/[0.05]">
+                  <button
+                    onClick={() => setViewMode('edit')}
+                    title="Edit"
+                    className={cn(
+                      'h-full px-2 flex items-center transition-colors',
+                      viewMode === 'edit'
+                        ? 'bg-white/[0.08] text-foreground/70'
+                        : 'text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-white/[0.03]',
+                    )}
+                  >
+                    <AlignLeft className="size-3" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode('split')}
+                    title="Split"
+                    className={cn(
+                      'h-full px-2 items-center transition-colors hidden sm:flex',
+                      viewMode === 'split'
+                        ? 'bg-white/[0.08] text-foreground/70'
+                        : 'text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-white/[0.03]',
+                    )}
+                  >
+                    <Columns2 className="size-3" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode('preview')}
+                    title="Preview"
+                    className={cn(
+                      'h-full px-2 flex items-center transition-colors',
+                      viewMode === 'preview'
+                        ? 'bg-white/[0.08] text-foreground/70'
+                        : 'text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-white/[0.03]',
+                    )}
+                  >
+                    <Eye className="size-3" />
+                  </button>
+                </div>
+
+                {/* Action buttons */}
+                <PlanActions
+                  planId={plan.id}
+                  planStatus={plan.status}
+                  onToggleConversation={() => setConversationOpen((v) => !v)}
+                  conversationActive={conversationOpen}
+                />
               </div>
             </div>
 
-            {/* Right side: save indicator + view toggle + actions */}
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {/* Save status */}
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/40">
-                {isSaving && (
-                  <>
-                    <Loader2 className="size-3 animate-spin text-primary/60" />
-                    <span>Saving…</span>
-                  </>
-                )}
-                {!isSaving && isDirty && <span className="text-amber-400/70">Unsaved</span>}
-                {!isSaving && !isDirty && lastSavedAt && (
-                  <span suppressHydrationWarning>
-                    Saved {formatDistanceToNow(lastSavedAt, { addSuffix: true })}
-                  </span>
-                )}
-                {saveError && (
-                  <span className="text-red-400/80" title={saveError}>
-                    Save error
-                  </span>
-                )}
-              </div>
-
-              {/* View mode toggle */}
-              <div className="flex items-center rounded-lg border border-white/[0.08] bg-white/[0.02] p-0.5 gap-0.5">
-                <button
-                  onClick={() => setViewMode('edit')}
-                  className={cn(
-                    'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all',
-                    viewMode === 'edit'
-                      ? 'bg-white/[0.08] text-foreground/80 font-medium'
-                      : 'text-muted-foreground/40 hover:text-muted-foreground/70',
-                  )}
-                  title="Edit only"
-                >
-                  <AlignLeft className="size-3" />
-                  <span className="hidden sm:inline">Edit</span>
-                </button>
-                <button
-                  onClick={() => setViewMode('split')}
-                  className={cn(
-                    'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all',
-                    viewMode === 'split'
-                      ? 'bg-white/[0.08] text-foreground/80 font-medium'
-                      : 'text-muted-foreground/40 hover:text-muted-foreground/70',
-                  )}
-                  title="Split view"
-                >
-                  <Columns2 className="size-3" />
-                  <span className="hidden sm:inline">Split</span>
-                </button>
-                <button
-                  onClick={() => setViewMode('preview')}
-                  className={cn(
-                    'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all',
-                    viewMode === 'preview'
-                      ? 'bg-white/[0.08] text-foreground/80 font-medium'
-                      : 'text-muted-foreground/40 hover:text-muted-foreground/70',
-                  )}
-                  title="Preview only"
-                >
-                  <Eye className="size-3" />
-                  <span className="hidden sm:inline">Preview</span>
-                </button>
-              </div>
-
-              {/* Plan action buttons */}
-              <PlanActions
-                planId={plan.id}
-                planStatus={plan.status}
-                onArchived={handlePlanArchived}
-                onToggleConversation={() => setConversationOpen((v) => !v)}
-                conversationActive={conversationOpen}
+            {/* Row 2: status chip · meta breadcrumb */}
+            <div className="flex items-center gap-2 pl-9 flex-wrap">
+              <PlanStatusSelect
+                status={plan.status}
+                disabled={isChangingStatus}
+                onChange={handleStatusChange}
               />
+
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground/35 flex-wrap">
+                {project && (
+                  <span className="flex items-center gap-1">
+                    <FolderOpen className="size-3 shrink-0" />
+                    {project.name}
+                  </span>
+                )}
+                <span className="flex items-center gap-1" suppressHydrationWarning>
+                  <CalendarDays className="size-3 shrink-0" />
+                  {formatDistanceToNow(new Date(plan.createdAt), { addSuffix: true })}
+                </span>
+                {plan.lastValidatedAt && (
+                  <span className="flex items-center gap-1" suppressHydrationWarning>
+                    <Clock className="size-3 shrink-0" />
+                    validated {formatDistanceToNow(new Date(plan.lastValidatedAt), { addSuffix: true })}
+                  </span>
+                )}
+                {plan.executingSessionId && (
+                  <Link
+                    href={`/sessions/${plan.executingSessionId}`}
+                    className="flex items-center gap-0.5 text-violet-400/50 hover:text-violet-400/80 transition-colors"
+                  >
+                    <ExternalLink className="size-3 shrink-0" />
+                    view session
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -476,7 +604,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
           className={cn(
             'flex-1 min-h-0 rounded-xl border border-white/[0.06] bg-[oklch(0.08_0_0)] overflow-hidden',
             viewMode === 'split'
-              ? 'grid grid-cols-2 divide-x divide-white/[0.06]'
+              ? 'grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/[0.06]'
               : 'flex flex-col',
           )}
         >
@@ -528,6 +656,46 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
           )}
         </div>
       </div>
+
+      {/* Archive confirmation dialog */}
+      <Dialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Archive this plan?</DialogTitle>
+            <DialogDescription>
+              The plan will be hidden from the default view. You can still find it by selecting
+              &ldquo;Archived&rdquo; in the status filter.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setArchiveConfirmOpen(false)}
+              disabled={isChangingStatus}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={isChangingStatus}
+              onClick={() => {
+                setArchiveConfirmOpen(false);
+                void applyStatusChange('archived');
+              }}
+              className="gap-1.5"
+            >
+              {isChangingStatus ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Archive className="size-3" />
+              )}
+              Archive
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Conversation panel — desktop side panel */}
       {conversationOpen && (
