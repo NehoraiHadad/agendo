@@ -430,6 +430,18 @@ export class SessionProcess {
       // Team inbox activity proves teammates are working — reset idle timer
       this.activityTracker.recordActivity();
 
+      // In stream-json mode (agendo sessions) team messages do NOT arrive as a
+      // new stdin turn automatically (unlike TUI mode). Inject real content
+      // messages into the agent's stdin so the lead agent wakes up and processes
+      // the teammate's report. Structured protocol messages (idle_notification,
+      // shutdown_approved, etc.) are internal bookkeeping — skip them.
+      if (!msg.isStructured && this.status === 'awaiting_input') {
+        const teamText = `[Message from teammate ${msg.from}]:\n${msg.text}`;
+        this.pushMessage(teamText).catch((err: unknown) => {
+          console.error(`[session-process] Failed to inject team message from ${msg.from}:`, err);
+        });
+      }
+
       // Check if this shutdown_approved completes the full set
       if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
         if (this.teamInboxMonitor?.isTeamDisbanded()) {
