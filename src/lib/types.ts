@@ -120,6 +120,8 @@ export interface WorkspacePanel {
   col: number;
   rowSpan?: number;
   colSpan?: number;
+  /** User-set panel height in px (persisted with workspace layout) */
+  height?: number;
 }
 
 /** workspaces.layout */

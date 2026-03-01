@@ -15,6 +15,7 @@ interface PanelState {
 interface WorkspaceState {
   workspaceId: string | null;
   panels: Record<string, PanelState>; // keyed by sessionId
+  panelHeights: Record<string, number>; // sessionId → px height (user-resized)
   focusedPanelId: string | null;
   gridCols: 2 | 3;
   expandedPanelId: string | null; // for full-screen overlay
@@ -59,6 +60,9 @@ interface WorkspaceActions {
   /** Switch between 2-column and 3-column grid layouts. */
   setGridCols: (cols: 2 | 3) => void;
 
+  /** Set a panel's user-defined height (in px). Pass null to clear (revert to default). */
+  setPanelHeight: (sessionId: string, height: number | null) => void;
+
   /** Return all session IDs currently registered in panels (for useMultiSessionStreams). */
   getSessionIds: () => string[];
 
@@ -77,6 +81,7 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 const initialState: WorkspaceState = {
   workspaceId: null,
   panels: {},
+  panelHeights: {},
   focusedPanelId: null,
   gridCols: 2,
   expandedPanelId: null,
@@ -87,6 +92,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
   setWorkspace: (id, layout) => {
     const panels: Record<string, PanelState> = {};
+    const panelHeights: Record<string, number> = {};
 
     // Respect the MAX_PANELS cap when hydrating from the API
     const cappedPanels = layout.panels.slice(0, MAX_PANELS);
@@ -96,11 +102,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
         needsAttention: false,
         status: null,
       };
+      if (panel.height) {
+        panelHeights[panel.sessionId] = panel.height;
+      }
     }
 
     set({
       workspaceId: id,
       panels,
+      panelHeights,
       gridCols: layout.gridCols,
       focusedPanelId: null,
       expandedPanelId: null,
@@ -176,12 +186,22 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
 
   setGridCols: (cols) => set({ gridCols: cols }),
 
+  setPanelHeight: (sessionId, height) => {
+    set((state) => {
+      if (height === null) {
+        const { [sessionId]: _, ...rest } = state.panelHeights;
+        return { panelHeights: rest };
+      }
+      return { panelHeights: { ...state.panelHeights, [sessionId]: height } };
+    });
+  },
+
   getSessionIds: () => {
     return Object.keys(get().panels);
   },
 
   persistLayout: async () => {
-    const { workspaceId, panels, gridCols } = get();
+    const { workspaceId, panels, panelHeights, gridCols } = get();
     if (!workspaceId) return;
 
     // Build layout panels array, assigning positional row/col from insertion order
@@ -191,6 +211,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set, get) => ({
       sessionId: panel.sessionId,
       row: Math.floor(index / cols),
       col: index % cols,
+      height: panelHeights[panel.sessionId],
     }));
 
     const layout: WorkspaceLayout = { panels: layoutPanels, gridCols };

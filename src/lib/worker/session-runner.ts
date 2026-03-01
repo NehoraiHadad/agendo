@@ -55,23 +55,28 @@ export async function runSession(
 
   validateBinary(agent.binaryPath);
 
-  // Load task for workingDir, env overrides, and prompt interpolation
-  const [task] = await db
-    .select({
-      title: tasks.title,
-      description: tasks.description,
-      inputContext: tasks.inputContext,
-      projectId: tasks.projectId,
-    })
-    .from(tasks)
-    .where(eq(tasks.id, session.taskId))
-    .limit(1);
+  // Load task for workingDir, env overrides, and prompt interpolation (may be null for conversations)
+  const task = session.taskId
+    ? await db
+        .select({
+          title: tasks.title,
+          description: tasks.description,
+          inputContext: tasks.inputContext,
+          projectId: tasks.projectId,
+        })
+        .from(tasks)
+        .where(eq(tasks.id, session.taskId))
+        .limit(1)
+        .then((r) => r[0] ?? null)
+    : null;
 
-  const project = task?.projectId
+  // Load project — prefer session.projectId (direct), fallback to task.projectId
+  const resolvedProjectId = session.projectId ?? task?.projectId ?? null;
+  const project = resolvedProjectId
     ? await db
         .select()
         .from(projects)
-        .where(eq(projects.id, task.projectId))
+        .where(eq(projects.id, resolvedProjectId))
         .limit(1)
         .then((r) => r[0] ?? null)
     : null;
@@ -98,8 +103,8 @@ export async function runSession(
   }
 
   // Propagate projectId into the child env so hooks can read it without MCP.
-  if (task?.projectId) {
-    envOverrides['AGENDO_PROJECT_ID'] = task.projectId;
+  if (resolvedProjectId) {
+    envOverrides['AGENDO_PROJECT_ID'] = resolvedProjectId;
   }
 
   // Resolve the initial prompt
@@ -127,7 +132,7 @@ export async function runSession(
       sessionId,
       taskId: session.taskId,
       agentId: session.agentId,
-      projectId: task?.projectId ?? null,
+      projectId: resolvedProjectId,
     };
     const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity);
     mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
@@ -142,7 +147,7 @@ export async function runSession(
       sessionId,
       taskId: session.taskId,
       agentId: session.agentId,
-      projectId: task?.projectId ?? null,
+      projectId: resolvedProjectId,
     };
     mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity);
     console.log(`[session-runner] Gemini MCP injected for session ${sessionId}`);
@@ -158,14 +163,26 @@ export async function runSession(
     (binaryName === 'claude' || binaryName === 'gemini' || binaryName === 'codex');
   if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
-    const preamble =
-      `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
-      `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
-      `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
-      `  - A clear title: "Add MCP tool: <tool_name>"\n` +
-      `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
-      `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
-      `---\n`;
+    let preamble: string;
+    if (session.kind === 'conversation') {
+      // Planning conversation preamble — no task context
+      preamble =
+        `[Agendo Context: project=${projectName}, mode=planning]\n` +
+        `Agendo MCP tools are available. You are in a planning conversation.\n` +
+        `Use create_task to turn ideas into actionable tasks.\n` +
+        `Use list_tasks to see existing tasks in this project.\n` +
+        `---\n`;
+    } else {
+      // Execution preamble — task context
+      preamble =
+        `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
+        `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
+        `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
+        `  - A clear title: "Add MCP tool: <tool_name>"\n` +
+        `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
+        `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
+        `---\n`;
+    }
     prompt = preamble + prompt;
   }
 

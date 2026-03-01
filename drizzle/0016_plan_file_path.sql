@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "plan_file_path" text;

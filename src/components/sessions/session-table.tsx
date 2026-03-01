@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatDistanceStrict, formatDistanceToNow } from 'date-fns';
-import { Activity, MessageSquare, MinusCircle, Pause } from 'lucide-react';
+import { Activity, MessageCircle, MessageSquare, MinusCircle, Pause, Play } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -94,6 +94,27 @@ export function SessionStatusBadge({ status, className }: SessionStatusBadgeProp
 }
 
 // ---------------------------------------------------------------------------
+// KindBadge
+// ---------------------------------------------------------------------------
+
+function KindBadge({ kind }: { kind: string }) {
+  if (kind === 'conversation') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60">
+        <MessageCircle className="size-3" />
+        Chat
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60">
+      <Play className="size-3" />
+      Exec
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SessionRow
 // ---------------------------------------------------------------------------
 
@@ -129,6 +150,9 @@ function SessionRow({ session }: SessionRowProps) {
       </TableCell>
       <TableCell>
         <SessionStatusBadge status={session.status} />
+      </TableCell>
+      <TableCell>
+        <KindBadge kind={session.kind} />
       </TableCell>
       <TableCell className="text-xs text-muted-foreground/70 max-w-[180px] truncate">
         {session.agentName ?? '-'}
@@ -176,6 +200,7 @@ function SessionCard({ session }: SessionRowProps) {
         <SessionStatusBadge status={session.status} className="shrink-0" />
       </div>
       <div className="flex items-center gap-3 text-xs text-muted-foreground/50 flex-wrap">
+        <KindBadge kind={session.kind} />
         {session.agentName && <span>{session.agentName}</span>}
         <span>{session.totalTurns} turns</span>
         {session.totalCostUsd != null && (
@@ -204,6 +229,7 @@ export function SessionTable({ taskId }: SessionTableProps) {
   const [data, setData] = useState<SessionWithDetails[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 20 });
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [kindFilter, setKindFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -215,11 +241,12 @@ export function SessionTable({ taskId }: SessionTableProps) {
   });
 
   const fetchSessions = useCallback(
-    async (page: number, status: string) => {
+    async (page: number, status: string, kind: string) => {
       setIsLoading(true);
       try {
         const params = new URLSearchParams();
         if (status !== 'all') params.set('status', status);
+        if (kind !== 'all') params.set('kind', kind);
         if (taskId) params.set('taskId', taskId);
         params.set('page', String(page));
         params.set('pageSize', String(meta.pageSize));
@@ -237,21 +264,26 @@ export function SessionTable({ taskId }: SessionTableProps) {
   );
 
   useEffect(() => {
-    fetchSessions(1, statusFilter);
+    fetchSessions(1, statusFilter, kindFilter);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
-    fetchSessions(1, value);
+    fetchSessions(1, value, kindFilter);
+  };
+
+  const handleKindChange = (value: string) => {
+    setKindFilter(value);
+    fetchSessions(1, statusFilter, value);
   };
 
   const handlePrevPage = () => {
-    if (meta.page > 1) fetchSessions(meta.page - 1, statusFilter);
+    if (meta.page > 1) fetchSessions(meta.page - 1, statusFilter, kindFilter);
   };
 
   const handleNextPage = () => {
     const totalPages = Math.ceil(meta.total / meta.pageSize);
-    if (meta.page < totalPages) fetchSessions(meta.page + 1, statusFilter);
+    if (meta.page < totalPages) fetchSessions(meta.page + 1, statusFilter, kindFilter);
   };
 
   const totalPages = Math.ceil(meta.total / meta.pageSize);
@@ -271,6 +303,17 @@ export function SessionTable({ taskId }: SessionTableProps) {
                 {s.replace('_', ' ')}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={kindFilter} onValueChange={handleKindChange}>
+          <SelectTrigger className="w-[160px] border-white/[0.08] bg-white/[0.04]">
+            <SelectValue placeholder="Filter by kind" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All kinds</SelectItem>
+            <SelectItem value="conversation">Conversations</SelectItem>
+            <SelectItem value="execution">Executions</SelectItem>
           </SelectContent>
         </Select>
 
@@ -301,6 +344,9 @@ export function SessionTable({ taskId }: SessionTableProps) {
               <TableHead className="w-[130px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
                 Status
               </TableHead>
+              <TableHead className="w-[70px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                Kind
+              </TableHead>
               <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
                 Agent
               </TableHead>
@@ -324,7 +370,7 @@ export function SessionTable({ taskId }: SessionTableProps) {
           <TableBody>
             {!isLoading && data.length === 0 ? (
               <TableRow>
-                <TableHead colSpan={8} className="h-24 text-center">
+                <TableHead colSpan={9} className="h-24 text-center">
                   No sessions found.
                 </TableHead>
               </TableRow>
@@ -332,7 +378,7 @@ export function SessionTable({ taskId }: SessionTableProps) {
               <>
                 {virtualItems[0]?.start > 0 && (
                   <tr>
-                    <td colSpan={8} style={{ height: virtualItems[0].start }} />
+                    <td colSpan={9} style={{ height: virtualItems[0].start }} />
                   </tr>
                 )}
                 {virtualItems.map((virtualRow) => (
@@ -341,7 +387,7 @@ export function SessionTable({ taskId }: SessionTableProps) {
                 {virtualItems.length > 0 && (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       style={{
                         height: virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0),
                       }}

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { createTerminalToken } from '@/terminal/auth';
 import { db } from '@/lib/db';
-import { executions, sessions, agents, tasks } from '@/lib/db/schema';
+import { executions, sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { terminalJwtSecret } from '@/lib/config';
 import { NotFoundError, ValidationError } from '@/lib/errors';
@@ -41,13 +41,16 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     const [row] = await db
       .select({
         sessionRef: sessions.sessionRef,
+        sessionProjectId: sessions.projectId,
         agentSlug: agents.slug,
         taskInputContext: tasks.inputContext,
+        projectRootPath: projects.rootPath,
         status: sessions.status,
       })
       .from(sessions)
       .innerJoin(agents, eq(agents.id, sessions.agentId))
-      .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+      .leftJoin(tasks, eq(tasks.id, sessions.taskId))
+      .leftJoin(projects, eq(projects.id, sessions.projectId))
       .where(eq(sessions.id, sessionId))
       .limit(1);
 
@@ -56,7 +59,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     }
 
     const inputContext = row.taskInputContext as TaskInputContext | null;
-    const cwd = inputContext?.workingDir ?? process.env.HOME ?? '/tmp';
+    const cwd = inputContext?.workingDir ?? row.projectRootPath ?? process.env.HOME ?? '/tmp';
     const hint = buildResumeHint(row.agentSlug, row.sessionRef);
 
     const token = createTerminalToken(

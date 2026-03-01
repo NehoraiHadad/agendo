@@ -11,6 +11,7 @@ interface SessionInfoPanelProps {
   stream: UseSessionStreamReturn;
   agentName: string;
   agentSlug: string;
+  projectName?: string;
 }
 
 function formatTimestamp(date: Date | null | undefined): string {
@@ -109,7 +110,13 @@ function getLatestRateLimitEvent(events: AgendoEvent[]) {
   return rlEvents.at(-1) ?? null;
 }
 
-export function SessionInfoPanel({ session, stream, agentName, agentSlug }: SessionInfoPanelProps) {
+export function SessionInfoPanel({
+  session,
+  stream,
+  agentName,
+  agentSlug,
+  projectName,
+}: SessionInfoPanelProps) {
   const initEvent = getLatestInitEvent(stream.events);
   const mcpServers = initEvent?.mcpServers ?? [];
   const model = initEvent?.model ?? session.model;
@@ -140,6 +147,20 @@ export function SessionInfoPanel({ session, stream, agentName, agentSlug }: Sess
               {session.status}
             </Badge>
           </div>
+          <div>
+            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Kind</p>
+            <Badge variant="outline" className="mt-1 text-[10px]">
+              {session.kind === 'conversation' ? 'Conversation' : 'Execution'}
+            </Badge>
+          </div>
+          {projectName && (
+            <div>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+                Project
+              </p>
+              <p className="mt-0.5 text-sm">{projectName}</p>
+            </div>
+          )}
           {model && (
             <div>
               <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Model</p>

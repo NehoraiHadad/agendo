@@ -41,9 +41,11 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   const setNeedsAttention = useWorkspaceStore((s) => s.setNeedsAttention);
   const setPanelStatus = useWorkspaceStore((s) => s.setPanelStatus);
   const setGridCols = useWorkspaceStore((s) => s.setGridCols);
+  const setPanelHeight = useWorkspaceStore((s) => s.setPanelHeight);
   const persistLayout = useWorkspaceStore((s) => s.persistLayout);
 
   const panels = useWorkspaceStore((s) => s.panels);
+  const panelHeights = useWorkspaceStore((s) => s.panelHeights);
   const gridCols = useWorkspaceStore((s) => s.gridCols);
   const expandedPanelId = useWorkspaceStore((s) => s.expandedPanelId);
   const focusedPanelId = useWorkspaceStore((s) => s.focusedPanelId);
@@ -80,7 +82,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   // Debounced layout persist (500ms)
   const debouncedPersist = useDebounce(persistLayout, 500);
 
-  // Persist layout whenever panels or gridCols change (after initial hydration)
+  // Persist layout whenever panels, gridCols, or panelHeights change (after initial hydration)
   const isFirstRenderRef = useRef(true);
   useEffect(() => {
     if (isFirstRenderRef.current) {
@@ -88,7 +90,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
       return;
     }
     debouncedPersist();
-  }, [panels, gridCols, debouncedPersist]);
+  }, [panels, gridCols, panelHeights, debouncedPersist]);
 
   // Count panels needing attention for the page title
   const attentionCount = Object.values(panels).filter((p) => p.needsAttention).length;
@@ -146,7 +148,7 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
   const expandedStream = expandedPanelId ? streams.get(expandedPanelId) : null;
 
   return (
-    <div className="flex flex-col h-full min-h-0 gap-4">
+    <div className="flex flex-col gap-4">
       {/* ------------------------------------------------------------------ */}
       {/* Workspace toolbar                                                    */}
       {/* ------------------------------------------------------------------ */}
@@ -187,42 +189,45 @@ export function WorkspaceClient({ workspace }: WorkspaceClientProps) {
       {/* ------------------------------------------------------------------ */}
       {/* Main grid                                                            */}
       {/* ------------------------------------------------------------------ */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {/* Mobile: always single column. Desktop: use gridCols setting */}
-        <div
-          className="grid gap-3 pb-4"
-          style={{
-            gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-          }}
-        >
-          {/* Session panels */}
-          {panelList.map((panel) => {
-            const stream = streams.get(panel.sessionId) ?? {
-              events: [],
-              sessionStatus: null,
-              isConnected: false,
-              error: null,
-            };
-            const sessionTitle = sessionTitles[panel.sessionId] ?? null;
+      {/* Responsive grid: mobile=1col, desktop=dynamic cols.
+          Each panel manages its own height via the resize handle. */}
+      <style>{`
+        @media (min-width: 640px) {
+          [data-workspace-grid] {
+            grid-template-columns: repeat(${gridCols}, minmax(0, 1fr));
+          }
+        }
+      `}</style>
+      <div data-workspace-grid className="grid gap-3 items-start grid-cols-1">
+        {/* Session panels */}
+        {panelList.map((panel) => {
+          const stream = streams.get(panel.sessionId) ?? {
+            events: [],
+            sessionStatus: null,
+            isConnected: false,
+            error: null,
+          };
+          const sessionTitle = sessionTitles[panel.sessionId] ?? null;
 
-            return (
-              <WorkspacePanel
-                key={panel.sessionId}
-                sessionId={panel.sessionId}
-                sessionTitle={sessionTitle}
-                stream={stream}
-                needsAttention={panel.needsAttention}
-                isFocused={focusedPanelId === panel.sessionId}
-                onFocus={() => handleFocusPanel(panel.sessionId)}
-                onExpand={() => setExpanded(panel.sessionId)}
-                onRemove={() => handleRemovePanel(panel.sessionId)}
-              />
-            );
-          })}
+          return (
+            <WorkspacePanel
+              key={panel.sessionId}
+              sessionId={panel.sessionId}
+              sessionTitle={sessionTitle}
+              stream={stream}
+              needsAttention={panel.needsAttention}
+              isFocused={focusedPanelId === panel.sessionId}
+              panelHeight={panelHeights[panel.sessionId]}
+              onHeightChange={(h) => setPanelHeight(panel.sessionId, h)}
+              onFocus={() => handleFocusPanel(panel.sessionId)}
+              onExpand={() => setExpanded(panel.sessionId)}
+              onRemove={() => handleRemovePanel(panel.sessionId)}
+            />
+          );
+        })}
 
-          {/* Add panel placeholder (only if under the cap) */}
-          {panelList.length < 6 && <WorkspaceAddPanel />}
-        </div>
+        {/* Add panel placeholder (only if under the cap) */}
+        {panelList.length < 6 && <WorkspaceAddPanel />}
       </div>
 
       {/* ------------------------------------------------------------------ */}

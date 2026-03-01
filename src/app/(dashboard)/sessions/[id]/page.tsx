@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
-import { sessions, agents, agentCapabilities, tasks } from '@/lib/db/schema';
+import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { SessionDetailWrapper } from './session-detail-wrapper';
 
@@ -17,17 +17,20 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       agentBinaryPath: agents.binaryPath,
       capLabel: agentCapabilities.label,
       taskTitle: tasks.title,
+      projectName: projects.name,
     })
     .from(sessions)
     .innerJoin(agents, eq(sessions.agentId, agents.id))
     .innerJoin(agentCapabilities, eq(sessions.capabilityId, agentCapabilities.id))
-    .innerJoin(tasks, eq(sessions.taskId, tasks.id))
+    .leftJoin(tasks, eq(sessions.taskId, tasks.id))
+    .leftJoin(projects, eq(projects.id, sessions.projectId))
     .where(eq(sessions.id, id))
     .limit(1);
 
   if (rows.length === 0) notFound();
 
-  const { session, agentName, agentSlug, agentBinaryPath, capLabel, taskTitle } = rows[0];
+  const { session, agentName, agentSlug, agentBinaryPath, capLabel, taskTitle, projectName } =
+    rows[0];
 
   return (
     <SessionDetailWrapper
@@ -36,7 +39,8 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       agentSlug={agentSlug}
       agentBinaryPath={agentBinaryPath}
       capLabel={capLabel}
-      taskTitle={taskTitle}
+      taskTitle={taskTitle ?? ''}
+      projectName={projectName ?? ''}
     />
   );
 }

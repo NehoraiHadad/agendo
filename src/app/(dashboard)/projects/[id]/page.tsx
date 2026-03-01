@@ -7,7 +7,10 @@ import { Button } from '@/components/ui/button';
 import { ProjectHubClient } from '@/components/projects/project-hub-client';
 import { getProject } from '@/lib/services/project-service';
 import { listTasksByStatus } from '@/lib/services/task-service';
-import { listSessionsByProject } from '@/lib/services/session-service';
+import {
+  listConversationsByProject,
+  listExecutionSessionsByProject,
+} from '@/lib/services/session-service';
 import { listAgents } from '@/lib/services/agent-service';
 import { NotFoundError } from '@/lib/errors';
 
@@ -22,9 +25,10 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     throw err;
   }
 
-  const [{ tasks: openTasks }, recentSessions, allAgents] = await Promise.all([
+  const [{ tasks: openTasks }, conversations, executionSessions, allAgents] = await Promise.all([
     listTasksByStatus({ projectId: id, limit: 10 }),
-    listSessionsByProject(id, 5),
+    listConversationsByProject(id, 20),
+    listExecutionSessionsByProject(id, 20),
     listAgents({ group: 'ai' }),
   ]);
 
@@ -53,7 +57,8 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
 
       <ProjectHubClient
         project={project}
-        recentSessions={recentSessions}
+        conversations={conversations}
+        executionSessions={executionSessions}
         openTasks={openTasks}
         agents={activeAgents}
       />

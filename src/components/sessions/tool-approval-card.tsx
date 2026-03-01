@@ -82,6 +82,7 @@ function getDangerConfig(level: number): DangerConfig {
 
 export interface ToolApprovalCardProps {
   sessionId: string;
+  sessionStatus?: string | null;
   approvalId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -93,6 +94,7 @@ type Decision = 'allow' | 'deny' | 'allow-session';
 
 export function ToolApprovalCard({
   sessionId,
+  sessionStatus: _sessionStatus,
   approvalId,
   toolName,
   toolInput,
@@ -120,7 +122,15 @@ export function ToolApprovalCard({
     return full.length > 300 ? full.slice(0, 300) + '\n…' : full;
   })();
 
-  async function handleDecision(decision: Decision, updatedInput?: Record<string, unknown>) {
+  async function handleDecision(
+    decision: Decision,
+    updatedInput?: Record<string, unknown>,
+    extra?: {
+      postApprovalMode?: string;
+      postApprovalCompact?: boolean;
+      clearContextRestart?: boolean;
+    },
+  ) {
     setError(null);
     setPending(decision);
 
@@ -134,6 +144,9 @@ export function ToolApprovalCard({
           toolName,
           decision,
           ...(updatedInput !== undefined ? { updatedInput } : {}),
+          ...(extra?.postApprovalMode ? { postApprovalMode: extra.postApprovalMode } : {}),
+          ...(extra?.postApprovalCompact ? { postApprovalCompact: true } : {}),
+          ...(extra?.clearContextRestart ? { clearContextRestart: true } : {}),
         }),
       });
 
@@ -143,7 +156,11 @@ export function ToolApprovalCard({
       }
 
       setDecided(true);
-      onResolved();
+      // Interactive tools (ExitPlanMode, AskUserQuestion) show their own
+      // "resolved" compact view. Non-interactive tools are removed from the DOM.
+      if (!INTERACTIVE_TOOL_NAMES.has(toolName)) {
+        onResolved();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
       setPending(null);
@@ -170,11 +187,16 @@ export function ToolApprovalCard({
     return (
       <InteractiveTool
         toolName={toolName}
+        sessionId={sessionId}
         input={toolInput}
         isAnswered={decided}
         respond={async (payload) => {
           if (payload.kind !== 'approval') return;
-          await handleDecision(payload.decision);
+          await handleDecision(payload.decision, payload.updatedInput, {
+            postApprovalMode: payload.postApprovalMode,
+            postApprovalCompact: payload.postApprovalCompact,
+            clearContextRestart: payload.clearContextRestart,
+          });
         }}
         onResolved={onResolved}
       />
