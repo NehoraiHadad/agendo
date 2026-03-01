@@ -39,7 +39,7 @@ import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
-import { mapClaudeJsonToEvents } from '@/lib/worker/claude-event-mapper';
+import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
 
 /**
  * Derive a log file path for a session.
