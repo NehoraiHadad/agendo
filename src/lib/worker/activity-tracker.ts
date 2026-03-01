@@ -150,7 +150,7 @@ export class ActivityTracker {
     }, 30_000);
   }
 
-  stopHeartbeat(): void {
+  private stopHeartbeat(): void {
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -196,7 +196,7 @@ export class ActivityTracker {
     }, 60_000);
   }
 
-  stopMcpHealthCheck(): void {
+  private stopMcpHealthCheck(): void {
     if (this.mcpHealthTimer !== null) {
       clearInterval(this.mcpHealthTimer);
       this.mcpHealthTimer = null;

@@ -15,10 +15,10 @@ import { ExecutionHeartbeat } from '@/lib/worker/heartbeat';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import type { SpawnOpts } from '@/lib/worker/adapters/types';
 import type { Execution, ExecutionStatus } from '@/lib/types';
+import { SIGKILL_DELAY_MS } from '@/lib/worker/session-control-handlers';
 
 // --- Constants ---
 
-const SIGKILL_DELAY_MS = 5_000;
 const RESULT_EXIT_GRACE_MS = 10_000; // max wait after result event before force-killing (GitHub #25629)
 const DEFAULT_TIMEOUT_SEC = 300;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
