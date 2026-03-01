@@ -866,6 +866,8 @@ export function SessionChatView({
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
   const msgIdRef = useRef(0);
+  const currentUserMsgCountRef = useRef(0); // always-current count from stream
+  const baseUserMsgCountRef = useRef(0); // count at time of last send
   // Accumulates base64 image data URLs in send order so we can re-hydrate
   // user:message display items (which only carry hasImage:boolean, not the URL).
   const imageUrlsQueueRef = useRef<string[]>([]);
@@ -882,6 +884,7 @@ export function SessionChatView({
 
   const handleSent = useCallback((text: string, imageDataUrl?: string) => {
     if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
+    baseUserMsgCountRef.current = currentUserMsgCountRef.current; // capture baseline
     setOptimisticMessages((prev) => [
       ...prev,
       { id: String(++msgIdRef.current), text, imageDataUrl },
@@ -892,10 +895,15 @@ export function SessionChatView({
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
   }, []);
 
-  // Clear optimistic messages once the real user:message events arrive in stream
+  // Keep currentUserMsgCountRef in sync with the stream
+  useEffect(() => {
+    currentUserMsgCountRef.current = stream.events.filter((e) => e.type === 'user:message').length;
+  }, [stream.events]);
+
+  // Clear optimistic messages once new user:message events arrive beyond the baseline
   useEffect(() => {
     const userMessageCount = stream.events.filter((e) => e.type === 'user:message').length;
-    if (userMessageCount > 0 && optimisticMessages.length > 0) {
+    if (optimisticMessages.length > 0 && userMessageCount > baseUserMsgCountRef.current) {
       setOptimisticMessages([]);
     }
   }, [stream.events, optimisticMessages.length]);
@@ -915,10 +923,9 @@ export function SessionChatView({
     isNearBottomRef.current = true;
   }, []);
 
-  // Window scroll tracking for page-scroll mode (non-compact, non-fullscreen, or compact+autoGrow)
+  // Window scroll tracking for compact+autoGrow mode only
   useEffect(() => {
-    if (fullscreen) return;
-    if (compact && !autoGrow) return;
+    if (!compact || !autoGrow) return;
     const onWindowScroll = () => {
       const distFromBottom =
         document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
@@ -1030,7 +1037,7 @@ export function SessionChatView({
           ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
           : compact && !autoGrow
             ? 'flex flex-col flex-1 min-h-0'
-            : 'flex flex-col rounded-xl border border-white/[0.07]'
+            : 'flex flex-col flex-1 min-h-0 rounded-xl border border-white/[0.07]'
       }
     >
       {/* Header — hidden in compact mode (workspace panel has its own header) */}
@@ -1050,8 +1057,8 @@ export function SessionChatView({
 
       {/* Chat area */}
       <div
-        ref={(compact && !autoGrow) || fullscreen ? scrollContainerRef : undefined}
-        onScroll={(compact && !autoGrow) || fullscreen ? handleScroll : undefined}
+        ref={!(compact && autoGrow) ? scrollContainerRef : undefined}
+        onScroll={!(compact && autoGrow) ? handleScroll : undefined}
         className={
           fullscreen
             ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
@@ -1059,7 +1066,7 @@ export function SessionChatView({
               ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
               : compact && autoGrow
                 ? 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
-                : 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+                : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
         }
         role="log"
         aria-live="polite"
@@ -1117,7 +1124,7 @@ export function SessionChatView({
           className={
             fullscreen
               ? 'shrink-0'
-              : 'sticky bottom-0 rounded-b-xl bg-[oklch(0.085_0_0)]/95 backdrop-blur-sm border-t border-white/[0.05]'
+              : 'shrink-0 rounded-b-xl bg-[oklch(0.085_0_0)]/95 backdrop-blur-sm border-t border-white/[0.05]'
           }
         >
           {/* Stop button — soft interrupt, only when agent is actively running */}
