@@ -36,6 +36,36 @@ export type ConfigScope = 'global' | { projectPath: string };
 /** File extensions allowed in the config tree. */
 const ALLOWED_EXTENSIONS = new Set(['.md', '.json', '.yaml', '.yml']);
 
+/**
+ * Directory names that contain Claude Code internal state rather than
+ * user-editable configuration. These are excluded from the tree entirely
+ * to keep the editor focused and to avoid inflated token counts.
+ *
+ * What IS included: root-level files, skills/, commands/, agents/, hooks/
+ * What is NOT included: caches, logs, runtime state, marketplace plugins,
+ *   per-project auto-generated memory, task/team state from agendo, etc.
+ */
+const EXCLUDED_DIRS = new Set([
+  'backups', // backup copies of config files
+  'cache', // internal caches
+  'debug', // debug logs
+  'file-history', // file edit history
+  'ide', // IDE integration state
+  'mcp-needs-auth-cache', // MCP auth cache
+  'paste-cache', // clipboard history
+  'plugins', // marketplace plugins (installed separately, not user config)
+  'projects', // per-project auto-generated memory and conversation state
+  'plans', // planning files (agendo / internal)
+  'scripts', // utility scripts, not context-loaded
+  'session-env', // per-session environment snapshots
+  'shell-snapshots', // shell state snapshots
+  'statsig', // telemetry / feature flags
+  'tasks', // agendo task state
+  'teams', // agendo team state
+  'telemetry', // telemetry data
+  'todos', // claude code todo state
+]);
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -122,12 +152,27 @@ function sumNodeTokens(nodes: TreeNode[]): number {
 }
 
 /**
- * Returns true when the file's immediate parent directory is `skills` or `commands`.
- * These files only load their YAML frontmatter on every message; the body loads on invoke.
+ * Returns true when any ancestor directory of the file is `skills` or `commands`.
+ *
+ * This handles:
+ * - commands/amend.md (parent = commands) ✓
+ * - skills/architect-mind/SKILL.md (ancestor = skills) ✓
+ * - skills/aws-cli-expert/references/guide.md (ancestor = skills) ✓
+ *
+ * For these files only the YAML frontmatter is shown in the skills/commands list
+ * per message; the full body loads only when the skill/command is invoked.
+ * Reference files have no frontmatter, so their always-loaded portion is ~0 tokens.
  */
 function isInvokeOnlyFile(filePath: string): boolean {
-  const parentName = path.basename(path.dirname(filePath));
-  return parentName === 'skills' || parentName === 'commands';
+  return filePath.split(path.sep).some((part) => part === 'skills' || part === 'commands');
+}
+
+/**
+ * Returns true for files that are never injected into Claude's context window.
+ * README.md files are documentation shipped with skills/plugins, not user config.
+ */
+function isNonContextFile(fileName: string): boolean {
+  return fileName === 'README.md';
 }
 
 /**
@@ -165,6 +210,7 @@ function buildTree(dirPath: string): TreeNode[] {
     const fullPath = path.join(dirPath, entry.name);
 
     if (entry.isDirectory()) {
+      if (EXCLUDED_DIRS.has(entry.name)) continue; // internal state — not user config
       const children = buildTree(fullPath);
       const tokenEstimate = sumNodeTokens(children);
       // Include directory nodes even if currently empty (the directory itself
@@ -184,8 +230,8 @@ function buildTree(dirPath: string): TreeNode[] {
         // Only .md files are injected as raw text into Claude's context window.
         // JSON/YAML files are configuration data (settings, keybindings, internal
         // state) — they are NOT loaded as text into the model, so they have no
-        // token cost worth reporting.
-        if (ext === '.md') {
+        // token cost worth reporting. README.md files are documentation, not config.
+        if (ext === '.md' && !isNonContextFile(entry.name)) {
           try {
             const content = fs.readFileSync(fullPath, 'utf-8');
             if (isInvokeOnlyFile(fullPath)) {
