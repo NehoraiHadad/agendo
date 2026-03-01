@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
@@ -14,7 +13,6 @@ import type {
   SessionStatus,
 } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
-import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
 import { capturePlanFilePath, readPlanFromFile } from '@/lib/worker/session-plan-utils';
@@ -39,6 +37,7 @@ import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
+import { handleSessionExit } from '@/lib/worker/session-exit-handler';
 import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
 
 /**
@@ -807,102 +806,32 @@ export class SessionProcess {
     if (this.exitHandled) return;
     this.exitHandled = true;
 
-    const totalSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
-    console.log(
-      `[session-process] exited session ${this.session.id} code=${exitCode ?? 'null'} status=${this.status} total=${totalSec}s`,
-    );
-    // Resolve the slot future in case the process exits before ever reaching
-    // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
-    this.slotReleaseFuture.resolve();
-
-    this.activityTracker.stopAllTimers();
-    // Clear any pending SIGKILL escalation timers — the process has already exited.
-    for (const t of this.sigkillTimers) {
-      clearTimeout(t);
-    }
-    this.sigkillTimers = [];
-    // Drain any approval promises so blocked adapters unblock immediately.
-    this.approvalHandler.drain('deny');
-    // Stop team inbox monitoring.
-    this.teamManager.stop();
-    // Unsubscribe from the control channel to release the pg pool connection.
-    // Null it out immediately to prevent any subsequent re-entry from releasing twice.
-    this.unsubscribeControl?.();
-    this.unsubscribeControl = null;
-
-    // Determine final session status based on exit code.
-    // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
-    // Clean exit (0) = agent finished normally → idle (resumable).
-    // terminateKilled = graceful worker shutdown → idle (auto-resumable on next message).
-    // interruptKilled / idleTimeoutKilled → idle (resumable).
-    // Anything else → ended (crash / unsupported command).
-    if (this.status === 'active' || this.status === 'awaiting_input') {
-      if (this.cancelKilled) {
-        // Cancel route may have already set status='ended' in DB, but if the process
-        // died before the cancel route could update, status may still be 'active'.
-        // Explicitly transition to 'ended' to cover both cases.
-        await this.transitionTo('ended');
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      } else if (
-        exitCode === 0 ||
-        this.activityTracker.idleTimeoutKilled ||
-        this.activityTracker.interruptKilled ||
-        this.terminateKilled
-      ) {
-        await this.transitionTo('idle');
-      } else {
-        await this.emitEvent({
-          type: 'system:error',
-          message:
-            `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
-            `This may be caused by an unsupported slash command (/mcp, /permissions) or a Claude CLI crash.`,
-        });
-        await this.transitionTo('ended');
-        // Kill the companion terminal tmux session — session is no longer resumable.
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      }
-    }
-
-    if (this.status === 'ended') {
-      await db
-        .update(sessions)
-        .set({ endedAt: new Date() })
-        .where(eq(sessions.id, this.session.id));
-    }
-
-    // Mode-change restart: re-enqueue immediately so the session cold-resumes
-    // with the updated permissionMode (already written to DB by the PATCH endpoint).
-    // The session status is now 'idle', so the next session-runner job can claim it.
-    if (this.modeChangeRestart && this.sessionRef) {
-      enqueueSession({ sessionId: this.session.id, resumeRef: this.sessionRef }).catch(
-        (err: unknown) => {
-          console.error(
-            `[session-process] Failed to re-enqueue session ${this.session.id} after mode change:`,
-            err,
-          );
-        },
-      );
-    }
-
-    // Clear-context restart (ExitPlanMode option 1): re-enqueue WITHOUT resumeRef
-    // so the session-runner calls adapter.spawn() (not resume) → fresh conversation.
-    // DB was already updated (sessionRef=null, new initialPrompt, new permissionMode)
-    // in the tool-approval handler before killing the process.
-    if (this.clearContextRestart) {
-      enqueueSession({ sessionId: this.session.id }).catch((err: unknown) => {
-        console.error(
-          `[session-process] Failed to re-enqueue session ${this.session.id} after clear-context restart:`,
-          err,
-        );
-      });
-    }
-
-    if (this.logWriter) {
-      await this.logWriter.close();
-      this.logWriter = null;
-    }
-
-    this.exitFuture.resolve(exitCode);
+    await handleSessionExit(exitCode, {
+      sessionId: this.session.id,
+      status: this.status,
+      sessionStartTime: this.sessionStartTime,
+      cancelKilled: this.cancelKilled,
+      terminateKilled: this.terminateKilled,
+      modeChangeRestart: this.modeChangeRestart,
+      clearContextRestart: this.clearContextRestart,
+      sessionRef: this.sessionRef,
+      activityTracker: this.activityTracker,
+      approvalHandler: this.approvalHandler,
+      teamManager: this.teamManager,
+      logWriter: this.logWriter,
+      sigkillTimers: this.sigkillTimers,
+      slotReleaseFuture: this.slotReleaseFuture,
+      exitFuture: this.exitFuture,
+      unsubscribeControl: this.unsubscribeControl,
+      clearUnsubscribeControl: () => {
+        this.unsubscribeControl = null;
+      },
+      emitEvent: (p) => this.emitEvent(p),
+      transitionTo: (s) => this.transitionTo(s),
+      clearLogWriter: () => {
+        this.logWriter = null;
+      },
+    });
   }
 
   // ---------------------------------------------------------------------------
