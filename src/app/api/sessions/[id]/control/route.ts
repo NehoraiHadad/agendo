@@ -16,8 +16,12 @@ import type { AgendoControl } from '@/lib/realtime/events';
  * Generic control channel endpoint. Publishes any AgendoControl payload to
  * the per-session PG NOTIFY channel. The session-process listener handles it.
  *
- * Special case: clearContextRestart on idle/ended sessions is handled directly
- * (no active worker process needed) — updates DB and re-enqueues.
+ * Special cases on idle/ended sessions (no active worker process):
+ *   - allow: update permissionMode + initialPrompt, resume with existing sessionRef
+ *   - clearContextRestart: clear sessionRef so re-enqueue spawns fresh
+ *
+ * Both paths use the plan file content as the initialPrompt so Claude is
+ * explicitly told to implement the plan on the next run.
  */
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
@@ -38,24 +42,23 @@ export const POST = withErrorBoundary(
     if (body.type === 'tool-approval') {
       const session = await getSession(id);
       if (session.status === 'idle' || session.status === 'ended') {
+        // Read plan file content — shared by both allow and clearContextRestart.
+        let planContent: string | null = null;
+        if (session.planFilePath) {
+          try {
+            planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
+          } catch {
+            planContent = null; // file may have been deleted
+          }
+        }
+        const initialPrompt = planContent
+          ? `Implement the following plan:\n\n${planContent}`
+          : 'Continue implementing the plan from the previous conversation.';
+
         if (body.clearContextRestart) {
           // ── Option: clear context + restart fresh ──────────────────────
-          // Deny the tool, reset sessionRef so re-enqueue spawns fresh, and
-          // use the plan content as the new initialPrompt.
-          let planContent: string | null = null;
-          if (session.planFilePath) {
-            try {
-              planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
-            } catch {
-              planContent = null; // file may have been deleted
-            }
-          }
-
+          // Clear sessionRef so the worker spawns a new Claude process (no --resume).
           const newMode = body.postApprovalMode ?? 'acceptEdits';
-          const initialPrompt = planContent
-            ? `Implement the following plan:\n\n${planContent}`
-            : 'Continue implementing the plan from the previous conversation.';
-
           await db
             .update(sessions)
             .set({ sessionRef: null, initialPrompt, permissionMode: newMode })
@@ -68,30 +71,24 @@ export const POST = withErrorBoundary(
 
         if (body.decision === 'allow') {
           // ── Option: allow in-place (keep context, resume with --resume) ─
-          // Store the approval in DB, update permissionMode, then re-enqueue.
-          // When session-process.start() runs, it reads pendingPlanApproval and
-          // sets up an auto-resolver so Claude's re-issued ExitPlanMode is
-          // approved immediately without another user click.
+          // Keep sessionRef intact so the worker resumes the existing Claude
+          // conversation. ExitPlanMode is stripped from the transcript by the
+          // CLI on resume (NO$() removes unresolved tool_uses), so it will NOT
+          // re-fire. Claude simply continues from where it left off with the
+          // initialPrompt as the first user message.
           const newMode = body.postApprovalMode ?? session.permissionMode;
           await db
             .update(sessions)
-            .set({
-              permissionMode: newMode,
-              pendingPlanApproval: {
-                decision: 'allow',
-                postApprovalMode: body.postApprovalMode,
-                postApprovalCompact: body.postApprovalCompact,
-              },
-            })
+            .set({ permissionMode: newMode, initialPrompt })
             .where(eq(sessions.id, id));
 
-          await enqueueSession({ sessionId: id });
+          await enqueueSession({ sessionId: id, resumeRef: session.sessionRef ?? undefined });
 
           return NextResponse.json({ data: { resuming: true } }, { status: 202 });
         }
 
-        // deny on idle: re-enqueue so Claude can receive the denial
-        // (the user likely clicked "Revise" which sends a message separately)
+        // deny on idle: user clicked "Revise" — they will send a message via
+        // the /messages route which handles cold-resume independently.
       }
       // Session is active — fall through to PG NOTIFY relay for the worker.
     }

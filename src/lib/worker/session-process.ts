@@ -252,34 +252,6 @@ export class SessionProcess {
     // Persist the log file path so the frontend can fetch it later.
     await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
 
-    // Read and consume pendingPlanApproval from DB. This is set by the control route
-    // when the user approves ExitPlanMode on an idle session (in-place resume path).
-    // We clear it before spawning so it isn't re-applied on subsequent restarts.
-    const [planApprovalRow] = await db
-      .select({ pendingPlanApproval: sessions.pendingPlanApproval })
-      .from(sessions)
-      .where(eq(sessions.id, this.session.id))
-      .limit(1);
-    const pendingPlanApproval = planApprovalRow?.pendingPlanApproval ?? null;
-    if (pendingPlanApproval) {
-      await db
-        .update(sessions)
-        .set({ pendingPlanApproval: null })
-        .where(eq(sessions.id, this.session.id));
-      this.approvalHandler.setAutoApproval({
-        postApprovalCompact: pendingPlanApproval.postApprovalCompact,
-        onApplied: () => {
-          if (pendingPlanApproval.postApprovalCompact) {
-            setTimeout(() => {
-              this.pushMessage('/compact').catch((err: unknown) => {
-                console.warn('[session-process] post-approval compact failed:', err);
-              });
-            }, 500);
-          }
-        },
-      });
-    }
-
     // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
     this.unsubscribeControl = await subscribe(
       channelName('agendo_control', this.session.id),
