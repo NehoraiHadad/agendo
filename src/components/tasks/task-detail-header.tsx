@@ -1,8 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -69,6 +74,17 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(task.description ?? '');
 
+  const {
+    saveDraft: saveTitleDraft,
+    getDraft: getTitleDraft,
+    clearDraft: clearTitleDraft,
+  } = useDraft(`draft:task:${task.id}:title`);
+  const {
+    saveDraft: saveDescDraft,
+    getDraft: getDescDraft,
+    clearDraft: clearDescDraft,
+  } = useDraft(`draft:task:${task.id}:desc`);
+
   const [warnOpen, setWarnOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
@@ -102,6 +118,7 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
         toast.success('Title updated');
       }
     }
+    clearTitleDraft();
     setEditingTitle(false);
   };
 
@@ -111,6 +128,7 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
     if (result.success) {
       updateTask(result.data as Task);
     }
+    clearDescDraft();
     setEditingDesc(false);
   };
 
@@ -123,118 +141,134 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
 
   return (
     <>
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-2">
-        {editingTitle ? (
-          <Input
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start gap-2">
+          {editingTitle ? (
+            <Input
+              autoFocus
+              value={titleDraft}
+              onChange={(e) => {
+                setTitleDraft(e.target.value);
+                saveTitleDraft(e.target.value);
+              }}
+              onBlur={saveTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void saveTitle();
+                if (e.key === 'Escape') {
+                  clearTitleDraft();
+                  setEditingTitle(false);
+                }
+              }}
+              className="flex-1 h-auto py-0.5 text-base font-semibold"
+            />
+          ) : (
+            <h2
+              className="flex-1 text-base font-semibold leading-snug cursor-text hover:underline"
+              onClick={() => {
+                setTitleDraft(getTitleDraft() ?? task.title);
+                setEditingTitle(true);
+              }}
+            >
+              {task.title}
+            </h2>
+          )}
+
+          <Select value={String(task.priority)} onValueChange={handlePriorityChange}>
+            <SelectTrigger className="w-auto shrink-0 h-auto border-none bg-transparent px-1 py-0.5 text-xs font-mono font-medium focus:ring-0 shadow-none">
+              <SelectValue>
+                <span className={PRIORITY_COLORS[task.priority] ?? 'text-zinc-400'}>
+                  P{task.priority}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {PRIORITY_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  <span className={PRIORITY_COLORS[Number(opt.value)] ?? 'text-zinc-400'}>
+                    {opt.label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {editingDesc ? (
+          <Textarea
             autoFocus
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={saveTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveTitle();
-              if (e.key === 'Escape') setEditingTitle(false);
+            value={descDraft}
+            onChange={(e) => {
+              setDescDraft(e.target.value);
+              saveDescDraft(e.target.value);
             }}
-            className="flex-1 h-auto py-0.5 text-base font-semibold"
+            onBlur={saveDesc}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                clearDescDraft();
+                setEditingDesc(false);
+              }
+            }}
+            className="text-sm min-h-[72px] resize-none"
           />
-        ) : (
-          <h2
-            className="flex-1 text-base font-semibold leading-snug cursor-text hover:underline"
-            onClick={() => { setTitleDraft(task.title); setEditingTitle(true); }}
+        ) : task.description ? (
+          <p
+            className="text-sm text-muted-foreground/70 leading-relaxed cursor-text"
+            onClick={() => {
+              setDescDraft(getDescDraft() ?? task.description ?? '');
+              setEditingDesc(true);
+            }}
           >
-            {task.title}
-          </h2>
+            {task.description}
+          </p>
+        ) : (
+          <button
+            className="text-sm text-muted-foreground/40 italic text-left"
+            onClick={() => {
+              setDescDraft(getDescDraft() ?? '');
+              setEditingDesc(true);
+            }}
+          >
+            Add description…
+          </button>
         )}
 
-        <Select
-          value={String(task.priority)}
-          onValueChange={handlePriorityChange}
-        >
-          <SelectTrigger className="w-auto shrink-0 h-auto border-none bg-transparent px-1 py-0.5 text-xs font-mono font-medium focus:ring-0 shadow-none">
-            <SelectValue>
-              <span className={PRIORITY_COLORS[task.priority] ?? 'text-zinc-400'}>
-                P{task.priority}
-              </span>
-            </SelectValue>
+        <Select value={task.status} onValueChange={handleStatusChange} disabled={isPending}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PRIORITY_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                <span className={PRIORITY_COLORS[Number(opt.value)] ?? 'text-zinc-400'}>
-                  {opt.label}
-                </span>
+            {BOARD_COLUMNS.map((status) => (
+              <SelectItem key={status} value={status}>
+                {STATUS_LABELS[status]}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      {editingDesc ? (
-        <Textarea
-          autoFocus
-          value={descDraft}
-          onChange={(e) => setDescDraft(e.target.value)}
-          onBlur={saveDesc}
-          onKeyDown={(e) => { if (e.key === 'Escape') setEditingDesc(false); }}
-          className="text-sm min-h-[72px] resize-none"
-        />
-      ) : task.description ? (
-        <p
-          className="text-sm text-muted-foreground/70 leading-relaxed cursor-text"
-          onClick={() => { setDescDraft(task.description ?? ''); setEditingDesc(true); }}
-        >
-          {task.description}
-        </p>
-      ) : (
-        <button
-          className="text-sm text-muted-foreground/40 italic text-left"
-          onClick={() => { setDescDraft(''); setEditingDesc(true); }}
-        >
-          Add description…
-        </button>
-      )}
-
-      <Select
-        value={task.status}
-        onValueChange={handleStatusChange}
-        disabled={isPending}
-      >
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {BOARD_COLUMNS.map((status) => (
-            <SelectItem key={status} value={status}>
-              {STATUS_LABELS[status]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-
-    <AlertDialog open={warnOpen} onOpenChange={setWarnOpen}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Open subtasks remaining</AlertDialogTitle>
-          <AlertDialogDescription>
-            {openSubtasks} subtask{openSubtasks !== 1 ? 's' : ''} still open. Mark this task as{' '}
-            {pendingStatus} anyway?
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => setPendingStatus(null)}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={async () => {
-              setWarnOpen(false);
-              if (pendingStatus) await doStatusChange(pendingStatus);
-              setPendingStatus(null);
-            }}
-          >
-            Mark as {pendingStatus}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      <AlertDialog open={warnOpen} onOpenChange={setWarnOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Open subtasks remaining</AlertDialogTitle>
+            <AlertDialogDescription>
+              {openSubtasks} subtask{openSubtasks !== 1 ? 's' : ''} still open. Mark this task as{' '}
+              {pendingStatus} anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingStatus(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setWarnOpen(false);
+                if (pendingStatus) await doStatusChange(pendingStatus);
+                setPendingStatus(null);
+              }}
+            >
+              Mark as {pendingStatus}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

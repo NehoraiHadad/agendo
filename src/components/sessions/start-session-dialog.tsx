@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
 import { Loader2, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,8 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
+
+  const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
 
   const fetchAgents = useCallback(
     async (signal: AbortSignal) => {
@@ -136,16 +139,22 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
 
     setSelectedAgentId(agentIdProp ?? '');
     setPromptCapId('');
-    setPromptText('');
     setError(null);
 
-    // fetchAgents and fetchTask are independent — run in parallel
-    void Promise.all([fetchAgents(signal), fetchTask(signal)]);
+    // If there's a saved draft, restore it and skip the task prefill
+    const saved = getDraft();
+    if (saved) {
+      setPromptText(saved);
+      void fetchAgents(signal);
+    } else {
+      setPromptText('');
+      void Promise.all([fetchAgents(signal), fetchTask(signal)]);
+    }
 
     return () => {
       controller.abort();
     };
-  }, [open, agentIdProp, fetchAgents, fetchTask]);
+  }, [open, agentIdProp, fetchAgents, fetchTask, getDraft]);
 
   useEffect(() => {
     if (!open || !activeAgentId) return;
@@ -217,6 +226,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           model: selectedModel || undefined,
         }),
       });
+      clearDraft();
       setOpen(false);
       router.push(`/sessions/${res.data.id}`);
     } catch (err) {
@@ -303,7 +313,10 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                 <Textarea
                   id="initial-prompt"
                   value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
+                  onChange={(e) => {
+                    setPromptText(e.target.value);
+                    saveDraft(e.target.value);
+                  }}
                   placeholder="Describe what you want the agent to do..."
                   className="min-h-[160px] resize-y"
                 />

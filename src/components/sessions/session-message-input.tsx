@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { Loader2, Send, Paperclip, X, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -271,6 +272,20 @@ export function SessionMessageInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session:${sessionId}`);
+
+  // Restore draft on mount (once per sessionId)
+  useEffect(() => {
+    const saved = getDraft();
+    if (saved) {
+      setMessage(saved);
+      requestAnimationFrame(() => {
+        if (textareaRef.current) autoGrow(textareaRef.current);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   const isAccepting =
     status === 'active' || status === 'awaiting_input' || status === 'idle' || status === 'ended';
 
@@ -384,6 +399,7 @@ export function SessionMessageInput({
         body: JSON.stringify(body),
       });
       setMessage('');
+      clearDraft();
       setPendingImage(null);
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -405,6 +421,7 @@ export function SessionMessageInput({
     const val = e.target.value;
     setMessage(val);
     autoGrow(e.target);
+    saveDraft(val);
     if (val.startsWith('/')) {
       setShowPicker(true);
       setShowModelPicker(false);

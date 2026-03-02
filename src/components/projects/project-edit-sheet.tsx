@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { Folder, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -76,6 +77,12 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     }
   }
 
+  const { saveDraft, getDraft, clearDraft } = useDraft(`draft:project:${project.id}`);
+
+  function saveCombinedDraft(nextName = name, nextDescription = description) {
+    saveDraft(JSON.stringify({ name: nextName, description: nextDescription }));
+  }
+
   function resetToProject() {
     setName(project.name);
     setRootPath(project.rootPath);
@@ -107,6 +114,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
         }),
       });
       onUpdated(res.data);
+      clearDraft();
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update project');
@@ -143,7 +151,26 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
   }
 
   return (
-    <Sheet open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetToProject(); }}>
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) {
+          const saved = getDraft();
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved) as { name?: string; description?: string };
+              if (parsed.name) setName(parsed.name);
+              if (parsed.description) setDescription(parsed.description);
+            } catch {
+              // ignore malformed draft
+            }
+          }
+        } else {
+          resetToProject();
+        }
+      }}
+    >
       <SheetTrigger asChild>
         <Button
           variant="ghost"
@@ -165,7 +192,10 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
             <Input
               id="edit-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                saveCombinedDraft(e.target.value);
+              }}
               required
             />
           </div>
@@ -204,18 +234,26 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                       No new projects found
                     </p>
                   ) : (
-                    <ul className="max-h-60 overflow-y-auto" onTouchMove={(e) => e.stopPropagation()}>
+                    <ul
+                      className="max-h-60 overflow-y-auto"
+                      onTouchMove={(e) => e.stopPropagation()}
+                    >
                       {suggestions.map((s) => (
                         <li key={s.path}>
                           <button
                             type="button"
-                            onClick={() => { setRootPath(s.path); setShowSuggestions(false); }}
+                            onClick={() => {
+                              setRootPath(s.path);
+                              setShowSuggestions(false);
+                            }}
                             className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground focus:outline-none focus:bg-accent"
                           >
                             <Folder className="size-4 shrink-0 text-muted-foreground" />
                             <div className="min-w-0">
                               <p className="font-medium truncate">{s.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono truncate">{s.path}</p>
+                              <p className="text-xs text-muted-foreground font-mono truncate">
+                                {s.path}
+                              </p>
                             </div>
                           </button>
                         </li>
@@ -229,13 +267,15 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
 
           <div className="space-y-2">
             <Label htmlFor="edit-desc">
-              Description{' '}
-              <span className="font-normal text-muted-foreground">(optional)</span>
+              Description <span className="font-normal text-muted-foreground">(optional)</span>
             </Label>
             <Textarea
               id="edit-desc"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                saveCombinedDraft(undefined, e.target.value);
+              }}
               className="min-h-[72px] resize-none"
             />
           </div>
@@ -263,8 +303,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
 
           <div className="space-y-2">
             <Label htmlFor="edit-icon">
-              Icon{' '}
-              <span className="font-normal text-muted-foreground">(optional emoji)</span>
+              Icon <span className="font-normal text-muted-foreground">(optional emoji)</span>
             </Label>
             <Input
               id="edit-icon"
@@ -289,9 +328,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
 
             {confirmDelete ? (
               <div className="w-full space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                <p className="text-sm font-medium">
-                  Delete &ldquo;{project.name}&rdquo;?
-                </p>
+                <p className="text-sm font-medium">Delete &ldquo;{project.name}&rdquo;?</p>
                 <RadioGroup
                   value={deleteMode}
                   onValueChange={(v) => setDeleteMode(v as 'archive' | 'purge')}
@@ -310,9 +347,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                     <RadioGroupItem value="purge" id="delete-mode-purge" className="mt-0.5" />
                     <Label htmlFor="delete-mode-purge" className="cursor-pointer space-y-0.5">
                       <span className="text-sm font-medium">Delete permanently</span>
-                      <p className="text-xs text-muted-foreground font-normal">
-                        Cannot be undone.
-                      </p>
+                      <p className="text-xs text-muted-foreground font-normal">Cannot be undone.</p>
                     </Label>
                   </div>
                 </RadioGroup>

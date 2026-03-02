@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
 import {
   Loader2,
@@ -62,6 +63,8 @@ export function QuickLaunchDialog({
   const [isLaunching, setIsLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { saveDraft, getDraft, clearDraft } = useDraft(`draft:quick-launch:${projectId}`);
+
   useEffect(() => {
     if (!open) return;
     void fetch('/api/agents?group=ai')
@@ -90,6 +93,7 @@ export function QuickLaunchDialog({
           }),
         },
       );
+      clearDraft();
       onOpenChange(false);
       router.push(`/sessions/${res.data.sessionId}?tab=${view}`);
     } catch (err) {
@@ -98,8 +102,17 @@ export function QuickLaunchDialog({
     }
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    // Restore draft when opening (if prompt is still empty — fresh page load)
+    if (nextOpen && !prompt) {
+      const saved = getDraft();
+      if (saved) setPrompt(saved);
+    }
+    onOpenChange(nextOpen);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
@@ -176,7 +189,10 @@ export function QuickLaunchDialog({
               id="ql-prompt"
               dir="auto"
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => {
+                setPrompt(e.target.value);
+                saveDraft(e.target.value);
+              }}
               placeholder="What do you want to work on?"
               className="min-h-[80px] resize-none"
             />

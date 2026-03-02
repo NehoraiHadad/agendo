@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,24 @@ export function TaskCreateDialog() {
 
   const projects = Object.values(projectsById);
 
+  const { saveDraft, getDraft, clearDraft } = useDraft('draft:task:new');
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      // Restore title + description from draft when dialog opens (event handler — not an effect)
+      const saved = getDraft();
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved) as { title?: string; description?: string };
+        if (parsed.title) setTitle(parsed.title);
+        if (parsed.description) setDescription(parsed.description);
+      } catch {
+        // ignore malformed draft
+      }
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
@@ -52,6 +71,7 @@ export function TaskCreateDialog() {
 
     if (result.success) {
       addTask(result.data as Task);
+      clearDraft();
       setTitle('');
       setDescription('');
       setPriority('3');
@@ -65,7 +85,7 @@ export function TaskCreateDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button size="sm">
           <Plus className="mr-1 h-4 w-4" />
@@ -81,14 +101,20 @@ export function TaskCreateDialog() {
           <Input
             autoFocus
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              saveDraft(JSON.stringify({ title: e.target.value, description }));
+            }}
             placeholder="Task title"
             required
           />
 
           <Textarea
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              saveDraft(JSON.stringify({ title, description: e.target.value }));
+            }}
             placeholder="Description (optional)"
             rows={3}
           />

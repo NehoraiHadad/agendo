@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { Check, Folder, FolderPlus, Loader2, Plus, Search, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,12 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const [pathDeniedReason, setPathDeniedReason] = useState('');
   const [pathTouched, setPathTouched] = useState(false);
   const checkAbortRef = useRef<AbortController | null>(null);
+
+  const { saveDraft, getDraft, clearDraft } = useDraft('draft:project:new');
+
+  function saveCombinedDraft(nextName = name, nextDescription = description) {
+    saveDraft(JSON.stringify({ name: nextName, description: nextDescription }));
+  }
 
   function reset() {
     setName('');
@@ -168,6 +175,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
         }),
       });
       onCreated(res.data);
+      clearDraft();
       reset();
       setOpen(false);
     } catch (err) {
@@ -189,7 +197,20 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) reset();
+        if (v) {
+          const saved = getDraft();
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved) as { name?: string; description?: string };
+              if (parsed.name) setName(parsed.name);
+              if (parsed.description) setDescription(parsed.description);
+            } catch {
+              // ignore malformed draft
+            }
+          }
+        } else {
+          reset();
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -209,7 +230,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
             <Input
               id="proj-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                saveCombinedDraft(e.target.value);
+              }}
               placeholder="My App"
               required
             />
@@ -313,7 +337,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
             <Textarea
               id="proj-desc"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                saveCombinedDraft(undefined, e.target.value);
+              }}
               placeholder="Short description of this project..."
               className="min-h-[72px] resize-none"
             />
