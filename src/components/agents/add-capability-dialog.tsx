@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useDraft } from '@/hooks/use-draft';
 import { Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,6 +40,22 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { saveDraft, getDraft, clearDraft } = useDraft(`draft:capability:new:${agentId}`);
+
+  function saveCombinedDraft(
+    nextLabel = label,
+    nextDescription = description,
+    nextPromptTemplate = promptTemplate,
+  ) {
+    saveDraft(
+      JSON.stringify({
+        label: nextLabel,
+        description: nextDescription,
+        promptTemplate: nextPromptTemplate,
+      }),
+    );
+  }
+
   function reset() {
     setLabel('');
     setDescription('');
@@ -75,6 +92,7 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
         },
       );
       onCreated(res.data);
+      clearDraft();
       reset();
       setOpen(false);
     } catch (err) {
@@ -89,7 +107,25 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) reset();
+        if (v) {
+          const saved = getDraft();
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved) as {
+                label?: string;
+                description?: string;
+                promptTemplate?: string;
+              };
+              if (parsed.label) setLabel(parsed.label);
+              if (parsed.description) setDescription(parsed.description);
+              if (parsed.promptTemplate) setPromptTemplate(parsed.promptTemplate);
+            } catch {
+              // ignore malformed draft
+            }
+          }
+        } else {
+          reset();
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -110,7 +146,10 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
             <Input
               id="cap-label"
               value={label}
-              onChange={(e) => setLabel(e.target.value)}
+              onChange={(e) => {
+                setLabel(e.target.value);
+                saveCombinedDraft(e.target.value);
+              }}
               placeholder="e.g. Code Review"
               required
             />
@@ -123,7 +162,10 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
             <Textarea
               id="cap-desc"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                saveCombinedDraft(undefined, e.target.value);
+              }}
               placeholder="Short description of what this capability does..."
               className="min-h-[72px] resize-none"
             />
@@ -136,7 +178,10 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
             <Textarea
               id="cap-prompt"
               value={promptTemplate}
-              onChange={(e) => setPromptTemplate(e.target.value)}
+              onChange={(e) => {
+                setPromptTemplate(e.target.value);
+                saveCombinedDraft(undefined, undefined, e.target.value);
+              }}
               placeholder="Initial prompt sent to the agent when this capability is invoked..."
               className="min-h-[80px] resize-none text-sm font-mono"
             />
