@@ -3,6 +3,33 @@ import { join } from 'node:path';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
+// TeamConfig types
+// ---------------------------------------------------------------------------
+
+export interface TeamConfigMember {
+  name: string;
+  agentId: string;
+  agentType: string;
+  model: string;
+  color?: string;
+  planModeRequired?: boolean;
+  joinedAt: number;
+  tmuxPaneId: string;
+  backendType?: string;
+}
+
+export interface TeamConfig {
+  name: string;
+  leadSessionId: string;
+  members: TeamConfigMember[];
+}
+
+export interface TeammateInboxEntry {
+  memberName: string;
+  inboxPath: string;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -32,12 +59,23 @@ export interface TeamMessage {
  */
 export class TeamInboxMonitor {
   private inboxPath: string;
+  private configPath: string;
+  private inboxesDir: string;
   /** Count of messages seen at the last poll (or at startPolling time). */
   private lastCount = 0;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Per-teammate message counts for outbox polling. */
+  private outboxLastCounts: Map<string, number> = new Map();
+  private outboxPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** The team name used for building paths. */
+  private teamName: string;
 
   constructor(teamName: string) {
-    this.inboxPath = join(homedir(), '.claude', 'teams', teamName, 'inboxes', 'team-lead.json');
+    this.teamName = teamName;
+    const teamDir = join(homedir(), '.claude', 'teams', teamName);
+    this.inboxPath = join(teamDir, 'inboxes', 'team-lead.json');
+    this.configPath = join(teamDir, 'config.json');
+    this.inboxesDir = join(teamDir, 'inboxes');
   }
 
   // ---------------------------------------------------------------------------
@@ -129,16 +167,118 @@ export class TeamInboxMonitor {
     }, intervalMs);
   }
 
+  // ---------------------------------------------------------------------------
+  // Config
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Read the team config from config.json and return the structured config.
+   * Returns null if the file does not exist or cannot be parsed.
+   */
+  readConfig(): TeamConfig | null {
+    if (!existsSync(this.configPath)) return null;
+    try {
+      const raw = readFileSync(this.configPath, 'utf-8');
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      const members = Array.isArray(obj.members)
+        ? (obj.members as Array<Record<string, unknown>>).map((m) => this.parseMember(m))
+        : [];
+      return {
+        name: typeof obj.name === 'string' ? obj.name : this.teamName,
+        leadSessionId: typeof obj.leadSessionId === 'string' ? obj.leadSessionId : '',
+        members,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * List all teammate inbox paths (excluding team-lead.json which is monitored separately).
+   * Returns array of { memberName, inboxPath } entries.
+   */
+  listTeammateInboxPaths(): TeammateInboxEntry[] {
+    if (!existsSync(this.inboxesDir)) return [];
+
+    let entries: string[];
+    try {
+      entries = readdirSync(this.inboxesDir) as string[];
+    } catch {
+      return [];
+    }
+
+    const result: TeammateInboxEntry[] = [];
+    for (const entry of entries) {
+      if (typeof entry !== 'string') continue;
+      if (!entry.endsWith('.json')) continue;
+      if (entry === 'team-lead.json') continue;
+      const memberName = entry.slice(0, -5); // strip .json
+      result.push({
+        memberName,
+        inboxPath: join(this.inboxesDir, entry),
+      });
+    }
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Outbox polling (lead → teammate messages)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Start polling all teammate inboxes every `intervalMs` milliseconds.
+   * Calls `onMessage(toAgent, msg)` for each new message that appears.
+   * Pre-existing messages are skipped (snapshot taken at start time).
+   *
+   * No-op if outbox polling is already active.
+   */
+  startOutboxPolling(
+    intervalMs: number,
+    onMessage: (toAgent: string, msg: TeamMessage) => void,
+  ): void {
+    if (this.outboxPollTimer !== null) return;
+
+    // Snapshot current counts per inbox so pre-existing messages are skipped.
+    for (const { memberName, inboxPath } of this.listTeammateInboxPaths()) {
+      const msgs = this.readInboxFile(inboxPath);
+      this.outboxLastCounts.set(memberName, msgs.length);
+    }
+
+    this.outboxPollTimer = setInterval(() => {
+      for (const { memberName, inboxPath } of this.listTeammateInboxPaths()) {
+        const msgs = this.readInboxFile(inboxPath);
+        const lastCount = this.outboxLastCounts.get(memberName) ?? 0;
+        if (msgs.length > lastCount) {
+          const newMsgs = msgs.slice(lastCount);
+          this.outboxLastCounts.set(memberName, msgs.length);
+          for (const msg of newMsgs) {
+            onMessage(memberName, msg);
+          }
+        }
+      }
+    }, intervalMs);
+  }
+
+  /**
+   * Stop outbox polling. Safe to call multiple times or when not polling.
+   */
+  stopOutboxPolling(): void {
+    if (this.outboxPollTimer !== null) {
+      clearInterval(this.outboxPollTimer);
+      this.outboxPollTimer = null;
+    }
+    this.outboxLastCounts.clear();
+  }
+
   /**
    * Check if the team has been disbanded.
    * True when: config file is gone, OR all non-leader members sent shutdown_approved.
    */
   isTeamDisbanded(): boolean {
-    const configPath = this.inboxPath.replace(/\/inboxes\/.*$/, '/config.json');
-    if (!existsSync(configPath)) return true;
+    if (!existsSync(this.configPath)) return true;
 
     try {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      const config = JSON.parse(readFileSync(this.configPath, 'utf-8')) as {
         members?: Array<{ name: string }>;
       };
       const nonLeaderMembers = (config.members ?? []).filter((m) => m.name !== 'team-lead');
@@ -171,6 +311,35 @@ export class TeamInboxMonitor {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Read messages from any inbox JSON file (generalized version of readAllMessages).
+   */
+  private readInboxFile(filePath: string): TeamMessage[] {
+    if (!existsSync(filePath)) return [];
+    try {
+      const raw = readFileSync(filePath, 'utf-8');
+      const arr = JSON.parse(raw) as unknown;
+      if (!Array.isArray(arr)) return [];
+      return (arr as Array<Record<string, unknown>>).map((item) => this.parseRawMessage(item));
+    } catch {
+      return [];
+    }
+  }
+
+  private parseMember(m: Record<string, unknown>): TeamConfigMember {
+    return {
+      name: typeof m.name === 'string' ? m.name : '',
+      agentId: typeof m.agentId === 'string' ? m.agentId : '',
+      agentType: typeof m.agentType === 'string' ? m.agentType : '',
+      model: typeof m.model === 'string' ? m.model : '',
+      color: typeof m.color === 'string' ? m.color : undefined,
+      planModeRequired: typeof m.planModeRequired === 'boolean' ? m.planModeRequired : undefined,
+      joinedAt: typeof m.joinedAt === 'number' ? m.joinedAt : 0,
+      tmuxPaneId: typeof m.tmuxPaneId === 'string' ? m.tmuxPaneId : '',
+      backendType: typeof m.backendType === 'string' ? m.backendType : undefined,
+    };
+  }
 
   private parseRawMessage(item: Record<string, unknown>): TeamMessage {
     const text = typeof item.text === 'string' ? item.text : '';

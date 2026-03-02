@@ -196,6 +196,68 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
           return `${ev.status} (${ev.rateLimitType}) resets ${resetStr}`;
         },
       };
+    case 'team:config':
+      return {
+        color: 'text-teal-400',
+        label: 'team:config',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'team:config' }>;
+          return `${ev.teamName} — ${ev.members.length} member${ev.members.length === 1 ? '' : 's'}`;
+        },
+      };
+    case 'team:task-update':
+      return {
+        color: 'text-teal-300',
+        label: 'team:task-update',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'team:task-update' }>;
+          const inProgress = ev.tasks.filter((t) => t.status === 'in_progress').length;
+          const completed = ev.tasks.filter((t) => t.status === 'completed').length;
+          return `${ev.tasks.length} tasks — ${inProgress} active, ${completed} done`;
+        },
+      };
+    case 'team:outbox-message':
+      return {
+        color: 'text-sky-400',
+        label: 'team:outbox-message',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'team:outbox-message' }>;
+          return `→${ev.toAgent}: ${truncate(ev.summary ?? ev.text, 60)}`;
+        },
+      };
+    case 'subagent:start':
+      return {
+        color: 'text-violet-300',
+        label: 'subagent:start',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'subagent:start' }>;
+          const parts = [ev.agentId.slice(0, 8)];
+          if (ev.subagentType) parts.push(ev.subagentType);
+          if (ev.description) parts.push(truncate(ev.description, 40));
+          return parts.join(' — ');
+        },
+      };
+    case 'subagent:progress':
+      return {
+        color: 'text-violet-400',
+        label: 'subagent:progress',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'subagent:progress' }>;
+          const parts = [ev.agentId.slice(0, 8), ev.eventType];
+          if (ev.toolName) parts.push(ev.toolName);
+          if (ev.summary) parts.push(truncate(ev.summary, 40));
+          return parts.join(' — ');
+        },
+      };
+    case 'subagent:complete':
+      return {
+        color: 'text-violet-500',
+        label: 'subagent:complete',
+        summary: (e) => {
+          const ev = e as Extract<AgendoEvent, { type: 'subagent:complete' }>;
+          return `${ev.agentId.slice(0, 8)} — ${ev.success ? 'success' : 'failed'}`;
+        },
+      };
   }
 }
 

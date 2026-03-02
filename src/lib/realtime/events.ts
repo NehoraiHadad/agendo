@@ -134,6 +134,69 @@ export type AgendoEvent =
       /** True when text is valid JSON (idle_notification, task_assignment, etc.) */
       isStructured: boolean;
       structuredPayload?: Record<string, unknown>;
+    })
+  /** Emitted when team is first detected (on attach) and re-emitted when new members join */
+  | (EventBase & {
+      type: 'team:config';
+      teamName: string;
+      members: Array<{
+        name: string;
+        agentId: string;
+        agentType: string;
+        model: string;
+        color?: string;
+        planModeRequired?: boolean;
+        joinedAt: number;
+        tmuxPaneId: string;
+        backendType?: string;
+      }>;
+    })
+  /** Emitted as a snapshot of the current task list (all tasks, not just diffs) */
+  | (EventBase & {
+      type: 'team:task-update';
+      tasks: Array<{
+        id: string;
+        subject: string;
+        status: 'pending' | 'in_progress' | 'completed';
+        owner?: string;
+        blocks: string[];
+        blockedBy: string[];
+      }>;
+    })
+  /** Lead → teammate messages (monitoring ALL inboxes, not just team-lead) */
+  | (EventBase & {
+      type: 'team:outbox-message';
+      toAgent: string;
+      fromAgent: string;
+      text: string;
+      summary?: string;
+      color?: string;
+      sourceTimestamp: string;
+      isStructured: boolean;
+      structuredPayload?: Record<string, unknown>;
+    })
+  /** Agent tool spawns a subagent within this session */
+  | (EventBase & {
+      type: 'subagent:start';
+      agentId: string;
+      toolUseId: string;
+      subagentType?: string;
+      description?: string;
+    })
+  /** Subagent transcript progress (from JSONL file tailing) */
+  | (EventBase & {
+      type: 'subagent:progress';
+      agentId: string;
+      eventType: 'tool_use' | 'text' | 'result';
+      toolName?: string;
+      summary?: string;
+    })
+  /** Subagent completed (tool-end event or transcript file end) */
+  | (EventBase & {
+      type: 'subagent:complete';
+      agentId: string;
+      toolUseId: string;
+      success: boolean;
     });
 
 export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';

@@ -217,6 +217,13 @@
   100% { background-position: 0% 50%; }
 }
 
+/* Travel dot — CSS Motion Path animation for team diagram message pulses */
+@keyframes travelDot {
+  0%   { offset-distance: 0%; opacity: 1; }
+  80%  { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
 /* ─── Utility classes ─────────────────────────────────────── */
 
 @layer utilities {
