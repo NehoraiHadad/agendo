@@ -2,7 +2,7 @@ import { accessSync, constants } from 'node:fs';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import type { ParsedFlag } from '@/lib/db/schema';
-import { eq, ne, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { ValidationError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { Agent, AgentCapability, NewAgent } from '@/lib/types';
@@ -138,37 +138,19 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
         label: cap.label,
         description: cap.description,
         source: 'preset',
-        interactionMode: cap.interactionMode,
+        interactionMode: 'prompt',
         promptTemplate: cap.promptTemplate,
         dangerLevel: cap.dangerLevel,
         timeoutSec: cap.timeoutSec,
         isEnabled: true,
       });
     }
-  }
-  // Create capabilities from parsed schema subcommands (non-preset tools).
-  // If schema wasn't extracted during the scan, extract it now at confirmation time.
-  else {
+  } else {
+    // For non-preset tools, try to extract schema from --help
     let schema = tool.schema;
     if (!schema) {
       const helpText = await getHelpText(tool.path);
       if (helpText) schema = quickParseHelp(helpText);
-    }
-
-    if (schema?.subcommands.length) {
-      for (const subcmd of schema.subcommands) {
-        await db.insert(agentCapabilities).values({
-          agentId: agent.id,
-          key: subcmd.name,
-          label: subcmd.name,
-          description: subcmd.description,
-          source: 'scan_help',
-          interactionMode: 'template',
-          commandTokens: [tool.name, subcmd.name],
-          dangerLevel: 0,
-          isEnabled: true,
-        });
-      }
     }
 
     // Update schema reference so flags are persisted below
@@ -194,31 +176,23 @@ export async function getAgentById(id: string): Promise<Agent> {
   return requireFound(agent, 'Agent', id);
 }
 
-interface ListAgentsOptions {
-  group?: 'ai' | 'tools';
-}
-
-export async function listAgents(options?: ListAgentsOptions): Promise<Agent[]> {
-  const query = db.select().from(agents);
-  if (options?.group === 'ai') {
-    return query.where(eq(agents.toolType, 'ai-agent')).orderBy(desc(agents.createdAt));
-  }
-  if (options?.group === 'tools') {
-    return query.where(ne(agents.toolType, 'ai-agent')).orderBy(desc(agents.createdAt));
-  }
-  return query.orderBy(desc(agents.createdAt));
+export async function listAgents(): Promise<Agent[]> {
+  return db
+    .select()
+    .from(agents)
+    .where(eq(agents.toolType, 'ai-agent'))
+    .orderBy(desc(agents.createdAt));
 }
 
 export type AgentWithCapabilities = Agent & { capabilities: AgentCapability[] };
 
 /** Fetch all agents with their capabilities joined. Used for agent picker UIs. */
-export async function listAgentsWithCapabilities(
-  options?: ListAgentsOptions,
-): Promise<AgentWithCapabilities[]> {
+export async function listAgentsWithCapabilities(): Promise<AgentWithCapabilities[]> {
   const rows = await db
     .select({ agent: agents, capability: agentCapabilities })
     .from(agents)
     .leftJoin(agentCapabilities, eq(agentCapabilities.agentId, agents.id))
+    .where(eq(agents.toolType, 'ai-agent'))
     .orderBy(desc(agents.createdAt));
 
   // Group capabilities by agent
@@ -232,13 +206,7 @@ export async function listAgentsWithCapabilities(
     }
   }
 
-  let result = [...agentMap.values()];
-  if (options?.group === 'ai') {
-    result = result.filter((a) => a.toolType === 'ai-agent');
-  } else if (options?.group === 'tools') {
-    result = result.filter((a) => a.toolType !== 'ai-agent');
-  }
-  return result;
+  return [...agentMap.values()];
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {

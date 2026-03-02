@@ -29,7 +29,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     listTasksByStatus({ projectId: id, limit: 10 }),
     listConversationsByProject(id, 20),
     listExecutionSessionsByProject(id, 20),
-    listAgents({ group: 'ai' }),
+    listAgents(),
   ]);
 
   const activeAgents = allAgents.filter((a) => a.isActive);

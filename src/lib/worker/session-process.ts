@@ -235,10 +235,8 @@ export class SessionProcess {
     // client never sees duplicate IDs.
     this.eventSeq = claimed.eventSeq;
 
-    // Set up log writer. Pass null for executionId since sessions track their own
-    // stats independently (no byte/line flush to the executions table).
     const logPath = resolveSessionLogPath(this.session.id);
-    this.logWriter = new FileLogWriter(null, logPath);
+    this.logWriter = new FileLogWriter(logPath);
     this.logWriter.open();
 
     // Persist the log file path so the frontend can fetch it later.

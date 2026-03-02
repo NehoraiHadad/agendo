@@ -251,7 +251,7 @@ export async function runSession(
     }
   }
 
-  const adapter = selectAdapter(agent, capability);
+  const adapter = selectAdapter(agent);
   const sessionProc = new SessionProcess(session, adapter, workerId);
 
   // Register immediately so the shutdown handler can markTerminating() even

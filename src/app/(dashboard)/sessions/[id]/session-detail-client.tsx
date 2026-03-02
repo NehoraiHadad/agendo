@@ -33,7 +33,7 @@ import { useSessionLogStream } from '@/hooks/use-session-log-stream';
 import { SessionChatView } from '@/components/sessions/session-chat-view';
 import { SessionEventLog } from '@/components/sessions/session-event-log';
 import { SessionInfoPanel } from '@/components/sessions/session-info-panel';
-import { ExecutionLogViewer } from '@/components/executions/execution-log-viewer';
+import { SessionLogViewer } from '@/components/sessions/session-log-viewer';
 import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
@@ -655,7 +655,7 @@ export function SessionDetailClient({
         </TabsContent>
 
         <TabsContent value="logs" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <ExecutionLogViewer executionId={session.id} externalStream={logStream} />
+          <SessionLogViewer stream={logStream} />
         </TabsContent>
 
         <TabsContent value="events" className="mt-4 flex-1 min-h-0 overflow-y-auto">

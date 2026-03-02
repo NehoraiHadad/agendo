@@ -30,18 +30,16 @@ vi.mock('pg-boss', () => {
 import PgBoss from 'pg-boss';
 import {
   getBoss,
-  enqueueExecution,
-  registerWorker,
+  enqueueSession,
+  registerSessionWorker,
   stopBoss,
-  type ExecuteCapabilityJobData,
+  type RunSessionJobData,
 } from '../queue';
 
 const MockPgBoss = vi.mocked(PgBoss);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Reset the singleton by calling stopBoss (which sets bossInstance = null)
-  // We need to do this carefully since stopBoss checks bossInstance
 });
 
 // Since the module has internal singleton state, we need a helper
@@ -79,50 +77,45 @@ describe('queue', () => {
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
-  it('enqueueExecution sends job with correct options', async () => {
-    const data: ExecuteCapabilityJobData = {
-      executionId: 'exec-1',
-      capabilityId: 'cap-1',
-      agentId: 'agent-1',
-      args: { prompt: 'test' },
+  it('enqueueSession sends job with correct options', async () => {
+    const data: RunSessionJobData = {
+      sessionId: 'sess-1',
     };
 
-    const jobId = await enqueueExecution(data);
+    const jobId = await enqueueSession(data);
 
     expect(jobId).toBe('job-id-123');
     expect(mockSend).toHaveBeenCalledWith(
-      'execute-capability',
+      'run-session',
       data,
       expect.objectContaining({
-        expireInMinutes: 45,
-        retryLimit: 2,
-        retryDelay: 30,
+        retryLimit: 1,
+        retryDelay: 10,
       }),
     );
   });
 
-  it('enqueueExecution returns job ID', async () => {
-    const data: ExecuteCapabilityJobData = {
-      executionId: 'exec-2',
-      capabilityId: 'cap-2',
-      agentId: 'agent-2',
-      args: {},
+  it('enqueueSession returns job ID', async () => {
+    const data: RunSessionJobData = {
+      sessionId: 'sess-2',
+      resumeRef: 'ref-abc',
     };
 
-    const result = await enqueueExecution(data);
+    const result = await enqueueSession(data);
 
     expect(result).toBe('job-id-123');
   });
 
-  it('registerWorker calls boss.work with config values', async () => {
+  it('registerSessionWorker calls boss.work 3 times for concurrent slots', async () => {
     const handler = vi.fn();
 
-    await registerWorker(handler);
+    await registerSessionWorker(handler);
 
+    expect(mockWork).toHaveBeenCalledTimes(3);
     expect(mockWork).toHaveBeenCalledWith(
-      'execute-capability',
+      'run-session',
       expect.objectContaining({
-        batchSize: 3,
+        batchSize: 1,
         pollingIntervalSeconds: 2, // Math.ceil(2000 / 1000)
       }),
       expect.any(Function),

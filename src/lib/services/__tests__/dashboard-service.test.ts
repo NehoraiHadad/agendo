@@ -8,13 +8,6 @@ const mockTaskCounts = [
   { status: 'done', count: 10 },
 ];
 
-const mockActiveExecCounts = [
-  { status: 'running', count: 2 },
-  { status: 'queued', count: 1 },
-];
-
-const mockFailedRow = [{ count: 4 }];
-
 const mockRecentEvents = [
   {
     id: 1,
@@ -24,33 +17,11 @@ const mockRecentEvents = [
     payload: {},
     createdAt: new Date('2026-02-17T10:00:00Z'),
   },
-  {
-    id: 2,
-    taskId: '00000000-0000-0000-0000-000000000002',
-    eventType: 'execution_created',
-    actorType: 'system',
-    payload: { executionId: 'exec-1' },
-    createdAt: new Date('2026-02-17T09:00:00Z'),
-  },
 ];
 
 const mockAgentRows = [
-  {
-    id: 'agent-1',
-    name: 'Claude',
-    slug: 'claude',
-    isActive: true,
-    maxConcurrent: 2,
-    runningExecutions: 1,
-  },
-  {
-    id: 'agent-2',
-    name: 'Codex',
-    slug: 'codex',
-    isActive: false,
-    maxConcurrent: 1,
-    runningExecutions: 0,
-  },
+  { id: 'agent-1', name: 'Claude', slug: 'claude', isActive: true, maxConcurrent: 2 },
+  { id: 'agent-2', name: 'Codex', slug: 'codex', isActive: false, maxConcurrent: 1 },
 ];
 
 const recentWorkerHeartbeat = {
@@ -67,46 +38,13 @@ const staleWorkerHeartbeat = {
   metadata: {},
 };
 
-const mockActiveExecsList = [
-  {
-    id: 'exec-1',
-    taskId: 'task-1',
-    agentId: 'agent-1',
-    agentName: 'Claude',
-    status: 'running',
-    startedAt: new Date('2026-02-17T10:00:00Z'),
-    createdAt: new Date('2026-02-17T09:55:00Z'),
-  },
-];
-
 // --- Query chain builders ---
-// Each builder creates a mock chain that resolves at the correct terminal method.
 
 /** select → from → groupBy (resolves) */
 function groupByChain(result: unknown) {
   return {
     from: vi.fn().mockReturnValue({
       groupBy: vi.fn().mockResolvedValue(result),
-    }),
-  };
-}
-
-/** select → from → where → groupBy (resolves) */
-function whereGroupByChain(result: unknown) {
-  return {
-    from: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        groupBy: vi.fn().mockResolvedValue(result),
-      }),
-    }),
-  };
-}
-
-/** select → from → where (resolves to array) */
-function whereTerminalChain(result: unknown) {
-  return {
-    from: vi.fn().mockReturnValue({
-      where: vi.fn().mockResolvedValue(result),
     }),
   };
 }
@@ -128,19 +66,6 @@ function whereOrderByChain(result: unknown) {
     from: vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({
         orderBy: vi.fn().mockResolvedValue(result),
-      }),
-    }),
-  };
-}
-
-/** select → from → innerJoin → where → orderBy (resolves) */
-function joinWhereOrderByChain(result: unknown) {
-  return {
-    from: vi.fn().mockReturnValue({
-      innerJoin: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue(result),
-        }),
       }),
     }),
   };
@@ -171,15 +96,6 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/db/schema', () => ({
   tasks: { status: 'status' },
-  executions: {
-    id: 'id',
-    taskId: 'taskId',
-    agentId: 'agentId',
-    status: 'status',
-    startedAt: 'startedAt',
-    endedAt: 'endedAt',
-    createdAt: 'createdAt',
-  },
   taskEvents: {
     id: 'id',
     taskId: 'taskId',
@@ -194,25 +110,21 @@ vi.mock('@/lib/db/schema', () => ({
     slug: 'slug',
     isActive: 'isActive',
     maxConcurrent: 'maxConcurrent',
+    toolType: 'toolType',
   },
   workerHeartbeats: {
     workerId: 'workerId',
     lastSeenAt: 'lastSeenAt',
-    currentExecutions: 'currentExecutions',
   },
 }));
 
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn(),
-  and: vi.fn(),
   desc: vi.fn(),
-  sql: vi.fn(),
   count: vi.fn(() => 'count'),
-  gte: vi.fn(),
-  inArray: vi.fn(),
 }));
 
-import { getDashboardStats, getActiveExecutionsList } from '@/lib/services/dashboard-service';
+import { getDashboardStats } from '@/lib/services/dashboard-service';
 
 describe('dashboard-service', () => {
   beforeEach(() => {
@@ -220,19 +132,15 @@ describe('dashboard-service', () => {
     selectCallIndex = 0;
   });
 
-  /** Standard 6-query getDashboardStats mock setup */
+  /** Standard 4-query getDashboardStats mock setup */
   function setupStatsQueries(overrides?: {
     taskCounts?: unknown;
-    activeExecCounts?: unknown;
-    failedRow?: unknown;
     recentEvents?: unknown;
     agentRows?: unknown;
     workerRow?: unknown;
   }) {
     resetSelectMock([
       () => groupByChain(overrides?.taskCounts ?? mockTaskCounts),
-      () => whereGroupByChain(overrides?.activeExecCounts ?? mockActiveExecCounts),
-      () => whereTerminalChain(overrides?.failedRow ?? mockFailedRow),
       () => orderByLimitChain(overrides?.recentEvents ?? mockRecentEvents),
       () => whereOrderByChain(overrides?.agentRows ?? mockAgentRows),
       () => orderByLimitChain(overrides?.workerRow ?? [recentWorkerHeartbeat]),
@@ -245,20 +153,14 @@ describe('dashboard-service', () => {
 
       const stats = await getDashboardStats();
 
-      expect(stats).toEqual({
+      expect(stats).toMatchObject({
         taskCountsByStatus: { todo: 5, in_progress: 3, done: 10 },
         totalTasks: 18,
-        activeExecutions: 2,
-        queuedExecutions: 1,
-        failedLast24h: 4,
         recentEvents: mockRecentEvents,
         agentHealth: mockAgentRows,
-        workerStatus: {
-          isOnline: true,
-          currentExecutions: 2,
-          lastSeenAt: recentWorkerHeartbeat.lastSeenAt,
-        },
       });
+      expect(stats.workerStatus).not.toBeNull();
+      expect(stats.workerStatus!.isOnline).toBe(true);
     });
 
     it('groups task counts by status correctly', async () => {
@@ -269,8 +171,6 @@ describe('dashboard-service', () => {
       ];
       setupStatsQueries({
         taskCounts: customTaskCounts,
-        activeExecCounts: [],
-        failedRow: [{ count: 0 }],
         recentEvents: [],
         agentRows: [],
         workerRow: [],
@@ -285,8 +185,6 @@ describe('dashboard-service', () => {
     it('reports worker online when heartbeat is recent', async () => {
       setupStatsQueries({
         taskCounts: [],
-        activeExecCounts: [],
-        failedRow: [{ count: 0 }],
         recentEvents: [],
         agentRows: [],
         workerRow: [recentWorkerHeartbeat],
@@ -301,8 +199,6 @@ describe('dashboard-service', () => {
     it('reports worker offline when heartbeat is stale', async () => {
       setupStatsQueries({
         taskCounts: [],
-        activeExecCounts: [],
-        failedRow: [{ count: 0 }],
         recentEvents: [],
         agentRows: [],
         workerRow: [staleWorkerHeartbeat],
@@ -317,8 +213,6 @@ describe('dashboard-service', () => {
     it('returns null workerStatus when no heartbeats exist', async () => {
       setupStatsQueries({
         taskCounts: [],
-        activeExecCounts: [],
-        failedRow: [{ count: 0 }],
         recentEvents: [],
         agentRows: [],
         workerRow: [],
@@ -327,63 +221,6 @@ describe('dashboard-service', () => {
       const stats = await getDashboardStats();
 
       expect(stats.workerStatus).toBeNull();
-    });
-
-    it('handles zero active executions', async () => {
-      setupStatsQueries({
-        taskCounts: [],
-        activeExecCounts: [],
-        failedRow: [{ count: 0 }],
-        recentEvents: [],
-        agentRows: [],
-        workerRow: [],
-      });
-
-      const stats = await getDashboardStats();
-
-      expect(stats.activeExecutions).toBe(0);
-      expect(stats.queuedExecutions).toBe(0);
-      expect(stats.failedLast24h).toBe(0);
-    });
-
-    it('counts cancelling executions as active', async () => {
-      setupStatsQueries({
-        taskCounts: [],
-        activeExecCounts: [{ status: 'cancelling', count: 3 }],
-        failedRow: [{ count: 0 }],
-        recentEvents: [],
-        agentRows: [],
-        workerRow: [],
-      });
-
-      const stats = await getDashboardStats();
-
-      expect(stats.activeExecutions).toBe(3);
-    });
-  });
-
-  describe('getActiveExecutionsList', () => {
-    it('returns correct structure', async () => {
-      resetSelectMock([() => joinWhereOrderByChain(mockActiveExecsList)]);
-
-      const result = await getActiveExecutionsList();
-
-      expect(result).toEqual(mockActiveExecsList);
-      expect(result[0]).toHaveProperty('id');
-      expect(result[0]).toHaveProperty('taskId');
-      expect(result[0]).toHaveProperty('agentId');
-      expect(result[0]).toHaveProperty('agentName');
-      expect(result[0]).toHaveProperty('status');
-      expect(result[0]).toHaveProperty('startedAt');
-      expect(result[0]).toHaveProperty('createdAt');
-    });
-
-    it('returns empty array when no active executions', async () => {
-      resetSelectMock([() => joinWhereOrderByChain([])]);
-
-      const result = await getActiveExecutionsList();
-
-      expect(result).toEqual([]);
     });
   });
 });

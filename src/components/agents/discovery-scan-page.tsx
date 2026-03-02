@@ -5,14 +5,12 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { DiscoveryFilterBar, type FilterValue } from './discovery-filter-bar';
 import { DiscoveredToolCard } from './discovered-tool-card';
 import { triggerScan } from '@/lib/actions/discovery-actions';
 import type { DiscoveredTool } from '@/lib/discovery';
 
 export function DiscoveryScanPage() {
   const [tools, setTools] = useState<DiscoveredTool[]>([]);
-  const [filter, setFilter] = useState<FilterValue>('all');
   const [isScanning, startTransition] = useTransition();
   const [hasScanned, setHasScanned] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -45,20 +43,11 @@ export function DiscoveryScanPage() {
     setTools((prev) => prev.filter((t) => t.name !== toolName));
   }
 
-  const counts: Record<string, number> = {};
-  for (const tool of tools) {
-    counts[tool.toolType] = (counts[tool.toolType] ?? 0) + 1;
-  }
-
-  const filtered = filter === 'all' ? tools : tools.filter((t) => t.toolType === filter);
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Discovery</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Scan your system for CLI tools and AI agents.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Scan your system for AI agents.</p>
       </div>
 
       <div className="flex gap-3 items-end">
@@ -73,8 +62,10 @@ export function DiscoveryScanPage() {
               id="search-tools"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleScan(); }}
-              placeholder="e.g. git, docker, npm, pnpm"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleScan();
+              }}
+              placeholder="e.g. claude, codex, gemini"
               className="pl-8 font-mono text-sm"
             />
           </div>
@@ -96,7 +87,7 @@ export function DiscoveryScanPage() {
       {!hasScanned && tools.length === 0 && !scanError && (
         <div className="rounded-lg border border-dashed p-12 text-center">
           <p className="text-muted-foreground">
-            No scan results yet. Click &quot;Scan Now&quot; to discover tools on your system.
+            No scan results yet. Click &quot;Scan Now&quot; to discover AI agents on your system.
           </p>
         </div>
       )}
@@ -104,31 +95,24 @@ export function DiscoveryScanPage() {
       {hasScanned && tools.length === 0 && !scanError && (
         <div className="rounded-lg border border-dashed p-12 text-center">
           <p className="text-sm text-muted-foreground">
-            No tools found.{' '}
-            {searchInput && 'Make sure the tool name matches its binary (e.g. "node", not "nodejs").'}
+            No agents found.{' '}
+            {searchInput &&
+              'Make sure the tool name matches its binary (e.g. "claude", not "claude-code").'}
           </p>
         </div>
       )}
 
       {tools.length > 0 && (
-        <>
-          <DiscoveryFilterBar activeFilter={filter} onFilterChange={setFilter} counts={counts} />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((tool) => (
-              <DiscoveredToolCard
-                key={tool.name}
-                tool={tool}
-                onConfirmed={handleConfirmed}
-                onDismissed={handleDismissed}
-              />
-            ))}
-          </div>
-          {filtered.length === 0 && (
-            <p className="text-center text-sm text-muted-foreground">
-              No tools match the selected filter.
-            </p>
-          )}
-        </>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {tools.map((tool) => (
+            <DiscoveredToolCard
+              key={tool.name}
+              tool={tool}
+              onConfirmed={handleConfirmed}
+              onDismissed={handleDismissed}
+            />
+          ))}
+        </div>
       )}
     </div>
   );

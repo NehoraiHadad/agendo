@@ -24,10 +24,7 @@ interface CreateCapabilityInput {
     | 'scan_mcp'
     | 'scan_man'
     | 'llm_generated';
-  interactionMode: 'template' | 'prompt';
-  commandTokens?: string[] | null;
   promptTemplate?: string | null;
-  argsSchema?: Record<string, unknown>;
   requiresApproval?: boolean;
   isEnabled?: boolean;
   dangerLevel?: number;
@@ -37,31 +34,14 @@ interface CreateCapabilityInput {
 interface UpdateCapabilityInput {
   label?: string;
   description?: string | null;
-  interactionMode?: 'template' | 'prompt';
-  commandTokens?: string[] | null;
   promptTemplate?: string | null;
-  argsSchema?: Record<string, unknown>;
   requiresApproval?: boolean;
   isEnabled?: boolean;
   dangerLevel?: number;
   timeoutSec?: number;
 }
 
-function validateModeConsistency(
-  mode: 'template' | 'prompt',
-  commandTokens: string[] | null | undefined,
-): void {
-  if (mode === 'template' && (!commandTokens || commandTokens.length === 0)) {
-    throw new ValidationError('Template mode requires non-null commandTokens', {
-      field: 'commandTokens',
-      interactionMode: mode,
-    });
-  }
-}
-
 export async function createCapability(data: CreateCapabilityInput): Promise<AgentCapability> {
-  validateModeConsistency(data.interactionMode, data.commandTokens);
-
   const [capability] = await db
     .insert(agentCapabilities)
     .values({
@@ -70,10 +50,8 @@ export async function createCapability(data: CreateCapabilityInput): Promise<Age
       label: data.label,
       description: data.description ?? null,
       source: data.source ?? 'manual',
-      interactionMode: data.interactionMode,
-      commandTokens: data.commandTokens ?? null,
+      interactionMode: 'prompt',
       promptTemplate: data.promptTemplate ?? null,
-      argsSchema: data.argsSchema ?? {},
       requiresApproval: data.requiresApproval ?? false,
       isEnabled: data.isEnabled ?? true,
       dangerLevel: data.dangerLevel ?? 0,
@@ -102,14 +80,6 @@ export async function updateCapability(
   id: string,
   data: UpdateCapabilityInput,
 ): Promise<AgentCapability> {
-  // If updating mode or tokens, validate consistency
-  if (data.interactionMode || data.commandTokens !== undefined) {
-    const existing = await getCapabilityById(id);
-    const mode = data.interactionMode ?? existing.interactionMode;
-    const tokens = data.commandTokens !== undefined ? data.commandTokens : existing.commandTokens;
-    validateModeConsistency(mode, tokens);
-  }
-
   const [capability] = await db
     .update(agentCapabilities)
     .set(data)

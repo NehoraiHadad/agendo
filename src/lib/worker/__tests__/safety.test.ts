@@ -26,13 +26,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import { realpathSync, accessSync, existsSync } from 'node:fs';
-import {
-  validateWorkingDir,
-  buildChildEnv,
-  buildCommandArgs,
-  validateArgs,
-  validateBinary,
-} from '@/lib/worker/safety';
+import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
 
 describe('safety', () => {
   beforeEach(() => {
@@ -71,95 +65,6 @@ describe('safety', () => {
       vi.mocked(realpathSync).mockReturnValue('/etc/secret');
       await expect(validateWorkingDir('/home/ubuntu/projects/symlink')).rejects.toThrow(
         'not in allowlist',
-      );
-    });
-  });
-
-  describe('buildChildEnv', () => {
-    it('includes allowlisted env vars only', () => {
-      const originalPath = process.env.PATH;
-      const originalHome = process.env.HOME;
-      process.env.PATH = '/usr/bin';
-      process.env.HOME = '/home/test';
-      process.env.SECRET_KEY = 'should-not-appear';
-
-      const env = buildChildEnv();
-
-      expect(env.PATH).toBe('/usr/bin');
-      expect(env.HOME).toBe('/home/test');
-      expect(env.TERM).toBe('xterm-256color');
-      expect(env.COLORTERM).toBe('truecolor');
-      expect(env).not.toHaveProperty('SECRET_KEY');
-
-      process.env.PATH = originalPath;
-      process.env.HOME = originalHome;
-    });
-
-    it('includes agent-specific allowlisted vars', () => {
-      process.env.ANTHROPIC_API_KEY = 'test-key';
-      const env = buildChildEnv({ agentAllowlist: ['ANTHROPIC_API_KEY'] });
-      expect(env.ANTHROPIC_API_KEY).toBe('test-key');
-      delete process.env.ANTHROPIC_API_KEY;
-    });
-
-    it('never spreads process.env', () => {
-      const env = buildChildEnv();
-      // Should have limited keys, not hundreds from process.env
-      const keys = Object.keys(env);
-      expect(keys.length).toBeLessThan(15);
-    });
-  });
-
-  describe('buildCommandArgs', () => {
-    it('substitutes placeholders with arg values', () => {
-      const result = buildCommandArgs(['git', 'checkout', '{{branch}}'], { branch: 'main' });
-      expect(result).toEqual(['git', 'checkout', 'main']);
-    });
-
-    it('preserves literal tokens', () => {
-      const result = buildCommandArgs(['git', 'status'], {});
-      expect(result).toEqual(['git', 'status']);
-    });
-
-    it('throws for missing required arguments', () => {
-      expect(() => buildCommandArgs(['git', 'checkout', '{{branch}}'], {})).toThrow(
-        'Missing required argument: branch',
-      );
-    });
-
-    it('rejects object values in token positions', () => {
-      expect(() => buildCommandArgs(['test', '{{arg}}'], { arg: { nested: true } })).toThrow(
-        'Object/array values not allowed',
-      );
-    });
-
-    it('rejects values with unsafe characters', () => {
-      expect(() => buildCommandArgs(['test', '{{arg}}'], { arg: '; rm -rf /' })).toThrow(
-        'disallowed characters',
-      );
-    });
-  });
-
-  describe('validateArgs', () => {
-    it('passes when no schema provided', () => {
-      expect(() => validateArgs(null, { anything: 'goes' })).not.toThrow();
-    });
-
-    it('rejects object arg values', () => {
-      expect(() => validateArgs({}, { nested: { bad: true } })).toThrow('must be a scalar value');
-    });
-
-    it('validates required fields from schema', () => {
-      const schema = { required: ['name'] };
-      expect(() => validateArgs(schema, {})).toThrow('Missing required argument: name');
-    });
-
-    it('validates pattern constraints', () => {
-      const schema = {
-        properties: { branch: { pattern: '^[a-zA-Z0-9/-]+$' } },
-      };
-      expect(() => validateArgs(schema, { branch: 'main; evil' })).toThrow(
-        'does not match pattern',
       );
     });
   });

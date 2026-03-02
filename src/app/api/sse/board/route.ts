@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
-import { db } from '@/lib/db';
-import { tasks, executions } from '@/lib/db/schema';
+import { tasks } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
 import { listTasksBoardItems } from '@/lib/services/task-service';
 import { createLogger } from '@/lib/logger';
@@ -51,21 +50,6 @@ export async function GET(_req: NextRequest) {
 
           for (const task of updatedTasks) {
             send('task_updated', task);
-          }
-
-          const updatedExecs = await db
-            .select()
-            .from(executions)
-            .where(
-              sql`${executions.createdAt} > ${lastPoll} OR ${executions.startedAt} > ${lastPoll} OR ${executions.endedAt} > ${lastPoll}`,
-            );
-
-          for (const exec of updatedExecs) {
-            send('execution_status', {
-              id: exec.id,
-              taskId: exec.taskId,
-              status: exec.status,
-            });
           }
 
           lastPoll = new Date();

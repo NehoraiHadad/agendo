@@ -7,10 +7,7 @@ const updateCapabilitySchema = z
   .object({
     label: z.string().min(1).optional(),
     description: z.string().nullable().optional(),
-    interactionMode: z.enum(['template', 'prompt']).optional(),
-    commandTokens: z.array(z.string()).nullable().optional(),
     promptTemplate: z.string().nullable().optional(),
-    argsSchema: z.record(z.unknown()).optional(),
     isEnabled: z.boolean().optional(),
     dangerLevel: z.number().int().min(0).max(3).optional(),
     timeoutSec: z.number().int().min(1).optional(),

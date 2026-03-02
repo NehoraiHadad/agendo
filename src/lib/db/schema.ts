@@ -22,7 +22,6 @@ import type {
   AgentMetadata,
   AgentSessionConfig,
   TaskInputContext,
-  JsonSchemaObject,
   PlanMetadata,
   SnapshotFindings,
   WorkspaceLayout,
@@ -48,17 +47,6 @@ export const taskStatusEnum = pgEnum('task_status', [
   'cancelled',
 ]);
 
-// 'cancelling' enables graceful shutdown: API sets cancelling -> worker SIGTERMs.
-export const executionStatusEnum = pgEnum('execution_status', [
-  'queued',
-  'running',
-  'cancelling',
-  'succeeded',
-  'failed',
-  'cancelled',
-  'timed_out',
-]);
-
 export const sessionStatusEnum = pgEnum('session_status', [
   'active',
   'awaiting_input',
@@ -66,8 +54,7 @@ export const sessionStatusEnum = pgEnum('session_status', [
   'ended',
 ]);
 
-// 'template' = CLI tools with command_tokens; 'prompt' = AI agents with free-form prompt.
-export const interactionModeEnum = pgEnum('interaction_mode', ['template', 'prompt']);
+export const interactionModeEnum = pgEnum('interaction_mode', ['prompt']);
 
 export const agentKindEnum = pgEnum('agent_kind', ['builtin', 'custom']);
 
@@ -142,13 +129,9 @@ export const agentCapabilities = pgTable(
     label: text('label').notNull(),
     description: text('description'),
     source: capabilitySourceEnum('source').notNull(),
-    // Determines template vs prompt execution path in the worker.
-    interactionMode: interactionModeEnum('interaction_mode').notNull().default('template'),
-    // Nullable: prompt-mode capabilities have no command template.
-    commandTokens: jsonb('command_tokens').$type<string[]>(),
-    // Prompt-mode: template with placeholders like {{task_title}}, {{input_context.prompt_additions}}.
+    interactionMode: interactionModeEnum('interaction_mode').notNull().default('prompt'),
+    // Template with placeholders like {{task_title}}, {{input_context.prompt_additions}}.
     promptTemplate: text('prompt_template'),
-    argsSchema: jsonb('args_schema').notNull().$type<JsonSchemaObject>().default({}),
     requiresApproval: boolean('requires_approval').notNull().default(false),
     isEnabled: boolean('is_enabled').notNull().default(true),
     // 0=safe, 1=caution, 2=dangerous, 3=destructive.
@@ -162,11 +145,6 @@ export const agentCapabilities = pgTable(
   (table) => [
     unique('uq_agent_capability_key').on(table.agentId, table.key),
     index('idx_capabilities_agent').on(table.agentId, table.isEnabled),
-    // Template-mode must have command_tokens; prompt-mode may have null.
-    check(
-      'capability_mode_consistency',
-      sql`(interaction_mode = 'template' AND command_tokens IS NOT NULL) OR (interaction_mode = 'prompt')`,
-    ),
   ],
 );
 
@@ -240,83 +218,6 @@ export const taskDependencies = pgTable(
     primaryKey({ columns: [table.taskId, table.dependsOnTaskId] }),
     check('no_self_dependency', sql`task_id <> depends_on_task_id`),
     // Cycle detection enforced in service layer via transactional DFS + row locking.
-  ],
-);
-
-// --- Executions -------------------------------------------------------------
-// State machine: see 02-architecture.md for full transition rules.
-// Log fields merged here (execution_logs table removed — 1:1 split was unnecessary).
-
-export const executions = pgTable(
-  'executions',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    taskId: uuid('task_id')
-      .notNull()
-      .references(() => tasks.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id),
-    capabilityId: uuid('capability_id')
-      .notNull()
-      .references(() => agentCapabilities.id),
-    requestedBy: uuid('requested_by').notNull().default('00000000-0000-0000-0000-000000000001'),
-    status: executionStatusEnum('status').notNull().default('queued'),
-    // Denormalized from capability at queue time; preserves history if capability changes.
-    mode: interactionModeEnum('mode').notNull().default('template'),
-    args: jsonb('args').notNull().$type<Record<string, unknown>>().default({}),
-    // Resolved prompt sent to AI agent (prompt-mode only).
-    prompt: text('prompt'),
-    // If set, overrides template interpolation (used for session continuation).
-    promptOverride: text('prompt_override'),
-    // OS PID for SIGTERM/SIGKILL on cancel (tmux session PID or child_process PID).
-    pid: integer('pid'),
-    // External session ID (e.g. Claude session UUID) for session resume.
-    sessionRef: text('session_ref'),
-    // tmux session name for this execution (all AI agents run inside tmux for web terminal access).
-    tmuxSessionName: text('tmux_session_name'),
-    // Links to previous execution when continuing a session (continuation chain).
-    parentExecutionId: uuid('parent_execution_id').references((): AnyPgColumn => executions.id, {
-      onDelete: 'set null',
-    }),
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    endedAt: timestamp('ended_at', { withTimezone: true }),
-    exitCode: integer('exit_code'),
-    // One-line error summary; full output in log file.
-    error: text('error'),
-    workerId: text('worker_id'),
-    // Updated every 30s; stale jobs (>2min) reclaimed by stale-job-reaper.
-    heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }),
-
-    // --- Log fields (merged from execution_logs) ---
-    logFilePath: text('log_file_path'),
-    logByteSize: bigint('log_byte_size', { mode: 'number' }).notNull().default(0),
-    logLineCount: integer('log_line_count').notNull().default(0),
-    logUpdatedAt: timestamp('log_updated_at', { withTimezone: true }),
-
-    // --- Retry support ---
-    // On failure: if retry_count < max_retries, worker requeues and increments.
-    retryCount: integer('retry_count').notNull().default(0),
-    maxRetries: integer('max_retries').notNull().default(0),
-    spawnDepth: integer('spawn_depth').notNull().default(0),
-    cliFlags: jsonb('cli_flags').$type<Record<string, string | boolean>>().notNull().default({}),
-    totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }),
-    totalTurns: integer('total_turns'),
-    totalDurationMs: integer('total_duration_ms'),
-    // Forward ref: sessions is defined after executions.
-    sessionId: uuid('session_id').references((): AnyPgColumn => sessions.id),
-
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    // Job claim: partial on 'queued' for fast SKIP LOCKED queries.
-    index('idx_executions_queue').on(table.status, table.createdAt),
-    index('idx_executions_task').on(table.taskId, table.createdAt),
-    // Stale job detection: running executions ordered by heartbeat.
-    index('idx_executions_stale').on(table.heartbeatAt),
-    // Per-agent concurrency check in claim query.
-    index('idx_executions_agent_active').on(table.agentId, table.status),
-    index('idx_executions_session').on(table.sessionId, table.createdAt),
   ],
 );
 
