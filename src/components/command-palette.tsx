@@ -12,6 +12,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { Search, ListTodo, FolderOpen, MessageSquare, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTaskBoardStore } from '@/lib/store/task-board-store';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ const GROUP_CONFIG: Record<
     href: (id: string) => string;
   }
 > = {
-  tasks: { label: 'TASKS', Icon: ListTodo, href: (id) => `/tasks/${id}` },
+  tasks: { label: 'TASKS', Icon: ListTodo, href: (_id) => `/tasks` },
   projects: { label: 'PROJECTS', Icon: FolderOpen, href: (id) => `/projects/${id}` },
   sessions: { label: 'SESSIONS', Icon: MessageSquare, href: (id) => `/sessions/${id}` },
   plans: { label: 'PLANS', Icon: FileText, href: (id) => `/plans/${id}` },
@@ -213,12 +214,18 @@ export function CommandPalette() {
     setSelectedIndex(0);
   }, [flatItems]);
 
+  const selectTask = useTaskBoardStore((s) => s.selectTask);
+
   const navigate = useCallback(
-    (href: string) => {
+    (href: string, taskId?: string) => {
       setOpen(false);
       router.push(href);
+      if (taskId) {
+        // Tasks open as a detail sheet via Zustand, not a separate page
+        setTimeout(() => selectTask(taskId), 50);
+      }
     },
-    [router],
+    [router, selectTask],
   );
 
   const handleKeyDown = useCallback(
@@ -232,7 +239,7 @@ export function CommandPalette() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const item = flatItems[selectedIndex];
-        if (item) navigate(item.href);
+        if (item) navigate(item.href, item.group === 'tasks' ? item.id : undefined);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         setOpen(false);
@@ -321,7 +328,9 @@ export function CommandPalette() {
                         isSelected={isSelected}
                         Icon={Icon}
                         query={query}
-                        onClick={() => navigate(href(item.id))}
+                        onClick={() =>
+                          navigate(href(item.id), group === 'tasks' ? item.id : undefined)
+                        }
                         onMouseEnter={() => setSelectedIndex(itemIdx)}
                       />
                     );
