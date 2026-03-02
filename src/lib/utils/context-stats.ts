@@ -5,17 +5,46 @@ export interface ContextStats {
   contextWindow: number | null;
 }
 
-/** Return token stats from the most recent agent:result event, or null if none yet. */
+/**
+ * Return token stats from the most recent agent:result event, or null if none yet.
+ *
+ * Priority:
+ * 1. `perCallContextStats` — captured from the last `message_start` stream event before
+ *    this result. Represents a single API call, so it's always ≤ contextWindow and accurate.
+ * 2. `modelUsage` fallback — aggregated across all API calls in the turn. For turns with
+ *    many tool calls (e.g. 10 tool calls × 150K cache each = 1.5M aggregated), this far
+ *    exceeds the context window. We cap it at contextWindow so the bar shows 100% rather
+ *    than an absurdly wrong near-zero value from inputTokens alone.
+ */
 export function getLatestContextStats(events: AgendoEvent[]): ContextStats | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === 'agent:result' && e.modelUsage) {
-      let inputTokens = 0;
+      // Extract contextWindow from modelUsage (it's the same across all model entries).
       let contextWindow: number | null = null;
       for (const usage of Object.values(e.modelUsage)) {
-        inputTokens += usage.inputTokens;
         if (usage.contextWindow) contextWindow = usage.contextWindow;
       }
+
+      // Prefer per-call stats: these come from message_start and represent a single
+      // API call, so cache_read + cache_create + input = actual context tokens used.
+      if (e.perCallContextStats) {
+        const { inputTokens, cacheReadInputTokens, cacheCreationInputTokens } =
+          e.perCallContextStats;
+        const total = inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+        if (total > 0) return { inputTokens: total, contextWindow };
+      }
+
+      // Fallback: sum all input+cache tokens from modelUsage, but cap at contextWindow.
+      // Without capping, complex turns (N API calls) report N× the context window.
+      let rawTotal = 0;
+      for (const usage of Object.values(e.modelUsage)) {
+        rawTotal +=
+          usage.inputTokens +
+          (usage.cacheReadInputTokens ?? 0) +
+          (usage.cacheCreationInputTokens ?? 0);
+      }
+      const inputTokens = contextWindow ? Math.min(rawTotal, contextWindow) : rawTotal;
       if (inputTokens > 0) return { inputTokens, contextWindow };
     }
   }

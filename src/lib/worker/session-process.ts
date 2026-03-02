@@ -88,6 +88,16 @@ export class SessionProcess {
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
   private dataBuffer = '';
+  /**
+   * Per-call context stats from the most recent `message_start` stream event.
+   * Injected into the next `agent:result` payload so context-stats.ts can show
+   * accurate context usage instead of the aggregated (and often overflowed) modelUsage.
+   */
+  private lastPerCallContextStats: {
+    inputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+  } | null = null;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -421,6 +431,9 @@ export class SessionProcess {
                 clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
                 appendDelta: (text) => this.activityTracker.appendDelta(text),
                 appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
+                onMessageStart: (stats) => {
+                  this.lastPerCallContextStats = stats;
+                },
                 onResultStats: (costUsd, turns) => {
                   void db
                     .update(sessions)
@@ -474,7 +487,16 @@ export class SessionProcess {
             continue; // suppress — keep in activeToolUseIds until human responds
           }
 
-          const event = await this.emitEvent(partial);
+          // Attach per-call context stats to agent:result so the frontend can show
+          // accurate context window usage. The stats come from the most recent
+          // message_start stream event, which reflects actual per-API-call context
+          // (unlike modelUsage which aggregates across all API calls in the turn).
+          const enrichedPartial: AgendoEventPayload =
+            partial.type === 'agent:result' && this.lastPerCallContextStats
+              ? { ...partial, perCallContextStats: this.lastPerCallContextStats }
+              : partial;
+
+          const event = await this.emitEvent(enrichedPartial);
 
           // Track in-flight tool calls to enable synthetic cleanup on cancel.
           if (event.type === 'agent:tool-start') {
