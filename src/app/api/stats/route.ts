@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { db } from '@/lib/db';
-import { executions, tasks, sessions } from '@/lib/db/schema';
+import { tasks, sessions } from '@/lib/db/schema';
 import { eq, sql, count } from 'drizzle-orm';
 
 export const GET = withErrorBoundary(async () => {
-  const [[runningResult], [todoResult], [sessionResult]] = await Promise.all([
-    db
-      .select({ count: count() })
-      .from(executions)
-      .where(sql`${executions.status} IN ('running', 'queued')`),
+  const [[todoResult], [sessionResult]] = await Promise.all([
     db.select({ count: count() }).from(tasks).where(eq(tasks.status, 'todo')),
     db
       .select({ count: count() })
@@ -19,7 +15,6 @@ export const GET = withErrorBoundary(async () => {
 
   return NextResponse.json({
     data: {
-      runningExecutions: runningResult.count,
       todoTasks: todoResult.count,
       activeSessions: sessionResult.count,
     },

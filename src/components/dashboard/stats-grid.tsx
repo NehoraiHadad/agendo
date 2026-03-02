@@ -5,49 +5,58 @@ interface StatsGridProps {
   stats: DashboardStats;
 }
 
-const METRICS = [
+interface Metric {
+  title: string;
+  getValue: (stats: DashboardStats) => number;
+  color: string;
+  dimColor: string;
+  isLive: boolean;
+  isAlert: boolean;
+}
+
+const METRICS: Metric[] = [
   {
     title: 'Total Tasks',
-    key: 'totalTasks' as const,
+    getValue: (s) => s.totalTasks,
     color: 'oklch(0.68 0.14 235)',
     dimColor: 'oklch(0.68 0.14 235 / 0.12)',
     isLive: false,
     isAlert: false,
   },
   {
-    title: 'Active',
-    key: 'activeExecutions' as const,
+    title: 'Todo',
+    getValue: (s) => s.taskCountsByStatus['todo'] ?? 0,
     color: 'oklch(0.72 0.18 145)',
     dimColor: 'oklch(0.72 0.18 145 / 0.12)',
+    isLive: false,
+    isAlert: false,
+  },
+  {
+    title: 'In Progress',
+    getValue: (s) => s.taskCountsByStatus['in_progress'] ?? 0,
+    color: 'oklch(0.78 0.15 70)',
+    dimColor: 'oklch(0.78 0.15 70 / 0.12)',
     isLive: true,
     isAlert: false,
   },
   {
-    title: 'Queued',
-    key: 'queuedExecutions' as const,
-    color: 'oklch(0.78 0.15 70)',
-    dimColor: 'oklch(0.78 0.15 70 / 0.12)',
-    isLive: false,
-    isAlert: false,
-  },
-  {
-    title: 'Failed / 24h',
-    key: 'failedLast24h' as const,
+    title: 'Done',
+    getValue: (s) => s.taskCountsByStatus['done'] ?? 0,
     color: 'oklch(0.62 0.22 22)',
     dimColor: 'oklch(0.62 0.22 22 / 0.12)',
     isLive: false,
-    isAlert: true,
+    isAlert: false,
   },
-] as const;
+];
 
 export function StatsGrid({ stats }: StatsGridProps) {
-  const allValues = METRICS.map((m) => stats[m.key] as number);
+  const allValues = METRICS.map((m) => m.getValue(stats));
   const maxValue = Math.max(...allValues, 1);
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {METRICS.map((m) => {
-        const value = stats[m.key] as number;
+        const value = m.getValue(stats);
         const pct = (value / maxValue) * 100;
         const isActive = m.isLive && value > 0;
         const isAlert = m.isAlert && value > 0;
@@ -55,7 +64,7 @@ export function StatsGrid({ stats }: StatsGridProps) {
 
         return (
           <div
-            key={m.key}
+            key={m.title}
             className={cn(
               'group relative overflow-hidden rounded-xl border border-white/[0.06] bg-[oklch(0.10_0_0)]',
               'px-5 pt-4 pb-3 transition-colors hover:bg-[oklch(0.115_0_0)] cursor-default',

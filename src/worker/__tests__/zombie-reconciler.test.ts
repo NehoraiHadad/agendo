@@ -17,12 +17,6 @@ vi.mock('../../lib/db/index', () => {
 });
 
 vi.mock('../../lib/db/schema', () => ({
-  executions: {
-    id: 'id',
-    pid: 'pid',
-    status: 'status',
-    workerId: 'worker_id',
-  },
   sessions: {
     id: 'id',
     pid: 'pid',
@@ -30,6 +24,7 @@ vi.mock('../../lib/db/schema', () => ({
     workerId: 'worker_id',
     sessionRef: 'session_ref',
     lastActiveAt: 'last_active_at',
+    initialPrompt: 'initial_prompt',
   },
 }));
 
@@ -47,24 +42,23 @@ vi.mock('drizzle-orm', () => ({
 
 import { db } from '../../lib/db/index';
 import { reconcileZombies } from '../zombie-reconciler';
+import { enqueueSession } from '../../lib/worker/queue';
 
 const mockDb = vi.mocked(db);
+const mockEnqueue = vi.mocked(enqueueSession);
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
-// Helper to set up select query result
-// First call = executions query (returns given rows), subsequent calls = sessions query (returns [])
-function mockSelectResult(rows: Array<{ id: string; pid: number | null }>) {
-  const execMockWhere = vi.fn().mockResolvedValue(rows);
-  const execMockFrom = vi.fn().mockReturnValue({ where: execMockWhere });
-  const sessMockWhere = vi.fn().mockResolvedValue([]);
-  const sessMockFrom = vi.fn().mockReturnValue({ where: sessMockWhere });
-  mockDb.select
-    .mockReturnValueOnce({ from: execMockFrom } as never)
-    .mockReturnValue({ from: sessMockFrom } as never);
+// Helper to set up session query result
+function mockSessionsResult(
+  rows: Array<{ id: string; pid: number | null; status: string; sessionRef?: string | null }>,
+) {
+  const mockWhere = vi.fn().mockResolvedValue(rows);
+  const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+  mockDb.select.mockReturnValue({ from: mockFrom } as never);
 }
 
 // Helper to set up update chain
@@ -76,69 +70,85 @@ function mockUpdateChain() {
 }
 
 describe('reconcileZombies', () => {
-  it('returns early with log when no orphans found', async () => {
-    mockSelectResult([]);
+  it('returns early when no orphaned sessions found', async () => {
+    mockSessionsResult([]);
 
     await reconcileZombies('worker-1');
 
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('No orphaned executions'));
     expect(mockDb.update).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
-  it('marks dead PID execution as failed', async () => {
-    mockSelectResult([{ id: 'exec-1', pid: 99999 }]);
+  it('marks awaiting_input session as idle without killing', async () => {
+    mockSessionsResult([{ id: 'sess-1', pid: 12345, status: 'awaiting_input', sessionRef: null }]);
     const { mockSetFn } = mockUpdateChain();
-
-    // pid 99999 is almost certainly not alive
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw new Error('ESRCH');
-    });
-
-    await reconcileZombies('worker-1');
-
-    expect(mockSetFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        error: 'Worker restarted, execution orphaned',
-      }),
-    );
-
-    killSpy.mockRestore();
-  });
-
-  it('sends SIGTERM to alive PID', async () => {
-    mockSelectResult([{ id: 'exec-2', pid: 12345 }]);
-    mockUpdateChain();
-
-    // First call (signal 0 check) succeeds = alive
-    // Second call (SIGTERM) succeeds
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
     await reconcileZombies('worker-1');
 
-    // Should have called kill with signal 0 (alive check) and then SIGTERM
-    expect(killSpy).toHaveBeenCalledWith(12345, 0);
-    expect(killSpy).toHaveBeenCalledWith(12345, 'SIGTERM');
+    // should NOT kill the PID for awaiting_input
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(mockSetFn).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'idle', workerId: null }),
+    );
 
     killSpy.mockRestore();
   });
 
-  it('treats null PID as dead', async () => {
-    mockSelectResult([{ id: 'exec-3', pid: null }]);
+  it('kills alive PID for active session (process group)', async () => {
+    mockSessionsResult([{ id: 'sess-2', pid: 12345, status: 'active', sessionRef: null }]);
+    mockUpdateChain();
+
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    await reconcileZombies('worker-1');
+
+    // Should check liveness with signal 0 then kill the process group
+    expect(killSpy).toHaveBeenCalledWith(12345, 0);
+    expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM');
+
+    killSpy.mockRestore();
+  });
+
+  it('marks active session as idle after killing', async () => {
+    mockSessionsResult([{ id: 'sess-3', pid: null, status: 'active', sessionRef: null }]);
     const { mockSetFn } = mockUpdateChain();
 
     await reconcileZombies('worker-1');
 
     expect(mockSetFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        error: 'Worker restarted, execution orphaned',
-      }),
+      expect.objectContaining({ status: 'idle', workerId: null }),
     );
   });
 
-  it('catches gracefully when kill throws on SIGTERM', async () => {
-    mockSelectResult([{ id: 'exec-4', pid: 55555 }]);
+  it('re-enqueues active session that has sessionRef', async () => {
+    mockSessionsResult([{ id: 'sess-4', pid: null, status: 'active', sessionRef: 'some-ref' }]);
+    // Need 2 update calls: set idle + set initialPrompt
+    const mockWhere = vi.fn().mockResolvedValue(undefined);
+    const mockSetFn = vi.fn().mockReturnValue({ where: mockWhere });
+    mockDb.update.mockReturnValue({ set: mockSetFn } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess-4', resumeRef: 'some-ref' }),
+    );
+  });
+
+  it('handles multiple orphaned sessions', async () => {
+    mockSessionsResult([
+      { id: 'sess-a', pid: null, status: 'active', sessionRef: null },
+      { id: 'sess-b', pid: null, status: 'active', sessionRef: null },
+    ]);
+    mockUpdateChain();
+
+    await reconcileZombies('worker-1');
+
+    expect(mockDb.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('catches gracefully when SIGTERM throws', async () => {
+    mockSessionsResult([{ id: 'sess-5', pid: 55555, status: 'active', sessionRef: null }]);
     mockUpdateChain();
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
@@ -152,40 +162,11 @@ describe('reconcileZombies', () => {
     killSpy.mockRestore();
   });
 
-  it('processes multiple orphans', async () => {
-    mockSelectResult([
-      { id: 'exec-a', pid: null },
-      { id: 'exec-b', pid: null },
-      { id: 'exec-c', pid: null },
-    ]);
-    mockUpdateChain();
+  it('queries only sessions for the given workerId', async () => {
+    mockSessionsResult([]);
 
     await reconcileZombies('worker-1');
 
-    // update called 3 times (once per dead orphan)
-    expect(mockDb.update).toHaveBeenCalledTimes(3);
-  });
-
-  it('sets endedAt timestamp on failed executions', async () => {
-    mockSelectResult([{ id: 'exec-5', pid: null }]);
-    const { mockSetFn } = mockUpdateChain();
-
-    const before = new Date();
-    await reconcileZombies('worker-1');
-    const after = new Date();
-
-    const setArg = mockSetFn.mock.calls[0][0];
-    expect(setArg.endedAt).toBeInstanceOf(Date);
-    expect(setArg.endedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
-    expect(setArg.endedAt.getTime()).toBeLessThanOrEqual(after.getTime());
-  });
-
-  it('queries only running and cancelling statuses for given worker', async () => {
-    mockSelectResult([]);
-
-    await reconcileZombies('worker-1');
-
-    // Verify select was called (the query was made)
     expect(mockDb.select).toHaveBeenCalled();
   });
 });

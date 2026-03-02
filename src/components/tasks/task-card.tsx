@@ -4,7 +4,6 @@ import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
-import { useExecutionStore } from '@/lib/store/execution-store';
 import { cn } from '@/lib/utils';
 
 interface TaskCardProps {
@@ -59,12 +58,6 @@ const PRIORITY_CONFIG: Record<number, PriorityConfig> = {
   },
 };
 
-const EXECUTION_STATUS: Record<string, { color: string; animate: boolean; title: string }> = {
-  queued: { color: 'bg-amber-400', animate: false, title: 'Queued' },
-  running: { color: 'bg-emerald-400', animate: true, title: 'Running' },
-  cancelling: { color: 'bg-orange-400', animate: true, title: 'Cancelling' },
-};
-
 /* ─── Component ────────────────────────────────────────────── */
 
 export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
@@ -76,7 +69,6 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
   const parentTask = useTaskBoardStore((s) =>
     task?.parentTaskId ? s.tasksById[task.parentTaskId] : undefined,
   );
-  const activeExec = useExecutionStore((s) => s.activeByTaskId[taskId] ?? null);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: taskId,
@@ -93,7 +85,6 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
 
   if (!task) return null;
 
-  const execStatus = activeExec ? (EXECUTION_STATUS[activeExec.status] ?? null) : null;
   const subtaskPct =
     task.subtaskTotal > 0 ? Math.round((task.subtaskDone / task.subtaskTotal) * 100) : 0;
 
@@ -117,17 +108,6 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
         isDragging && 'opacity-20 scale-[0.98] shadow-none',
       )}
     >
-      {/* Active execution ribbon — top edge */}
-      {execStatus && (
-        <div
-          className={cn(
-            'absolute top-0 left-0 right-0 h-[2px] rounded-t-lg',
-            execStatus.color,
-            execStatus.animate && 'animate-pulse',
-          )}
-        />
-      )}
-
       <div className="flex items-start gap-2 p-3">
         {/* Drag handle */}
         <button
@@ -177,27 +157,6 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
             <p className="flex-1 min-w-0 text-sm font-medium leading-snug text-foreground/90 group-hover:text-foreground transition-colors break-words">
               {task.title}
             </p>
-            {execStatus && (
-              <span
-                className={cn(
-                  'mt-0.5 inline-flex items-center gap-1 shrink-0 text-[9px] font-medium uppercase tracking-wide rounded-full px-1.5 py-0.5',
-                  activeExec?.status === 'running'
-                    ? 'bg-emerald-500/15 text-emerald-400'
-                    : activeExec?.status === 'queued'
-                      ? 'bg-amber-500/15 text-amber-400'
-                      : 'bg-orange-500/15 text-orange-400',
-                )}
-              >
-                <span
-                  className={cn(
-                    'inline-block h-1.5 w-1.5 rounded-full',
-                    execStatus.color,
-                    execStatus.animate && 'animate-pulse',
-                  )}
-                />
-                {activeExec?.status}
-              </span>
-            )}
           </div>
 
           {/* Description snippet */}

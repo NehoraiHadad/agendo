@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { executions, sessions } from '@/lib/db/schema';
+import { sessions } from '@/lib/db/schema';
 import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
 
@@ -34,23 +34,6 @@ export class StaleReaper {
   async reap(): Promise<number> {
     const thresholdMs = config.STALE_JOB_THRESHOLD_MS;
     const staleInterval = sql`NOW() - INTERVAL '${sql.raw(String(thresholdMs))} milliseconds'`;
-
-    // --- Reap stale executions (heartbeat lost while running) ---
-    const staleRows = await db
-      .select({ id: executions.id })
-      .from(executions)
-      .where(and(eq(executions.status, 'running'), lt(executions.heartbeatAt, staleInterval)));
-
-    if (staleRows.length > 0) {
-      await Promise.all(
-        staleRows.map((row) =>
-          db
-            .update(executions)
-            .set({ status: 'timed_out', error: 'Heartbeat lost — worker stale' })
-            .where(and(eq(executions.id, row.id), eq(executions.status, 'running'))),
-        ),
-      );
-    }
 
     // --- Reap stale sessions (heartbeat lost while active/awaiting_input) ---
     // Kill orphaned OS processes, then transition to 'idle' for cold-resume.
@@ -109,6 +92,6 @@ export class StaleReaper {
       }
     }
 
-    return staleRows.length + staleSessions.length;
+    return staleSessions.length;
   }
 }

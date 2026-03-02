@@ -6,18 +6,15 @@ import {
   renderLogChunk,
   resetLineIdCounter,
   type RenderedLine,
+  type StreamType,
 } from '@/lib/log-renderer';
-import type { SseLogEvent } from '@/lib/types';
-import type { UseExecutionStreamReturn } from './use-execution-stream';
 
-// Re-export type alias for downstream use
-export type UseSessionLogStreamReturn = UseExecutionStreamReturn;
-
-// Cast helper — session statuses don't overlap with ExecutionStatus but the
-// viewer only uses status for display, so casting is safe here.
-function asExecutionStatus(s: string | null): UseExecutionStreamReturn['status'] {
-  return s as UseExecutionStreamReturn['status'];
-}
+type SseLogEvent =
+  | { type: 'status'; status: string }
+  | { type: 'catchup'; content: string }
+  | { type: 'log'; content: string; stream: StreamType }
+  | { type: 'done'; status: string }
+  | { type: 'error'; message: string };
 
 const MAX_LINES = 5000;
 
@@ -28,6 +25,10 @@ interface StreamState {
   isConnected: boolean;
   error: string | null;
   isTruncated: boolean;
+}
+
+export interface UseSessionLogStreamReturn extends StreamState {
+  reset: () => void;
 }
 
 type StreamAction =
@@ -74,7 +75,11 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
     case 'SET_DONE':
       return { ...state, isDone: true, status: action.status, isConnected: false };
     case 'SET_CONNECTED':
-      return { ...state, isConnected: action.connected, error: action.connected ? null : state.error };
+      return {
+        ...state,
+        isConnected: action.connected,
+        error: action.connected ? null : state.error,
+      };
     case 'SET_ERROR':
       return { ...state, error: action.error, isConnected: false };
     case 'RESET':
@@ -138,7 +143,9 @@ export function useSessionLogStream(sessionId: string | null): UseSessionLogStre
               es.close();
               break;
           }
-        } catch { /* ignore malformed */ }
+        } catch {
+          /* ignore malformed */
+        }
       };
 
       es.onerror = () => {
@@ -162,5 +169,5 @@ export function useSessionLogStream(sessionId: string | null): UseSessionLogStre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  return { ...state, status: asExecutionStatus(state.status), reset };
+  return { ...state, reset };
 }

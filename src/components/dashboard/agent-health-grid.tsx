@@ -19,62 +19,23 @@ function getAgentStatus(agent: AgentHealthEntry): AgentStatusInfo {
       dotClass: 'bg-zinc-600',
       labelClass: 'text-zinc-500',
     };
-  if (agent.runningExecutions >= agent.maxConcurrent)
-    return {
-      label: 'Busy',
-      dotClass: 'bg-amber-400 animate-pulse',
-      labelClass: 'text-amber-400',
-    };
-  if (agent.runningExecutions > 0)
-    return {
-      label: 'Active',
-      dotClass: 'bg-emerald-400 animate-pulse',
-      labelClass: 'text-emerald-400',
-    };
   return {
-    label: 'Idle',
-    dotClass: 'bg-zinc-600',
-    labelClass: 'text-muted-foreground/40',
+    label: 'Enabled',
+    dotClass: 'bg-emerald-400',
+    labelClass: 'text-emerald-400',
   };
-}
-
-function SlotBar({ used, total }: { used: number; total: number }) {
-  const displayTotal = Math.min(total, 10);
-  return (
-    <div className="flex gap-0.5 items-center">
-      {Array.from({ length: displayTotal }, (_, i) => (
-        <span
-          key={i}
-          className={cn(
-            'inline-block h-2 w-1.5 rounded-[2px] transition-all duration-300',
-            i < used
-              ? 'bg-emerald-400 shadow-[0_0_4px_oklch(0.72_0.18_145/0.7)]'
-              : 'bg-white/[0.07]',
-          )}
-        />
-      ))}
-    </div>
-  );
 }
 
 function AgentRow({ agent }: { agent: AgentHealthEntry }) {
   const status = getAgentStatus(agent);
 
   return (
-    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 px-4 py-2.5 rounded-lg hover:bg-white/[0.03] transition-colors border-b border-white/[0.04] last:border-0">
+    <div className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-2.5 rounded-lg hover:bg-white/[0.03] transition-colors border-b border-white/[0.04] last:border-0">
       {/* Name + status dot */}
       <div className="flex items-center gap-2 min-w-0">
         <span className={cn('size-1.5 rounded-full shrink-0', status.dotClass)} />
         <span className="truncate text-sm font-medium text-foreground/90">{agent.name}</span>
       </div>
-
-      {/* Slot indicator bar */}
-      <SlotBar used={agent.runningExecutions} total={agent.maxConcurrent} />
-
-      {/* Slot count */}
-      <span className="font-mono text-xs text-muted-foreground/50 tabular-nums text-right w-10">
-        {agent.runningExecutions}/{agent.maxConcurrent}
-      </span>
 
       {/* Status label */}
       <span className={cn('text-[10px] font-medium w-14 text-right', status.labelClass)}>

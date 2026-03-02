@@ -54,9 +54,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
   if (!cap) throw new BadRequestError('Capability not found');
   if (cap.interactionMode !== 'prompt') {
-    throw new BadRequestError(
-      'Sessions can only be created for prompt-mode capabilities. Use /api/executions for template capabilities.',
-    );
+    throw new BadRequestError('Only prompt-mode capabilities can be used for sessions.');
   }
 
   const session = await createSession({

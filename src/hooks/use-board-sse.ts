@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from 'react';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
-import { useExecutionStore } from '@/lib/store/execution-store';
 import type { Task } from '@/lib/types';
 
 const MAX_RETRY_DELAY = 30000;
@@ -52,23 +51,6 @@ export function useBoardSse() {
           // Skip ad-hoc tasks — they are managed via the ad-hoc panel, not the main board
           if (task.isAdHoc) return;
           useTaskBoardStore.getState().applyServerCreate(task);
-        } catch {
-          // ignore
-        }
-      });
-
-      es.addEventListener('execution_status', (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data) as {
-            id: string;
-            taskId: string;
-            status: string;
-          };
-          useExecutionStore.getState().updateExecution({
-            id: data.id,
-            taskId: data.taskId,
-            status: data.status as import('@/lib/types').ExecutionStatus,
-          });
         } catch {
           // ignore
         }

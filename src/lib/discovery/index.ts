@@ -1,8 +1,6 @@
 import { scanPATH } from './scanner';
 import type { ScannedBinary } from './scanner';
 import { identifyBinary } from './identifier';
-import { classifyBinary } from './classifier';
-import type { ToolType } from './classifier';
 import { getHelpText, quickParseHelp } from './schema-extractor';
 import type { ParsedSchema } from './schema-extractor';
 import { getPresetForBinary, AI_TOOL_PRESETS } from './presets';
@@ -13,7 +11,7 @@ export interface DiscoveredTool {
   path: string;
   realPath: string;
   isSymlink: boolean;
-  toolType: ToolType;
+  toolType: string;
   version: string | null;
   packageName: string | null;
   packageSection: string | null;
@@ -26,8 +24,7 @@ export interface DiscoveredTool {
 
 /**
  * Run the full discovery pipeline.
- * Stages 1-3 run for ALL binaries. Stage 4 (schema) runs only for AI presets
- * and optionally for tools in `schemaTargets`.
+ * Only processes binaries that match known AI agent presets or explicitly requested targets.
  */
 export async function runDiscovery(
   schemaTargets?: Set<string>,
@@ -41,7 +38,6 @@ export async function runDiscovery(
   const tools: DiscoveredTool[] = [];
 
   // Only process binaries that match a known preset or are explicitly requested.
-  // Processing all 1800+ PATH binaries is extremely slow (dpkg -S + apt-cache per binary).
   const presetNames = new Set(Object.keys(AI_TOOL_PRESETS));
   const entries = Array.from(binaries.values()).filter(
     (b) => presetNames.has(b.name) || schemaTargets?.has(b.name),
@@ -56,20 +52,8 @@ export async function runDiscovery(
     }),
   );
 
-  // Sort: AI agents first, then by name
-  tools.sort((a, b) => {
-    const typeOrder: Record<ToolType, number> = {
-      'ai-agent': 0,
-      'cli-tool': 1,
-      'admin-tool': 2,
-      'interactive-tui': 3,
-      'shell-util': 4,
-      daemon: 5,
-    };
-    const orderDiff = (typeOrder[a.toolType] ?? 9) - (typeOrder[b.toolType] ?? 9);
-    if (orderDiff !== 0) return orderDiff;
-    return a.name.localeCompare(b.name);
-  });
+  // Sort by name
+  tools.sort((a, b) => a.name.localeCompare(b.name));
 
   return tools;
 }
@@ -81,15 +65,10 @@ async function processBinary(
   existingBinaryPaths?: Set<string>,
 ): Promise<DiscoveredTool> {
   const identity = await identifyBinary(binary.name, binary.path);
-  const toolType = await classifyBinary({
-    name: binary.name,
-    packageSection: identity.packageSection,
-  });
   const preset = getPresetForBinary(binary.name) ?? null;
 
   let schema: ParsedSchema | null = null;
-  const shouldExtractSchema =
-    preset !== null || schemaTargets?.has(binary.name) || toolType === 'ai-agent';
+  const shouldExtractSchema = preset !== null || schemaTargets?.has(binary.name);
 
   if (shouldExtractSchema) {
     const helpText = await getHelpText(binary.name);
@@ -109,7 +88,7 @@ async function processBinary(
     path: binary.path,
     realPath: binary.realPath,
     isSymlink: binary.isSymlink,
-    toolType: preset?.toolType ?? toolType,
+    toolType: preset?.toolType ?? 'ai-agent',
     version: identity.version,
     packageName: identity.packageName,
     packageSection: identity.packageSection,

@@ -16,11 +16,6 @@ import type { DiscoveredTool } from '@/lib/discovery';
 
 const TYPE_COLORS: Record<string, string> = {
   'ai-agent': 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
-  'cli-tool': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  'admin-tool': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-  'interactive-tui': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-  daemon: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200',
-  'shell-util': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
 };
 
 interface DiscoveredToolCardProps {
@@ -46,12 +41,17 @@ export function DiscoveredToolCard({ tool, onConfirmed, onDismissed }: Discovere
   }
 
   return (
-    <Card className={`rounded-xl border border-white/[0.06] bg-card p-4 hover:border-white/[0.12] transition-all duration-200 ${tool.isConfirmed ? 'opacity-60' : ''}`}>
+    <Card
+      className={`rounded-xl border border-white/[0.06] bg-card p-4 hover:border-white/[0.12] transition-all duration-200 ${tool.isConfirmed ? 'opacity-60' : ''}`}
+    >
       <CardHeader className="pb-2 p-0">
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-sm font-semibold text-foreground">{tool.name}</CardTitle>
           <div className="flex gap-1">
-            <Badge variant="outline" className={`text-[10px] bg-white/[0.04] border border-white/[0.06] text-muted-foreground/70 rounded-full px-2 py-0.5 ${TYPE_COLORS[tool.toolType] ?? ''}`}>
+            <Badge
+              variant="outline"
+              className={`text-[10px] bg-white/[0.04] border border-white/[0.06] text-muted-foreground/70 rounded-full px-2 py-0.5 ${TYPE_COLORS[tool.toolType] ?? ''}`}
+            >
               {tool.toolType}
             </Badge>
             {tool.preset && <Badge variant="default">Preset</Badge>}
@@ -72,7 +72,12 @@ export function DiscoveredToolCard({ tool, onConfirmed, onDismissed }: Discovere
         {error && <p className="text-xs text-destructive">{error}</p>}
         {!tool.isConfirmed && (
           <>
-            <Button size="sm" className="bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 glow-sm" onClick={handleConfirm} disabled={isPending}>
+            <Button
+              size="sm"
+              className="bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 glow-sm"
+              onClick={handleConfirm}
+              disabled={isPending}
+            >
               {isPending ? 'Confirming...' : 'Confirm'}
             </Button>
             <Button

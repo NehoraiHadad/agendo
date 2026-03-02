@@ -10,13 +10,12 @@ import {
   CommandGroup,
   CommandItem,
 } from '@/components/ui/command';
-import { LayoutDashboard, ListTodo, Bot, Play } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Bot } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/tasks', label: 'Tasks', icon: ListTodo },
   { href: '/agents', label: 'Agents', icon: Bot },
-  { href: '/executions', label: 'Executions', icon: Play },
 ];
 
 interface TaskResult {
@@ -72,7 +71,11 @@ export function CommandPalette() {
   );
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} className="bg-[oklch(0.10_0_0)] border border-white/[0.10] rounded-xl shadow-2xl">
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      className="bg-[oklch(0.10_0_0)] border border-white/[0.10] rounded-xl shadow-2xl"
+    >
       <CommandInput
         placeholder="Type a command or search..."
         value={search}
@@ -83,7 +86,11 @@ export function CommandPalette() {
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Navigation">
           {NAV_ITEMS.map((item) => (
-            <CommandItem key={item.href} onSelect={() => navigate(item.href)} className="hover:bg-white/[0.05]">
+            <CommandItem
+              key={item.href}
+              onSelect={() => navigate(item.href)}
+              className="hover:bg-white/[0.05]"
+            >
               <item.icon className="mr-2 h-4 w-4" />
               {item.label}
             </CommandItem>
@@ -92,7 +99,11 @@ export function CommandPalette() {
         {tasks.length > 0 && (
           <CommandGroup heading="Tasks">
             {tasks.map((task) => (
-              <CommandItem key={task.id} onSelect={() => navigate(`/tasks/${task.id}`)} className="hover:bg-white/[0.05]">
+              <CommandItem
+                key={task.id}
+                onSelect={() => navigate(`/tasks/${task.id}`)}
+                className="hover:bg-white/[0.05]"
+              >
                 <ListTodo className="mr-2 h-4 w-4" />
                 <span className="truncate">{task.title}</span>
               </CommandItem>

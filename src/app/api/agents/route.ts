@@ -14,6 +14,7 @@ const createAgentSchema = z.object({
   workingDir: z.string().nullable().optional(),
   envAllowlist: z.array(z.string()).optional().default([]),
   maxConcurrent: z.number().int().min(1).max(10).optional().default(1),
+  toolType: z.string().optional().default('ai-agent'),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -25,17 +26,8 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     return NextResponse.json({ data: agent ? [agent] : [] });
   }
 
-  const group = url.searchParams.get('group');
-  const groupOption =
-    group === 'ai'
-      ? { group: 'ai' as const }
-      : group === 'tools'
-        ? { group: 'tools' as const }
-        : undefined;
   const withCapabilities = url.searchParams.get('capabilities') === 'true';
-  const data = withCapabilities
-    ? await listAgentsWithCapabilities(groupOption)
-    : await listAgents(groupOption);
+  const data = withCapabilities ? await listAgentsWithCapabilities() : await listAgents();
   return NextResponse.json({ data });
 });
 

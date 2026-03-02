@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { ShieldCheck, Shield, ShieldAlert, ShieldBan } from 'lucide-react';
@@ -65,27 +64,10 @@ export function CapabilityRow({ capability, onToggle, onDelete }: CapabilityRowP
       <div className="flex items-center gap-3 min-w-0">
         <DangerIcon className={`h-4 w-4 shrink-0 ${dangerClassName}`} />
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{capability.label}</span>
-            <Badge
-              variant="outline"
-              className={
-                capability.interactionMode === 'template'
-                  ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300'
-                  : 'border-purple-300 text-purple-700 dark:border-purple-700 dark:text-purple-300'
-              }
-            >
-              {capability.interactionMode === 'template' ? 'Template' : 'Prompt'}
-            </Badge>
-          </div>
+          <span className="text-sm font-medium">{capability.label}</span>
           {capability.description && (
             <p className="text-xs text-muted-foreground truncate max-w-md">
               {capability.description}
-            </p>
-          )}
-          {capability.commandTokens && (
-            <p className="font-mono text-xs text-muted-foreground/60 truncate max-w-md">
-              {capability.commandTokens.join(' ')}
             </p>
           )}
         </div>

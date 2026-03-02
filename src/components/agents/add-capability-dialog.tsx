@@ -33,26 +33,29 @@ interface AddCapabilityDialogProps {
 export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogProps) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState('');
-  const [command, setCommand] = useState('');
   const [description, setDescription] = useState('');
+  const [promptTemplate, setPromptTemplate] = useState('');
   const [dangerLevel, setDangerLevel] = useState('0');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
     setLabel('');
-    setCommand('');
     setDescription('');
+    setPromptTemplate('');
     setDangerLevel('0');
     setError(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!label.trim() || !command.trim()) return;
+    if (!label.trim()) return;
 
-    const commandTokens = command.trim().split(/\s+/);
-    const key = label.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const key = label
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
 
     setIsSubmitting(true);
     setError(null);
@@ -66,8 +69,7 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
             key,
             label: label.trim(),
             description: description.trim() || null,
-            interactionMode: 'template',
-            commandTokens,
+            promptTemplate: promptTemplate.trim() || null,
             dangerLevel: parseInt(dangerLevel, 10),
           }),
         },
@@ -76,26 +78,30 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
       reset();
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create command');
+      setError(err instanceof Error ? err.message : 'Failed to create capability');
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) reset();
+      }}
+    >
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="px-2 sm:px-3" title="Add Command">
+        <Button size="sm" variant="outline" className="px-2 sm:px-3" title="Add Capability">
           <Plus className="size-4" />
-          <span className="hidden sm:inline ml-1.5">Add Command</span>
+          <span className="hidden sm:inline ml-1.5">Add Capability</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Command</DialogTitle>
-          <DialogDescription>
-            Create a template command that can be run against tasks.
-          </DialogDescription>
+          <DialogTitle>Add Capability</DialogTitle>
+          <DialogDescription>Create a prompt-mode capability for this agent.</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -105,24 +111,9 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
               id="cap-label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g. Run Tests"
+              placeholder="e.g. Code Review"
               required
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="cap-command">Command</Label>
-            <Input
-              id="cap-command"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="e.g. npm test"
-              required
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">
-              Space-separated tokens. Will be executed as-is.
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -133,8 +124,21 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
               id="cap-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Short description of what this command does..."
+              placeholder="Short description of what this capability does..."
               className="min-h-[72px] resize-none"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cap-prompt">
+              Prompt Template <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              id="cap-prompt"
+              value={promptTemplate}
+              onChange={(e) => setPromptTemplate(e.target.value)}
+              placeholder="Initial prompt sent to the agent when this capability is invoked..."
+              className="min-h-[80px] resize-none text-sm font-mono"
             />
           </div>
 
@@ -156,9 +160,13 @@ export function AddCapabilityDialog({ agentId, onCreated }: AddCapabilityDialogP
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
-            <Button type="submit" disabled={!label.trim() || !command.trim() || isSubmitting}>
-              {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              Add Command
+            <Button type="submit" disabled={!label.trim() || isSubmitting}>
+              {isSubmitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+              Add Capability
             </Button>
           </DialogFooter>
         </form>

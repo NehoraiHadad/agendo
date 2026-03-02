@@ -3,8 +3,7 @@ import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { ClaudeAdapter } from '@/lib/worker/adapters/claude-adapter';
 import { CodexAdapter } from '@/lib/worker/adapters/codex-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
-import { TemplateAdapter } from '@/lib/worker/adapters/template-adapter';
-import type { Agent, AgentCapability } from '@/lib/types';
+import type { Agent } from '@/lib/types';
 
 function makeAgent(binaryPath: string): Agent {
   return {
@@ -35,51 +34,23 @@ function makeAgent(binaryPath: string): Agent {
   };
 }
 
-function makeCap(mode: 'template' | 'prompt'): AgentCapability {
-  return {
-    id: 'cap-1',
-    agentId: 'agent-1',
-    key: 'test',
-    label: 'Test',
-    description: null,
-    source: 'manual',
-    interactionMode: mode,
-    commandTokens: mode === 'template' ? ['test'] : null,
-    promptTemplate: mode === 'prompt' ? '{{prompt}}' : null,
-    argsSchema: {},
-    requiresApproval: false,
-    isEnabled: true,
-    dangerLevel: 0,
-    timeoutSec: 300,
-    maxOutputBytes: 10485760,
-    createdAt: new Date(),
-  };
-}
-
 describe('selectAdapter', () => {
-  it('returns TemplateAdapter for template mode', () => {
-    const adapter = selectAdapter(makeAgent('/usr/bin/git'), makeCap('template'));
-    expect(adapter).toBeInstanceOf(TemplateAdapter);
-  });
-
   it('returns ClaudeAdapter for claude binary', () => {
-    const adapter = selectAdapter(makeAgent('/usr/local/bin/claude'), makeCap('prompt'));
+    const adapter = selectAdapter(makeAgent('/usr/local/bin/claude'));
     expect(adapter).toBeInstanceOf(ClaudeAdapter);
   });
 
   it('returns CodexAdapter for codex binary', () => {
-    const adapter = selectAdapter(makeAgent('/usr/local/bin/codex'), makeCap('prompt'));
+    const adapter = selectAdapter(makeAgent('/usr/local/bin/codex'));
     expect(adapter).toBeInstanceOf(CodexAdapter);
   });
 
   it('returns GeminiAdapter for gemini binary', () => {
-    const adapter = selectAdapter(makeAgent('/usr/local/bin/gemini'), makeCap('prompt'));
+    const adapter = selectAdapter(makeAgent('/usr/local/bin/gemini'));
     expect(adapter).toBeInstanceOf(GeminiAdapter);
   });
 
   it('throws for unknown binary', () => {
-    expect(() => selectAdapter(makeAgent('/usr/bin/unknown'), makeCap('prompt'))).toThrow(
-      'No adapter found',
-    );
+    expect(() => selectAdapter(makeAgent('/usr/bin/unknown'))).toThrow('No adapter found');
   });
 });

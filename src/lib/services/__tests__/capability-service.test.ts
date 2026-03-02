@@ -8,7 +8,6 @@ vi.mock('@/lib/db', () => {
     key: 'run-prompt',
     label: 'Run Prompt',
     interactionMode: 'prompt',
-    commandTokens: null,
     requiresApproval: false,
     isEnabled: true,
     dangerLevel: 1,
@@ -50,27 +49,6 @@ import { db } from '@/lib/db';
 describe('capability-service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  describe('mode consistency validation', () => {
-    function checkModeConsistency(
-      mode: 'template' | 'prompt',
-      commandTokens: string[] | null,
-    ): boolean {
-      return mode !== 'template' || commandTokens !== null;
-    }
-
-    it('rejects template mode without commandTokens', () => {
-      expect(checkModeConsistency('template', null)).toBe(false);
-    });
-
-    it('allows prompt mode without commandTokens', () => {
-      expect(checkModeConsistency('prompt', null)).toBe(true);
-    });
-
-    it('allows template mode with commandTokens', () => {
-      expect(checkModeConsistency('template', ['git', 'status'])).toBe(true);
-    });
   });
 
   describe('toggleApproval', () => {

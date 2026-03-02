@@ -7,12 +7,10 @@ import {
   LayoutDashboard,
   ListTodo,
   Bot,
-  Play,
   MessageSquare,
   ChevronLeft,
   ChevronRight,
   X,
-  Wrench,
   FolderOpen,
   FileText,
   PanelTop,
@@ -50,7 +48,6 @@ function MiniResourceBar({ pct }: { pct: number }) {
 }
 
 interface SidebarStats {
-  runningExecutions: number;
   todoTasks: number;
   activeSessions: number;
 }
@@ -64,14 +61,12 @@ const navItems = [
   { href: '/projects', label: 'Projects', icon: FolderOpen, badgeKey: null },
   { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
   { href: '/agents', label: 'AI Agents', icon: Bot, badgeKey: null },
-  { href: '/tools', label: 'Tools', icon: Wrench, badgeKey: null },
   {
     href: '/sessions',
     label: 'Sessions',
     icon: MessageSquare,
     badgeKey: 'activeSessions' as const,
   },
-  { href: '/executions', label: 'Executions', icon: Play, badgeKey: 'runningExecutions' as const },
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
   { href: '/config', label: 'Config', icon: Settings, badgeKey: null },

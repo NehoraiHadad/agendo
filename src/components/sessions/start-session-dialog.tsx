@@ -71,7 +71,9 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
       if (agentIdProp) return;
       setIsLoadingAgents(true);
       try {
-        const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50', { signal });
+        const res = await apiFetch<ApiListResponse<Agent>>('/api/agents?pageSize=50&group=ai', {
+          signal,
+        });
         if (!signal.aborted) setAgents(res.data.filter((a) => a.isActive));
       } catch {
         // ignore

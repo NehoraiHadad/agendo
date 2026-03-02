@@ -15,10 +15,7 @@ interface CreateCapabilityInput {
   key: string;
   label: string;
   description?: string | null;
-  interactionMode: 'template' | 'prompt';
-  commandTokens?: string[] | null;
   promptTemplate?: string | null;
-  argsSchema?: Record<string, unknown>;
   dangerLevel?: number;
   timeoutSec?: number;
 }
@@ -26,10 +23,7 @@ interface CreateCapabilityInput {
 interface UpdateCapabilityInput {
   label?: string;
   description?: string | null;
-  interactionMode?: 'template' | 'prompt';
-  commandTokens?: string[] | null;
   promptTemplate?: string | null;
-  argsSchema?: Record<string, unknown>;
   isEnabled?: boolean;
   dangerLevel?: number;
   timeoutSec?: number;

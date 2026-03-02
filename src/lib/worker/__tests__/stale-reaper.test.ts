@@ -35,8 +35,8 @@ describe('StaleReaper', () => {
     mockReturning.mockResolvedValue([]);
   });
 
-  it('returns 0 when no stale rows found', async () => {
-    mockWhere.mockResolvedValue([]); // both executions and sessions return empty
+  it('returns 0 when no stale sessions found', async () => {
+    mockWhere.mockResolvedValue([]);
 
     const reaper = new StaleReaper();
     const count = await reaper.reap();
@@ -44,27 +44,10 @@ describe('StaleReaper', () => {
     expect(count).toBe(0);
   });
 
-  it('marks stale executions as timed_out', async () => {
-    // First call: stale executions; second call: stale sessions (empty)
-    mockWhere.mockResolvedValueOnce([{ id: 'exec-1' }, { id: 'exec-2' }]).mockResolvedValueOnce([]);
-    // Execution updates don't use returning(), just resolve the where
-    mockUpdateWhere.mockResolvedValue({ rowCount: 1 });
-
-    const reaper = new StaleReaper();
-    const count = await reaper.reap();
-
-    expect(count).toBe(2);
-    expect(mockSet).toHaveBeenCalledWith({
-      status: 'timed_out',
-      error: 'Heartbeat lost — worker stale',
-    });
-  });
-
   it('only kills PIDs for sessions that were actually reaped', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-    // First call: stale executions (empty); second call: stale sessions
-    mockWhere.mockResolvedValueOnce([]).mockResolvedValueOnce([
+    mockWhere.mockResolvedValueOnce([
       { id: 'session-1', pid: 1234 },
       { id: 'session-2', pid: 5678 },
     ]);
