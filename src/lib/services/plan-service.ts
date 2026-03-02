@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { plans } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -39,6 +39,24 @@ export interface ExecutePlanOpts {
 export interface ValidatePlanOpts {
   agentId: string;
   capabilityId: string;
+}
+
+export interface SearchPlanResult {
+  id: string;
+  title: string;
+  status: string;
+  projectId: string;
+}
+
+export async function searchPlans(q: string, limit = 5): Promise<SearchPlanResult[]> {
+  const rows = await db
+    .select({ id: plans.id, title: plans.title, status: plans.status, projectId: plans.projectId })
+    .from(plans)
+    .where(or(ilike(plans.title, `%${q}%`), ilike(plans.content, `%${q}%`)))
+    .orderBy(desc(plans.updatedAt))
+    .limit(limit);
+
+  return rows;
 }
 
 export async function createPlan(input: CreatePlanInput): Promise<Plan> {

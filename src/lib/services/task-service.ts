@@ -1,4 +1,4 @@
-import { eq, and, sql, desc, asc, ilike } from 'drizzle-orm';
+import { eq, and, sql, desc, asc, ilike, or } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/schema';
 import { isValidTaskTransition } from '@/lib/state-machines';
@@ -373,6 +373,35 @@ export interface ReorderTaskInput {
   status?: TaskStatus;
   afterSortOrder: number | null;
   beforeSortOrder: number | null;
+}
+
+export interface SearchTaskResult {
+  id: string;
+  title: string;
+  status: string;
+  projectName: string | null;
+}
+
+export async function searchTasks(q: string, limit = 5): Promise<SearchTaskResult[]> {
+  const rows = await db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      projectName: projects.name,
+    })
+    .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .where(or(ilike(tasks.title, `%${q}%`), ilike(tasks.description, `%${q}%`)))
+    .orderBy(desc(tasks.updatedAt))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    projectName: row.projectName ?? null,
+  }));
 }
 
 export async function reorderTask(id: string, input: ReorderTaskInput): Promise<Task> {
