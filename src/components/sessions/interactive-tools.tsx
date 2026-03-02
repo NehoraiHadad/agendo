@@ -403,9 +403,10 @@ function ExitPlanModeRenderer({
         });
       } else {
         // Allow in-place (approve / approve+compact). Works for both live and idle
-        // sessions. For idle sessions, the control route stores the decision in DB
-        // and re-enqueues with --resume, so Claude's re-issued ExitPlanMode is
-        // auto-approved without requiring a second click.
+        // sessions. For idle sessions, the control route updates permissionMode +
+        // initialPrompt (plan content) and re-enqueues with the existing sessionRef
+        // so Claude resumes the same conversation. The CLI strips the unresolved
+        // ExitPlanMode tool_use on resume, so Claude simply continues implementing.
         await respond({
           kind: 'approval',
           decision: 'allow',
