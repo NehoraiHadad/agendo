@@ -311,6 +311,14 @@ export const sessions = pgTable(
     planFilePath: text('plan_file_path'),
     totalDurationMs: integer('total_duration_ms'),
     tmuxSessionName: text('tmux_session_name'),
+    // The session this was forked from, if any.
+    parentSessionId: uuid('parent_session_id').references((): AnyPgColumn => sessions.id, {
+      onDelete: 'set null',
+    }),
+    // The Claude CLI sessionRef to resume from with --fork-session on first start.
+    // Set at fork creation time to parent.sessionRef. Cleared (implicitly superseded)
+    // once the fork's own sessionRef is written by system:init.
+    forkSourceRef: text('fork_source_ref'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

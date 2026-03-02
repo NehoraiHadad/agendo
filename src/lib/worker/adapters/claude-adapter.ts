@@ -23,7 +23,9 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
-    return this.launch(prompt, opts, ['--resume', sessionRef]);
+    const extraFlags = ['--resume', sessionRef];
+    if (opts.forkSession) extraFlags.push('--fork-session');
+    return this.launch(prompt, opts, extraFlags);
   }
 
   extractSessionId(output: string): string | null {

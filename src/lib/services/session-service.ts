@@ -56,6 +56,43 @@ export async function getSession(id: string): Promise<Session> {
   return requireFound(session, 'Session', id);
 }
 
+/** Create a fork of an existing session.
+ *
+ * If the parent has a sessionRef (i.e. it has run at least one turn), the fork stores
+ * forkSourceRef so that when the fork is first started it uses --resume <forkSourceRef>
+ * --fork-session, giving it the full conversation history of the parent as its starting
+ * point. Claude then issues a new sessionId for the fork via system:init.
+ *
+ * If the parent has no sessionRef, forkSourceRef is null and the fork starts fresh.
+ */
+export async function forkSession(parentId: string): Promise<Session> {
+  const parent = await getSession(parentId);
+  const [fork] = await db
+    .insert(sessions)
+    .values({
+      taskId: parent.taskId,
+      projectId: parent.projectId,
+      kind: parent.kind,
+      agentId: parent.agentId,
+      capabilityId: parent.capabilityId,
+      idleTimeoutSec: parent.idleTimeoutSec,
+      status: 'idle',
+      permissionMode: parent.permissionMode as
+        | 'default'
+        | 'bypassPermissions'
+        | 'acceptEdits'
+        | 'plan'
+        | 'dontAsk',
+      allowedTools: parent.allowedTools as string[],
+      ...(parent.model ? { model: parent.model } : {}),
+      parentSessionId: parentId,
+      // Store the parent's Claude session ID so the first start can use --fork-session.
+      forkSourceRef: parent.sessionRef ?? null,
+    })
+    .returning();
+  return fork;
+}
+
 export interface SessionWithAgent extends Session {
   agentName: string;
   taskTitle: string | null;

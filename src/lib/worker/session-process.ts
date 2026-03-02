@@ -340,7 +340,21 @@ export class SessionProcess {
       }
     });
 
-    if (resumeRef) {
+    // Determine how to start: fork (--resume --fork-session), resume (--resume), or spawn.
+    // Fork path: the session has a forkSourceRef from a parent but no sessionRef yet,
+    // meaning this is the very first start of a forked session.
+    const forkSourceRef = this.session.forkSourceRef;
+    const isForkStart = !!forkSourceRef && !this.session.sessionRef;
+
+    if (isForkStart) {
+      // First start of a forked session: resume parent's conversation in a new session.
+      // Claude creates a fresh session ID, initialized from the parent's history.
+      await this.emitEvent({ type: 'user:message', text: displayText ?? prompt });
+      this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
+        ...spawnOpts,
+        forkSession: true,
+      });
+    } else if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the
       // session log and is replayed after a page refresh (cold-resume path).
       // Use displayText if provided so system preambles (e.g. [Previous Work Summary])
@@ -797,6 +811,9 @@ export class SessionProcess {
     await this.emitEvent({ type: 'session:state', status });
 
     if (status === 'awaiting_input') {
+      // Drain any team messages that arrived while Claude was active.
+      this.teamManager.drainPendingInjections();
+
       const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
       console.log(
         `[session-process] awaiting_input session ${this.session.id} elapsed=${elapsedSec}s — slot released`,
