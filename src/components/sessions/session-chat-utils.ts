@@ -295,6 +295,8 @@ export function buildDisplayItems(
       }
 
       case 'team:message': {
+        // Pushing team-message naturally breaks any open assistant bubble —
+        // the next agent:text sees the last item is not 'assistant' and starts fresh.
         items.push({
           kind: 'team-message',
           id: ev.id,

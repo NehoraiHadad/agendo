@@ -25,6 +25,7 @@ import { MultiEditView } from '@/components/executions/tool-views/multi-edit-vie
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
+import { TeamMessageCard } from '@/components/sessions/team-message-card';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
@@ -697,159 +698,6 @@ function TypingIndicator() {
 }
 
 // ---------------------------------------------------------------------------
-// TeamMessageCard — collapsible card for incoming team agent messages
-// ---------------------------------------------------------------------------
-
-/** Maps Claude team color names to Tailwind classes. */
-const TEAM_COLORS: Record<string, { border: string; dot: string; bg: string }> = {
-  blue: {
-    border: 'border-l-blue-400',
-    dot: 'text-blue-400',
-    bg: 'bg-blue-400/[0.04]',
-  },
-  green: {
-    border: 'border-l-emerald-400',
-    dot: 'text-emerald-400',
-    bg: 'bg-emerald-400/[0.04]',
-  },
-  purple: {
-    border: 'border-l-purple-400',
-    dot: 'text-purple-400',
-    bg: 'bg-purple-400/[0.04]',
-  },
-  red: {
-    border: 'border-l-red-400',
-    dot: 'text-red-400',
-    bg: 'bg-red-400/[0.04]',
-  },
-  yellow: {
-    border: 'border-l-yellow-400',
-    dot: 'text-yellow-400',
-    bg: 'bg-yellow-400/[0.04]',
-  },
-  orange: {
-    border: 'border-l-orange-400',
-    dot: 'text-orange-400',
-    bg: 'bg-orange-400/[0.04]',
-  },
-  cyan: {
-    border: 'border-l-cyan-400',
-    dot: 'text-cyan-400',
-    bg: 'bg-cyan-400/[0.04]',
-  },
-};
-const DEFAULT_TEAM_COLOR = {
-  border: 'border-l-zinc-500',
-  dot: 'text-zinc-400',
-  bg: 'bg-zinc-400/[0.04]',
-};
-
-function formatRelativeTime(timestamp: string): string {
-  try {
-    const diffMs = Date.now() - new Date(timestamp).getTime();
-    if (diffMs < 60_000) return 'just now';
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-    return `${Math.floor(diffMs / 86_400_000)}d ago`;
-  } catch {
-    return '';
-  }
-}
-
-const TeamMessageCard = memo(function TeamMessageCard({
-  item,
-}: {
-  item: Extract<DisplayItem, { kind: 'team-message' }>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const colors = TEAM_COLORS[item.color ?? ''] ?? DEFAULT_TEAM_COLOR;
-  const relativeTime = formatRelativeTime(item.sourceTimestamp);
-
-  // idle_notification: render as a compact single-line badge — no content body
-  if (item.isStructured && item.structuredPayload?.type === 'idle_notification') {
-    return (
-      <div
-        className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 py-1.5 flex items-center gap-2`}
-      >
-        <span className={`text-[10px] ${colors.dot} select-none`}>●</span>
-        <span className="text-xs font-mono text-muted-foreground/60">{item.fromAgent}</span>
-        <span className="text-xs text-muted-foreground/40">idle</span>
-        <span className="ml-auto text-[10px] text-muted-foreground/30 pr-2">{relativeTime}</span>
-      </div>
-    );
-  }
-
-  // task_assignment: show compact card with task ID
-  if (item.isStructured && item.structuredPayload?.type === 'task_assignment') {
-    const taskId = item.structuredPayload.taskId as string | undefined;
-    const taskTitle = item.structuredPayload.taskTitle as string | undefined;
-    return (
-      <div className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 py-2 space-y-1`}>
-        <div className="flex items-center gap-2">
-          <span className={`text-[10px] ${colors.dot} select-none`}>●</span>
-          <span className="text-xs font-mono text-muted-foreground/60">{item.fromAgent}</span>
-          <span className="text-xs text-muted-foreground/40">task assigned</span>
-          <span className="ml-auto text-[10px] text-muted-foreground/30 pr-2">{relativeTime}</span>
-        </div>
-        {taskId && (
-          <div className="text-xs text-muted-foreground/60">
-            <span className="font-mono text-muted-foreground/40">{taskId.slice(0, 8)}</span>
-            {taskTitle && <span className="ml-1.5">{taskTitle}</span>}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Default: full markdown card with optional collapse after 6 lines
-  const lines = item.text.split('\n');
-  const COLLAPSE_THRESHOLD = 6;
-  const shouldCollapse = lines.length > COLLAPSE_THRESHOLD;
-  const displayText =
-    shouldCollapse && !expanded ? lines.slice(0, COLLAPSE_THRESHOLD).join('\n') + '\n…' : item.text;
-
-  return (
-    <div
-      className={`border-l-2 ${colors.border} ${colors.bg} rounded-r-md pl-3 pr-2 py-2 space-y-1.5`}
-    >
-      {/* Header row */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className={`text-[10px] ${colors.dot} select-none shrink-0`}>●</span>
-        <span className="text-xs font-mono text-muted-foreground/70 shrink-0">
-          {item.fromAgent}
-        </span>
-        {item.summary && (
-          <span className="text-xs text-muted-foreground/45 truncate flex-1 min-w-0">
-            {item.summary}
-          </span>
-        )}
-        <span className="text-[10px] text-muted-foreground/30 shrink-0 ml-auto">
-          {relativeTime}
-        </span>
-      </div>
-
-      {/* Markdown content */}
-      <div className="text-xs text-foreground/65 break-words overflow-hidden">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-          {displayText}
-        </ReactMarkdown>
-      </div>
-
-      {/* Expand / collapse toggle */}
-      {shouldCollapse && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className={`text-[10px] ${colors.dot} opacity-60 hover:opacity-100 transition-opacity`}
-        >
-          {expanded ? 'Show less ▲' : 'Show more ▼'}
-        </button>
-      )}
-    </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
 // InitialPromptBanner — shows the prompt that kicked off the session
 // ---------------------------------------------------------------------------
 
@@ -1050,15 +898,18 @@ export function SessionChatView({
 
   function renderDisplayItem(
     item: DisplayItem,
-    idx: number,
+    _idx: number,
     prevItem?: DisplayItem,
   ): React.ReactNode {
+    // Use kind+id as key for all items — avoids collisions between numeric idx
+    // and numeric item.id (e.g. both equalling 56 caused duplicate key warnings).
+    const k = `${item.kind}-${item.id}`;
     switch (item.kind) {
       case 'assistant': {
         const showAvatar = prevItem?.kind !== 'assistant' && prevItem?.kind !== 'thinking';
         return (
           <AssistantBubble
-            key={idx}
+            key={k}
             parts={item.parts}
             sessionId={sessionId}
             showAvatar={showAvatar}
@@ -1067,11 +918,11 @@ export function SessionChatView({
         );
       }
       case 'thinking':
-        return <ThinkingBubble key={idx} text={item.text} />;
+        return <ThinkingBubble key={k} text={item.text} />;
       case 'user':
         return (
           <UserBubble
-            key={idx}
+            key={k}
             text={item.text}
             hasImage={item.hasImage}
             imageDataUrl={item.imageDataUrl}
@@ -1081,7 +932,7 @@ export function SessionChatView({
       case 'turn-complete':
         return (
           <TurnCompletePill
-            key={idx}
+            key={k}
             text={item.text}
             costUsd={item.costUsd}
             sessionCostUsd={item.sessionCostUsd}
@@ -1089,14 +940,14 @@ export function SessionChatView({
           />
         );
       case 'info':
-        return <InfoPill key={idx} text={item.text} />;
+        return <InfoPill key={k} text={item.text} />;
       case 'error':
-        return <ErrorPill key={idx} text={item.text} />;
+        return <ErrorPill key={k} text={item.text} />;
       case 'tool-approval': {
         if (resolvedApprovals.has(item.approvalId)) return null;
         return (
           <ToolApprovalCard
-            key={item.id}
+            key={k}
             sessionId={sessionId}
             sessionStatus={currentStatus}
             approvalId={item.approvalId}
@@ -1108,7 +959,7 @@ export function SessionChatView({
         );
       }
       case 'team-message':
-        return <TeamMessageCard key={item.id} item={item} />;
+        return <TeamMessageCard key={k} item={item} />;
     }
   }
 
