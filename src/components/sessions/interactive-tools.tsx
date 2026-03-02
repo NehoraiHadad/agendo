@@ -27,6 +27,8 @@ import {
   Layers,
   Maximize2,
   X,
+  Pencil,
+  ChevronRight,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -93,55 +95,141 @@ interface Question {
 function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: InteractiveToolProps) {
   const questions = Array.isArray(input.questions) ? (input.questions as Question[]) : [];
 
-  const [selections, setSelections] = useState<Record<number, Set<string>>>(() =>
-    Object.fromEntries(questions.map((_, i) => [i, new Set<string>()])),
-  );
+  // Per-step committed answers (finalized when user advances past a step)
+  const [committedAnswers, setCommittedAnswers] = useState<Record<number, Set<string>>>({});
+  // Working selections for the active step
+  const [currentSelections, setCurrentSelections] = useState<Set<string>>(new Set());
+  const [currentStep, setCurrentStep] = useState(0);
+  // Incrementing this key on the question panel triggers re-animation via CSS
+  const [stepKey, setStepKey] = useState(0);
+
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // True while the 220ms transition delay is in progress (blocks new input)
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   const isDone = submitted || isAnswered;
-  const canSubmit = !isDone && questions.every((_, i) => (selections[i]?.size ?? 0) > 0);
+  const isSingleQ = questions.length === 1;
+  const currentQ = questions[currentStep] as Question | undefined;
+  const isLastStep = currentStep === questions.length - 1;
+  const isMultiSelectStep = currentQ?.multiSelect ?? false;
 
-  function handleToggle(qIdx: number, optLabel: string, multiSelect: boolean) {
-    if (isDone) return;
-    setSelections((prev) => {
-      const next = { ...prev };
-      const set = new Set(next[qIdx]);
-      if (multiSelect) {
-        if (set.has(optLabel)) set.delete(optLabel);
-        else set.add(optLabel);
-      } else {
-        set.clear();
-        set.add(optLabel);
+  // ── Done state ─────────────────────────────────────────────────────────────
+  if (isDone) {
+    // Only show per-question answers when WE submitted (local state has them)
+    const finalAnswers: Record<number, Set<string>> = submitted
+      ? { ...committedAnswers, [currentStep]: currentSelections }
+      : {};
+    return (
+      <div className="rounded-xl border border-primary/15 bg-primary/[0.04] px-3.5 py-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="size-3.5 text-primary/60 shrink-0" />
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-primary/50">
+            {isSingleQ ? 'Answered' : `${questions.length} responses sent`}
+          </span>
+        </div>
+        {submitted && questions.length > 0 && (
+          <div className="space-y-1 pt-0.5">
+            {questions.map((q, i) => {
+              const selected = [...(finalAnswers[i] ?? [])];
+              if (!selected.length) return null;
+              return (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className="text-foreground/35 flex-1 min-w-0 truncate">
+                    {q.header ?? q.question}
+                  </span>
+                  <span className="shrink-0 bg-primary/[0.12] text-primary/65 px-2 py-0.5 rounded-full text-[11px] font-medium max-w-[160px] truncate">
+                    {selected.join(', ')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!currentQ) return null;
+
+  const canSubmit = currentSelections.size > 0 && !loading && !isTransitioning;
+  const canNext = currentSelections.size > 0 && !isTransitioning;
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  function handleToggle(optLabel: string) {
+    if (isDone || isTransitioning) return;
+
+    if (isMultiSelectStep) {
+      setCurrentSelections((prev) => {
+        const next = new Set(prev);
+        if (next.has(optLabel)) next.delete(optLabel);
+        else next.add(optLabel);
+        return next;
+      });
+    } else {
+      // Single-select: set immediately for visual feedback, then auto-advance
+      const newSel = new Set([optLabel]);
+      setCurrentSelections(newSel);
+
+      if (!isLastStep) {
+        // Capture values from closure (fresh at click time)
+        const nextIdx = currentStep + 1;
+        const nextPrevSel = committedAnswers[nextIdx];
+        setIsTransitioning(true);
+        setTimeout(() => {
+          setCommittedAnswers((prev) => ({ ...prev, [currentStep]: newSel }));
+          setCurrentStep(nextIdx);
+          setCurrentSelections(new Set(nextPrevSel));
+          setStepKey((k) => k + 1);
+          setIsTransitioning(false);
+        }, 220);
       }
-      next[qIdx] = set;
-      return next;
-    });
+      // Last step + single-select: keep selection, wait for submit button
+    }
+  }
+
+  function handleNext() {
+    if (!canNext || isLastStep) return;
+    const nextIdx = currentStep + 1;
+    const nextPrevSel = committedAnswers[nextIdx];
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setCommittedAnswers((prev) => ({ ...prev, [currentStep]: currentSelections }));
+      setCurrentStep(nextIdx);
+      setCurrentSelections(new Set(nextPrevSel));
+      setStepKey((k) => k + 1);
+      setIsTransitioning(false);
+    }, 220);
+  }
+
+  function handleBack(targetStep: number) {
+    // Preserve the current step's selections before stepping back
+    setCommittedAnswers((prev) => ({ ...prev, [currentStep]: currentSelections }));
+    setCurrentStep(targetStep);
+    setCurrentSelections(new Set(committedAnswers[targetStep]));
+    setStepKey((k) => k + 1);
   }
 
   async function handleSubmit() {
-    if (!canSubmit || loading) return;
+    if (!canSubmit) return;
+    const finalCommitted = { ...committedAnswers, [currentStep]: currentSelections };
+    const allAnswered = questions.every((_, i) => (finalCommitted[i]?.size ?? 0) > 0);
+    if (!allAnswered) return;
+
     setLoading(true);
     setError(null);
 
-    // Build answers map: question text → selected label (or comma-joined for multiSelect)
     const answers: Record<string, string> = {};
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
-      const selected = [...(selections[i] ?? [])];
+      const selected = [...(finalCommitted[i] ?? [])];
       answers[q.question] = q.multiSelect ? selected.join(', ') : (selected[0] ?? '');
     }
 
     try {
-      // Send the answers back to Claude via the approval control channel.
-      // Claude's AskUserQuestion.call() receives updatedInput.answers and
-      // returns a proper tool result, then continues with the user's choices.
-      await respond({
-        kind: 'approval',
-        decision: 'allow',
-        updatedInput: { answers },
-      });
+      await respond({ kind: 'approval', decision: 'allow', updatedInput: { answers } });
       setSubmitted(true);
       onResolved?.();
     } catch (err) {
@@ -151,111 +239,211 @@ function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: Int
     }
   }
 
+  // ── Wizard card ────────────────────────────────────────────────────────────
   return (
-    <div
-      className={cn(
-        'rounded-xl border p-4 space-y-4 text-sm',
-        isDone
-          ? 'border-primary/15 bg-primary/[0.04] opacity-75'
-          : 'border-primary/30 bg-primary/[0.07]',
-      )}
-    >
+    <div className="rounded-xl border border-primary/25 bg-[oklch(0.085_0.012_280)] overflow-hidden text-sm">
+      {/* Accent bar */}
+      <div className="h-[2px] bg-gradient-to-r from-primary/70 via-primary/20 to-transparent" />
+
       {/* Header */}
-      <div className="flex items-center gap-2">
-        {isDone ? (
-          <CheckCircle2 className="size-3.5 text-primary/60 shrink-0" />
-        ) : (
-          <span className="size-2 rounded-full bg-primary animate-pulse shrink-0" />
-        )}
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-primary/60">
-          {isDone ? 'Answered' : 'Awaiting your input'}
+      <div className="px-3.5 pt-3 pb-2.5 flex items-center gap-2 border-b border-white/[0.05]">
+        <span className="size-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-primary/55 flex-1">
+          {isSingleQ ? 'Awaiting your input' : 'Agent has questions'}
         </span>
+        {/* Step progress — multi-question only */}
+        {!isSingleQ && (
+          <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/40">
+            <span className="tabular-nums">
+              {currentStep + 1}&thinsp;/&thinsp;{questions.length}
+            </span>
+            <span className="flex gap-[3px]">
+              {questions.map((_, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    'h-[3px] rounded-full transition-all duration-300',
+                    i < currentStep
+                      ? 'w-3 bg-primary/45'
+                      : i === currentStep
+                        ? 'w-4 bg-primary'
+                        : 'w-2 bg-white/15',
+                  )}
+                />
+              ))}
+            </span>
+          </span>
+        )}
       </div>
 
-      {/* Questions */}
-      {questions.map((q, qIdx) => (
-        <div key={qIdx} className="space-y-2">
-          <p className="font-medium text-foreground/90 leading-relaxed">{q.question}</p>
-          {q.multiSelect && (
-            <p className="text-xs text-muted-foreground/50">Select all that apply</p>
+      {/* Answered echoes — clickable rows to step back */}
+      {!isSingleQ && currentStep > 0 && (
+        <div className="border-b border-white/[0.05]">
+          {Array.from({ length: currentStep }, (_, i) => {
+            const q = questions[i];
+            const selected = [...(committedAnswers[i] ?? [])];
+            if (!selected.length) return null;
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={isTransitioning}
+                onClick={() => handleBack(i)}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs hover:bg-white/[0.03] transition-colors group disabled:pointer-events-none"
+              >
+                <CheckCircle2 className="size-3 text-primary/40 shrink-0" />
+                <span className="text-foreground/35 flex-1 text-left truncate min-w-0">
+                  {q.header ?? q.question}
+                </span>
+                <span className="bg-primary/[0.10] text-primary/55 px-2 py-[2px] rounded text-[11px] shrink-0 max-w-[120px] truncate">
+                  {selected.join(', ')}
+                </span>
+                <Pencil className="size-2.5 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors shrink-0" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Current question — key on stepKey triggers re-animation */}
+      <div key={stepKey} className="px-3.5 pt-4 pb-4 space-y-3 animate-fade-in-up">
+        {/* Question text */}
+        <div className="space-y-0.5">
+          {currentQ.header && (
+            <p className="text-[10px] uppercase tracking-widest text-primary/40 font-semibold">
+              {currentQ.header}
+            </p>
           )}
-          <div className="space-y-1.5">
-            {q.options.map((opt) => {
-              const isSelected = selections[qIdx]?.has(opt.label) ?? false;
-              return (
-                <button
-                  key={opt.label}
-                  type="button"
-                  disabled={isDone}
-                  onClick={() => handleToggle(qIdx, opt.label, q.multiSelect ?? false)}
+          <p className="font-medium text-foreground/90 leading-relaxed">{currentQ.question}</p>
+          {isMultiSelectStep && (
+            <p className="text-[11px] text-muted-foreground/40 pt-0.5">Select all that apply</p>
+          )}
+        </div>
+
+        {/* Options */}
+        <div className="space-y-1.5">
+          {currentQ.options.map((opt) => {
+            const isSelected = currentSelections.has(opt.label);
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                disabled={isTransitioning}
+                onClick={() => handleToggle(opt.label)}
+                className={cn(
+                  'w-full text-left rounded-xl border px-3 py-2.5 transition-all duration-150',
+                  'flex items-start gap-2.5',
+                  isSelected
+                    ? 'border-primary/45 bg-primary/[0.09] shadow-[0_0_12px_oklch(0.7_0.18_280/0.08)]'
+                    : 'border-white/[0.06] bg-white/[0.02] hover:border-primary/20 hover:bg-primary/[0.04]',
+                  isTransitioning && 'pointer-events-none',
+                )}
+              >
+                {/* Radio/checkbox indicator */}
+                <span
                   className={cn(
-                    'w-full text-left rounded-lg border px-3 py-2.5 transition-all duration-150',
-                    'flex items-start gap-2.5',
-                    isSelected
-                      ? 'border-primary/50 bg-primary/10 shadow-[0_0_10px_oklch(0.7_0.18_280/0.10)]'
-                      : 'border-white/[0.07] bg-white/[0.02] hover:border-primary/25 hover:bg-primary/[0.04]',
-                    isDone && 'cursor-default',
+                    'mt-[3px] shrink-0 h-3.5 w-3.5 border-2 transition-all duration-150 flex items-center justify-center',
+                    isMultiSelectStep ? 'rounded-sm' : 'rounded-full',
+                    isSelected ? 'border-primary bg-primary' : 'border-white/20',
                   )}
                 >
-                  <span
-                    className={cn(
-                      'mt-0.5 shrink-0 h-3.5 w-3.5 border-2 transition-all duration-150 flex items-center justify-center',
-                      q.multiSelect ? 'rounded-sm' : 'rounded-full',
-                      isSelected ? 'border-primary bg-primary' : 'border-white/20',
-                    )}
-                  >
-                    {isSelected && (
-                      <span
-                        className={cn(
-                          'bg-white block',
-                          q.multiSelect ? 'h-1.5 w-1.5 rounded-[1px]' : 'h-1.5 w-1.5 rounded-full',
-                        )}
-                      />
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
+                  {isSelected && (
                     <span
                       className={cn(
-                        'text-sm',
-                        isSelected ? 'text-foreground' : 'text-foreground/70',
+                        'bg-white block',
+                        isMultiSelectStep
+                          ? 'h-1.5 w-1.5 rounded-[1px]'
+                          : 'h-1.5 w-1.5 rounded-full',
                       )}
-                    >
-                      {opt.label}
-                    </span>
-                    {opt.description && (
-                      <p className="mt-0.5 text-xs text-muted-foreground/50 leading-relaxed">
-                        {opt.description}
-                      </p>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+                    />
+                  )}
+                </span>
+
+                {/* Label + description */}
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={cn('text-sm', isSelected ? 'text-foreground' : 'text-foreground/70')}
+                  >
+                    {opt.label}
+                  </span>
+                  {opt.description && (
+                    <p className="mt-0.5 text-xs text-muted-foreground/45 leading-relaxed">
+                      {opt.description}
+                    </p>
+                  )}
+                </div>
+
+                {/* Arrow hint for single-select non-last step */}
+                {isSelected && !isMultiSelectStep && !isLastStep && (
+                  <ChevronRight className="shrink-0 size-3.5 text-primary/40 mt-[3px]" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {error && (
+          <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded px-2 py-1">
+            {error}
+          </p>
+        )}
+
+        {/* Navigation footer */}
+        <div className="flex items-center gap-2 pt-0.5">
+          {/* Back button — shown in multi-Q when not on first step */}
+          {!isSingleQ && currentStep > 0 && !isTransitioning && (
+            <button
+              type="button"
+              onClick={() => handleBack(currentStep - 1)}
+              className="text-xs text-muted-foreground/35 hover:text-muted-foreground/60 transition-colors"
+            >
+              ← Back
+            </button>
+          )}
+
+          <div className="ml-auto flex items-center gap-2">
+            {/* Next button — multi-select non-last steps */}
+            {!isLastStep && isMultiSelectStep && (
+              <button
+                type="button"
+                disabled={!canNext}
+                onClick={handleNext}
+                className={cn(
+                  'flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                  canNext
+                    ? 'border-primary/30 bg-primary/[0.08] text-primary/80 hover:bg-primary/[0.16] hover:border-primary/45 active:scale-[0.98]'
+                    : 'border-white/[0.05] bg-transparent text-muted-foreground/30 cursor-not-allowed',
+                )}
+              >
+                Next
+                <ChevronRight className="size-3.5" />
+              </button>
+            )}
+
+            {/* Submit button — last step (or single question) */}
+            {isLastStep && (
+              <button
+                type="button"
+                disabled={!canSubmit}
+                onClick={() => void handleSubmit()}
+                className={cn(
+                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                  canSubmit
+                    ? 'border-primary/40 bg-primary/[0.12] text-primary hover:bg-primary/[0.22] hover:border-primary/55 active:scale-[0.98]'
+                    : 'border-white/[0.05] bg-white/[0.02] text-muted-foreground/30 cursor-not-allowed',
+                )}
+              >
+                {loading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
+                {isSingleQ ? 'Submit' : 'Submit answers'}
+              </button>
+            )}
           </div>
         </div>
-      ))}
-
-      {error && (
-        <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded px-2 py-1">
-          {error}
-        </p>
-      )}
-
-      {!isDone && (
-        <button
-          type="button"
-          disabled={!canSubmit || loading}
-          onClick={() => void handleSubmit()}
-          className={cn(
-            'w-full rounded-lg py-2 text-sm font-medium transition-all duration-200',
-            canSubmit && !loading
-              ? 'bg-primary/20 text-primary border border-primary/30 hover:bg-primary/30 hover:border-primary/50'
-              : 'bg-white/[0.03] text-muted-foreground/30 border border-white/[0.05] cursor-not-allowed',
-          )}
-        >
-          {loading ? <Loader2 className="size-4 animate-spin mx-auto" /> : 'Submit Answer'}
-        </button>
-      )}
+      </div>
     </div>
   );
 }
