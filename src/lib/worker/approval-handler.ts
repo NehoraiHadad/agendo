@@ -56,6 +56,15 @@ export class ApprovalHandler {
   private pendingAskUserQuestions = new Map<string, AskUserQuestion[]>();
   /** toolUseIds for APPROVAL_GATED_TOOLS — suppress their agent:tool-start/end events. */
   private suppressedToolUseIds = new Set<string>();
+  /**
+   * Pending auto-approval for ExitPlanMode set from idle-session DB field.
+   * When ExitPlanMode fires after --resume, this decision is applied automatically
+   * so the user doesn't have to click a second time.
+   */
+  private pendingPlanAutoApproval: {
+    postApprovalCompact?: boolean;
+    onApplied?: () => void;
+  } | null = null;
 
   constructor(
     private readonly session: Session,
@@ -144,6 +153,20 @@ export class ApprovalHandler {
   }
 
   // ---------------------------------------------------------------------------
+  // Auto-approval for idle-session ExitPlanMode resume
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register a one-shot auto-approval for the next ExitPlanMode call.
+   * Called by SessionProcess.start() when pendingPlanApproval is found in DB.
+   * The `onApplied` callback fires after the auto-approval is consumed so that
+   * post-approval side effects (compact, etc.) can be triggered.
+   */
+  setAutoApproval(opts: { postApprovalCompact?: boolean; onApplied?: () => void }): void {
+    this.pendingPlanAutoApproval = opts;
+  }
+
+  // ---------------------------------------------------------------------------
   // Drain (called on cancel, terminate, onExit)
   // ---------------------------------------------------------------------------
 
@@ -198,6 +221,16 @@ export class ApprovalHandler {
     // (AskUserQuestion does not need plan capture — only ExitPlanMode does.)
     if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {
       await this.capturePlanFilePath();
+
+      // Auto-approval: idle session was approved before re-enqueueing. Claude
+      // re-issues ExitPlanMode on --resume, so we resolve it immediately here.
+      if (this.pendingPlanAutoApproval) {
+        const auto = this.pendingPlanAutoApproval;
+        this.pendingPlanAutoApproval = null; // consume (one-shot)
+        this.pendingApprovalsByTool.delete(toolName);
+        auto.onApplied?.();
+        return 'allow';
+      }
     }
 
     // Emit approval request event to frontend and block until user responds.

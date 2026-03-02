@@ -32,35 +32,66 @@ export const POST = withErrorBoundary(
     }
 
     // -----------------------------------------------------------------------
-    // clearContextRestart on idle/ended sessions: handle directly in the API
-    // route since there is no worker process listening on the PG NOTIFY channel.
+    // tool-approval on idle/ended sessions: handle directly in the API route
+    // since there is no worker process listening on the PG NOTIFY channel.
     // -----------------------------------------------------------------------
-    if (body.type === 'tool-approval' && body.clearContextRestart) {
+    if (body.type === 'tool-approval') {
       const session = await getSession(id);
       if (session.status === 'idle' || session.status === 'ended') {
-        // Read plan content from the stored plan_file_path in the DB
-        let planContent: string | null = null;
-        if (session.planFilePath) {
-          try {
-            planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
-          } catch {
-            planContent = null; // file may have been deleted
+        if (body.clearContextRestart) {
+          // ── Option: clear context + restart fresh ──────────────────────
+          // Deny the tool, reset sessionRef so re-enqueue spawns fresh, and
+          // use the plan content as the new initialPrompt.
+          let planContent: string | null = null;
+          if (session.planFilePath) {
+            try {
+              planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
+            } catch {
+              planContent = null; // file may have been deleted
+            }
           }
+
+          const newMode = body.postApprovalMode ?? 'acceptEdits';
+          const initialPrompt = planContent
+            ? `Implement the following plan:\n\n${planContent}`
+            : 'Continue implementing the plan from the previous conversation.';
+
+          await db
+            .update(sessions)
+            .set({ sessionRef: null, initialPrompt, permissionMode: newMode })
+            .where(eq(sessions.id, id));
+
+          await enqueueSession({ sessionId: id });
+
+          return NextResponse.json({ data: { restarting: true } }, { status: 202 });
         }
 
-        const newMode = body.postApprovalMode ?? 'acceptEdits';
-        const initialPrompt = planContent
-          ? `Implement the following plan:\n\n${planContent}`
-          : 'Continue implementing the plan from the previous conversation.';
+        if (body.decision === 'allow') {
+          // ── Option: allow in-place (keep context, resume with --resume) ─
+          // Store the approval in DB, update permissionMode, then re-enqueue.
+          // When session-process.start() runs, it reads pendingPlanApproval and
+          // sets up an auto-resolver so Claude's re-issued ExitPlanMode is
+          // approved immediately without another user click.
+          const newMode = body.postApprovalMode ?? session.permissionMode;
+          await db
+            .update(sessions)
+            .set({
+              permissionMode: newMode,
+              pendingPlanApproval: {
+                decision: 'allow',
+                postApprovalMode: body.postApprovalMode,
+                postApprovalCompact: body.postApprovalCompact,
+              },
+            })
+            .where(eq(sessions.id, id));
 
-        await db
-          .update(sessions)
-          .set({ sessionRef: null, initialPrompt, permissionMode: newMode })
-          .where(eq(sessions.id, id));
+          await enqueueSession({ sessionId: id });
 
-        await enqueueSession({ sessionId: id });
+          return NextResponse.json({ data: { resuming: true } }, { status: 202 });
+        }
 
-        return NextResponse.json({ data: { restarting: true } }, { status: 202 });
+        // deny on idle: re-enqueue so Claude can receive the denial
+        // (the user likely clicked "Revise" which sends a message separately)
       }
       // Session is active — fall through to PG NOTIFY relay for the worker.
     }

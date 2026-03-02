@@ -14,6 +14,7 @@ import {
   Code,
   Bot,
   Camera,
+  ListTodo,
   type LucideIcon,
 } from 'lucide-react';
 import { QuickLaunchDialog } from '@/components/sessions/quick-launch-dialog';
@@ -86,10 +87,15 @@ export function ProjectHubClient({
     return <Bot className={`${size} text-muted-foreground`} />;
   }
 
-  const tabs: { id: TabId; label: string; count: number; icon?: React.ElementType }[] = [
-    { id: 'conversations', label: 'Conversations', count: conversations.length },
-    { id: 'sessions', label: 'Sessions', count: executionSessions.length },
-    { id: 'tasks', label: 'Tasks', count: openTasks.length },
+  const tabs: { id: TabId; label: string; count: number; icon: React.ElementType }[] = [
+    {
+      id: 'conversations',
+      label: 'Conversations',
+      count: conversations.length,
+      icon: MessageCircle,
+    },
+    { id: 'sessions', label: 'Sessions', count: executionSessions.length, icon: Play },
+    { id: 'tasks', label: 'Tasks', count: openTasks.length, icon: ListTodo },
     { id: 'snapshots', label: 'Snapshots', count: 0, icon: Camera },
   ];
 
@@ -142,7 +148,7 @@ export function ProjectHubClient({
 
       {/* Tabs */}
       <div className="border-b border-white/[0.06]">
-        <nav className="flex gap-0 -mb-px" aria-label="Project tabs">
+        <nav className="flex gap-0 -mb-px overflow-x-auto scrollbar-none" aria-label="Project tabs">
           {tabs.map((tab) => {
             const TabIcon = tab.icon;
             return (
@@ -150,16 +156,19 @@ export function ProjectHubClient({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                   activeTab === tab.id
                     ? 'border-primary text-foreground'
                     : 'border-transparent text-muted-foreground hover:text-foreground hover:border-white/[0.1]'
                 }`}
               >
-                {TabIcon && <TabIcon className="size-3.5" />}
-                {tab.label}
+                <TabIcon className="size-3.5 shrink-0" />
+                <span className="hidden sm:inline">{tab.label}</span>
                 {tab.count > 0 && (
-                  <span className="ml-0.5 text-xs text-muted-foreground/60">({tab.count})</span>
+                  <span className="text-xs text-muted-foreground/60 tabular-nums">
+                    <span className="sm:hidden">{tab.count}</span>
+                    <span className="hidden sm:inline">({tab.count})</span>
+                  </span>
                 )}
               </button>
             );
