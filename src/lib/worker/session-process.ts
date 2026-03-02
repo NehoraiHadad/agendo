@@ -40,6 +40,7 @@ import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
+import { recordInterruptionEvent, type InFlightTool } from '@/lib/worker/interruption-marker';
 
 /**
  * Derive a log file path for a session.
@@ -105,6 +106,8 @@ export class SessionProcess {
   private exitHandled = false;
   private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
+  /** Maps toolUseId → {toolName, input} for tools currently in-flight, used to build interruption notes. */
+  private activeToolInfo = new Map<string, InFlightTool>();
   /** Manages per-tool approval gates, interactive tool responses, and suppressed tool tracking. */
   private approvalHandler!: ApprovalHandler;
   /** Manages idle timer, heartbeat, MCP health check, and delta buffers. */
@@ -512,12 +515,18 @@ export class SessionProcess {
 
           const event = await this.emitEvent(enrichedPartial);
 
-          // Track in-flight tool calls to enable synthetic cleanup on cancel.
+          // Track in-flight tool calls to enable synthetic cleanup on cancel
+          // and to build informative interruption notes on worker restart.
           if (event.type === 'agent:tool-start') {
             this.activeToolUseIds.add(event.toolUseId);
+            this.activeToolInfo.set(event.toolUseId, {
+              toolName: event.toolName,
+              input: event.input,
+            });
           }
           if (event.type === 'agent:tool-end') {
             this.activeToolUseIds.delete(event.toolUseId);
+            this.activeToolInfo.delete(event.toolUseId);
           }
 
           // Detect TeamCreate / TeamDelete tool events for team lifecycle.
@@ -778,6 +787,7 @@ export class SessionProcess {
       await this.emitEvent({ type: 'agent:tool-end', toolUseId, content: '[Interrupted by user]' });
     }
     this.activeToolUseIds.clear();
+    this.activeToolInfo.clear();
     this.approvalHandler.clearSuppressed();
     this.approvalHandler.drain('deny');
     await this.adapter.interrupt();
@@ -867,6 +877,36 @@ export class SessionProcess {
     this.unsubscribeControl?.();
     this.unsubscribeControl = null;
 
+    // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
+    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
+
+    // When a session is interrupted mid-turn by a worker restart (terminateKilled && active),
+    // record an interruption note in the task event log. On the next cold resume, the
+    // [Previous Work Summary] preamble will include this note, so the agent knows it was
+    // interrupted and can verify whether its last action completed.
+    if (wasInterruptedMidTurn && this.session.taskId) {
+      const inflight = [...this.activeToolInfo.values()];
+      try {
+        await this.emitEvent({
+          type: 'system:info',
+          message:
+            inflight.length > 0
+              ? `Session interrupted mid-turn. In-flight tool(s): ${inflight.map((t) => t.toolName).join(', ')}.`
+              : 'Session interrupted mid-turn (worker restart).',
+        });
+      } catch {
+        // Best-effort: log writer may already be closing
+      }
+      try {
+        await recordInterruptionEvent(this.session.taskId, inflight, this.session.agentId);
+      } catch (err) {
+        console.warn(
+          `[session-process] Failed to record interruption event for session ${this.session.id}:`,
+          err,
+        );
+      }
+    }
+
     // Determine final session status based on exit code.
     // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
     // Clean exit (0) = agent finished normally → idle (resumable).
@@ -932,6 +972,28 @@ export class SessionProcess {
           err,
         );
       });
+    }
+
+    // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
+    // Only fires when the session was genuinely mid-work (active, not awaiting_input),
+    // has a resumable sessionRef, and no other re-enqueue path is already running.
+    const resumeRef = this.sessionRef ?? this.session.sessionRef ?? null;
+    if (
+      wasInterruptedMidTurn &&
+      resumeRef &&
+      !this.cancelKilled &&
+      !this.clearContextRestart &&
+      !this.modeChangeRestart
+    ) {
+      enqueueSession({ sessionId: this.session.id, resumeRef }).catch((err: unknown) => {
+        console.error(
+          `[session-process] Failed to re-enqueue session ${this.session.id} after mid-turn interruption:`,
+          err,
+        );
+      });
+      console.log(
+        `[session-process] Session ${this.session.id} auto-resumed after mid-turn worker restart`,
+      );
     }
 
     if (this.logWriter) {

@@ -207,13 +207,23 @@ export async function runSession(
               .join('\n')
           : '  (none yet)';
 
+      // Check if the most recent note is an interruption marker so we can
+      // give the agent a more precise instruction than "continue from where you left off".
+      const mostRecentNote = progressNotes[0];
+      const mostRecentNoteText =
+        (mostRecentNote?.payload as { note?: string } | undefined)?.note ?? '';
+      const wasInterrupted = mostRecentNoteText.includes('Session interrupted mid-turn');
+      const continuationInstruction = wasInterrupted
+        ? 'Your previous session was interrupted mid-turn. Review the most recent note above and verify whether your last action completed before proceeding.'
+        : 'Continue from where you left off.';
+
       const resumeContext =
         `[Previous Work Summary]\n` +
         `Task: ${task.title}\n` +
         `Recent progress notes:\n` +
         `${notesText}\n` +
         `---\n` +
-        `Continue from where you left off.\n\n`;
+        `${continuationInstruction}\n\n`;
       prompt = resumeContext + prompt;
     }
   }
