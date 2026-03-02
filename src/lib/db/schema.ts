@@ -319,6 +319,15 @@ export const sessions = pgTable(
     // Set at fork creation time to parent.sessionRef. Cleared (implicitly superseded)
     // once the fork's own sessionRef is written by system:init.
     forkSourceRef: text('fork_source_ref'),
+    // Stored ExitPlanMode approval decision for idle sessions (in-place resume path).
+    // When the user approves ExitPlanMode while the session is idle, the decision is
+    // stored here and consumed on next resume so Claude's re-issued ExitPlanMode is
+    // auto-resolved without requiring another user click.
+    pendingPlanApproval: jsonb('pending_plan_approval').$type<{
+      decision: 'allow';
+      postApprovalMode?: 'default' | 'acceptEdits' | 'bypassPermissions';
+      postApprovalCompact?: boolean;
+    }>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
