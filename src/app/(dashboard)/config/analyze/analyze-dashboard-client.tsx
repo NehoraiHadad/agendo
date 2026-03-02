@@ -1,19 +1,19 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   BarChart2,
   Loader2,
   AlertCircle,
-  Play,
   Zap,
   TrendingUp,
   Settings2,
   ArrowLeft,
   CheckCircle2,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfigScopeSelector } from '@/components/config/config-scope-selector';
@@ -686,6 +686,11 @@ export function AnalyzeDashboardClient({ projects }: Props) {
     }
   }, []);
 
+  // Auto-run on mount and on scope change
+  useEffect(() => {
+    void runAnalysis(scope);
+  }, [runAnalysis, scope]);
+
   const handleFix = useCallback(
     async (action: NonNullable<Suggestion['action']>, value?: string) => {
       setFixingAction(action);
@@ -784,6 +789,22 @@ export function AnalyzeDashboardClient({ projects }: Props) {
             </div>
             <div className="flex-1" />
 
+            {/* Refresh static analysis */}
+            <button
+              type="button"
+              disabled={isLoading || launching}
+              onClick={() => void runAnalysis(scope)}
+              title="Refresh"
+              className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors disabled:opacity-30"
+              style={{ background: 'oklch(0.10 0 0)' }}
+            >
+              {isLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+
             {/* AI Deep Analysis */}
             <button
               type="button"
@@ -808,29 +829,6 @@ export function AnalyzeDashboardClient({ projects }: Props) {
               )}
               {launching ? 'Launching…' : 'AI Deep Analysis'}
             </button>
-
-            {/* Static analysis */}
-            <button
-              type="button"
-              disabled={isLoading || launching}
-              onClick={() => void runAnalysis(scope)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
-                'disabled:opacity-50',
-              )}
-              style={{
-                background: isLoading ? 'oklch(0.68 0.16 55 / 0.1)' : 'oklch(0.68 0.16 55 / 0.2)',
-                color: 'oklch(0.68 0.16 55 / 0.9)',
-                border: '1px solid oklch(0.68 0.16 55 / 0.2)',
-              }}
-            >
-              {isLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )}
-              {isLoading ? 'Analysing…' : 'Run Analysis'}
-            </button>
           </div>
 
           {/* Launch error */}
@@ -840,19 +838,6 @@ export function AnalyzeDashboardClient({ projects }: Props) {
 
       {/* ── Main content ───────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {state.phase === 'idle' && (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <BarChart2 className="h-10 w-10 text-muted-foreground/10" />
-            <p className="text-sm text-muted-foreground/30">
-              Select a scope and click Run Analysis
-            </p>
-            <p className="text-[11px] text-muted-foreground/20 max-w-xs leading-relaxed">
-              Scans your Claude config files, reads session baselines from JSONL logs, and surfaces
-              one-click optimisations.
-            </p>
-          </div>
-        )}
-
         {state.phase === 'loading' && (
           <div className="flex flex-col items-center gap-3 py-16">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
