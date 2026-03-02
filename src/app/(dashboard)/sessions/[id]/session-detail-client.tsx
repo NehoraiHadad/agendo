@@ -385,21 +385,29 @@ export function SessionDetailClient({
           }}
         />
 
-        <div className="flex items-center gap-3 px-4 py-3">
-          {/* Back button */}
-          <Link href="/sessions">
+        {/*
+         * Responsive layout strategy:
+         * Mobile:  [back][title + status pill]   ← row 1 (order-1, order-2)
+         *          [meta info · · ·]              ← row 2 (order-3, sm:hidden)
+         *          [context bar]                  ← row 3 (order-4, sm:hidden)
+         *          [Model][Snap][Mode][End]        ← row 4 (order-5 / sm:order-3)
+         * Desktop: [back][title + meta]  [buttons] ← single row, no wrapping
+         */}
+        <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center gap-x-2 sm:gap-x-3 gap-y-0 px-3 sm:px-4 pt-3 pb-3">
+          {/* Back button — order 1, vertically centred */}
+          <Link href="/sessions" className="order-1 self-center shrink-0">
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 shrink-0 text-muted-foreground/50 hover:text-foreground hover:bg-white/[0.05]"
+              className="h-8 w-8 text-muted-foreground/50 hover:text-foreground hover:bg-white/[0.05] active:bg-white/[0.08] active:scale-95 transition-all"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
 
-          {/* Title + meta */}
-          <div className="flex-1 min-w-0">
-            {/* Title row */}
+          {/* Title + [desktop meta] — order 2, grows to fill remaining width */}
+          <div className="order-2 flex-1 min-w-0">
+            {/* Title row — title + status pill side by side */}
             <div className="flex items-center gap-2 flex-wrap">
               {isEditingTitle ? (
                 <div className="flex items-center gap-1">
@@ -417,14 +425,14 @@ export function SessionDetailClient({
                   />
                   <button
                     onClick={() => void saveTitle()}
-                    className="p-1.5 text-emerald-400 hover:text-emerald-300 transition-colors rounded"
+                    className="p-1.5 text-emerald-400 hover:text-emerald-300 active:text-emerald-200 transition-colors rounded"
                     aria-label="Save"
                   >
                     <Check className="size-3.5" />
                   </button>
                   <button
                     onClick={cancelEditing}
-                    className="p-1.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors rounded"
+                    className="p-1.5 text-muted-foreground/40 hover:text-muted-foreground active:text-foreground transition-colors rounded"
                     aria-label="Cancel"
                   >
                     <X className="size-3.5" />
@@ -433,7 +441,7 @@ export function SessionDetailClient({
               ) : (
                 <button
                   onClick={startEditing}
-                  className="group flex items-center gap-1.5 text-base font-semibold hover:text-foreground/80 transition-colors text-left"
+                  className="group flex items-center gap-1.5 text-base font-semibold hover:text-foreground/80 active:text-foreground/60 transition-colors text-left"
                   title="Click to rename session"
                 >
                   <span className="font-mono text-foreground/90">
@@ -446,11 +454,15 @@ export function SessionDetailClient({
               <SessionStatusIndicator status={currentStatus} />
             </div>
 
-            {/* Meta breadcrumb */}
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
+            {/* Meta breadcrumb — desktop only (mobile gets its own row below) */}
+            <div className="hidden sm:flex mt-1 items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
               <span className="text-muted-foreground/60">{agentName}</span>
-              <span className="text-muted-foreground/20">·</span>
-              <span>{capLabel}</span>
+              {session.kind !== 'conversation' && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <span>{capLabel}</span>
+                </>
+              )}
               {projectName && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
@@ -514,30 +526,86 @@ export function SessionDetailClient({
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Mobile: meta info row — single truncated line */}
+          <div className="sm:hidden order-3 w-full mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground/50 overflow-hidden min-w-0">
+            <span className="text-muted-foreground/70 shrink-0">{agentName}</span>
+            {session.kind !== 'conversation' && (
+              <>
+                <span className="text-muted-foreground/25 shrink-0">·</span>
+                <span className="shrink-0">{capLabel}</span>
+              </>
+            )}
+            {projectName && (
+              <>
+                <span className="text-muted-foreground/25 shrink-0">·</span>
+                <span className="shrink-0">{projectName}</span>
+              </>
+            )}
+            {taskTitle && (
+              <>
+                <span className="text-muted-foreground/25 shrink-0">·</span>
+                <span className="truncate min-w-0">{taskTitle}</span>
+              </>
+            )}
+            {session.kind === 'conversation' && (
+              <>
+                <span className="text-muted-foreground/25 shrink-0">·</span>
+                <span className="shrink-0 text-muted-foreground/40">Conversation</span>
+              </>
+            )}
+          </div>
+
+          {/* Mobile: context bar row */}
+          {contextStats?.contextWindow && (
+            <div className="sm:hidden order-4 w-full mt-2 flex items-center gap-2.5">
+              <div
+                className="flex-1 relative h-[4px] rounded-full overflow-hidden"
+                style={{
+                  backgroundColor: ctxTrackColor(
+                    contextStats.inputTokens / contextStats.contextWindow,
+                  ),
+                }}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-[width]"
+                  style={{
+                    width: ctxBarWidth(contextStats.inputTokens / contextStats.contextWindow),
+                    backgroundColor: ctxBarColor(
+                      contextStats.inputTokens / contextStats.contextWindow,
+                    ),
+                  }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
+                {fmtTokens(contextStats.inputTokens)}/{fmtTokens(contextStats.contextWindow)}
+              </span>
+            </div>
+          )}
+
+          {/* Action buttons — order-5 on mobile (full-width strip), order-3 on desktop (right column) */}
           {(currentStatus === 'active' ||
             currentStatus === 'awaiting_input' ||
             currentStatus === 'idle') && (
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="order-5 sm:order-3 w-full sm:w-auto mt-2.5 sm:mt-0 flex items-center gap-1.5 sm:shrink-0">
               {/* Model selector */}
-              <div className="relative" ref={modelMenuRef}>
+              <div className="relative flex-1 sm:flex-none" ref={modelMenuRef}>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowModelMenu((v) => !v)}
                   disabled={isModelChanging}
                   title={currentModel ? `Model: ${currentModel}` : 'Select model'}
-                  className="h-7 px-2.5 text-xs border gap-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border-cyan-500/20"
+                  className="w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 active:bg-cyan-500/15 active:scale-95 border-cyan-500/20 transition-all"
                 >
                   {isModelChanging ? (
                     <Loader2 className="size-3 animate-spin" />
                   ) : (
                     <Cpu className="size-3" />
                   )}
-                  <span className="hidden sm:inline">{modelLabel ?? 'Model'}</span>
+                  <span>{modelLabel ?? 'Model'}</span>
                 </Button>
                 {showModelMenu && (
-                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] max-w-[320px] max-h-72 overflow-y-auto rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
+                  <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-1 z-50 min-w-[200px] max-w-[320px] max-h-72 overflow-y-auto rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
                     {headerModels.length === 0 ? (
                       <div className="px-3 py-2 text-xs text-muted-foreground/50">
                         No models available
@@ -569,6 +637,7 @@ export function SessionDetailClient({
                   </div>
                 )}
               </div>
+
               {/* Save snapshot button */}
               {session.projectId && (
                 <Button
@@ -576,40 +645,44 @@ export function SessionDetailClient({
                   size="sm"
                   onClick={() => setShowSaveSnapshot(true)}
                   title="Save context snapshot"
-                  className="h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 border-teal-500/20"
+                  className="flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 active:bg-teal-500/15 active:scale-95 border-teal-500/20 transition-all"
                 >
                   <Camera className="size-3" />
-                  <span className="hidden sm:inline">Snapshot</span>
+                  <span>Snapshot</span>
                 </Button>
               )}
+
+              {/* Permission mode */}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => void handleModeChange()}
                 disabled={isModeChanging}
                 title={modeCfg.title}
-                className={`h-7 px-2.5 text-xs border gap-1.5 ${modeCfg.className}`}
+                className={`flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${modeCfg.className}`}
               >
                 {isModeChanging ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : (
                   <ModeIcon className="size-3" />
                 )}
-                <span className="hidden sm:inline">{modeCfg.label}</span>
+                <span>{modeCfg.label}</span>
               </Button>
+
+              {/* End session */}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowEndConfirm(true)}
                 disabled={isEnding}
-                className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 gap-1.5"
+                className="flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/15 active:scale-95 border border-red-500/20 gap-1.5 transition-all"
               >
                 {isEnding ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : (
                   <PowerOff className="size-3" />
                 )}
-                <span className="hidden sm:inline">End</span>
+                <span>End</span>
               </Button>
             </div>
           )}
