@@ -775,6 +775,11 @@ export function SessionChatView({
   >([]);
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
+  // Tracks the effective initial prompt, which may be set optimistically on first send
+  // before the server prop updates (which requires a page refresh).
+  const [effectiveInitialPrompt, setEffectiveInitialPrompt] = useState<string | null>(
+    initialPrompt ?? null,
+  );
   const msgIdRef = useRef(0);
   const currentUserMsgCountRef = useRef(0); // always-current count from stream
   const baseUserMsgCountRef = useRef(0); // count at time of last send
@@ -792,14 +797,27 @@ export function SessionChatView({
     }
   }, [sessionId, isInterrupting]);
 
-  const handleSent = useCallback((text: string, imageDataUrl?: string) => {
-    if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
-    baseUserMsgCountRef.current = currentUserMsgCountRef.current; // capture baseline
-    setOptimisticMessages((prev) => [
-      ...prev,
-      { id: String(++msgIdRef.current), text, imageDataUrl },
-    ]);
-  }, []);
+  const handleSent = useCallback(
+    (text: string, imageDataUrl?: string) => {
+      if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
+      baseUserMsgCountRef.current = currentUserMsgCountRef.current; // capture baseline
+
+      // When this is the very first message to a fresh session (idle, no initial prompt set),
+      // the server stores it as initialPrompt and spawns — no user:message event is emitted.
+      // Show it as the initial prompt banner immediately rather than an optimistic bubble
+      // so the UI is consistent with what appears after a page refresh.
+      if (!effectiveInitialPrompt && currentStatus === 'idle') {
+        setEffectiveInitialPrompt(text);
+        return;
+      }
+
+      setOptimisticMessages((prev) => [
+        ...prev,
+        { id: String(++msgIdRef.current), text, imageDataUrl },
+      ]);
+    },
+    [effectiveInitialPrompt, currentStatus],
+  );
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
@@ -1008,7 +1026,7 @@ export function SessionChatView({
       >
         {stream.events.length === 0 && !stream.error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
-            {currentStatus === 'idle' && !initialPrompt ? (
+            {currentStatus === 'idle' && !effectiveInitialPrompt ? (
               <span className="text-xs">Send a message to start the conversation</span>
             ) : (
               <>
@@ -1022,7 +1040,7 @@ export function SessionChatView({
         )}
 
         {/* Initial prompt banner — shown once at the top if present */}
-        {initialPrompt && <InitialPromptBanner prompt={initialPrompt} />}
+        {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
 
         {augmentedDisplayItems.map((item, i) =>
           renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
