@@ -19,6 +19,9 @@ import {
   Cpu,
   Camera,
   MoreHorizontal,
+  Users,
+  GitFork,
+  Network,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,14 +31,18 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useSessionStream } from '@/hooks/use-session-stream';
 import { useSessionLogStream } from '@/hooks/use-session-log-stream';
+import { useTeamState } from '@/hooks/use-team-state';
 import { SessionChatView } from '@/components/sessions/session-chat-view';
 import { SessionEventLog } from '@/components/sessions/session-event-log';
 import { SessionInfoPanel } from '@/components/sessions/session-info-panel';
 import { SessionLogViewer } from '@/components/sessions/session-log-viewer';
 import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
+import { TeamPanel } from '@/components/sessions/team-panel';
+import { TeamDiagram } from '@/components/sessions/team-diagram';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
@@ -221,8 +228,13 @@ export function SessionDetailClient({
   const stream = useSessionStream(session.id);
   const currentStatus = stream.sessionStatus ?? session.status;
   const logStream = useSessionLogStream(session.id);
+  const teamState = useTeamState(stream.events);
+  const [showTeamPanel, setShowTeamPanel] = useState(false);
+  const [showTeamSheet, setShowTeamSheet] = useState(false);
+  const [showDiagram, setShowDiagram] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
+  const [isForkingSession, setIsForkingSession] = useState(false);
   const [showSaveSnapshot, setShowSaveSnapshot] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(
     (session.permissionMode as PermissionMode) ?? 'bypassPermissions',
@@ -361,6 +373,20 @@ export function SessionDetailClient({
     }
   }
 
+  async function handleFork() {
+    if (isForkingSession) return;
+    setIsForkingSession(true);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/fork`, { method: 'POST' });
+      if (res.ok) {
+        const body = (await res.json()) as { data: { id: string } };
+        window.open(`/sessions/${body.data.id}`, '_blank');
+      }
+    } finally {
+      setIsForkingSession(false);
+    }
+  }
+
   async function handleModeChange() {
     if (isModeChanging || currentStatus === 'ended') return;
     const nextIndex = (MODE_CYCLE.indexOf(permissionMode) + 1) % MODE_CYCLE.length;
@@ -382,6 +408,14 @@ export function SessionDetailClient({
 
   const modeCfg = MODE_CONFIG[permissionMode];
   const ModeIcon = modeCfg.icon;
+
+  function handleTeamToggle() {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setShowTeamSheet((v) => !v);
+    } else {
+      setShowTeamPanel((v) => !v);
+    }
+  }
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -467,11 +501,41 @@ export function SessionDetailClient({
               )}
 
               <SessionStatusIndicator status={currentStatus} />
+
+              {/* Team badge — shown when a team is active */}
+              {teamState.isActive && (
+                <button
+                  type="button"
+                  onClick={handleTeamToggle}
+                  title="Toggle team panel"
+                  className={`inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 border transition-all ${
+                    showTeamPanel || showTeamSheet
+                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                      : 'bg-white/[0.04] border-white/[0.08] text-muted-foreground/50 hover:text-muted-foreground/80 hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <Users className="size-3" />
+                  <span>{teamState.members.length} agents</span>
+                </button>
+              )}
             </div>
 
             {/* Meta breadcrumb — desktop only (mobile gets its own row below) */}
             <div className="hidden sm:flex mt-1 items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
               <span className="text-muted-foreground/60">{agentName}</span>
+              {session.parentSessionId && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <Link
+                    href={`/sessions/${session.parentSessionId}`}
+                    className="inline-flex items-center gap-0.5 text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
+                    title="View parent session"
+                  >
+                    <GitFork className="size-2.5" />
+                    <span>forked</span>
+                  </Link>
+                </>
+              )}
               {session.kind !== 'conversation' && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
@@ -682,6 +746,40 @@ export function SessionDetailClient({
                     <span className="text-xs font-medium opacity-70">{modeCfg.label}</span>
                   </button>
 
+                  {/* Topology diagram */}
+                  {teamState.isActive && (
+                    <button
+                      onClick={() => {
+                        setShowDiagram(true);
+                        setShowMobileMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-muted-foreground/60 hover:bg-white/[0.04] active:bg-white/[0.07] transition-colors"
+                    >
+                      <Network className="size-4 shrink-0" />
+                      <span>Diagram</span>
+                    </button>
+                  )}
+
+                  {/* Fork session */}
+                  <button
+                    onClick={() => {
+                      void handleFork();
+                      setShowMobileMenu(false);
+                    }}
+                    disabled={isForkingSession}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-violet-400 hover:bg-violet-500/[0.08] active:bg-violet-500/[0.12] transition-colors"
+                  >
+                    {isForkingSession ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" />
+                    ) : (
+                      <GitFork className="size-4 shrink-0" />
+                    )}
+                    <span className="flex-1">Fork</span>
+                    <span className="text-xs font-medium opacity-50">
+                      {session.sessionRef ? 'with history' : 'no history yet'}
+                    </span>
+                  </button>
+
                   <div className="h-px bg-white/[0.06] mx-3" />
 
                   {/* End session */}
@@ -792,6 +890,59 @@ export function SessionDetailClient({
                 <span>{modeCfg.label}</span>
               </Button>
 
+              {/* Team panel toggle — desktop only, shown when team is active */}
+              {teamState.isActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleTeamToggle}
+                  title="Toggle team panel"
+                  className={`h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${
+                    showTeamPanel
+                      ? 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20'
+                      : 'text-muted-foreground/50 hover:text-foreground/70 hover:bg-white/[0.05] border-white/[0.08]'
+                  }`}
+                >
+                  <Users className="size-3" />
+                  <span>Team</span>
+                </Button>
+              )}
+
+              {/* Topology diagram — shown when team is active */}
+              {teamState.isActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDiagram(true)}
+                  title="View agent topology diagram"
+                  className="h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all text-muted-foreground/50 hover:text-foreground/70 hover:bg-white/[0.05] border-white/[0.08]"
+                >
+                  <Network className="size-3" />
+                  <span>Diagram</span>
+                </Button>
+              )}
+
+              {/* Fork session */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleFork()}
+                disabled={isForkingSession}
+                title={
+                  session.sessionRef
+                    ? "Fork — open a new session that starts with this conversation's full history"
+                    : 'Fork — open a new session with the same settings (no history yet)'
+                }
+                className="h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20"
+              >
+                {isForkingSession ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <GitFork className="size-3" />
+                )}
+                <span>Fork</span>
+              </Button>
+
               {/* End session */}
               <Button
                 variant="ghost"
@@ -812,62 +963,95 @@ export function SessionDetailClient({
         </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue={defaultTab} className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <TabsList className="flex w-full overflow-x-auto shrink-0">
-          <TabsTrigger value="chat" className="shrink-0">
-            Chat
-          </TabsTrigger>
-          <TabsTrigger value="terminal" className="shrink-0">
-            Terminal
-          </TabsTrigger>
-          <TabsTrigger value="logs" className="shrink-0">
-            Logs
-          </TabsTrigger>
-          <TabsTrigger value="events" className="shrink-0">
-            Events
-          </TabsTrigger>
-          <TabsTrigger value="info" className="shrink-0">
-            Info
-          </TabsTrigger>
-        </TabsList>
+      {/* Main content area: Tabs + optional desktop team panel */}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Tabs section */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <Tabs defaultValue={defaultTab} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <TabsList className="flex w-full overflow-x-auto shrink-0">
+              <TabsTrigger value="chat" className="shrink-0">
+                Chat
+              </TabsTrigger>
+              <TabsTrigger value="terminal" className="shrink-0">
+                Terminal
+              </TabsTrigger>
+              <TabsTrigger value="logs" className="shrink-0">
+                Logs
+              </TabsTrigger>
+              <TabsTrigger value="events" className="shrink-0">
+                Events
+              </TabsTrigger>
+              <TabsTrigger value="info" className="shrink-0">
+                Info
+              </TabsTrigger>
+            </TabsList>
 
-        <TabsContent
-          value="chat"
-          forceMount
-          className="mt-3 data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col overflow-hidden"
-        >
-          <SessionChatView
+            <TabsContent
+              value="chat"
+              forceMount
+              className="mt-3 data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col overflow-hidden"
+            >
+              <SessionChatView
+                sessionId={session.id}
+                stream={stream}
+                currentStatus={currentStatus}
+                initialPrompt={session.initialPrompt}
+                agentBinaryPath={agentBinaryPath}
+              />
+            </TabsContent>
+
+            <TabsContent value="terminal" className="mt-4">
+              <WebTerminal sessionId={session.id} className="h-[300px] sm:h-[500px]" />
+            </TabsContent>
+
+            <TabsContent value="logs" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+              <SessionLogViewer stream={logStream} />
+            </TabsContent>
+
+            <TabsContent value="events" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+              <SessionEventLog events={stream.events} />
+            </TabsContent>
+
+            <TabsContent value="info" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+              <SessionInfoPanel
+                session={session}
+                stream={stream}
+                agentName={agentName}
+                agentSlug={agentSlug}
+                projectName={projectName}
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        {/* Desktop team panel — push layout (not overlay) */}
+        {showTeamPanel && teamState.isActive && (
+          <TeamPanel
+            teamState={teamState}
             sessionId={session.id}
-            stream={stream}
-            currentStatus={currentStatus}
-            initialPrompt={session.initialPrompt}
-            agentBinaryPath={agentBinaryPath}
+            sessionStatus={currentStatus}
+            className="hidden md:flex"
           />
-        </TabsContent>
+        )}
+      </div>
 
-        <TabsContent value="terminal" className="mt-4">
-          <WebTerminal sessionId={session.id} className="h-[300px] sm:h-[500px]" />
-        </TabsContent>
-
-        <TabsContent value="logs" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <SessionLogViewer stream={logStream} />
-        </TabsContent>
-
-        <TabsContent value="events" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <SessionEventLog events={stream.events} />
-        </TabsContent>
-
-        <TabsContent value="info" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <SessionInfoPanel
-            session={session}
-            stream={stream}
-            agentName={agentName}
-            agentSlug={agentSlug}
-            projectName={projectName}
-          />
-        </TabsContent>
-      </Tabs>
+      {/* Mobile team panel — Sheet */}
+      {teamState.isActive && (
+        <Sheet open={showTeamSheet} onOpenChange={setShowTeamSheet}>
+          <SheetContent
+            side="right"
+            className="p-0 w-80 bg-[oklch(0.085_0_0)] border-l border-white/[0.06]"
+          >
+            <SheetTitle className="sr-only">Team Panel</SheetTitle>
+            <TeamPanel
+              teamState={teamState}
+              sessionId={session.id}
+              sessionStatus={currentStatus}
+              className="flex md:hidden h-full"
+            />
+          </SheetContent>
+        </Sheet>
+      )}
 
       {/* Save snapshot dialog */}
       <SaveSnapshotDialog
@@ -876,6 +1060,28 @@ export function SessionDetailClient({
         sessionId={session.id}
         projectId={session.projectId ?? null}
       />
+
+      {/* Agent topology diagram — full-screen dialog */}
+      <Dialog open={showDiagram} onOpenChange={setShowDiagram}>
+        <DialogContent className="max-w-none w-[96vw] h-[90vh] p-0 border border-white/[0.08] bg-[oklch(0.07_0_0)] overflow-hidden flex flex-col">
+          <DialogHeader className="flex-row items-center gap-2.5 px-4 py-3 border-b border-white/[0.06] shrink-0">
+            <Network className="size-4 text-muted-foreground/40 shrink-0" />
+            <DialogTitle className="font-mono text-sm text-foreground/70 font-normal">
+              {teamState.teamName ? `${teamState.teamName} — topology` : 'agent topology'}
+            </DialogTitle>
+            <span className="text-[10px] text-muted-foreground/25 font-mono ml-1">
+              {teamState.members.length} agents
+            </span>
+          </DialogHeader>
+          <div className="flex-1 min-h-0">
+            <TeamDiagram
+              teamState={teamState}
+              events={stream.events}
+              sessionStatus={currentStatus}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* End session confirmation */}
       <Dialog open={showEndConfirm} onOpenChange={(v) => !v && setShowEndConfirm(false)}>
