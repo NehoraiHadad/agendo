@@ -59,6 +59,17 @@ export type AgendoEvent =
         toolUseId: string;
       }>;
       serverToolUse?: { webSearchRequests?: number; webFetchRequests?: number };
+      /**
+       * Per-call context stats captured from the last `message_start` stream event before
+       * this result. Unlike `modelUsage` (which aggregates across all API calls in the turn),
+       * these values represent a single API call and give an accurate context window reading.
+       * Formula: inputTokens + cacheReadInputTokens + cacheCreationInputTokens = actual context used.
+       */
+      perCallContextStats?: {
+        inputTokens: number;
+        cacheReadInputTokens: number;
+        cacheCreationInputTokens: number;
+      };
     })
   | (EventBase & { type: 'agent:activity'; thinking: boolean })
   | (EventBase & {

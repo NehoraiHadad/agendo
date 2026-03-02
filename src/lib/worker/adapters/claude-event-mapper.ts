@@ -22,6 +22,16 @@ export interface ClaudeEventMapperCallbacks {
   appendThinkingDelta(text: string): void;
   /** Called with cost/turn stats from a `result` event for DB persistence. */
   onResultStats(costUsd: number | null, turns: number | null): void;
+  /**
+   * Called when a `message_start` stream event fires — provides per-call accurate
+   * context stats (NOT aggregated across the turn like `result.modelUsage`).
+   * The caller should store the latest value and attach it to the next `agent:result`.
+   */
+  onMessageStart?(stats: {
+    inputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+  }): void;
 }
 
 export function mapClaudeJsonToEvents(
@@ -241,6 +251,24 @@ export function mapClaudeJsonToEvents(
   // Batch text_delta and thinking_delta events to limit PG NOTIFY throughput (~5 events/sec).
   if (type === 'stream_event') {
     const event = parsed.event as Record<string, unknown> | undefined;
+
+    // message_start fires once at the beginning of each API call and contains
+    // per-call accurate usage stats (NOT aggregated across the turn).
+    // This is the only reliable source of true context window usage because
+    // result.modelUsage accumulates values across all API calls in a turn,
+    // easily exceeding the context window by 5-20× for complex multi-tool turns.
+    if (event?.type === 'message_start' && callbacks.onMessageStart) {
+      const message = event.message as Record<string, unknown> | undefined;
+      const usage = message?.usage as Record<string, unknown> | undefined;
+      if (usage) {
+        callbacks.onMessageStart({
+          inputTokens: (usage.input_tokens as number | undefined) ?? 0,
+          cacheReadInputTokens: (usage.cache_read_input_tokens as number | undefined) ?? 0,
+          cacheCreationInputTokens: (usage.cache_creation_input_tokens as number | undefined) ?? 0,
+        });
+      }
+    }
+
     if (event?.type === 'content_block_delta') {
       const delta = event.delta as Record<string, unknown> | undefined;
       if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -249,9 +277,9 @@ export function mapClaudeJsonToEvents(
         callbacks.appendThinkingDelta(delta.thinking);
       }
     }
-    // All other stream_event subtypes (message_start, content_block_start/stop,
-    // message_delta, message_stop) are ignored — the complete messages provide
-    // the same data in a more reliable form.
+    // All other stream_event subtypes (content_block_start/stop, message_delta,
+    // message_stop) are ignored — the complete messages provide the same data
+    // in a more reliable form.
     return [];
   }
 
