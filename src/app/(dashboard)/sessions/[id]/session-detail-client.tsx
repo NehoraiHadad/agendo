@@ -18,6 +18,7 @@ import {
   X,
   Cpu,
   Camera,
+  MoreHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -230,6 +231,8 @@ export function SessionDetailClient({
   const [isModelChanging, setIsModelChanging] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
   const [dynamicModels, setDynamicModels] = useState<DynamicModelOption[]>([]);
 
   // Close model menu on outside click
@@ -243,6 +246,18 @@ export function SessionDetailClient({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showModelMenu]);
+
+  // Close mobile ⋯ menu on outside click
+  useEffect(() => {
+    if (!showMobileMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
+        setShowMobileMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMobileMenu]);
 
   // Fetch available models for this agent's provider
   useEffect(() => {
@@ -527,7 +542,7 @@ export function SessionDetailClient({
           </div>
 
           {/* Mobile: meta info row — single truncated line */}
-          <div className="sm:hidden order-3 w-full mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground/50 overflow-hidden min-w-0">
+          <div className="sm:hidden order-4 w-full mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground/50 overflow-hidden min-w-0">
             <span className="text-muted-foreground/70 shrink-0">{agentName}</span>
             {session.kind !== 'conversation' && (
               <>
@@ -557,7 +572,7 @@ export function SessionDetailClient({
 
           {/* Mobile: context bar row */}
           {contextStats?.contextWindow && (
-            <div className="sm:hidden order-4 w-full mt-2 flex items-center gap-2.5">
+            <div className="sm:hidden order-5 w-full mt-2 flex items-center gap-2.5">
               <div
                 className="flex-1 relative h-[4px] rounded-full overflow-hidden"
                 style={{
@@ -582,20 +597,128 @@ export function SessionDetailClient({
             </div>
           )}
 
-          {/* Action buttons — order-5 on mobile (full-width strip), order-3 on desktop (right column) */}
+          {/* Mobile: ⋯ menu button — sits inline in row 1 next to title */}
           {(currentStatus === 'active' ||
             currentStatus === 'awaiting_input' ||
             currentStatus === 'idle') && (
-            <div className="order-5 sm:order-3 w-full sm:w-auto mt-2.5 sm:mt-0 flex items-center gap-1.5 sm:shrink-0">
+            <div className="sm:hidden order-3 self-center shrink-0 relative" ref={mobileMenuRef}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowMobileMenu((v) => !v)}
+                className="h-8 w-8 text-muted-foreground/50 hover:text-foreground hover:bg-white/[0.05] active:bg-white/[0.08] active:scale-95 transition-all border border-white/[0.06]"
+                aria-label="Session actions"
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+
+              {showMobileMenu && (
+                <div className="absolute right-0 top-full mt-1.5 z-50 w-60 rounded-xl border border-white/[0.08] bg-[oklch(0.11_0_0)] shadow-2xl overflow-hidden">
+                  {/* Model section */}
+                  {headerModels.length > 0 && (
+                    <>
+                      <div className="px-3 pt-3 pb-1.5">
+                        <p className="text-[10px] font-medium text-muted-foreground/40 uppercase tracking-wider mb-1">
+                          Model
+                        </p>
+                        {headerModels.map((m) => {
+                          const isActiveModel =
+                            currentModel?.toLowerCase() === m.id.toLowerCase() ||
+                            currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => {
+                                void handleModelChange(m.id);
+                                setShowMobileMenu(false);
+                              }}
+                              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-sm flex items-center justify-between transition-colors ${
+                                isActiveModel
+                                  ? 'text-cyan-400 bg-cyan-500/10'
+                                  : 'text-foreground/70 hover:bg-white/[0.05]'
+                              }`}
+                            >
+                              <span>{m.label}</span>
+                              {isActiveModel && (
+                                <span className="text-[10px] text-muted-foreground/40 font-mono">
+                                  current
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="h-px bg-white/[0.06] mx-3" />
+                    </>
+                  )}
+
+                  {/* Snapshot */}
+                  {session.projectId && (
+                    <button
+                      onClick={() => {
+                        setShowSaveSnapshot(true);
+                        setShowMobileMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-teal-400 hover:bg-teal-500/[0.08] active:bg-teal-500/[0.12] transition-colors"
+                    >
+                      <Camera className="size-4 shrink-0" />
+                      <span>Save snapshot</span>
+                    </button>
+                  )}
+
+                  {/* Permission mode */}
+                  <button
+                    onClick={() => void handleModeChange()}
+                    disabled={isModeChanging}
+                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors hover:bg-white/[0.04] active:bg-white/[0.07] ${modeCfg.className.split(' ').find((c) => c.startsWith('text-')) ?? 'text-foreground/70'}`}
+                  >
+                    {isModeChanging ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" />
+                    ) : (
+                      <ModeIcon className="size-4 shrink-0" />
+                    )}
+                    <span className="flex-1">Permission</span>
+                    <span className="text-xs font-medium opacity-70">{modeCfg.label}</span>
+                  </button>
+
+                  <div className="h-px bg-white/[0.06] mx-3" />
+
+                  {/* End session */}
+                  <button
+                    onClick={() => {
+                      setShowEndConfirm(true);
+                      setShowMobileMenu(false);
+                    }}
+                    disabled={isEnding}
+                    className="w-full text-left px-4 py-2.5 mb-1 text-sm flex items-center gap-3 text-red-400 hover:bg-red-500/[0.08] active:bg-red-500/[0.12] transition-colors"
+                  >
+                    {isEnding ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" />
+                    ) : (
+                      <PowerOff className="size-4 shrink-0" />
+                    )}
+                    <span>End session</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Desktop: individual labeled buttons — right column */}
+          {(currentStatus === 'active' ||
+            currentStatus === 'awaiting_input' ||
+            currentStatus === 'idle') && (
+            <div className="hidden sm:flex order-3 items-center gap-1.5 shrink-0">
               {/* Model selector */}
-              <div className="relative flex-1 sm:flex-none" ref={modelMenuRef}>
+              <div className="relative" ref={modelMenuRef}>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowModelMenu((v) => !v)}
                   disabled={isModelChanging}
                   title={currentModel ? `Model: ${currentModel}` : 'Select model'}
-                  className="w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 active:bg-cyan-500/15 active:scale-95 border-cyan-500/20 transition-all"
+                  className="h-7 px-2.5 text-xs border gap-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 active:bg-cyan-500/15 active:scale-95 border-cyan-500/20 transition-all"
                 >
                   {isModelChanging ? (
                     <Loader2 className="size-3 animate-spin" />
@@ -605,7 +728,7 @@ export function SessionDetailClient({
                   <span>{modelLabel ?? 'Model'}</span>
                 </Button>
                 {showModelMenu && (
-                  <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-1 z-50 min-w-[200px] max-w-[320px] max-h-72 overflow-y-auto rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] max-w-[320px] max-h-72 overflow-y-auto rounded-md border border-white/[0.1] bg-[oklch(0.12_0_0)] shadow-lg py-1">
                     {headerModels.length === 0 ? (
                       <div className="px-3 py-2 text-xs text-muted-foreground/50">
                         No models available
@@ -638,14 +761,14 @@ export function SessionDetailClient({
                 )}
               </div>
 
-              {/* Save snapshot button */}
+              {/* Save snapshot */}
               {session.projectId && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowSaveSnapshot(true)}
                   title="Save context snapshot"
-                  className="flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 active:bg-teal-500/15 active:scale-95 border-teal-500/20 transition-all"
+                  className="h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 active:bg-teal-500/15 active:scale-95 border-teal-500/20 transition-all"
                 >
                   <Camera className="size-3" />
                   <span>Snapshot</span>
@@ -659,7 +782,7 @@ export function SessionDetailClient({
                 onClick={() => void handleModeChange()}
                 disabled={isModeChanging}
                 title={modeCfg.title}
-                className={`flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${modeCfg.className}`}
+                className={`h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${modeCfg.className}`}
               >
                 {isModeChanging ? (
                   <Loader2 className="size-3 animate-spin" />
@@ -675,7 +798,7 @@ export function SessionDetailClient({
                 size="sm"
                 onClick={() => setShowEndConfirm(true)}
                 disabled={isEnding}
-                className="flex-1 sm:flex-none w-full sm:w-auto h-9 sm:h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/15 active:scale-95 border border-red-500/20 gap-1.5 transition-all"
+                className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/15 active:scale-95 border border-red-500/20 gap-1.5 transition-all"
               >
                 {isEnding ? (
                   <Loader2 className="size-3 animate-spin" />
