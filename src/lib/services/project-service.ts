@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and, or, ilike } from 'drizzle-orm';
 import { access, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { db } from '@/lib/db';
@@ -45,6 +45,31 @@ export async function getProject(id: string): Promise<Project> {
   if (!project) throw new NotFoundError('Project', id);
   if (!project.isActive) throw new NotFoundError('Project', id);
   return project;
+}
+
+export interface SearchProjectResult {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export async function searchProjects(q: string, limit = 5): Promise<SearchProjectResult[]> {
+  const rows = await db
+    .select({ id: projects.id, name: projects.name, description: projects.description })
+    .from(projects)
+    .where(
+      and(
+        eq(projects.isActive, true),
+        or(ilike(projects.name, `%${q}%`), ilike(projects.description, `%${q}%`)),
+      ),
+    )
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+  }));
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {

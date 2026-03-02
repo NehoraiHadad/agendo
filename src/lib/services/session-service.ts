@@ -1,4 +1,4 @@
-import { eq, and, desc, count, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, count, getTableColumns, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -134,6 +134,36 @@ export async function listExecutionSessionsByProject(
     .orderBy(desc(sessions.createdAt))
     .limit(limit);
   return rows as SessionWithAgent[];
+}
+
+export interface SearchSessionResult {
+  id: string;
+  title: string;
+  status: string;
+  agentName: string;
+}
+
+export async function searchSessions(q: string, limit = 5): Promise<SearchSessionResult[]> {
+  const rows = await db
+    .select({
+      id: sessions.id,
+      title: sessions.title,
+      initialPrompt: sessions.initialPrompt,
+      status: sessions.status,
+      agentName: agents.name,
+    })
+    .from(sessions)
+    .innerJoin(agents, eq(sessions.agentId, agents.id))
+    .where(or(ilike(sessions.title, `%${q}%`), ilike(sessions.initialPrompt, `%${q}%`)))
+    .orderBy(desc(sessions.createdAt))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title ?? row.initialPrompt?.slice(0, 80) ?? 'Untitled session',
+    status: row.status,
+    agentName: row.agentName,
+  }));
 }
 
 export interface ListSessionsInput {

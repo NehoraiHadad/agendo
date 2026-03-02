@@ -15,11 +15,13 @@ import {
   FileText,
   PanelTop,
   Settings,
+  Search,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useCommandPalette } from '@/hooks/use-command-palette';
 
 interface SystemStats {
   cpu: number;
@@ -94,6 +96,7 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
   }, []);
   const [stats, setStats] = useState<SidebarStats | null>(null);
   const [sysStats, setSysStats] = useState<SystemStats | null>(null);
+  const { open: openPalette } = useCommandPalette();
 
   useEffect(() => {
     async function fetchStats() {
@@ -208,9 +211,46 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
         </Button>
       </div>
 
+      {/* Search trigger */}
+      <div className="px-2 pt-3 pb-1">
+        {isCollapsed ? (
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={openPalette}
+                aria-label="Search"
+                className="flex h-9 w-full items-center justify-center rounded-lg text-muted-foreground/40 hover:text-foreground/65 hover:bg-white/[0.04] transition-colors"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs">
+              Search <span className="ml-1 text-white/40">⌘K</span>
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <button
+            onClick={openPalette}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-white/[0.04] group"
+            style={{
+              border: '1px solid oklch(0.5 0.05 280 / 0.1)',
+              background: 'oklch(0.12 0.01 280 / 0.4)',
+            }}
+          >
+            <Search className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0" />
+            <span className="flex-1 text-[12px] text-muted-foreground/30 font-medium">
+              Search...
+            </span>
+            <kbd className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-mono text-muted-foreground/20 bg-white/[0.03] border border-white/[0.05]">
+              ⌘K
+            </kbd>
+          </button>
+        )}
+      </div>
+
       {/* Nav section label */}
       {!isCollapsed && (
-        <div className="px-4 pt-4 pb-1">
+        <div className="px-4 pt-2 pb-1">
           <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/20">
             Navigation
           </span>
