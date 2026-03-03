@@ -621,7 +621,7 @@ function BranchPopover({
   originalText,
 }: {
   sessionId: string;
-  branchUuid: string;
+  branchUuid: string | null;
   originalText: string;
 }) {
   const router = useRouter();
@@ -646,7 +646,10 @@ function BranchPopover({
       const res = await fetch(`/api/sessions/${sessionId}/fork`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeAt: branchUuid, initialPrompt: text.trim() }),
+        body: JSON.stringify({
+          ...(branchUuid ? { resumeAt: branchUuid } : {}),
+          initialPrompt: text.trim(),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -737,7 +740,7 @@ function UserBubble({
   imageDataUrl?: string;
   ts?: number;
   sessionId?: string;
-  branchUuid?: string;
+  branchUuid?: string | null;
 }) {
   return (
     <div className="flex gap-2.5 items-start justify-end animate-fade-in-up group/userrow">
@@ -778,8 +781,8 @@ function UserBubble({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {sessionId && branchUuid && (
-            <div className="opacity-0 group-hover/userrow:opacity-100 transition-opacity">
+          {sessionId && branchUuid !== undefined && (
+            <div className="opacity-0 group-hover/userrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
               <BranchPopover sessionId={sessionId} branchUuid={branchUuid} originalText={text} />
             </div>
           )}
