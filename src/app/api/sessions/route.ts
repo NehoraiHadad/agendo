@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
-import { createSession, listSessions, type SessionKind } from '@/lib/services/session-service';
+import {
+  createSession,
+  listSessions,
+  deleteSessions,
+  type SessionKind,
+} from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
@@ -74,4 +79,14 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   }
 
   return NextResponse.json({ data: { id: session.id } }, { status: 201 });
+});
+
+const bulkDeleteSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(100),
+});
+
+export const DELETE = withErrorBoundary(async (req: NextRequest) => {
+  const body = bulkDeleteSchema.parse(await req.json());
+  const result = await deleteSessions(body.sessionIds);
+  return NextResponse.json({ data: result });
 });
