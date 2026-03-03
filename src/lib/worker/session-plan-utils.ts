@@ -2,14 +2,16 @@
  * Plan file utilities for SessionProcess.
  *
  * Handles finding and reading the Claude plan file that ExitPlanMode writes
- * to ~/.claude/plans/ — used for the "clear context & restart" flow.
+ * to ~/.claude/plans/ — used for the "clear context & restart" flow and
+ * for auto-saving plans to the plans table on approval.
  */
 
 import { join } from 'node:path';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { db } from '@/lib/db';
-import { sessions } from '@/lib/db/schema';
+import { sessions, plans } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import type { Session } from '@/lib/types';
 
 /**
  * Eagerly find the plan file in ~/.claude/plans/ (most recently modified .md)
@@ -55,4 +57,48 @@ export async function readPlanFromFile(sessionId: string): Promise<string | null
     console.warn(`[session-plan-utils] Failed to read plan from DB path:`, err);
     return null;
   }
+}
+
+/**
+ * Auto-save plan content to the plans table when ExitPlanMode is approved.
+ * Reads the captured plan file, creates a plan record, and links it to the session's project.
+ */
+export async function savePlanFromSession(session: Session): Promise<void> {
+  const content = await readPlanFromFile(session.id);
+  if (!content) {
+    console.warn(`[session-plan-utils] No plan content found for session ${session.id}`);
+    return;
+  }
+
+  const projectId = session.projectId;
+  if (!projectId) {
+    console.warn(
+      `[session-plan-utils] Session ${session.id} has no projectId — skipping plan save`,
+    );
+    return;
+  }
+
+  // Extract a title from the first heading or first line of the plan content
+  const firstLine = content.split('\n').find((line) => line.trim().length > 0) ?? 'Untitled Plan';
+  const title =
+    firstLine
+      .replace(/^#+\s*/, '')
+      .trim()
+      .slice(0, 200) || 'Untitled Plan';
+
+  const [plan] = await db
+    .insert(plans)
+    .values({
+      projectId,
+      title,
+      content,
+      sourceSessionId: session.id,
+      status: 'ready',
+      metadata: {},
+    })
+    .returning({ id: plans.id });
+
+  console.log(
+    `[session-plan-utils] Saved plan ${plan.id} from session ${session.id} (${content.length} chars)`,
+  );
 }

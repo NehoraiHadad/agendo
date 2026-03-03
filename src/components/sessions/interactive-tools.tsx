@@ -29,6 +29,7 @@ import {
   X,
   Pencil,
   ChevronRight,
+  ListTodo,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -524,7 +525,7 @@ interface AllowedPrompt {
 }
 
 type PostApprovalMode = 'bypassPermissions' | 'acceptEdits' | 'default';
-type PlanAction = 'approve' | 'compact' | 'restart' | 'revise';
+type PlanAction = 'approve' | 'compact' | 'restart' | 'revise' | 'breakdown';
 
 const MODE_OPTIONS: { value: PostApprovalMode; label: string; title: string }[] = [
   {
@@ -556,6 +557,7 @@ function ExitPlanModeRenderer({
   const [planLoading, setPlanLoading] = useState(true);
   const [planSheetOpen, setPlanSheetOpen] = useState(false);
   const [approvalMode, setApprovalMode] = useState<PostApprovalMode>('acceptEdits');
+  const [breakdownTriggered, setBreakdownTriggered] = useState(false);
 
   const isSessionLive = sessionStatus === 'active' || sessionStatus === 'awaiting_input';
   const isSessionIdle = !isSessionLive;
@@ -632,12 +634,65 @@ function ExitPlanModeRenderer({
     }
   }
 
+  async function handleBreakIntoTasks() {
+    setError(null);
+    setPending('breakdown');
+    setBreakdownTriggered(true);
+    try {
+      // Approve the plan and switch to bypassPermissions so MCP tools work
+      await respond({
+        kind: 'approval',
+        decision: 'allow',
+        postApprovalMode: 'bypassPermissions',
+        postApprovalCompact: true,
+      });
+
+      // Wait for approval + mode switch + compact to propagate before sending
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const taskMessage = planContent
+        ? `IMPORTANT: Do NOT implement any code changes. Instead, break the plan below into actionable tasks using the Agendo MCP tools.
+
+For each major step:
+1. Use mcp__agendo__create_task with a clear title and a fully self-contained description that an AI agent can execute without any additional context
+2. Each description must include: scope (exact files/modules to touch), done criteria (how to verify completion), and constraints (what NOT to change)
+3. For steps that must run in sequence, use mcp__agendo__create_subtask to group them under a parent task
+4. Set appropriate priorities (highest for critical path, lower for independent work)
+
+After creating all tasks, report a summary of what you created.
+
+PLAN TO DECOMPOSE:
+
+${planContent}`
+        : `IMPORTANT: Do NOT implement any code changes. Instead, break the plan you just produced into actionable tasks using the Agendo MCP tools. Create one task per major step with self-contained descriptions that include scope, done criteria, and constraints.`;
+
+      await fetch(`/api/sessions/${sessionId}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: taskMessage }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Request failed');
+      setPending(null);
+      setBreakdownTriggered(false);
+    }
+  }
+
   // Compact "answered" state shown after the user has acted
   if (isAnswered && !feedbackMode) {
     return (
       <div className="rounded-md border border-violet-500/15 bg-violet-500/[0.03] px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground/60">
-        <CheckCircle2 className="size-3.5 text-violet-400/60 shrink-0" />
-        <span>Plan approved — implementing</span>
+        {breakdownTriggered ? (
+          <>
+            <ListTodo className="size-3.5 text-violet-400/60 shrink-0" />
+            <span>Plan approved — creating tasks</span>
+          </>
+        ) : (
+          <>
+            <CheckCircle2 className="size-3.5 text-violet-400/60 shrink-0" />
+            <span>Plan approved — implementing</span>
+          </>
+        )}
       </div>
     );
   }
@@ -773,6 +828,27 @@ function ExitPlanModeRenderer({
                   <RotateCcw className="size-3.5 shrink-0" />
                 )}
                 Restart fresh
+              </button>
+
+              {/* ☰ Break into tasks */}
+              <button
+                type="button"
+                disabled={isDisabled}
+                onClick={() => void handleBreakIntoTasks()}
+                title="Approve the plan and have the agent create tasks on the board instead of implementing directly"
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                  isDisabled
+                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                    : 'border-amber-500/30 bg-amber-500/[0.08] text-amber-300/80 hover:bg-amber-500/[0.16] hover:border-amber-500/45 active:scale-[0.98]',
+                )}
+              >
+                {pending === 'breakdown' ? (
+                  <Loader2 className="size-3.5 animate-spin shrink-0" />
+                ) : (
+                  <ListTodo className="size-3.5 shrink-0" />
+                )}
+                Break into tasks
               </button>
 
               {/* ✏ Revise */}
@@ -1027,6 +1103,28 @@ function ExitPlanModeRenderer({
                   <RotateCcw className="size-3.5 shrink-0" />
                 )}
                 Restart fresh
+              </button>
+
+              <button
+                type="button"
+                disabled={isDisabled}
+                onClick={() => {
+                  setPlanSheetOpen(false);
+                  void handleBreakIntoTasks();
+                }}
+                className={cn(
+                  'flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-xs font-medium transition-all duration-150',
+                  isDisabled
+                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                    : 'border-amber-500/30 bg-amber-500/[0.08] text-amber-300/80 hover:bg-amber-500/[0.16] hover:border-amber-500/45',
+                )}
+              >
+                {pending === 'breakdown' ? (
+                  <Loader2 className="size-3.5 animate-spin shrink-0" />
+                ) : (
+                  <ListTodo className="size-3.5 shrink-0" />
+                )}
+                Break into tasks
               </button>
 
               <button

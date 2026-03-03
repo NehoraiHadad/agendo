@@ -17,7 +17,11 @@ import { FileLogWriter } from '@/lib/worker/log-writer';
 import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
-import { capturePlanFilePath, readPlanFromFile } from '@/lib/worker/session-plan-utils';
+import {
+  capturePlanFilePath,
+  readPlanFromFile,
+  savePlanFromSession,
+} from '@/lib/worker/session-plan-utils';
 import {
   handleCancel,
   handleInterrupt,
@@ -688,6 +692,15 @@ export class SessionProcess {
         // control_response reaches Claude first (otherwise set_permission_mode
         // control_request times out while Claude waits for the tool response).
         if (control.decision === 'allow') {
+          // Auto-save plan to plans table when ExitPlanMode is approved
+          const isExitPlanMode =
+            control.toolName === 'ExitPlanMode' || control.toolName === 'exit_plan_mode';
+          if (isExitPlanMode) {
+            savePlanFromSession(this.session).catch((err: unknown) => {
+              console.warn('[session-process] Failed to auto-save plan:', err);
+            });
+          }
+
           if (control.postApprovalMode) {
             // Small delay to let the allow response reach Claude before sending
             // the set_permission_mode control_request on the same stdin pipe.
