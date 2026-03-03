@@ -34,7 +34,7 @@ With built-in **Model Context Protocol (MCP)** support, agendo allows your agent
 A centralized command center providing real-time metrics on agent health, active tasks, token usage, and recent system activity.
 
 <p align="center">
-  <img src="public/docs/screenshots/agendo_dashboard_1772524363503.png" alt="Agendo Dashboard Snapshot" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+  <img src="public/docs/screenshots/polished_dashboard.png" alt="Agendo Dashboard Snapshot" width="80%">
 </p>
 
 ### 📁 Project Management
@@ -66,7 +66,7 @@ A robust overview of the active intelligence layer—track your deployed agents 
 A premium, glassmorphism-styled dark mode experience for communicating with orchestrated AI agents on the go.
 
 <p align="center">
-  <img src="public/docs/screenshots/chat_mobile_view.png" alt="Mobile Chat Interface" width="40%" style="border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);">
+  <img src="public/docs/screenshots/polished_mobile.png" alt="Mobile Chat Interface" width="40%">
 </p>
 
 ### ⚙️ Context & Config Budgeting
