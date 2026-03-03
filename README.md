@@ -3,11 +3,9 @@
   <img src="public/hero-banner.png" alt="Agendo - AI Agent Manager & Builder" width="100%">
 </p>
 
-<h1 align="center" style="font-weight: 900; font-size: 3rem;">agendo</h1>
+# agendo
 
-<p align="center">
-  <i align="center">The Next-Generation AI Agent Manager, Builder & Execution Orchestrator 🍌✨</i>
-</p>
+> **The Next-Generation AI Agent Manager, Builder & Execution Orchestrator**
 
 <p align="center">
   <img src="https://img.shields.io/badge/Next.js-16.1.6-black?style=for-the-badge&logo=next.js" alt="Next.js">
@@ -19,65 +17,21 @@
 
 ---
 
+## 📸 Interface Preview
+
+<div align="center">
+  <img src="public/screenshot-desktop.png" alt="Agendo Desktop Interface" width="65%" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-right: 2%;">
+  <img src="public/screenshot-mobile.png" alt="Agendo Mobile Interface" width="30%" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+  <p><em>Agendo features a fully responsive, modern UI built with Next.js and Tailwind CSS.</em></p>
+</div>
+
+---
+
 ## ✨ Overview
 
 **agendo** is a powerful application designed for discovering, building, and orchestrating advanced AI coding agents (Claude, Codex, Gemini). It delivers live log streaming, bidirectional communication, and robust task management through an intuitive Kanban interface.
 
 With built-in **Model Context Protocol (MCP)** support, agendo allows your agents to initiate tasks autonomously, making it a state-of-the-art framework for autonomous and collaborative AI development.
-
----
-
-## 📸 Showcase
-
-### 🎛️ The Dashboard
-
-A centralized command center providing real-time metrics on agent health, active tasks, token usage, and recent system activity.
-
-<p align="center">
-  <img src="public/docs/screenshots/polished_dashboard.png" alt="Agendo Dashboard Snapshot" width="80%">
-</p>
-
-### 📁 Project Management
-
-Easily manage your different environments and orchestrated workflows from a sleek, organized interface.
-
-<p align="center">
-  <img src="public/docs/screenshots/agendo_projects_1772524376448.png" alt="Projects View" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-</p>
-
-### 📋 Kanban Task Board
-
-Organize, track, and monitor agent tasks dynamically. The native drag-and-drop integrated dashboard enables smooth lifecycle tracking (To Do, In Progress, Blocked, Done).
-
-<p align="center">
-  <img src="public/docs/screenshots/agendo_tasks_1772524391213.png" alt="Kanban Tasks Interface" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-</p>
-
-### 🤖 Active AI Agents
-
-A robust overview of the active intelligence layer—track your deployed agents (Gemini, Codex, Claude Code), verify their version, and observe execution traces.
-
-<p align="center">
-  <img src="public/docs/screenshots/agendo_agents_1772524409207.png" alt="Agent Management" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-</p>
-
-### 📱 Mobile Chat Interface (Concept)
-
-A premium, glassmorphism-styled dark mode experience for communicating with orchestrated AI agents on the go.
-
-<p align="center">
-  <img src="public/docs/screenshots/polished_mobile.png" alt="Mobile Chat Interface" width="40%">
-</p>
-
-### ⚙️ Context & Config Budgeting
-
-Maintain complex configuration spaces efficiently with advanced context threshold visualizers.
-
-<p align="center">
-  <img src="public/docs/screenshots/agendo_config_1772524194116.png" alt="Configuration and Context Setup" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-</p>
-
----
 
 ## 🚀 Key Features
 
@@ -85,21 +39,21 @@ Maintain complex configuration spaces efficiently with advanced context threshol
   <tr>
     <td width="50%">
       <h3>🤖 Multi-Agent Orchestration</h3>
-      <p>Seamless management and communication with external AI models (Claude, Codex, Gemini) in real-time.</p>
+      <p>Seamless management and communication with external AI models (Claude, Codex, Gemini) in real-time. Coordinate multiple agents across complex codebases.</p>
     </td>
     <td width="50%">
       <h3>📋 Kanban Task Management</h3>
-      <p>Organize, track, and monitor agent tasks dynamically with an integrated Kanban board.</p>
+      <p>Organize, track, and monitor agent tasks dynamically with an integrated Kanban board. Move tasks seamlessly from backlog to execution.</p>
     </td>
   </tr>
   <tr>
     <td width="50%">
       <h3>⚡ Real-Time Streaming</h3>
-      <p>Server-Sent Events (SSE) and WebSocket integration provide instant live log streaming and bidirectional interactions.</p>
+      <p>Server-Sent Events (SSE) and WebSocket integration provide instant live log streaming and bidirectional interactions directly in the UI.</p>
     </td>
     <td width="50%">
       <h3>🔌 First-Class MCP Support</h3>
-      <p>Built-in MCP server handling via stdio transports allowing agents to request tools and complete autonomous pipelines.</p>
+      <p>Built-in MCP server handling via stdio transports allowing agents to request tools, read files, and complete autonomous pipelines securely.</p>
     </td>
   </tr>
 </table>
@@ -126,7 +80,7 @@ Ensure you have **Node.js 22+**, **pnpm / npm**, and **PostgreSQL** installed an
 
 ### Starting the Ecosystem
 
-Agendo uses **PM2** to manage its robust multi-service architecture including the main Next.js app, the worker queue, and the terminal server server.
+Agendo uses **PM2** to manage its robust multi-service architecture including the main Next.js app, the worker queue, and the terminal server.
 
 **Important**: The application development server targets **Port 4100**.
 
@@ -172,5 +126,5 @@ _For deep architectural details, consult the `planning/` directory._
 ---
 
 <p align="center">
-  Crafted with ❤️ and a touch of 🍌 for the future of Autonomous AI Development.
+  Crafted with ❤️ for the future of Autonomous AI Development.
 </p>
