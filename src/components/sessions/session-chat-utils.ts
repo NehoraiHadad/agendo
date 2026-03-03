@@ -43,8 +43,12 @@ export type DisplayItem =
       text: string;
       hasImage?: boolean;
       imageDataUrl?: string;
-      /** UUID of the preceding assistant turn — used as --resume-session-at when branching. */
-      branchUuid?: string;
+      /**
+       * UUID of the preceding assistant turn — used as --resume-session-at when branching.
+       * null = first user message (no preceding turn); fork without --resume-session-at.
+       * undefined = branch button not applicable (non-session context).
+       */
+      branchUuid?: string | null;
     }
   | { kind: 'info'; id: number; text: string }
   | { kind: 'error'; id: number; text: string }
@@ -291,7 +295,8 @@ export function buildDisplayItems(
           hasImage: ev.hasImage,
           // Attach the UUID of the preceding assistant turn. When present,
           // the chat view shows a branch button on this user message.
-          branchUuid: lastAgentResultUuid,
+          // null = first message (no preceding turn) — still shows button, forks from start.
+          branchUuid: lastAgentResultUuid ?? null,
         });
         // Reset: a new user turn starts; next agent:result will set a fresh UUID.
         lastAgentResultUuid = undefined;
