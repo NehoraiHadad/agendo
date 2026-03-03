@@ -55,6 +55,9 @@ export interface SpawnOpts {
   /** When true, adds --fork-session to --resume so Claude creates a new session ID
    *  initialized from the resumed session's conversation history (Claude only). */
   forkSession?: boolean;
+  /** Claude JSONL UUID to pass as --resume-session-at. Truncates conversation
+   *  history at that assistant message when combined with --fork-session. */
+  resumeSessionAt?: string;
 }
 
 export interface ManagedProcess {

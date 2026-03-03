@@ -70,6 +70,11 @@ export type AgendoEvent =
         cacheReadInputTokens: number;
         cacheCreationInputTokens: number;
       };
+      /**
+       * Claude JSONL UUID of this assistant turn — passed as --resume-session-at when branching.
+       * Only present for Claude sessions. Undefined for Codex/Gemini.
+       */
+      messageUuid?: string;
     })
   | (EventBase & { type: 'agent:activity'; thinking: boolean })
   | (EventBase & {

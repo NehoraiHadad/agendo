@@ -14,14 +14,14 @@ const WORKER_ID = config.WORKER_ID;
 const inFlightJobs = new Set<Promise<void>>();
 
 async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
-  const { sessionId, resumeRef } = job.data;
+  const { sessionId, resumeRef, resumeSessionAt } = job.data;
   console.log(
     `[worker] slot claimed for session ${sessionId} — ${inFlightJobs.size + 1} slot(s) in use`,
   );
 
   const promise = (async () => {
     try {
-      await runSession(sessionId, WORKER_ID, resumeRef);
+      await runSession(sessionId, WORKER_ID, resumeRef, resumeSessionAt);
       console.log(
         `[worker] slot freed for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
       );

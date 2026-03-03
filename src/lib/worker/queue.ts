@@ -5,6 +5,8 @@ import { config } from '../config';
 export interface RunSessionJobData {
   sessionId: string;
   resumeRef?: string;
+  /** Claude JSONL UUID to pass as --resume-session-at (conversation branching). */
+  resumeSessionAt?: string;
 }
 
 const SESSION_QUEUE_NAME = 'run-session';

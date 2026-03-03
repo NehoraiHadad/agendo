@@ -99,6 +99,8 @@ export class SessionProcess {
     cacheReadInputTokens: number;
     cacheCreationInputTokens: number;
   } | null = null;
+  /** UUID of the last assistant JSONL message — used as --resume-session-at for branching. */
+  private lastAssistantUuid: string | undefined;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -215,6 +217,7 @@ export class SessionProcess {
     mcpServers?: AcpMcpServer[],
     initialImage?: ImageContent,
     displayText?: string,
+    resumeSessionAt?: string,
   ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
@@ -356,6 +359,7 @@ export class SessionProcess {
       this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
         ...spawnOpts,
         forkSession: true,
+        resumeSessionAt,
       });
     } else if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the
@@ -440,6 +444,12 @@ export class SessionProcess {
           );
         }
 
+        // Capture the UUID from Claude's assistant messages so branching knows
+        // which message to pass to --resume-session-at when the user forks.
+        if (parsed.type === 'assistant' && typeof parsed.uuid === 'string') {
+          this.lastAssistantUuid = parsed.uuid;
+        }
+
         let partials: AgendoEventPayload[];
         try {
           partials = this.adapter.mapJsonToEvents
@@ -504,13 +514,19 @@ export class SessionProcess {
             continue; // suppress — keep in activeToolUseIds until human responds
           }
 
-          // Attach per-call context stats to agent:result so the frontend can show
-          // accurate context window usage. The stats come from the most recent
-          // message_start stream event, which reflects actual per-API-call context
-          // (unlike modelUsage which aggregates across all API calls in the turn).
+          // Attach per-call context stats and assistant UUID to agent:result.
+          // perCallContextStats reflects actual per-API-call context usage.
+          // messageUuid is the Claude JSONL UUID of the last assistant turn,
+          // used by the frontend when branching (--resume-session-at).
           const enrichedPartial: AgendoEventPayload =
-            partial.type === 'agent:result' && this.lastPerCallContextStats
-              ? { ...partial, perCallContextStats: this.lastPerCallContextStats }
+            partial.type === 'agent:result'
+              ? {
+                  ...partial,
+                  ...(this.lastPerCallContextStats
+                    ? { perCallContextStats: this.lastPerCallContextStats }
+                    : {}),
+                  ...(this.lastAssistantUuid ? { messageUuid: this.lastAssistantUuid } : {}),
+                }
               : partial;
 
           const event = await this.emitEvent(enrichedPartial);

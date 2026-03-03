@@ -48,6 +48,7 @@ export async function runSession(
   sessionId: string,
   workerId: string,
   resumeRef?: string,
+  resumeSessionAt?: string,
 ): Promise<void> {
   const session = await getSession(sessionId);
   const agent = await getAgentById(session.agentId);
@@ -277,6 +278,7 @@ export async function runSession(
     mcpServers,
     initialImage,
     userResumeText,
+    resumeSessionAt,
   );
 
   // Wait until the session releases its pg-boss slot (first awaiting_input or
