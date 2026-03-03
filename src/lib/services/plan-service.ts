@@ -187,6 +187,54 @@ Start by creating subtasks for each major step, then execute them one by one.`;
 }
 
 /**
+ * Break a plan into tasks by creating an agent session that decomposes the
+ * plan into individual tasks using MCP tools. Unlike executePlan(), the agent
+ * only creates the tasks — it does NOT execute them. The user can review,
+ * reorder, and edit the created tasks before kicking off execution separately.
+ */
+export async function breakPlanIntoTasks(
+  planId: string,
+  opts: ExecutePlanOpts,
+): Promise<{ sessionId: string }> {
+  const plan = await getPlan(planId);
+
+  const initialPrompt = `You are a task breakdown specialist. Your ONLY job is to decompose the following plan into \
+actionable tasks using the Agendo MCP tools. Do NOT implement anything — just create the tasks.
+
+For each major step in the plan:
+1. Use mcp__agendo__create_task with:
+   - projectId: "${plan.projectId}"
+   - A clear, specific title
+   - A fully self-contained description that an AI agent can execute without any additional context
+   - Each description must include: scope (exact files/modules to touch), done criteria (how to verify \
+completion), and constraints (what NOT to change)
+2. For steps that must run in sequence, use mcp__agendo__create_subtask to group them under a parent task
+3. Set appropriate priorities (highest for critical path, lower for independent work)
+
+After creating all tasks, report a summary of what you created using mcp__agendo__add_progress_note.
+
+PLAN TO DECOMPOSE:
+
+${plan.content}
+
+Remember: create tasks only. Do NOT implement any code changes.`;
+
+  const session = await createSession({
+    projectId: plan.projectId,
+    kind: 'execution',
+    agentId: opts.agentId,
+    capabilityId: opts.capabilityId,
+    initialPrompt,
+    permissionMode: 'bypassPermissions',
+    model: opts.model,
+  });
+
+  await enqueueSession({ sessionId: session.id });
+
+  return { sessionId: session.id };
+}
+
+/**
  * Start a collaborative conversation session for a plan. The agent reviews
  * and helps improve the plan, outputting suggested edits in a structured
  * format that the frontend can parse and apply.
