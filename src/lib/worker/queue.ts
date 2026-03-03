@@ -7,6 +7,12 @@ export interface RunSessionJobData {
   resumeRef?: string;
   /** Claude JSONL UUID to pass as --resume-session-at (conversation branching). */
   resumeSessionAt?: string;
+  /**
+   * The message to send on cold resume. Passed via job data instead of
+   * overwriting session.initialPrompt so the original first prompt is preserved
+   * for the InitialPromptBanner in the UI.
+   */
+  resumePrompt?: string;
 }
 
 const SESSION_QUEUE_NAME = 'run-session';

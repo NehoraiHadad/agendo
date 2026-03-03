@@ -49,6 +49,7 @@ export async function runSession(
   workerId: string,
   resumeRef?: string,
   resumeSessionAt?: string,
+  resumePrompt?: string,
 ): Promise<void> {
   const session = await getSession(sessionId);
   const agent = await getAgentById(session.agentId);
@@ -108,8 +109,11 @@ export async function runSession(
     envOverrides['AGENDO_PROJECT_ID'] = resolvedProjectId;
   }
 
-  // Resolve the initial prompt
-  let prompt = session.initialPrompt ?? '';
+  // Resolve the prompt:
+  // - On cold resume (resumeRef set): use resumePrompt from job data (the user's new message).
+  //   session.initialPrompt is NOT used here so it stays as the original first prompt for the UI.
+  // - On first spawn (no resumeRef): use session.initialPrompt (the original user prompt).
+  let prompt = (resumeRef ? resumePrompt : undefined) ?? session.initialPrompt ?? '';
   if (!prompt && capability.promptTemplate) {
     if (task) {
       prompt = interpolatePrompt(capability.promptTemplate, {
