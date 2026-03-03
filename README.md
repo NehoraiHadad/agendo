@@ -112,14 +112,36 @@ pm2 restart agent-monitor
 
 ---
 
-## 🧠 Architecture & Principles
+## 🧠 Architecture & Workflow
+
+### Multi-Process Architecture
+
+Agendo is built on a robust three-process architecture to ensure stability, responsiveness, and secure agent execution:
+
+<p align="center">
+  <img src="public/architecture.svg" alt="Agendo Architecture Diagram" width="100%" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+</p>
+
+- **Next.js App (4100)**: Serves the Kanban UI, API routes, and manages real-time EventSource (SSE) connections with the client.
+- **Worker Process**: Subscribes to `pg-boss` queues, securely spawns AI CLI subprocesses, and streams real-time updates back via PG NOTIFY.
+- **MCP Server**: Injects the Model Context Protocol into agent sessions via `stdio`, allowing agents native task management capabilities within their isolated environments.
+
+### 🔄 Strict TDD & Agent Collaboration
 
 Development on agendo follows strict guidelines to ensure scale and maintainability:
 
 1. **Source of Truth Data**: The data model constraints are enforced strictly; types and enums are immutable without rigorous planning.
 2. **Type Safety**: Absolute strict mode (`no any` types allowed).
-3. **Test-Driven Development (TDD)**: All new features require Red-Green-Refactor cycles starting with failing tests.
-4. **Agent Collaboration Workflow**: Test agents build first, implementation agents execute second. Parallel development is minimized.
+
+We enforce a firm **Test-Driven Development (TDD)** cycle paired with an **Agent Collaboration Workflow**:
+
+<p align="center">
+  <img src="public/workflow.svg" alt="Agendo TDD Workflow Diagram" width="100%" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+</p>
+
+- **Test Agents** are deployed first to write strictly failing tests based on the agreed-upon interface (RED).
+- **Implementation Agents** are deployed second to write the minimal code required to make tests pass (GREEN).
+- **Parallel development is minimized** to avoid stepping on state. Every feature requires this Red-Green-Refactor cycle.
 
 _For deep architectural details, consult the `planning/` directory._
 
