@@ -4,9 +4,20 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatDistanceStrict, formatDistanceToNow } from 'date-fns';
-import { Activity, MessageCircle, MessageSquare, MinusCircle, Pause, Play } from 'lucide-react';
+import {
+  Activity,
+  MessageCircle,
+  MessageSquare,
+  MinusCircle,
+  Pause,
+  Play,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -22,9 +33,19 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui/table';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import type { Session, SessionStatus } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -115,7 +136,7 @@ function KindBadge({ kind }: { kind: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// SessionRow
+// Helpers
 // ---------------------------------------------------------------------------
 
 interface SessionWithDetails extends Session {
@@ -129,13 +150,33 @@ function formatDuration(startedAt: Date | null, endedAt: Date | null): string {
   return formatDistanceStrict(startedAt, end);
 }
 
-interface SessionRowProps {
-  session: SessionWithDetails;
+function isDeletable(status: SessionStatus): boolean {
+  return status === 'ended' || status === 'idle';
 }
 
-function SessionRow({ session }: SessionRowProps) {
+// ---------------------------------------------------------------------------
+// SessionRow
+// ---------------------------------------------------------------------------
+
+interface SessionRowProps {
+  session: SessionWithDetails;
+  selected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
+  onDeleteOne: (session: SessionWithDetails) => void;
+}
+
+function SessionRow({ session, selected, onSelect, onDeleteOne }: SessionRowProps) {
+  const canDelete = isDeletable(session.status);
   return (
-    <TableRow className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+    <TableRow className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
+      <TableCell className="w-10 pr-0">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(v) => onSelect(session.id, !!v)}
+          disabled={!canDelete}
+          aria-label={`Select session ${session.id.slice(0, 8)}`}
+        />
+      </TableCell>
       <TableCell className="font-mono text-xs">
         <Link
           href={`/sessions/${session.id}`}
@@ -172,6 +213,17 @@ function SessionRow({ session }: SessionRowProps) {
       <TableCell className="text-xs text-muted-foreground/50" suppressHydrationWarning>
         {formatDistanceToNow(session.createdAt, { addSuffix: true })}
       </TableCell>
+      <TableCell className="w-10 pl-0">
+        {canDelete && (
+          <button
+            onClick={() => onDeleteOne(session)}
+            className="rounded-md p-1.5 text-muted-foreground/40 hover:text-destructive hover:bg-white/[0.06] transition-colors opacity-0 group-hover:opacity-100"
+            aria-label="Delete session"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </TableCell>
     </TableRow>
   );
 }
@@ -180,38 +232,70 @@ function SessionRow({ session }: SessionRowProps) {
 // SessionCard — mobile card layout
 // ---------------------------------------------------------------------------
 
-function SessionCard({ session }: SessionRowProps) {
+interface SessionCardProps {
+  session: SessionWithDetails;
+  selected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
+  onDeleteOne: (session: SessionWithDetails) => void;
+}
+
+function SessionCard({ session, selected, onSelect, onDeleteOne }: SessionCardProps) {
+  const canDelete = isDeletable(session.status);
   return (
-    <Link
-      href={`/sessions/${session.id}`}
-      className="block rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 hover:border-white/[0.12] hover:bg-white/[0.04] transition-colors no-underline"
-    >
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="min-w-0 flex-1">
-          {session.title ? (
-            <p className="text-sm font-medium text-foreground/90 truncate">{session.title}</p>
-          ) : (
-            <p className="font-mono text-xs text-muted-foreground/70">{session.id.slice(0, 8)}</p>
-          )}
-          {session.taskTitle && (
-            <p className="mt-0.5 text-xs text-muted-foreground/60 truncate">{session.taskTitle}</p>
-          )}
-        </div>
-        <SessionStatusBadge status={session.status} className="shrink-0" />
-      </div>
-      <div className="flex items-center gap-3 text-xs text-muted-foreground/50 flex-wrap">
-        <KindBadge kind={session.kind} />
-        {session.agentName && <span>{session.agentName}</span>}
-        <span>{session.totalTurns} turns</span>
-        {session.totalCostUsd != null && (
-          <span className="font-mono">${Number(session.totalCostUsd).toFixed(4)}</span>
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 hover:border-white/[0.12] hover:bg-white/[0.04] transition-colors">
+      <div className="flex items-start gap-3 mb-2">
+        {canDelete && (
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(v) => onSelect(session.id, !!v)}
+            className="mt-0.5 shrink-0"
+            aria-label={`Select session ${session.id.slice(0, 8)}`}
+          />
         )}
-        <span>{formatDuration(session.startedAt, session.endedAt)}</span>
-        <span suppressHydrationWarning>
-          {formatDistanceToNow(session.createdAt, { addSuffix: true })}
-        </span>
+        <Link href={`/sessions/${session.id}`} className="min-w-0 flex-1 no-underline">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              {session.title ? (
+                <p className="text-sm font-medium text-foreground/90 truncate">{session.title}</p>
+              ) : (
+                <p className="font-mono text-xs text-muted-foreground/70">
+                  {session.id.slice(0, 8)}
+                </p>
+              )}
+              {session.taskTitle && (
+                <p className="mt-0.5 text-xs text-muted-foreground/60 truncate">
+                  {session.taskTitle}
+                </p>
+              )}
+            </div>
+            <SessionStatusBadge status={session.status} className="shrink-0" />
+          </div>
+        </Link>
+        {canDelete && (
+          <button
+            onClick={() => onDeleteOne(session)}
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground/40 hover:text-destructive hover:bg-white/[0.06] transition-colors"
+            aria-label="Delete session"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
-    </Link>
+      <Link href={`/sessions/${session.id}`} className="no-underline">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground/50 flex-wrap">
+          <KindBadge kind={session.kind} />
+          {session.agentName && <span>{session.agentName}</span>}
+          <span>{session.totalTurns} turns</span>
+          {session.totalCostUsd != null && (
+            <span className="font-mono">${Number(session.totalCostUsd).toFixed(4)}</span>
+          )}
+          <span>{formatDuration(session.startedAt, session.endedAt)}</span>
+          <span suppressHydrationWarning>
+            {formatDistanceToNow(session.createdAt, { addSuffix: true })}
+          </span>
+        </div>
+      </Link>
+    </div>
   );
 }
 
@@ -220,6 +304,7 @@ function SessionCard({ session }: SessionRowProps) {
 // ---------------------------------------------------------------------------
 
 const ALL_STATUSES: SessionStatus[] = ['active', 'awaiting_input', 'idle', 'ended'];
+const COL_COUNT = 11; // checkbox + 9 data cols + delete
 
 interface SessionTableProps {
   taskId?: string;
@@ -232,6 +317,12 @@ export function SessionTable({ taskId }: SessionTableProps) {
   const [kindFilter, setKindFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Selection state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Delete confirmation dialog
+  const [deleteTarget, setDeleteTarget] = useState<{ ids: string[]; label: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const virtualizer = useVirtualizer({
     count: data.length,
@@ -267,6 +358,11 @@ export function SessionTable({ taskId }: SessionTableProps) {
     fetchSessions(1, statusFilter, kindFilter);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Clear selection when data changes
+  useEffect(() => {
+    setSelected(new Set());
+  }, [data]);
+
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
     fetchSessions(1, value, kindFilter);
@@ -286,12 +382,83 @@ export function SessionTable({ taskId }: SessionTableProps) {
     if (meta.page < totalPages) fetchSessions(meta.page + 1, statusFilter, kindFilter);
   };
 
+  // Selection handlers
+  const handleSelect = (id: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const deletableIds = data.filter((s) => isDeletable(s.status)).map((s) => s.id);
+  const allDeletableSelected =
+    deletableIds.length > 0 && deletableIds.every((id) => selected.has(id));
+  const someDeletableSelected = deletableIds.some((id) => selected.has(id));
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelected(new Set(deletableIds));
+    } else {
+      setSelected(new Set());
+    }
+  };
+
+  // Delete handlers
+  const handleDeleteOne = (session: SessionWithDetails) => {
+    const label = session.title ?? session.id.slice(0, 8);
+    setDeleteTarget({ ids: [session.id], label: `"${label}"` });
+  };
+
+  const handleDeleteSelected = () => {
+    setDeleteTarget({
+      ids: Array.from(selected),
+      label: `${selected.size} session${selected.size > 1 ? 's' : ''}`,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      if (deleteTarget.ids.length === 1) {
+        await apiFetch(`/api/sessions/${deleteTarget.ids[0]}`, { method: 'DELETE' });
+        toast.success('Session deleted');
+      } else {
+        const result = await apiFetch<{ data: { deletedCount: number; skippedIds: string[] } }>(
+          '/api/sessions',
+          {
+            method: 'DELETE',
+            body: JSON.stringify({ sessionIds: deleteTarget.ids }),
+          },
+        );
+        const { deletedCount, skippedIds } = result.data;
+        if (skippedIds.length > 0) {
+          toast.success(
+            `Deleted ${deletedCount} session${deletedCount !== 1 ? 's' : ''} (${skippedIds.length} active skipped)`,
+          );
+        } else {
+          toast.success(`Deleted ${deletedCount} session${deletedCount !== 1 ? 's' : ''}`);
+        }
+      }
+      setDeleteTarget(null);
+      setSelected(new Set());
+      fetchSessions(meta.page, statusFilter, kindFilter);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const totalPages = Math.ceil(meta.total / meta.pageSize);
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 mb-2">
+      {/* Toolbar: filters + bulk actions */}
+      <div className="flex items-center gap-3 mb-2 flex-wrap">
         <Select value={statusFilter} onValueChange={handleStatusChange}>
           <SelectTrigger className="w-[160px] border-white/[0.08] bg-white/[0.04]">
             <SelectValue placeholder="Filter by status" />
@@ -318,6 +485,22 @@ export function SessionTable({ taskId }: SessionTableProps) {
         </Select>
 
         {isLoading && <span className="text-sm text-muted-foreground/60">Loading...</span>}
+
+        {/* Bulk delete bar */}
+        {selected.size > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-muted-foreground/70">{selected.size} selected</span>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteSelected}
+              className="gap-1.5"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Mobile card list (< sm) */}
@@ -325,7 +508,15 @@ export function SessionTable({ taskId }: SessionTableProps) {
         {!isLoading && data.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground/50">No sessions found.</p>
         ) : (
-          data.map((session) => <SessionCard key={session.id} session={session} />)
+          data.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              selected={selected.has(session.id)}
+              onSelect={handleSelect}
+              onDeleteOne={handleDeleteOne}
+            />
+          ))
         )}
       </div>
 
@@ -338,6 +529,16 @@ export function SessionTable({ taskId }: SessionTableProps) {
         <Table>
           <TableHeader className="bg-white/[0.02]">
             <TableRow>
+              <TableHead className="w-10 pr-0 h-9">
+                <Checkbox
+                  checked={allDeletableSelected && deletableIds.length > 0}
+                  onCheckedChange={(v) => handleSelectAll(!!v)}
+                  aria-label="Select all deletable sessions"
+                  {...(someDeletableSelected && !allDeletableSelected
+                    ? { 'data-state': 'indeterminate' }
+                    : {})}
+                />
+              </TableHead>
               <TableHead className="w-[100px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
                 ID
               </TableHead>
@@ -365,12 +566,13 @@ export function SessionTable({ taskId }: SessionTableProps) {
               <TableHead className="w-[120px] text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
                 Created
               </TableHead>
+              <TableHead className="w-10 pl-0 h-9" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {!isLoading && data.length === 0 ? (
               <TableRow>
-                <TableHead colSpan={9} className="h-24 text-center">
+                <TableHead colSpan={COL_COUNT} className="h-24 text-center">
                   No sessions found.
                 </TableHead>
               </TableRow>
@@ -378,16 +580,25 @@ export function SessionTable({ taskId }: SessionTableProps) {
               <>
                 {virtualItems[0]?.start > 0 && (
                   <tr>
-                    <td colSpan={9} style={{ height: virtualItems[0].start }} />
+                    <td colSpan={COL_COUNT} style={{ height: virtualItems[0].start }} />
                   </tr>
                 )}
-                {virtualItems.map((virtualRow) => (
-                  <SessionRow key={data[virtualRow.index].id} session={data[virtualRow.index]} />
-                ))}
+                {virtualItems.map((virtualRow) => {
+                  const session = data[virtualRow.index];
+                  return (
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      selected={selected.has(session.id)}
+                      onSelect={handleSelect}
+                      onDeleteOne={handleDeleteOne}
+                    />
+                  );
+                })}
                 {virtualItems.length > 0 && (
                   <tr>
                     <td
-                      colSpan={9}
+                      colSpan={COL_COUNT}
                       style={{
                         height: virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0),
                       }}
@@ -427,6 +638,30 @@ export function SessionTable({ taskId }: SessionTableProps) {
           </div>
         </div>
       )}
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.label}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove{' '}
+              {deleteTarget?.ids.length === 1 ? 'this session' : 'these sessions'} and associated
+              log files. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

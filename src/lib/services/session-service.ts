@@ -1,7 +1,8 @@
-import { eq, and, desc, count, getTableColumns, or, ilike } from 'drizzle-orm';
+import { eq, and, desc, count, getTableColumns, or, ilike, inArray } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { ConflictError } from '@/lib/errors';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
 
@@ -237,4 +238,75 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
   ]);
 
   return { data, total, page, pageSize };
+}
+
+/**
+ * Delete a single session. Only ended or idle sessions can be deleted.
+ * Active/awaiting_input sessions must be cancelled first.
+ * Also cleans up the log file on disk if it exists.
+ */
+export async function deleteSession(id: string): Promise<void> {
+  const session = await getSession(id);
+  if (session.status === 'active' || session.status === 'awaiting_input') {
+    throw new ConflictError('Cannot delete an active session. Cancel it first.');
+  }
+  // Clean up log file
+  if (session.logFilePath) {
+    const { unlink } = await import('node:fs/promises');
+    await unlink(session.logFilePath).catch(() => {});
+  }
+  // Clean up plan file
+  if (session.planFilePath) {
+    const { unlink } = await import('node:fs/promises');
+    await unlink(session.planFilePath).catch(() => {});
+  }
+  await db.delete(sessions).where(eq(sessions.id, id));
+}
+
+/**
+ * Delete multiple sessions in bulk. Only deletes ended/idle sessions;
+ * skips active/awaiting_input ones and returns the count actually deleted.
+ */
+export async function deleteSessions(
+  ids: string[],
+): Promise<{ deletedCount: number; skippedIds: string[] }> {
+  if (ids.length === 0) return { deletedCount: 0, skippedIds: [] };
+
+  // Fetch sessions to identify which can be deleted and gather file paths
+  const rows = await db
+    .select({
+      id: sessions.id,
+      status: sessions.status,
+      logFilePath: sessions.logFilePath,
+      planFilePath: sessions.planFilePath,
+    })
+    .from(sessions)
+    .where(inArray(sessions.id, ids));
+
+  const deletable: typeof rows = [];
+  const skippedIds: string[] = [];
+  for (const row of rows) {
+    if (row.status === 'active' || row.status === 'awaiting_input') {
+      skippedIds.push(row.id);
+    } else {
+      deletable.push(row);
+    }
+  }
+
+  if (deletable.length === 0) return { deletedCount: 0, skippedIds };
+
+  // Clean up files
+  const { unlink } = await import('node:fs/promises');
+  await Promise.allSettled(
+    deletable.flatMap((row) => {
+      const paths = [row.logFilePath, row.planFilePath].filter(Boolean) as string[];
+      return paths.map((p) => unlink(p));
+    }),
+  );
+
+  // Delete from DB
+  const deletableIds = deletable.map((r) => r.id);
+  await db.delete(sessions).where(inArray(sessions.id, deletableIds));
+
+  return { deletedCount: deletable.length, skippedIds };
 }

@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError } from '@/lib/errors';
+import { deleteSession } from '@/lib/services/session-service';
 
 export const GET = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
@@ -64,5 +65,14 @@ export const PATCH = withErrorBoundary(
     if (!updated) throw new NotFoundError('Session', id);
 
     return NextResponse.json({ data: updated });
+  },
+);
+
+export const DELETE = withErrorBoundary(
+  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
+    const { id } = await params;
+    assertUUID(id, 'Session');
+    await deleteSession(id);
+    return new NextResponse(null, { status: 204 });
   },
 );
