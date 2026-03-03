@@ -355,7 +355,9 @@ export class SessionProcess {
     if (isForkStart) {
       // First start of a forked session: resume parent's conversation in a new session.
       // Claude creates a fresh session ID, initialized from the parent's history.
-      await this.emitEvent({ type: 'user:message', text: displayText ?? prompt });
+      // No user:message event is emitted here — the InitialPromptBanner in the UI already
+      // displays session.initialPrompt (the clean edited message). Emitting it would create
+      // a duplicate bubble that also includes the MCP context preamble.
       this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
         ...spawnOpts,
         forkSession: true,

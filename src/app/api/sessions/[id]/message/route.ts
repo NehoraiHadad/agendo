@@ -6,9 +6,6 @@ import { withErrorBoundary } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
 import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { enqueueSession } from '@/lib/worker/queue';
-import { db } from '@/lib/db';
-import { sessions } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
 import { BadRequestError } from '@/lib/errors';
 import { config } from '@/lib/config';
 import type { AgendoControl } from '@/lib/realtime/events';
@@ -32,7 +29,8 @@ export const POST = withErrorBoundary(
       throw new BadRequestError(`Session not accepting messages (status: ${session.status})`);
     }
 
-    // Cold resume: process has exited; update initialPrompt and restart via run-session job.
+    // Cold resume: process has exited; restart via run-session job, passing the message in
+    // job data (not writing to session.initialPrompt so the original prompt is preserved).
     if (session.status === 'idle' || session.status === 'ended') {
       // If an image was attached, save it to a predictable path for the session-runner to pick up.
       if (image) {
@@ -45,15 +43,10 @@ export const POST = withErrorBoundary(
           JSON.stringify({ path: imgPath, mimeType: image.mimeType }),
         );
       }
-      await db
-        .update(sessions)
-        .set({
-          initialPrompt: message, // runner will use this as the resume prompt
-        })
-        .where(eq(sessions.id, id));
       await enqueueSession({
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
+        resumePrompt: message,
       });
       return NextResponse.json({ data: { resuming: true } }, { status: 202 });
     }
