@@ -17,7 +17,7 @@ export type GeminiEvent =
       toolInput: Record<string, unknown>;
       toolUseId: string;
     }
-  | { type: 'gemini:tool-end'; toolUseId: string }
+  | { type: 'gemini:tool-end'; toolUseId: string; resultText?: string; failed?: boolean }
   | { type: 'gemini:turn-complete'; result: Record<string, unknown> }
   | { type: 'gemini:turn-error'; message: string }
   | { type: 'gemini:init'; model: string; sessionId: string };
@@ -75,7 +75,7 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
         {
           type: 'agent:tool-end',
           toolUseId: event.toolUseId,
-          content: '',
+          content: event.resultText ?? '',
         },
       ];
 

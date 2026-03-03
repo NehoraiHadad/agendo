@@ -45,9 +45,52 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private storedOpts: SpawnOpts | null = null;
   /** When true, suppresses exit callbacks during model-switch process restart. */
   private modelSwitching = false;
+  /** Active tool call IDs from `tool_call` events (yolo mode).
+   *  Used to pair `tool_call_update` with its start event and avoid
+   *  emitting orphaned tool-end events in default mode (where tools are
+   *  tracked via the permission handler instead). */
+  private activeToolCalls = new Set<string>();
 
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
+
+  /**
+   * Build Gemini CLI args from SpawnOpts. Centralized so launch() and setModel()
+   * restart use the same flags.
+   *
+   * Flags:
+   *  --experimental-acp           — ACP mode (required)
+   *  -m <model>                   — model override
+   *  --approval-mode yolo         — skip all permission prompts when bypassPermissions
+   *  --allowed-mcp-server-names   — restrict global MCP to only injected servers (avoid
+   *                                 loading 6+ global MCP servers from ~/.gemini/settings.json)
+   */
+  private static buildArgs(opts: SpawnOpts): string[] {
+    const args = ['--experimental-acp'];
+    if (opts.model) {
+      args.push('-m', opts.model);
+    }
+    // Map Agendo permission mode to Gemini --approval-mode.
+    // bypassPermissions/dontAsk → yolo (suppresses ALL ACP permission requests)
+    // acceptEdits → auto_edit (auto-approve file edits, prompt for shell)
+    const permMode = opts.permissionMode;
+    if (permMode === 'bypassPermissions' || permMode === 'dontAsk') {
+      args.push('--approval-mode', 'yolo');
+    } else if (permMode === 'acceptEdits') {
+      args.push('--approval-mode', 'auto_edit');
+    }
+    // Restrict global MCP servers: only load servers injected via ACP session/new.
+    // Pass the names of injected servers so they are not filtered out by the allowlist.
+    const injectedNames = (opts.mcpServers ?? []).map((s) => s.name);
+    if (injectedNames.length > 0) {
+      args.push('--allowed-mcp-server-names', ...injectedNames);
+    } else {
+      // No MCP servers injected — block all global servers to avoid slow startup
+      args.push('--allowed-mcp-server-names', '__none__');
+    }
+    args.push(...(opts.extraArgs ?? []));
+    return args;
+  }
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, null);
@@ -120,10 +163,11 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
   async setPermissionMode(mode: string): Promise<boolean> {
     if (!this.sessionId) return false;
+    // ACP mode IDs from session/new response: "default", "autoEdit", "yolo".
+    // "plan" is NOT a valid ACP mode (rejected with -32603).
     const modeMap: Record<string, string> = {
-      plan: 'plan',
       default: 'default',
-      acceptEdits: 'auto-edit',
+      acceptEdits: 'autoEdit',
       bypassPermissions: 'yolo',
       dontAsk: 'yolo',
     };
@@ -131,7 +175,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     if (!geminiMode) return false;
     await this.sendRequest('session/set_mode', {
       sessionId: this.sessionId,
-      mode: geminiMode,
+      modeId: geminiMode,
     });
     return true;
   }
@@ -164,11 +208,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
     // Spawn new process with updated model
     const opts = this.storedOpts;
-    const geminiArgs = ['--experimental-acp'];
-    if (opts.model) {
-      geminiArgs.push('-m', opts.model);
-    }
-    geminiArgs.push(...(opts.extraArgs ?? []));
+    const geminiArgs = GeminiAdapter.buildArgs(opts);
 
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
@@ -238,11 +278,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     this.dataCallbacks = dataCallbacks;
     this.exitCallbacks = exitCallbacks;
 
-    const geminiArgs = ['--experimental-acp'];
-    if (opts.model) {
-      geminiArgs.push('-m', opts.model);
-    }
-    geminiArgs.push(...(opts.extraArgs ?? []));
+    const geminiArgs = GeminiAdapter.buildArgs(opts);
 
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
@@ -344,8 +380,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     // Server request (has id + method → needs a response)
     if (msg.id !== undefined && msg.method) {
       if (msg.method === 'session/request_permission') {
-        // ACP v0.20 schema: params = { sessionId, toolCall, options: [{ kind, name, optionId }] }
-        // "allow_once" kind → first option with kind=allow_once, "reject_once" → reject
+        // ACP permission options: allow_always (session-wide), allow_once, reject_once.
         const params = msg.params ?? {};
         const toolCall = params.toolCall as Record<string, unknown> | undefined;
         const options =
@@ -359,14 +394,16 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         this.emitNdjson({ type: 'gemini:tool-start', toolName, toolInput, toolUseId });
 
         if (!this.approvalHandler) {
-          // Auto-allow: pick the first allow_once option
-          const allowOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
+          // Auto-allow: prefer allow_always (session-wide) so subsequent calls skip prompting
+          const allowOption =
+            options.find((o) => o.kind === 'allow_always') ??
+            options.find((o) => o.kind === 'allow_once') ??
+            options[0];
           this.writeJson({
             jsonrpc: '2.0',
             id: msg.id,
             result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
           });
-          // Emit tool-end after approval
           this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
           return;
         }
@@ -375,22 +412,33 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         const msgId = msg.id;
         this.approvalHandler({ approvalId, toolName, toolInput })
           .then((decision) => {
-            const chosenOption =
-              decision === 'deny'
-                ? (options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1])
-                : (options.find((o) => o.kind === 'allow_once') ?? options[0]);
+            let chosenOption;
+            if (decision === 'deny') {
+              chosenOption =
+                options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1];
+            } else if (decision === 'allow-session') {
+              // Session-wide approval → use allow_always so Gemini won't ask again for this tool
+              chosenOption =
+                options.find((o) => o.kind === 'allow_always') ??
+                options.find((o) => o.kind === 'allow_once') ??
+                options[0];
+            } else {
+              // 'allow' or { behavior: 'allow', updatedInput } → one-time approval
+              chosenOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
+            }
             this.writeJson({
               jsonrpc: '2.0',
               id: msgId,
-              // ACP requestPermissionResponseSchema: { outcome: { outcome: 'selected', optionId } }
               result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
             });
-            // Emit tool-end after approval response
             this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
           })
           .catch((err: unknown) => {
             console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
-            const allowOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
+            const allowOption =
+              options.find((o) => o.kind === 'allow_always') ??
+              options.find((o) => o.kind === 'allow_once') ??
+              options[0];
             this.writeJson({
               jsonrpc: '2.0',
               id: msgId,
@@ -453,20 +501,57 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
             // Emit structured NDJSON for thinking output
             this.emitNdjson({ type: 'gemini:thinking', text: content.text });
           }
-        } else if (sessionUpdate === 'tool_call_start') {
-          const toolCall = update?.toolCall as Record<string, unknown> | undefined;
-          const toolUseId = `gemini-tool-${++toolUseCounter}`;
+        } else if (sessionUpdate === 'tool_call') {
+          // Yolo mode: tool_call (status=in_progress) → tool started.
+          // Default mode uses session/request_permission instead (handled above).
+          const toolCallId = update?.toolCallId as string | undefined;
+          const title = (update?.title as string) ?? '';
+          const kind = (update?.kind as string) ?? '';
+          const locations = (update?.locations as Array<{ path?: string }>) ?? [];
+          const filePath = locations[0]?.path;
+          // Extract actual tool name from toolCallId (format: "tool_name-timestamp")
+          // Fall back to title if toolCallId doesn't contain a recognizable name.
+          const extractedName = toolCallId?.replace(/-\d+$/, '') ?? '';
+          // Use title as description context (for shell commands it contains the command)
+          // but use extractedName as the primary tool name.
+          // Title can be "{}" or raw JSON for MCP tools, so prefer extractedName.
+          const baseName = extractedName || title || 'unknown';
+          const toolName = filePath
+            ? `${baseName} (${filePath})`
+            : title && title !== '{}' && extractedName && title !== extractedName
+              ? `${extractedName}: ${title}`
+              : baseName;
+          const id = toolCallId ?? `gemini-tool-${++toolUseCounter}`;
+          this.activeToolCalls.add(id);
           this.emitNdjson({
             type: 'gemini:tool-start',
-            toolName: (toolCall?.title as string) ?? (toolCall?.name as string) ?? 'unknown',
-            toolInput:
-              (toolCall?.rawInput as Record<string, unknown>) ??
-              (toolCall?.input as Record<string, unknown>) ??
-              {},
-            toolUseId,
+            toolName,
+            toolInput: kind ? { kind } : {},
+            toolUseId: id,
           });
-        } else if (sessionUpdate === 'tool_call_end' || sessionUpdate === 'tool_result') {
-          this.emitNdjson({ type: 'gemini:tool-end', toolUseId: `gemini-tool-${toolUseCounter}` });
+        } else if (sessionUpdate === 'tool_call_update') {
+          // Sent in both yolo and default modes when a tool completes or fails.
+          // In yolo mode: paired with a preceding tool_call → close it.
+          // In default mode: no preceding tool_call (permission handler handled
+          // the start+end) → skip to avoid orphaned tool-end events.
+          const toolCallId = update?.toolCallId as string | undefined;
+          if (toolCallId && this.activeToolCalls.has(toolCallId)) {
+            this.activeToolCalls.delete(toolCallId);
+            // Extract result content from tool_call_update payload
+            const contentArr = (update?.content as Array<{ content?: { text?: string } }>) ?? [];
+            const resultText = contentArr
+              .map((c) => c.content?.text ?? '')
+              .filter(Boolean)
+              .join('\n');
+            const status = update?.status as string | undefined;
+            this.emitNdjson({
+              type: 'gemini:tool-end',
+              toolUseId: toolCallId,
+              ...(resultText ? { resultText } : {}),
+              ...(status === 'failed' ? { failed: true } : {}),
+            });
+          }
+          // else: default mode — permission handler already emitted start+end
         }
       }
     }
@@ -596,33 +681,54 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private static readonly INIT_METHODS = new Set(['initialize', 'session/new']);
   private static readonly INIT_TIMEOUT_MS = 30_000;
 
-  private sendRequest<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {
+  private async sendRequest<T = unknown>(
+    method: string,
+    params: Record<string, unknown>,
+    attempt = 1,
+  ): Promise<T> {
     const id = ++this.requestId;
-    return new Promise<T>((resolve, reject) => {
-      this.pendingRequests.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
+    try {
+      const response = await new Promise<T>((resolve, reject) => {
+        this.pendingRequests.set(id, {
+          resolve: resolve as (value: unknown) => void,
+          reject,
+        });
+        this.writeJson({ jsonrpc: '2.0', id, method, params });
+
+        // Determine timeout based on method type
+        let timeoutMs: number | null = null;
+        if (GeminiAdapter.INIT_METHODS.has(method)) {
+          timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
+        } else if (method === 'session/prompt') {
+          timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
+        }
+
+        if (timeoutMs !== null) {
+          const ms = timeoutMs;
+          setTimeout(() => {
+            if (this.pendingRequests.has(id)) {
+              this.pendingRequests.delete(id);
+              reject(new Error(`ACP request "${method}" timed out after ${ms}ms`));
+            }
+          }, ms);
+        }
       });
-      this.writeJson({ jsonrpc: '2.0', id, method, params });
+      return response;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isRetryable =
+        GeminiAdapter.INIT_METHODS.has(method) &&
+        (message.includes('429') || message.includes('Rate limit exceeded')) &&
+        attempt < 3;
 
-      // Determine timeout based on method type
-      let timeoutMs: number | null = null;
-      if (GeminiAdapter.INIT_METHODS.has(method)) {
-        timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
-      } else if (method === 'session/prompt') {
-        timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
+      if (isRetryable) {
+        const delay = Math.pow(2, attempt) * 2000; // 4s, 8s
+        console.warn(`[GeminiAdapter] ${method} failed with 429, retrying in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        return this.sendRequest<T>(method, params, attempt + 1);
       }
-
-      if (timeoutMs !== null) {
-        const ms = timeoutMs;
-        setTimeout(() => {
-          if (this.pendingRequests.has(id)) {
-            this.pendingRequests.delete(id);
-            reject(new Error(`ACP request "${method}" timed out after ${ms}ms`));
-          }
-        }, ms);
-      }
-    });
+      throw err;
+    }
   }
 
   /**
