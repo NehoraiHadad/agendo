@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Bot,
   User,
@@ -15,6 +16,7 @@ import {
   Square,
   ArrowDown,
   MessageSquare,
+  GitBranch,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -609,16 +611,133 @@ function ThinkingBubble({ text }: { text: string }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// BranchPopover — "Branch from here" dialog attached to user messages
+// ---------------------------------------------------------------------------
+
+function BranchPopover({
+  sessionId,
+  branchUuid,
+  originalText,
+}: {
+  sessionId: string;
+  branchUuid: string;
+  originalText: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(originalText);
+  const [loading, setLoading] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-focus textarea when popover opens
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    } else {
+      setText(originalText);
+    }
+  }, [open, originalText]);
+
+  const handleConfirm = useCallback(async () => {
+    if (!text.trim() || loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeAt: branchUuid, initialPrompt: text.trim() }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Server error ${res.status}`);
+      }
+      const { data } = (await res.json()) as { data: { id: string } };
+      setOpen(false);
+      router.push(`/sessions/${data.id}`);
+    } catch (err) {
+      console.error('[BranchPopover] fork failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId, branchUuid, text, loading, router]);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] text-primary/50 hover:text-primary/80 hover:bg-primary/10 rounded px-1.5 py-0.5 transition-colors"
+        title="Branch from here"
+      >
+        <GitBranch className="size-3" />
+        <span>Branch</span>
+      </button>
+
+      {open && (
+        <>
+          {/* Backdrop */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          {/* Popover */}
+          <div
+            className="absolute right-0 bottom-full mb-2 z-50 w-72 rounded-xl border border-white/[0.10] bg-[oklch(0.12_0_0)] shadow-2xl p-3 space-y-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-1.5">
+              <GitBranch className="size-3.5 text-primary/70 shrink-0" />
+              <span className="text-xs font-medium text-foreground/80">Branch from here</span>
+            </div>
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={4}
+              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] text-sm text-foreground/90 p-2 resize-none focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+              placeholder="Edit your message…"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-xs text-muted-foreground/60 hover:text-muted-foreground px-2.5 py-1 rounded hover:bg-white/[0.05] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirm()}
+                disabled={!text.trim() || loading}
+                className="text-xs bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-1 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              >
+                {loading ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <GitBranch className="size-3" />
+                )}
+                Start branch →
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function UserBubble({
   text,
   hasImage,
   imageDataUrl,
   ts,
+  sessionId,
+  branchUuid,
 }: {
   text: string;
   hasImage?: boolean;
   imageDataUrl?: string;
   ts?: number;
+  sessionId?: string;
+  branchUuid?: string;
 }) {
   return (
     <div className="flex gap-2.5 items-start justify-end animate-fade-in-up group/userrow">
@@ -658,11 +777,18 @@ function UserBubble({
             />
           )}
         </div>
-        {ts && (
-          <span className="text-[10px] text-muted-foreground/25 opacity-0 group-hover/userrow:opacity-100 transition-opacity pr-0.5">
-            {formatMessageTime(ts)}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {sessionId && branchUuid && (
+            <div className="opacity-0 group-hover/userrow:opacity-100 transition-opacity">
+              <BranchPopover sessionId={sessionId} branchUuid={branchUuid} originalText={text} />
+            </div>
+          )}
+          {ts && (
+            <span className="text-[10px] text-muted-foreground/25 opacity-0 group-hover/userrow:opacity-100 transition-opacity pr-0.5">
+              {formatMessageTime(ts)}
+            </span>
+          )}
+        </div>
       </div>
       {/* User avatar */}
       <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/15 border border-primary/25 p-1.5">
@@ -945,6 +1071,8 @@ export function SessionChatView({
             hasImage={item.hasImage}
             imageDataUrl={item.imageDataUrl}
             ts={item.ts}
+            sessionId={sessionId}
+            branchUuid={item.branchUuid}
           />
         );
       case 'turn-complete':

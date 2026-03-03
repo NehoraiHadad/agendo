@@ -43,6 +43,8 @@ export type DisplayItem =
       text: string;
       hasImage?: boolean;
       imageDataUrl?: string;
+      /** UUID of the preceding assistant turn — used as --resume-session-at when branching. */
+      branchUuid?: string;
     }
   | { kind: 'info'; id: number; text: string }
   | { kind: 'error'; id: number; text: string }
@@ -118,6 +120,9 @@ export function buildDisplayItems(
   const pendingTools = new Map<string, ToolState>();
   let sessionInitCount = 0;
   let sessionCostUsd = 0;
+  // Track the last assistant UUID from agent:result so the next user:message
+  // can offer a branch button (Claude only — only set when messageUuid is present).
+  let lastAgentResultUuid: string | undefined;
 
   for (const ev of events) {
     switch (ev.type) {
@@ -254,6 +259,8 @@ export function buildDisplayItems(
         const denials = ev.permissionDenials?.length ?? 0;
         if (denials > 0) parts.push(`${denials} denied`);
         if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
+        // Capture messageUuid for the next user message's branch button.
+        lastAgentResultUuid = ev.messageUuid;
         items.push({
           kind: 'turn-complete',
           id: ev.id,
@@ -276,7 +283,18 @@ export function buildDisplayItems(
       }
 
       case 'user:message': {
-        items.push({ kind: 'user', id: ev.id, ts: ev.ts, text: ev.text, hasImage: ev.hasImage });
+        items.push({
+          kind: 'user',
+          id: ev.id,
+          ts: ev.ts,
+          text: ev.text,
+          hasImage: ev.hasImage,
+          // Attach the UUID of the preceding assistant turn. When present,
+          // the chat view shows a branch button on this user message.
+          branchUuid: lastAgentResultUuid,
+        });
+        // Reset: a new user turn starts; next agent:result will set a fresh UUID.
+        lastAgentResultUuid = undefined;
         break;
       }
 

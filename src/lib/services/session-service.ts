@@ -2,6 +2,7 @@ import { eq, and, desc, count, getTableColumns, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
 
 export type SessionKind = 'conversation' | 'execution';
@@ -64,8 +65,18 @@ export async function getSession(id: string): Promise<Session> {
  * point. Claude then issues a new sessionId for the fork via system:init.
  *
  * If the parent has no sessionRef, forkSourceRef is null and the fork starts fresh.
+ *
+ * @param resumeAt - Claude JSONL UUID of the assistant turn to branch from. Passed as
+ *   --resume-session-at to Claude, truncating conversation history at that point.
+ * @param initialPrompt - The user's (possibly edited) message to kick off the branch.
+ *   When provided, the fork is enqueued immediately without waiting for user to send
+ *   the first message.
  */
-export async function forkSession(parentId: string): Promise<Session> {
+export async function forkSession(
+  parentId: string,
+  resumeAt?: string,
+  initialPrompt?: string,
+): Promise<Session> {
   const parent = await getSession(parentId);
   const [fork] = await db
     .insert(sessions)
@@ -85,11 +96,23 @@ export async function forkSession(parentId: string): Promise<Session> {
         | 'dontAsk',
       allowedTools: parent.allowedTools as string[],
       ...(parent.model ? { model: parent.model } : {}),
+      ...(initialPrompt ? { initialPrompt } : {}),
       parentSessionId: parentId,
       // Store the parent's Claude session ID so the first start can use --fork-session.
       forkSourceRef: parent.sessionRef ?? null,
     })
     .returning();
+
+  // Enqueue immediately when the parent has a sessionRef and an initialPrompt is
+  // provided. This starts the fork right away without waiting for the user to
+  // send the first message manually.
+  if (parent.sessionRef && initialPrompt) {
+    await enqueueSession({
+      sessionId: fork.id,
+      resumeSessionAt: resumeAt,
+    });
+  }
+
   return fork;
 }
 
