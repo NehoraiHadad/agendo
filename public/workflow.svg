@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 300">
+  <defs>
+    <style>
+      .box { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 2; rx: 8; }
+      .box-red { fill: #fee2e2; stroke: #ef4444; stroke-width: 2; rx: 8; }
+      .box-green { fill: #dcfce7; stroke: #22c55e; stroke-width: 2; rx: 8; }
+      .box-blue { fill: #e0f2fe; stroke: #0ea5e9; stroke-width: 2; rx: 8; }
+      .text-title { font-family: system-ui, sans-serif; font-size: 16px; font-weight: bold; fill: #1e293b; text-anchor: middle; }
+      .text-sub { font-family: system-ui, sans-serif; font-size: 12px; fill: #475569; text-anchor: middle; }
+      .arrow { fill: #94a3b8; }
+      .line { stroke: #94a3b8; stroke-width: 2; fill: none; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" class="arrow" />
+    </marker>
+  </defs>
+
+  <text x="420" y="40" class="text-title" style="font-size: 20px">Strict TDD &amp; Agent Collaboration Workflow</text>
+
+  <!-- Step 1 -->
+  <rect x="40" y="100" width="130" height="80" class="box-red" />
+  <text x="105" y="135" class="text-title">1. RED</text>
+  <text x="105" y="155" class="text-sub">Write Tests</text>
+  <text x="105" y="170" class="text-sub" style="font-weight:bold; fill:#ef4444">(Test Agent)</text>
+
+  <path d="M 170 140 L 200 140" class="line" marker-end="url(#arrowhead)" />
+
+  <!-- Step 2 -->
+  <rect x="210" y="100" width="110" height="80" class="box" />
+  <text x="265" y="135" class="text-title">2. VERIFY</text>
+  <text x="265" y="155" class="text-sub">Failing Tests?</text>
+
+  <path d="M 320 140 L 350 140" class="line" marker-end="url(#arrowhead)" />
+
+  <!-- Step 3 -->
+  <rect x="360" y="100" width="130" height="80" class="box-green" />
+  <text x="425" y="135" class="text-title">3. GREEN</text>
+  <text x="425" y="155" class="text-sub">Write Minimum Code</text>
+  <text x="425" y="170" class="text-sub" style="font-weight:bold; fill:#22c55e">(Impl Agent)</text>
+
+  <path d="M 490 140 L 520 140" class="line" marker-end="url(#arrowhead)" />
+
+  <!-- Step 4 -->
+  <rect x="530" y="100" width="110" height="80" class="box" />
+  <text x="585" y="135" class="text-title">4. VERIFY</text>
+  <text x="585" y="155" class="text-sub">Passing Tests?</text>
+
+  <path d="M 640 140 L 670 140" class="line" marker-end="url(#arrowhead)" />
+
+  <!-- Step 5 -->
+  <rect x="680" y="100" width="110" height="80" class="box-blue" />
+  <text x="735" y="135" class="text-title">5. REFACTOR</text>
+  <text x="735" y="155" class="text-sub">Clean Up</text>
+  
+  <!-- Loop back -->
+  <path d="M 735 180 L 735 240 L 105 240 L 105 180" class="line" stroke-dasharray="5" marker-end="url(#arrowhead)" />
+  <text x="420" y="230" class="text-sub">Next Feature / Component</text>
+</svg>
