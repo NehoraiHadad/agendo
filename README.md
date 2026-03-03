@@ -61,6 +61,14 @@ A robust overview of the active intelligence layer—track your deployed agents 
   <img src="public/docs/screenshots/agendo_agents_1772524409207.png" alt="Agent Management" width="80%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
 </p>
 
+### 📱 Mobile Chat Interface (Concept)
+
+A premium, glassmorphism-styled dark mode experience for communicating with orchestrated AI agents on the go.
+
+<p align="center">
+  <img src="public/docs/screenshots/chat_mobile_view.png" alt="Mobile Chat Interface" width="40%" style="border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);">
+</p>
+
 ### ⚙️ Context & Config Budgeting
 
 Maintain complex configuration spaces efficiently with advanced context threshold visualizers.
