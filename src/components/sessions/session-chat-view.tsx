@@ -16,7 +16,7 @@ import {
   Square,
   ArrowDown,
   MessageSquare,
-  GitBranch,
+  Pencil,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -612,7 +612,7 @@ function ThinkingBubble({ text }: { text: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// BranchPopover — "Branch from here" dialog attached to user messages
+// EditPopover — "Edit message" dialog attached to user messages
 // ---------------------------------------------------------------------------
 
 function BranchPopover({
@@ -671,24 +671,28 @@ function BranchPopover({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1 text-[10px] text-primary/50 hover:text-primary/80 hover:bg-primary/10 rounded px-1.5 py-0.5 transition-colors"
-        title="Branch from here"
+        title="Edit message"
       >
-        <GitBranch className="size-3" />
-        <span>Branch</span>
+        <Pencil className="size-3" />
+        <span>Edit</span>
       </button>
 
       {open && (
         <>
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          {/* Popover */}
+          {/* Bottom sheet on mobile, floating popover on desktop */}
           <div
-            className="absolute right-0 bottom-full mb-2 z-50 w-72 rounded-xl border border-white/[0.10] bg-[oklch(0.12_0_0)] shadow-2xl p-3 space-y-2.5"
+            className="fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl border-t border-white/[0.10] bg-[oklch(0.12_0_0)] shadow-2xl p-4 pb-8 space-y-3 sm:absolute sm:bottom-full sm:right-0 sm:left-auto sm:mb-2 sm:w-72 sm:rounded-xl sm:border sm:p-3 sm:pb-3 sm:space-y-2.5"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Grab handle — mobile only */}
+            <div className="sm:hidden flex justify-center -mt-1 mb-1">
+              <div className="w-10 h-1 rounded-full bg-white/20" />
+            </div>
             <div className="flex items-center gap-1.5">
-              <GitBranch className="size-3.5 text-primary/70 shrink-0" />
-              <span className="text-xs font-medium text-foreground/80">Branch from here</span>
+              <Pencil className="size-3.5 text-primary/70 shrink-0" />
+              <span className="text-xs font-medium text-foreground/80">Edit message</span>
             </div>
             <textarea
               ref={textareaRef}
@@ -698,11 +702,11 @@ function BranchPopover({
               className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] text-sm text-foreground/90 p-2 resize-none focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40"
               placeholder="Edit your message…"
             />
-            <div className="flex justify-end gap-2">
+            <div className="flex gap-2 sm:justify-end">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="text-xs text-muted-foreground/60 hover:text-muted-foreground px-2.5 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                className="flex-1 sm:flex-none text-xs text-muted-foreground/60 hover:text-muted-foreground px-2.5 py-2 sm:py-1 rounded hover:bg-white/[0.05] transition-colors"
               >
                 Cancel
               </button>
@@ -710,14 +714,14 @@ function BranchPopover({
                 type="button"
                 onClick={() => void handleConfirm()}
                 disabled={!text.trim() || loading}
-                className="text-xs bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-1 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                className="flex-1 sm:flex-none text-xs bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-2 sm:py-1 rounded-lg transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
               >
                 {loading ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : (
-                  <GitBranch className="size-3" />
+                  <Pencil className="size-3" />
                 )}
-                Start branch →
+                Edit →
               </button>
             </div>
           </div>
