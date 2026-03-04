@@ -511,6 +511,12 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       return;
     }
 
+    if (method === 'tool/requestUserInput') {
+      const answers = await this.handleUserInputRequest(params);
+      this.rpcRespond(id, { answers });
+      return;
+    }
+
     // Unknown server request — auto-decline
     console.warn(`[codex-app-server] Unknown server request method: ${method}`);
     this.rpcRespond(id, { decision: 'decline' });
@@ -564,6 +570,83 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
 
     return mapDecisionToCodex(decision);
+  }
+
+  /**
+   * Handle `tool/requestUserInput` — the Codex equivalent of AskUserQuestion.
+   *
+   * Strategy: reuse the existing agent:tool-approval / AskUserQuestion path so
+   * the frontend renders the interactive question card via interactive-tools.tsx,
+   * and the answer arrives via the `answer-question` control message.
+   *
+   * Returns the Codex-format response: `{ "<questionId>": { answers: [text] } }`.
+   */
+  private async handleUserInputRequest(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, { answers: string[] }>> {
+    type CodexQuestion = {
+      id: string;
+      header: string;
+      question: string;
+      options: Array<{ id: string; label: string; description?: string }> | null;
+    };
+
+    const rawQuestions = (params.questions as CodexQuestion[] | null) ?? [];
+    const requestId = (params.itemId as string | null) ?? `codex-ask-${Date.now()}`;
+
+    if (!this.approvalHandler || rawQuestions.length === 0) {
+      // No approval handler or no questions — return empty (Codex will continue)
+      return {};
+    }
+
+    // Map Codex question format → AskUserQuestion frontend format.
+    // Store the original question IDs indexed by position so we can map answers back.
+    const questionIds = rawQuestions.map((q) => q.id);
+    const mappedQuestions = rawQuestions.map((q) => ({
+      question: q.question,
+      header: q.header,
+      options: (q.options ?? []).map((o) => ({
+        label: o.label,
+        description: o.description ?? '',
+      })),
+      multiSelect: false,
+    }));
+
+    let decision: PermissionDecision;
+    try {
+      decision = await this.approvalHandler({
+        approvalId: requestId,
+        toolName: 'AskUserQuestion',
+        toolInput: { questions: mappedQuestions },
+      });
+    } catch {
+      return {};
+    }
+
+    // Extract answers from the resolved decision.
+    // session-process.ts resolves with { behavior:'allow', updatedInput:{ answers: Record<string,string> } }
+    // where answers is keyed by question index ("0", "1", ...) with selected label values.
+    if (
+      typeof decision !== 'object' ||
+      !('behavior' in decision) ||
+      decision.behavior !== 'allow'
+    ) {
+      return {};
+    }
+
+    const rawAnswers = (decision.updatedInput as Record<string, unknown> | undefined)?.answers as
+      | Record<string, string>
+      | undefined;
+
+    if (!rawAnswers) return {};
+
+    // Build Codex response: { "<questionId>": { answers: ["<text>"] } }
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const [idx, text] of Object.entries(rawAnswers)) {
+      const questionId = questionIds[Number(idx)] ?? idx;
+      answers[questionId] = { answers: [text] };
+    }
+    return answers;
   }
 
   // -------------------------------------------------------------------------
