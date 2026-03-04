@@ -1,5 +1,18 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { Readable, Writable } from 'node:stream';
+import {
+  ClientSideConnection,
+  ndJsonStream,
+  PROTOCOL_VERSION,
+  type Client,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type SessionNotification,
+  type ReadTextFileRequest,
+  type ReadTextFileResponse,
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
+} from '@agentclientprotocol/sdk';
 import { AsyncLock } from '@/lib/utils/async-lock';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
@@ -11,27 +24,155 @@ import type {
 } from '@/lib/worker/adapters/types';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-}
-
-interface AcpMessage {
-  jsonrpc: '2.0';
-  id?: number | string;
-  method?: string;
-  params?: Record<string, unknown>;
-  result?: unknown;
-  error?: { code: number; message: string };
-}
-
-/** Auto-incrementing ID for synthetic tool-use events. */
+/** Auto-incrementing ID for synthetic tool-use events (permission-mode flow). */
 let toolUseCounter = 0;
+
+/**
+ * ACP Client implementation. Handles incoming agent requests:
+ *  - requestPermission  — tool approval in default/acceptEdits mode
+ *  - sessionUpdate      — streaming text, thinking, tool-call events
+ *  - readTextFile       — agent reads a file from the client filesystem
+ *  - writeTextFile      — agent writes a file to the client filesystem
+ */
+class GeminiClientHandler implements Client {
+  constructor(
+    private readonly emitNdjson: (event: GeminiEvent) => void,
+    private readonly getApprovalHandler: () => GeminiAdapter['approvalHandler'],
+    private readonly activeToolCalls: Set<string>,
+  ) {}
+
+  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    const { toolCall, options } = params;
+    const toolName = toolCall.title ?? 'unknown';
+    const toolInput = (toolCall.rawInput as Record<string, unknown> | undefined) ?? {};
+    const toolUseId = toolCall.toolCallId ?? `gemini-tool-${++toolUseCounter}`;
+
+    this.emitNdjson({ type: 'gemini:tool-start', toolName, toolInput, toolUseId });
+
+    const approvalHandler = this.getApprovalHandler();
+    if (!approvalHandler) {
+      const allowOption =
+        options.find((o) => o.kind === 'allow_always') ??
+        options.find((o) => o.kind === 'allow_once') ??
+        options[0];
+      this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
+      return { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } };
+    }
+
+    const approvalId = `gemini-perm-${toolUseId}`;
+    try {
+      const decision = await approvalHandler({ approvalId, toolName, toolInput });
+      let chosenOption;
+      if (decision === 'deny') {
+        chosenOption = options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1];
+      } else if (decision === 'allow-session') {
+        chosenOption =
+          options.find((o) => o.kind === 'allow_always') ??
+          options.find((o) => o.kind === 'allow_once') ??
+          options[0];
+      } else {
+        // 'allow' or { behavior: 'allow', updatedInput } → one-time approval
+        chosenOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
+      }
+      this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
+      return { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } };
+    } catch (err) {
+      console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
+      const allowOption =
+        options.find((o) => o.kind === 'allow_always') ??
+        options.find((o) => o.kind === 'allow_once') ??
+        options[0];
+      this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
+      return { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } };
+    }
+  }
+
+  async sessionUpdate(params: SessionNotification): Promise<void> {
+    const update = params.update;
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk':
+        if (update.content.type === 'text') {
+          this.emitNdjson({ type: 'gemini:text', text: update.content.text });
+        }
+        break;
+      case 'agent_thought_chunk':
+        if (update.content.type === 'text') {
+          this.emitNdjson({ type: 'gemini:thinking', text: update.content.text });
+        }
+        break;
+      case 'tool_call': {
+        const { toolCallId, title, kind, locations } = update;
+        const filePath = locations?.[0]?.path;
+        const extractedName = toolCallId?.replace(/-\d+$/, '') ?? '';
+        const baseName = extractedName || title || 'unknown';
+        const toolName = filePath
+          ? `${baseName} (${filePath})`
+          : title && title !== '{}' && extractedName && title !== extractedName
+            ? `${extractedName}: ${title}`
+            : baseName;
+        const id = toolCallId ?? `gemini-tool-${++toolUseCounter}`;
+        this.activeToolCalls.add(id);
+        this.emitNdjson({
+          type: 'gemini:tool-start',
+          toolName,
+          toolInput: kind ? { kind } : {},
+          toolUseId: id,
+        });
+        break;
+      }
+      case 'tool_call_update': {
+        const { toolCallId, content, status } = update;
+        if (toolCallId && this.activeToolCalls.has(toolCallId)) {
+          this.activeToolCalls.delete(toolCallId);
+          const resultText = (content ?? [])
+            .filter((c): c is typeof c & { type: 'content' } => c.type === 'content')
+            .map((c) => (c.content.type === 'text' ? c.content.text : ''))
+            .filter(Boolean)
+            .join('\n');
+          this.emitNdjson({
+            type: 'gemini:tool-end',
+            toolUseId: toolCallId,
+            ...(resultText ? { resultText } : {}),
+            ...(status === 'failed' ? { failed: true } : {}),
+          });
+        }
+        // else: default mode — permission handler already emitted start+end
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+    try {
+      let content = readFileSync(params.path, 'utf-8');
+      if (params.line != null) {
+        const lines = content.split('\n');
+        const start = Math.max(0, params.line - 1);
+        const end = params.limit ? start + params.limit : lines.length;
+        content = lines.slice(start, end).join('\n');
+      }
+      return { content };
+    } catch {
+      return { content: '' };
+    }
+  }
+
+  async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+    try {
+      writeFileSync(params.path, params.content, 'utf-8');
+    } catch {
+      /* ignore write errors */
+    }
+    return {};
+  }
+}
 
 export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
-  private requestId = 0;
-  private pendingRequests = new Map<number | string, PendingRequest>();
+  private connection: ClientSideConnection | null = null;
+  private clientHandler: GeminiClientHandler | null = null;
   private sessionId: string | null = null;
   private currentTurn: Promise<void> = Promise.resolve();
   private lock = new AsyncLock();
@@ -53,27 +194,22 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
+  private static readonly INIT_TIMEOUT_MS = 30_000;
 
   /**
-   * Build Gemini CLI args from SpawnOpts. Centralized so launch() and setModel()
-   * restart use the same flags.
+   * Build Gemini CLI args from SpawnOpts.
    *
    * Flags:
    *  --experimental-acp           — ACP mode (required)
    *  -m <model>                   — model override
    *  --approval-mode yolo         — skip all permission prompts when bypassPermissions
-   *  --allowed-mcp-server-names   — restrict global MCP to only injected servers (avoid
-   *                                 loading 6+ global MCP servers from ~/.gemini/settings.json)
+   *  --allowed-mcp-server-names   — restrict global MCP to only injected servers
    */
   private static buildArgs(opts: SpawnOpts): string[] {
     const args = ['--experimental-acp'];
     if (opts.model) {
       args.push('-m', opts.model);
     }
-    // Map Agendo permission mode to Gemini --approval-mode.
-    // bypassPermissions/dontAsk → yolo (suppresses ALL ACP permission requests)
-    // acceptEdits → auto_edit (auto-approve file edits, prompt for shell)
-    // plan → plan (read-only enforcement; requires experimental.plan=true in settings.json)
     const permMode = opts.permissionMode;
     if (permMode === 'bypassPermissions' || permMode === 'dontAsk') {
       args.push('--approval-mode', 'yolo');
@@ -82,17 +218,28 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     } else if (permMode === 'plan') {
       args.push('--approval-mode', 'plan');
     }
-    // Restrict global MCP servers: only load servers injected via ACP session/new.
-    // Pass the names of injected servers so they are not filtered out by the allowlist.
     const injectedNames = (opts.mcpServers ?? []).map((s) => s.name);
     if (injectedNames.length > 0) {
       args.push('--allowed-mcp-server-names', ...injectedNames);
     } else {
-      // No MCP servers injected — block all global servers to avoid slow startup
       args.push('--allowed-mcp-server-names', '__none__');
     }
     args.push(...(opts.extraArgs ?? []));
     return args;
+  }
+
+  /** Create an ACP ClientSideConnection for the given child process. */
+  private createConnection(
+    cp: ReturnType<typeof BaseAgentAdapter.spawnDetached>,
+  ): ClientSideConnection {
+    if (!cp.stdin || !cp.stdout) throw new Error('Child process has no stdio');
+    const stream = ndJsonStream(
+      Writable.toWeb(cp.stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(cp.stdout) as ReadableStream<Uint8Array>,
+    );
+    if (!this.clientHandler) throw new Error('clientHandler not initialized');
+    const handler = this.clientHandler;
+    return new ClientSideConnection((_agent) => handler, stream);
   }
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
@@ -117,12 +264,10 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   async interrupt(): Promise<void> {
-    // Step 1: Send ACP session/cancel notification (per spec — no id, it's a notification)
-    if (this.sessionId) {
-      this.writeJson({
-        jsonrpc: '2.0',
-        method: 'session/cancel',
-        params: { sessionId: this.sessionId },
+    // Step 1: Send ACP session/cancel notification
+    if (this.sessionId && this.connection) {
+      this.connection.cancel({ sessionId: this.sessionId }).catch(() => {
+        // Ignore errors — process may already be exiting
       });
     }
 
@@ -165,8 +310,8 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   async setPermissionMode(mode: string): Promise<boolean> {
-    if (!this.sessionId) return false;
-    // ACP mode IDs from session/new response: "default", "autoEdit", "yolo".
+    if (!this.sessionId || !this.connection) return false;
+    // ACP mode IDs: "default", "autoEdit", "yolo".
     // "plan" is NOT a valid ACP mode (rejected with -32603).
     const modeMap: Record<string, string> = {
       default: 'default',
@@ -176,10 +321,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     };
     const geminiMode = modeMap[mode];
     if (!geminiMode) return false;
-    await this.sendRequest('session/set_mode', {
-      sessionId: this.sessionId,
-      modeId: geminiMode,
-    });
+    await this.connection.setSessionMode({ sessionId: this.sessionId, modeId: geminiMode });
     return true;
   }
 
@@ -203,62 +345,31 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       await exitPromise;
     }
 
-    // Reject all pending requests from the old process
-    for (const [, pending] of this.pendingRequests) {
-      pending.reject(new Error('Gemini process restarting for model switch'));
-    }
-    this.pendingRequests.clear();
-
     // Spawn new process with updated model
     const opts = this.storedOpts;
     const geminiArgs = GeminiAdapter.buildArgs(opts);
-
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
 
-    // Wire new stdout to readline parser → same dataCallbacks
-    const rl = createInterface({ input: cp.stdout ?? process.stdin });
-    rl.on('line', (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('{')) return;
-      try {
-        const msg = JSON.parse(trimmed) as AcpMessage;
-        this.handleAcpMessage(msg, this.dataCallbacks);
-      } catch {
-        // Skip non-JSON lines
-      }
-    });
-
+    // Wire stderr → same dataCallbacks
     cp.stderr?.on('data', (chunk: Buffer) => {
       for (const cb of this.dataCallbacks) cb(chunk.toString('utf-8'));
     });
 
-    // Wire exit handler to same exitCallbacks (respecting modelSwitching flag)
+    // Wire exit → same exitCallbacks (respecting modelSwitching flag)
     cp.on('exit', (code) => {
-      for (const [, pending] of this.pendingRequests) {
-        pending.reject(new Error('Gemini process exited'));
-      }
-      this.pendingRequests.clear();
       if (!this.modelSwitching) {
         for (const cb of this.exitCallbacks) cb(code);
       }
     });
 
+    // Create new ACP connection for the new process
+    this.connection = this.createConnection(cp);
+
     // Re-initialize ACP and reload session
     try {
-      const initResult = await this.sendRequest<{ agentCapabilities?: Record<string, unknown> }>(
-        'initialize',
-        {
-          protocolVersion: 1,
-          clientInfo: { name: 'agendo', version: '1.0.0' },
-          clientCapabilities: {
-            fs: { readTextFile: true, writeTextFile: true },
-            terminal: true,
-          },
-        },
-      );
-
-      await this.loadOrCreateSession(initResult?.agentCapabilities, opts, this.sessionId);
+      const initResult = await this.acpInitialize();
+      await this.loadOrCreateSession(initResult.agentCapabilities, opts, this.sessionId);
     } catch (err) {
       this.modelSwitching = false;
       const message = err instanceof Error ? err.message : String(err);
@@ -281,36 +392,27 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     this.dataCallbacks = dataCallbacks;
     this.exitCallbacks = exitCallbacks;
 
-    const geminiArgs = GeminiAdapter.buildArgs(opts);
+    // Set up the client handler (shared across model-switch restarts via this.clientHandler)
+    this.activeToolCalls = new Set<string>();
+    this.clientHandler = new GeminiClientHandler(
+      (event) => this.emitNdjson(event),
+      () => this.approvalHandler,
+      this.activeToolCalls,
+    );
 
+    const geminiArgs = GeminiAdapter.buildArgs(opts);
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
 
-    // Parse ndJSON from stdout line by line (readline handles buffering — no processLineBuffer needed)
-    const rl = createInterface({ input: cp.stdout ?? process.stdin });
-    rl.on('line', (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('{')) return;
-      try {
-        const msg = JSON.parse(trimmed) as AcpMessage;
-        this.handleAcpMessage(msg, dataCallbacks);
-      } catch {
-        // Skip non-JSON lines (Gemini debug output)
-      }
-    });
+    // Create ACP connection
+    this.connection = this.createConnection(cp);
 
     cp.stderr?.on('data', (chunk: Buffer) => {
       for (const cb of dataCallbacks) cb(chunk.toString('utf-8'));
     });
 
     let exitFired = false;
-
     cp.on('exit', (code) => {
-      // Reject all pending requests so awaiting callers unblock
-      for (const [, pending] of this.pendingRequests) {
-        pending.reject(new Error('Gemini process exited'));
-      }
-      this.pendingRequests.clear();
       if (!exitFired && !this.modelSwitching) {
         exitFired = true;
         for (const cb of exitCallbacks) cb(code);
@@ -318,19 +420,13 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     });
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
-    // Error events are already emitted by initAndRun (for init failures) or
-    // sendPrompt (for prompt failures). Here we just clean up: exit with code 0
-    // so session-process transitions to 'idle' (resumable) instead of showing
-    // the "Session ended unexpectedly" message.
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
       console.error('[GeminiAdapter] init failed:', err.message);
       if (!exitFired) {
         exitFired = true;
         for (const cb of exitCallbacks) cb(0);
       }
-      // Kill the entire process group (not just the main process) — Gemini CLI
-      // spawns with detached:true, so cp.kill() alone leaves orphan children.
-      // Use SIGKILL fallback because Gemini may ignore SIGTERM during init.
+      // Kill the entire process group
       if (cp.pid) {
         try {
           process.kill(-cp.pid, 'SIGTERM');
@@ -341,7 +437,6 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
             /* already dead */
           }
         }
-        // SIGKILL fallback after 2s — Gemini sometimes ignores SIGTERM
         const pid = cp.pid;
         setTimeout(() => {
           try {
@@ -365,223 +460,15 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     };
   }
 
-  private handleAcpMessage(msg: AcpMessage, _dataCallbacks: Array<(chunk: string) => void>): void {
-    // Response to one of our requests (has id + result or error, no method)
-    if (msg.id !== undefined && !msg.method && ('result' in msg || 'error' in msg)) {
-      const pending = this.pendingRequests.get(msg.id);
-      if (pending) {
-        this.pendingRequests.delete(msg.id);
-        if (msg.error) {
-          pending.reject(new Error(`ACP error ${msg.error.code}: ${msg.error.message}`));
-        } else {
-          pending.resolve(msg.result);
-        }
-      }
-      return;
-    }
-
-    // Server request (has id + method → needs a response)
-    if (msg.id !== undefined && msg.method) {
-      if (msg.method === 'session/request_permission') {
-        // ACP permission options: allow_always (session-wide), allow_once, reject_once.
-        const params = msg.params ?? {};
-        const toolCall = params.toolCall as Record<string, unknown> | undefined;
-        const options =
-          (params.options as Array<{ kind: string; optionId: string; name: string }>) ?? [];
-
-        const toolName = (toolCall?.title as string | undefined) ?? 'unknown';
-        const toolInput = (toolCall?.rawInput as Record<string, unknown>) ?? {};
-        const toolUseId = `gemini-tool-${++toolUseCounter}`;
-
-        // Emit tool-start NDJSON so the frontend shows the tool card
-        this.emitNdjson({ type: 'gemini:tool-start', toolName, toolInput, toolUseId });
-
-        if (!this.approvalHandler) {
-          // Auto-allow: prefer allow_always (session-wide) so subsequent calls skip prompting
-          const allowOption =
-            options.find((o) => o.kind === 'allow_always') ??
-            options.find((o) => o.kind === 'allow_once') ??
-            options[0];
-          this.writeJson({
-            jsonrpc: '2.0',
-            id: msg.id,
-            result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
-          });
-          this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
-          return;
-        }
-
-        const approvalId = String(msg.id);
-        const msgId = msg.id;
-        this.approvalHandler({ approvalId, toolName, toolInput })
-          .then((decision) => {
-            let chosenOption;
-            if (decision === 'deny') {
-              chosenOption =
-                options.find((o) => o.kind === 'reject_once') ?? options[options.length - 1];
-            } else if (decision === 'allow-session') {
-              // Session-wide approval → use allow_always so Gemini won't ask again for this tool
-              chosenOption =
-                options.find((o) => o.kind === 'allow_always') ??
-                options.find((o) => o.kind === 'allow_once') ??
-                options[0];
-            } else {
-              // 'allow' or { behavior: 'allow', updatedInput } → one-time approval
-              chosenOption = options.find((o) => o.kind === 'allow_once') ?? options[0];
-            }
-            this.writeJson({
-              jsonrpc: '2.0',
-              id: msgId,
-              result: { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } },
-            });
-            this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
-          })
-          .catch((err: unknown) => {
-            console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
-            const allowOption =
-              options.find((o) => o.kind === 'allow_always') ??
-              options.find((o) => o.kind === 'allow_once') ??
-              options[0];
-            this.writeJson({
-              jsonrpc: '2.0',
-              id: msgId,
-              result: { outcome: { outcome: 'selected', optionId: allowOption?.optionId ?? '' } },
-            });
-            this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
-          });
-      }
-      // Handle fs/read_text_file and fs/write_text_file client requests from Gemini
-      // Per ACP spec: params include sessionId, path, line?, limit?
-      else if (msg.method === 'fs/read_text_file') {
-        const {
-          path: filePath,
-          line,
-          limit,
-        } = msg.params as { sessionId: string; path: string; line?: number; limit?: number };
-        try {
-          let content = readFileSync(filePath, 'utf-8');
-          if (line !== undefined && line !== null) {
-            const lines = content.split('\n');
-            const start = Math.max(0, line - 1);
-            const end = limit ? start + limit : lines.length;
-            content = lines.slice(start, end).join('\n');
-          }
-          this.writeJson({ jsonrpc: '2.0', id: msg.id, result: { content } });
-        } catch {
-          this.writeJson({ jsonrpc: '2.0', id: msg.id, result: { content: '' } });
-        }
-      } else if (msg.method === 'fs/write_text_file') {
-        const { path: filePath, content } = msg.params as {
-          sessionId: string;
-          path: string;
-          content: string;
-        };
-        try {
-          writeFileSync(filePath, content, 'utf-8');
-        } catch {
-          /* ignore write errors */
-        }
-        this.writeJson({ jsonrpc: '2.0', id: msg.id, result: null });
-      }
-      return;
-    }
-
-    // Notification (no id, has method)
-    // ACP v0.20: session/update params = { sessionId, update: { sessionUpdate, content, ... } }
-    if (msg.method && msg.id === undefined) {
-      if (msg.method === 'session/update') {
-        const update = msg.params?.update as Record<string, unknown> | undefined;
-        const sessionUpdate = update?.sessionUpdate as string | undefined;
-        if (sessionUpdate === 'agent_message_chunk') {
-          const content = update?.content as Record<string, unknown> | undefined;
-          if (content?.type === 'text' && typeof content.text === 'string') {
-            // Emit structured NDJSON instead of raw text
-            this.emitNdjson({ type: 'gemini:text', text: content.text });
-          }
-        } else if (sessionUpdate === 'agent_thought_chunk') {
-          const content = update?.content as Record<string, unknown> | undefined;
-          if (content?.type === 'text' && typeof content.text === 'string') {
-            // Emit structured NDJSON for thinking output
-            this.emitNdjson({ type: 'gemini:thinking', text: content.text });
-          }
-        } else if (sessionUpdate === 'tool_call') {
-          // Yolo mode: tool_call (status=in_progress) → tool started.
-          // Default mode uses session/request_permission instead (handled above).
-          const toolCallId = update?.toolCallId as string | undefined;
-          const title = (update?.title as string) ?? '';
-          const kind = (update?.kind as string) ?? '';
-          const locations = (update?.locations as Array<{ path?: string }>) ?? [];
-          const filePath = locations[0]?.path;
-          // Extract actual tool name from toolCallId (format: "tool_name-timestamp")
-          // Fall back to title if toolCallId doesn't contain a recognizable name.
-          const extractedName = toolCallId?.replace(/-\d+$/, '') ?? '';
-          // Use title as description context (for shell commands it contains the command)
-          // but use extractedName as the primary tool name.
-          // Title can be "{}" or raw JSON for MCP tools, so prefer extractedName.
-          const baseName = extractedName || title || 'unknown';
-          const toolName = filePath
-            ? `${baseName} (${filePath})`
-            : title && title !== '{}' && extractedName && title !== extractedName
-              ? `${extractedName}: ${title}`
-              : baseName;
-          const id = toolCallId ?? `gemini-tool-${++toolUseCounter}`;
-          this.activeToolCalls.add(id);
-          this.emitNdjson({
-            type: 'gemini:tool-start',
-            toolName,
-            toolInput: kind ? { kind } : {},
-            toolUseId: id,
-          });
-        } else if (sessionUpdate === 'tool_call_update') {
-          // Sent in both yolo and default modes when a tool completes or fails.
-          // In yolo mode: paired with a preceding tool_call → close it.
-          // In default mode: no preceding tool_call (permission handler handled
-          // the start+end) → skip to avoid orphaned tool-end events.
-          const toolCallId = update?.toolCallId as string | undefined;
-          if (toolCallId && this.activeToolCalls.has(toolCallId)) {
-            this.activeToolCalls.delete(toolCallId);
-            // Extract result content from tool_call_update payload
-            const contentArr = (update?.content as Array<{ content?: { text?: string } }>) ?? [];
-            const resultText = contentArr
-              .map((c) => c.content?.text ?? '')
-              .filter(Boolean)
-              .join('\n');
-            const status = update?.status as string | undefined;
-            this.emitNdjson({
-              type: 'gemini:tool-end',
-              toolUseId: toolCallId,
-              ...(resultText ? { resultText } : {}),
-              ...(status === 'failed' ? { failed: true } : {}),
-            });
-          }
-          // else: default mode — permission handler already emitted start+end
-        }
-      }
-    }
-  }
-
   private async initAndRun(
     prompt: string,
     opts: SpawnOpts,
     resumeSessionId: string | null,
   ): Promise<void> {
-    // 1–2: Handshake + session creation.
-    // Errors here are init failures (sendPrompt was never called), so we emit
-    // the error event here. sendPrompt handles its own errors separately.
+    // 1–2: Handshake + session creation
     try {
-      const initResult = await this.sendRequest<{ agentCapabilities?: Record<string, unknown> }>(
-        'initialize',
-        {
-          protocolVersion: 1,
-          clientInfo: { name: 'agendo', version: '1.0.0' },
-          clientCapabilities: {
-            fs: { readTextFile: true, writeTextFile: true },
-            terminal: true,
-          },
-        },
-      );
-
-      await this.loadOrCreateSession(initResult?.agentCapabilities, opts, resumeSessionId);
+      const initResult = await this.acpInitialize();
+      await this.loadOrCreateSession(initResult.agentCapabilities, opts, resumeSessionId);
       if (!resumeSessionId && this.sessionId) {
         this.sessionRefCallback?.(this.sessionId);
       }
@@ -591,146 +478,130 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       throw err;
     }
 
-    // Emit init event with model and sessionId so the frontend can display them.
+    // Emit init event with model and sessionId
     if (this.sessionId && opts.model) {
       this.emitNdjson({ type: 'gemini:init', model: opts.model, sessionId: this.sessionId });
     }
 
-    // 3. First prompt — sendPrompt emits its own error events on failure.
+    // 3. First prompt
     await this.sendPrompt(prompt);
   }
 
   /**
+   * Send ACP initialize with retry on 429.
+   * Timeout: 30s per attempt.
+   */
+  private async acpInitialize(
+    attempt = 1,
+  ): Promise<Awaited<ReturnType<ClientSideConnection['initialize']>>> {
+    if (!this.connection) throw new Error('No ACP connection');
+    const timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
+    try {
+      return await Promise.race([
+        this.connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientInfo: { name: 'agendo', version: '1.0.0' },
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            terminal: true,
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`ACP initialize timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          ),
+        ),
+      ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isRetryable =
+        (message.includes('429') || message.includes('Rate limit exceeded')) && attempt < 3;
+      if (isRetryable) {
+        const delay = Math.pow(2, attempt) * 2000; // 4s, 8s
+        console.warn(`[GeminiAdapter] initialize failed with 429, retrying in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        return this.acpInitialize(attempt + 1);
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Load an existing session (via session/load) or create a new one (via session/new).
-   *
-   * - If resumeSessionId is provided and the adapter supports loadSession:
-   *   tries session/load first; falls back to session/new on failure.
-   * - Otherwise (or on fallback): calls session/new and updates this.sessionId.
-   *
-   * Note: sessionRefCallback is NOT called here — callers are responsible for
-   * invoking it when a brand-new (non-resume) session is started.
    */
   private async loadOrCreateSession(
-    agentCaps: Record<string, unknown> | undefined,
+    agentCaps: { loadSession?: boolean } | undefined,
     opts: SpawnOpts,
     resumeSessionId: string | null,
   ): Promise<void> {
+    if (!this.connection) throw new Error('No ACP connection');
+
     if (resumeSessionId && agentCaps?.loadSession) {
       try {
-        await this.sendRequest('session/load', {
+        await this.connection.loadSession({
           sessionId: resumeSessionId,
           cwd: opts.cwd,
-          mcpServers: opts.mcpServers ?? [],
+          mcpServers: (opts.mcpServers ?? []) as Parameters<
+            ClientSideConnection['loadSession']
+          >[0]['mcpServers'],
         });
-        return; // session/load succeeded; this.sessionId already points to the resumed session
+        return; // session/load succeeded
       } catch (loadErr) {
         const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
         console.warn(`[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`);
       }
     }
 
-    const result = await this.sendRequest<{ sessionId: string }>('session/new', {
+    const result = await this.connection.newSession({
       cwd: opts.cwd,
-      mcpServers: opts.mcpServers ?? [],
+      mcpServers: (opts.mcpServers ?? []) as Parameters<
+        ClientSideConnection['newSession']
+      >[0]['mcpServers'],
     });
     this.sessionId = result.sessionId;
   }
 
   private async sendPrompt(text: string): Promise<void> {
-    if (!this.sessionId) throw new Error('No active session');
+    if (!this.sessionId || !this.connection) throw new Error('No active session');
     this.thinkingCallback?.(true);
 
     // Build prompt content blocks — text always present, image optional
-    const promptContent: Array<Record<string, unknown>> = [{ type: 'text', text }];
+    const promptContent: Parameters<ClientSideConnection['prompt']>[0]['prompt'] = [
+      { type: 'text', text },
+    ];
     if (this.pendingImage) {
       promptContent.push({
         type: 'image',
         data: this.pendingImage.data,
         mimeType: this.pendingImage.mimeType,
-      });
+      } as (typeof promptContent)[number]);
       this.pendingImage = null;
     }
 
     try {
-      // Send directly — do NOT retry session/prompt. Gemini's ACP server
-      // appends the message to conversation history BEFORE calling the API,
-      // so retrying on 429 causes duplicate messages in the chat context.
-      // The error surfaces to the user, who can resend from the UI.
-      const result = await this.sendRequest<Record<string, unknown>>('session/prompt', {
-        sessionId: this.sessionId,
-        prompt: promptContent,
-      });
+      const conn = this.connection;
+      const timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
+      await Promise.race([
+        conn.prompt({ sessionId: this.sessionId, prompt: promptContent }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          ),
+        ),
+      ]);
       // Emit synthetic result event so session-process emits agent:result
-      this.emitNdjson({ type: 'gemini:turn-complete', result: result ?? {} });
+      this.emitNdjson({ type: 'gemini:turn-complete', result: {} });
     } catch (err) {
-      // Emit error event so session-process transitions to awaiting_input
       const message = err instanceof Error ? err.message : String(err);
       // Don't emit error for process exit — onExit handles that
-      if (!message.includes('Gemini process exited')) {
+      if (!message.includes('Gemini process exited') && !message.includes('Connection closed')) {
         this.emitNdjson({ type: 'gemini:turn-error', message });
       }
-      // Re-throw so the lock.acquire caller can handle it if needed
       throw err;
     } finally {
       this.thinkingCallback?.(false);
-    }
-  }
-
-  /**
-   * ACP request timeout for handshake/init methods (initialize, session/new).
-   * session/prompt also gets a timeout (PROMPT_TIMEOUT_MS) to prevent hanging
-   * indefinitely if Gemini crashes mid-turn without closing stdout.
-   */
-  private static readonly INIT_METHODS = new Set(['initialize', 'session/new']);
-  private static readonly INIT_TIMEOUT_MS = 30_000;
-
-  private async sendRequest<T = unknown>(
-    method: string,
-    params: Record<string, unknown>,
-    attempt = 1,
-  ): Promise<T> {
-    const id = ++this.requestId;
-    try {
-      const response = await new Promise<T>((resolve, reject) => {
-        this.pendingRequests.set(id, {
-          resolve: resolve as (value: unknown) => void,
-          reject,
-        });
-        this.writeJson({ jsonrpc: '2.0', id, method, params });
-
-        // Determine timeout based on method type
-        let timeoutMs: number | null = null;
-        if (GeminiAdapter.INIT_METHODS.has(method)) {
-          timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
-        } else if (method === 'session/prompt') {
-          timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
-        }
-
-        if (timeoutMs !== null) {
-          const ms = timeoutMs;
-          setTimeout(() => {
-            if (this.pendingRequests.has(id)) {
-              this.pendingRequests.delete(id);
-              reject(new Error(`ACP request "${method}" timed out after ${ms}ms`));
-            }
-          }, ms);
-        }
-      });
-      return response;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const isRetryable =
-        GeminiAdapter.INIT_METHODS.has(method) &&
-        (message.includes('429') || message.includes('Rate limit exceeded')) &&
-        attempt < 3;
-
-      if (isRetryable) {
-        const delay = Math.pow(2, attempt) * 2000; // 4s, 8s
-        console.warn(`[GeminiAdapter] ${method} failed with 429, retrying in ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        return this.sendRequest<T>(method, params, attempt + 1);
-      }
-      throw err;
     }
   }
 
@@ -742,10 +613,5 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private emitNdjson(event: GeminiEvent): void {
     const line = JSON.stringify(event) + '\n';
     for (const cb of this.dataCallbacks) cb(line);
-  }
-
-  private writeJson(msg: Record<string, unknown>): void {
-    if (!this.childProcess?.stdin?.writable) return;
-    this.childProcess.stdin.write(JSON.stringify(msg) + '\n');
   }
 }
