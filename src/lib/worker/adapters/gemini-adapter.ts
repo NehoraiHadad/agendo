@@ -28,6 +28,20 @@ import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 let toolUseCounter = 0;
 
 /**
+ * Extract a string message from any thrown value.
+ * The SDK rejects with the raw JSON-RPC error object { code, message } (not an Error
+ * instance) when the agent sends an error response. Without this helper, String(err)
+ * produces "[object Object]".
+ */
+function extractMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as Record<string, unknown>).message);
+  }
+  return String(err);
+}
+
+/**
  * ACP Client implementation. Handles incoming agent requests:
  *  - requestPermission  — tool approval in default/acceptEdits mode
  *  - sessionUpdate      — streaming text, thinking, tool-call events
@@ -372,7 +386,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       await this.loadOrCreateSession(initResult.agentCapabilities, opts, this.sessionId);
     } catch (err) {
       this.modelSwitching = false;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractMessage(err);
       this.emitNdjson({ type: 'gemini:turn-error', message: `Model switch failed: ${message}` });
       return false;
     }
@@ -473,7 +487,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         this.sessionRefCallback?.(this.sessionId);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractMessage(err);
       this.emitNdjson({ type: 'gemini:turn-error', message: `Init failed: ${message}` });
       throw err;
     }
@@ -514,7 +528,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         ),
       ]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractMessage(err);
       const isRetryable =
         (message.includes('429') || message.includes('Rate limit exceeded')) && attempt < 3;
       if (isRetryable) {
@@ -548,7 +562,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         });
         return; // session/load succeeded
       } catch (loadErr) {
-        const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+        const msg = extractMessage(loadErr);
         console.warn(`[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`);
       }
     }
@@ -594,7 +608,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       // Emit synthetic result event so session-process emits agent:result
       this.emitNdjson({ type: 'gemini:turn-complete', result: {} });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractMessage(err);
       // Don't emit error for process exit — onExit handles that
       if (!message.includes('Gemini process exited') && !message.includes('Connection closed')) {
         this.emitNdjson({ type: 'gemini:turn-error', message });
