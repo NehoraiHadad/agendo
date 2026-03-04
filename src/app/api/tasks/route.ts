@@ -15,7 +15,6 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const parentTaskId = url.searchParams.get('parentTaskId') ?? undefined;
   const q = url.searchParams.get('q') ?? undefined;
   const projectId = url.searchParams.get('projectId') ?? undefined;
-  const includeAdHoc = url.searchParams.get('includeAdHoc') === 'true';
 
   const result = await listTasksByStatus({
     status: status ?? undefined,
@@ -24,7 +23,6 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     parentTaskId,
     q,
     projectId,
-    includeAdHoc,
   });
 
   return NextResponse.json({

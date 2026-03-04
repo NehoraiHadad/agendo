@@ -24,7 +24,6 @@ const mockTask = {
   sortOrder: 1500,
   assigneeAgentId: null,
   inputContext: {},
-  isAdHoc: false,
   dueAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),

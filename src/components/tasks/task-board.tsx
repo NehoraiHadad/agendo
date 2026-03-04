@@ -13,7 +13,6 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core';
 import { DragOverlay } from '@dnd-kit/core';
-import { Ghost } from 'lucide-react';
 import { useTaskBoardStore, BOARD_COLUMNS } from '@/lib/store/task-board-store';
 import { TaskColumn } from './task-column';
 import { TaskDetailSheet } from './task-detail-sheet';
@@ -21,7 +20,7 @@ import { TaskCreateDialog } from './task-create-dialog';
 import { TaskDragOverlay } from './task-drag-overlay';
 import { useBoardSse } from '@/hooks/use-board-sse';
 import { toast } from 'sonner';
-import type { TaskStatus, Project, Task } from '@/lib/types';
+import type { TaskStatus, Project } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
 
 interface TaskBoardProps {
@@ -61,15 +60,10 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const projectsById = useTaskBoardStore((s) => s.projectsById);
   const selectedProjectIds = useTaskBoardStore((s) => s.selectedProjectIds);
   const setProjectFilter = useTaskBoardStore((s) => s.setProjectFilter);
-  const showAdHoc = useTaskBoardStore((s) => s.showAdHoc);
-  const setShowAdHoc = useTaskBoardStore((s) => s.setShowAdHoc);
-  const applyServerCreate = useTaskBoardStore((s) => s.applyServerCreate);
-  const purgeAdHocTasks = useTaskBoardStore((s) => s.purgeAdHocTasks);
   const hydrated = useRef(false);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const originalStatusRef = useRef<TaskStatus | null>(null);
-  const adHocLoadedRef = useRef(false);
 
   // Initialize SSE connection
   useBoardSse();
@@ -81,39 +75,6 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
       hydrated.current = true;
     }
   }, [initialData, initialCursors, initialProjects, hydrate, hydrateProjects]);
-
-  // Sync ad-hoc visibility: fetch on enable, purge on disable
-  useEffect(() => {
-    if (!showAdHoc) {
-      purgeAdHocTasks();
-      adHocLoadedRef.current = false;
-      return;
-    }
-
-    if (adHocLoadedRef.current) return;
-    adHocLoadedRef.current = true;
-
-    async function fetchAdHoc() {
-      try {
-        const results = await Promise.all(
-          BOARD_COLUMNS.map((status) =>
-            fetch(`/api/tasks?status=${status}&includeAdHoc=true&limit=100`)
-              .then((r) => r.json())
-              .then((j) => (j.data as Task[]) ?? []),
-          ),
-        );
-        for (const tasks of results) {
-          for (const task of tasks) {
-            if ((task as TaskBoardItem).isAdHoc) applyServerCreate(task);
-          }
-        }
-      } catch {
-        // silently ignore — ad-hoc view is best-effort
-      }
-    }
-
-    void fetchAdHoc();
-  }, [showAdHoc, applyServerCreate, purgeAdHocTasks]);
 
   const toggleProjectFilter = useCallback(
     (projectId: string) => {
@@ -261,21 +222,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
         <h1 className="text-xl font-semibold sm:text-2xl">Tasks</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowAdHoc(!showAdHoc)}
-            title={showAdHoc ? 'Hide ad-hoc tasks' : 'Show ad-hoc tasks (chat scratch tasks)'}
-            className={`flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-              showAdHoc
-                ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                : 'border-white/[0.06] text-muted-foreground/50 hover:border-white/10 hover:text-muted-foreground'
-            }`}
-          >
-            <Ghost className="h-3 w-3" />
-            Ad-hoc
-          </button>
-          <TaskCreateDialog />
-        </div>
+        <TaskCreateDialog />
       </div>
 
       {hasProjects && (

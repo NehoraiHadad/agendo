@@ -191,29 +191,22 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
 
           {/* Footer chips */}
           <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-            {/* Priority / Ad-hoc chip */}
-            {task.isAdHoc ? (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400/70 bg-amber-500/[0.07] border border-amber-500/15 rounded-full px-2 py-0.5 font-medium">
-                Ad-hoc
-              </span>
-            ) : (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border',
-                  {
-                    'text-red-400 bg-red-500/[0.08] border-red-500/20': task.priority === 1,
-                    'text-orange-400 bg-orange-500/[0.08] border-orange-500/20':
-                      task.priority === 2,
-                    'text-blue-400 bg-blue-500/[0.07] border-blue-500/15': task.priority === 3,
-                    'text-zinc-500 bg-zinc-500/[0.06] border-zinc-600/15': task.priority === 4,
-                    'text-zinc-600 bg-transparent border-zinc-700/15': task.priority === 5,
-                  },
-                )}
-              >
-                <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', pCfg.dotColor)} />
-                {pCfg.label}
-              </span>
-            )}
+            {/* Priority chip */}
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border',
+                {
+                  'text-red-400 bg-red-500/[0.08] border-red-500/20': task.priority === 1,
+                  'text-orange-400 bg-orange-500/[0.08] border-orange-500/20': task.priority === 2,
+                  'text-blue-400 bg-blue-500/[0.07] border-blue-500/15': task.priority === 3,
+                  'text-zinc-500 bg-zinc-500/[0.06] border-zinc-600/15': task.priority === 4,
+                  'text-zinc-600 bg-transparent border-zinc-700/15': task.priority === 5,
+                },
+              )}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', pCfg.dotColor)} />
+              {pCfg.label}
+            </span>
 
             {/* Assignee chip */}
             {task.assigneeAgentId && (

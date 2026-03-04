@@ -41,9 +41,6 @@ interface TaskBoardState {
 
   /** Project IDs to show (empty = show all) */
   selectedProjectIds: string[];
-
-  /** Whether ad-hoc tasks are visible on the board */
-  showAdHoc: boolean;
 }
 
 interface TaskBoardActions {
@@ -94,12 +91,6 @@ interface TaskBoardActions {
 
   /** Set which project IDs are selected for filtering (empty = all) */
   setProjectFilter: (projectIds: string[]) => void;
-
-  /** Show or hide ad-hoc tasks on the board */
-  setShowAdHoc: (show: boolean) => void;
-
-  /** Remove all ad-hoc tasks from the board store (called after each SSE snapshot) */
-  purgeAdHocTasks: () => void;
 }
 
 type TaskBoardStore = TaskBoardState & TaskBoardActions;
@@ -143,7 +134,6 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   pendingOptimistic: new Set(),
   projectsById: {},
   selectedProjectIds: [],
-  showAdHoc: false,
 
   hydrate: (tasksByStatus, cursors) => {
     const tasksById: Record<string, TaskBoardItem> = {};
@@ -299,9 +289,6 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       const merged = toTaskBoardItem(task, oldTask);
 
       if (!oldTask) {
-        // New task from SSE: only add if not ad-hoc (ad-hoc tasks are managed separately)
-        const t = task as Partial<TaskBoardItem>;
-        if (t.isAdHoc) return prev;
         return {
           tasksById: { ...prev.tasksById, [task.id]: merged },
           columns: {
@@ -361,32 +348,5 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
   setProjectFilter: (projectIds) => {
     set({ selectedProjectIds: projectIds });
-  },
-
-  setShowAdHoc: (show) => {
-    set({ showAdHoc: show });
-  },
-
-  purgeAdHocTasks: () => {
-    set((state) => {
-      const adHocIds = new Set(
-        Object.values(state.tasksById)
-          .filter((t) => t.isAdHoc)
-          .map((t) => t.id),
-      );
-      if (adHocIds.size === 0) return state;
-
-      const newTasksById = Object.fromEntries(
-        Object.entries(state.tasksById).filter(([id]) => !adHocIds.has(id)),
-      );
-      const newColumns = Object.fromEntries(
-        BOARD_COLUMNS.map((status) => [
-          status,
-          state.columns[status].filter((id) => !adHocIds.has(id)),
-        ]),
-      ) as Record<TaskStatus, string[]>;
-
-      return { tasksById: newTasksById, columns: newColumns };
-    });
   },
 }));

@@ -188,8 +188,6 @@ export const tasks = pgTable(
       onDelete: 'set null',
     }),
     inputContext: jsonb('input_context').notNull().$type<TaskInputContext>().default({}),
-    // True for tasks auto-created by quick-launch (not user-created). Excluded from Kanban by default.
-    isAdHoc: boolean('is_ad_hoc').notNull().default(false),
     dueAt: timestamp('due_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
