@@ -7,6 +7,7 @@ import { Loader2, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -247,8 +248,8 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           Start Session
         </Button>
       </DialogTrigger>
-      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-md">
-        <DialogHeader className="shrink-0">
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
           <DialogTitle>Start Session</DialogTitle>
           <DialogDescription>
             The agent will work on this task. Edit the prompt below if needed.
@@ -256,7 +257,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-4">
-          <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+          <DialogBody className="space-y-4">
             {!agentIdProp && (
               <div className="space-y-2">
                 <Label htmlFor="session-agent">Agent</Label>
@@ -325,11 +326,11 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                 Pre-filled from the task. Edit freely before starting.
               </p>
             </div>
-          </div>
+          </DialogBody>
 
           {error && <p className="shrink-0 text-sm text-destructive">{error}</p>}
 
-          <DialogFooter className="shrink-0">
+          <DialogFooter>
             <Button type="submit" disabled={!canSubmit}>
               {isSubmitting ? (
                 <Loader2 className="size-4 animate-spin" />

@@ -14,7 +14,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
@@ -120,7 +126,7 @@ export function QuickLaunchDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-5 pt-2">
+        <DialogBody className="flex flex-col gap-5">
           {/* Agent picker */}
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground uppercase tracking-wider">Agent</Label>
@@ -197,24 +203,24 @@ export function QuickLaunchDialog({
               className="min-h-[80px] resize-none"
             />
           </div>
+        </DialogBody>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <Button
-            onClick={() => void handleLaunch()}
-            disabled={!selectedAgentId || isLaunching}
-            className="w-full"
-          >
-            {isLaunching ? (
-              <>
-                <Loader2 className="size-4 mr-2 animate-spin" />
-                Launching…
-              </>
-            ) : (
-              'Launch →'
-            )}
-          </Button>
-        </div>
+        <Button
+          onClick={() => void handleLaunch()}
+          disabled={!selectedAgentId || isLaunching}
+          className="w-full"
+        >
+          {isLaunching ? (
+            <>
+              <Loader2 className="size-4 mr-2 animate-spin" />
+              Launching…
+            </>
+          ) : (
+            'Launch →'
+          )}
+        </Button>
       </DialogContent>
     </Dialog>
   );
