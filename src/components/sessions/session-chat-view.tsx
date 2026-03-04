@@ -883,6 +883,8 @@ interface SessionChatViewProps {
   currentStatus: SessionStatus | null | string;
   initialPrompt?: string | null;
   agentBinaryPath?: string;
+  /** Agent slug (e.g. 'codex-cli-1') — enables Codex-specific controls. */
+  agentSlug?: string;
   /** When true, renders a compact version for workspace panels (smaller text, less padding) */
   compact?: boolean;
   /** When true (compact mode only), panel grows with content instead of fixed height */
@@ -895,6 +897,7 @@ export function SessionChatView({
   currentStatus,
   initialPrompt,
   agentBinaryPath,
+  agentSlug,
   compact = false,
   autoGrow = false,
 }: SessionChatViewProps) {
@@ -929,6 +932,41 @@ export function SessionChatView({
       setIsInterrupting(false);
     }
   }, [sessionId, isInterrupting]);
+
+  const isCodex = agentSlug === 'codex-cli-1';
+  const [steerText, setSteerText] = useState('');
+  const [isSteering, setIsSteering] = useState(false);
+  const [isRollingBack, setIsRollingBack] = useState(false);
+
+  const handleSteer = useCallback(async () => {
+    const msg = steerText.trim();
+    if (!msg || isSteering) return;
+    setIsSteering(true);
+    try {
+      await fetch(`/api/sessions/${sessionId}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'steer', message: msg }),
+      });
+      setSteerText('');
+    } finally {
+      setIsSteering(false);
+    }
+  }, [sessionId, steerText, isSteering]);
+
+  const handleRollback = useCallback(async () => {
+    if (isRollingBack) return;
+    setIsRollingBack(true);
+    try {
+      await fetch(`/api/sessions/${sessionId}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'rollback', numTurns: 1 }),
+      });
+    } finally {
+      setIsRollingBack(false);
+    }
+  }, [sessionId, isRollingBack]);
 
   const handleSent = useCallback(
     (text: string, imageDataUrl?: string) => {
@@ -1232,6 +1270,48 @@ export function SessionChatView({
                   <Square className="size-3 fill-current" />
                 )}
                 Stop
+              </button>
+            </div>
+          )}
+          {/* Codex steer input — inject guidance mid-turn */}
+          {isActive && isCodex && (
+            <div className="flex items-center gap-1.5 px-3 pt-1.5">
+              <input
+                type="text"
+                value={steerText}
+                onChange={(e) => setSteerText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSteer();
+                  }
+                }}
+                placeholder="Steer (inject guidance mid-turn)…"
+                className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-white/[0.15]"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSteer()}
+                disabled={!steerText.trim() || isSteering}
+                className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded px-2 py-1 transition-colors disabled:opacity-40"
+              >
+                {isSteering ? <Loader2 className="size-3 animate-spin" /> : null}
+                Steer
+              </button>
+            </div>
+          )}
+          {/* Codex rollback button — undo last turn (conversation only) */}
+          {currentStatus === 'awaiting_input' && isCodex && (
+            <div className="flex justify-end px-3 pt-1">
+              <button
+                type="button"
+                onClick={() => void handleRollback()}
+                disabled={isRollingBack}
+                title="Undo last turn. File changes are NOT reverted — use git diff / git checkout to revert files manually."
+                className="flex items-center gap-1 text-[11px] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.04] rounded px-2 py-0.5 transition-colors disabled:opacity-40"
+              >
+                {isRollingBack ? <Loader2 className="size-3 animate-spin" /> : <span>↩</span>}
+                Undo last turn
               </button>
             </div>
           )}
