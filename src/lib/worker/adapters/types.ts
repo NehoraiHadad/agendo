@@ -4,7 +4,13 @@ export type PermissionDecision =
   | 'allow'
   | 'deny'
   | 'allow-session'
-  | { behavior: 'allow'; updatedInput: Record<string, unknown> };
+  | {
+      behavior: 'allow';
+      /** Modified tool input to send back to the agent. */
+      updatedInput?: Record<string, unknown>;
+      /** Codex only: remember approval rule for this command pattern in the session. */
+      rememberForSession?: boolean;
+    };
 
 /** Full context of a tool approval request, passed to the ApprovalHandler. */
 export interface ApprovalRequest {
@@ -65,6 +71,9 @@ export interface SpawnOpts {
   /** Claude JSONL UUID to pass as --resume-session-at. Truncates conversation
    *  history at that assistant message when combined with --fork-session. */
   resumeSessionAt?: string;
+  /** System-level instructions injected before the user's initial message.
+   *  For Codex app-server: passed as `developerInstructions` in thread/start. */
+  developerInstructions?: string;
 }
 
 export interface ManagedProcess {
@@ -102,6 +111,10 @@ export interface AgentAdapter {
   setModel?(model: string): Promise<boolean>;
   /** Query MCP server connection status via control_request. */
   getMcpStatus?(): Promise<Record<string, unknown> | null>;
+  /** Inject a steering message into the current running turn (Codex only). */
+  steer?(message: string): Promise<void>;
+  /** Rollback the last N turns in the thread (Codex only). */
+  rollback?(numTurns?: number): Promise<void>;
   /** Map a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
    *  When present, session-process.ts delegates to this instead of mapClaudeJsonToEvents. */
   mapJsonToEvents?(

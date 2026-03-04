@@ -98,6 +98,14 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private model: string | undefined;
   /** MCP servers to inject via config/batchWrite during initialization. */
   private mcpServers: AcpMcpServer[] | undefined;
+  /** System-level instructions injected via developerInstructions in thread/start. */
+  private developerInstructions: string | undefined;
+  /** Token usage from thread/tokenUsage/updated notification. */
+  private tokenUsage: { used: number; limit: number } | null = null;
+  /** Whether a context compaction is currently in progress. */
+  private compacting = false;
+  /** Whether the current turn is active (set on turn/started, cleared on turn/completed). */
+  private turnActive = false;
 
   /** JSON-RPC pending requests keyed by request ID. */
   private pending = new Map<RpcId, PendingRequest>();
@@ -116,6 +124,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.permissionMode = opts.permissionMode;
     this.model = opts.model;
     this.mcpServers = opts.mcpServers;
+    this.developerInstructions = opts.developerInstructions;
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -132,6 +141,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.permissionMode = opts.permissionMode;
     this.model = opts.model;
     this.mcpServers = opts.mcpServers;
+    this.developerInstructions = opts.developerInstructions;
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -287,6 +297,9 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         sandbox: getSandboxMode(opts.permissionMode),
         model: opts.model ?? null,
         persistExtendedHistory: false,
+        ...(this.developerInstructions
+          ? { developerInstructions: this.developerInstructions }
+          : {}),
       });
       const thread = (result.thread as Record<string, unknown>) ?? result;
       this.threadId = resumeThreadId;
@@ -308,6 +321,9 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         sandbox: getSandboxMode(opts.permissionMode),
         experimentalRawEvents: false,
         persistExtendedHistory: false,
+        ...(this.developerInstructions
+          ? { developerInstructions: this.developerInstructions }
+          : {}),
       });
       const thread = result.thread as Record<string, unknown>;
       this.threadId = thread.id as string;
@@ -430,6 +446,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       case 'turn/started': {
         const turn = (params.turn as Record<string, unknown>) ?? {};
         this.currentTurnId = turn.id as string;
+        this.turnActive = true;
         this.thinkingCallback?.(true);
         this.emitSynthetic({ type: 'as:turn.started' });
         break;
@@ -437,6 +454,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
       case 'turn/completed': {
         this.currentTurnId = null;
+        this.turnActive = false;
         this.thinkingCallback?.(false);
         const turn = params.turn as Record<string, unknown>;
         const status = (turn?.status as string) ?? 'completed';
@@ -473,6 +491,44 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         break;
       }
 
+      case 'item/commandExecution/outputDelta': {
+        const delta = params.delta as string;
+        if (delta) this.emitSynthetic({ type: 'as:cmd-delta', text: delta });
+        break;
+      }
+
+      case 'item/plan/delta': {
+        const delta = params.delta as string;
+        if (delta) this.emitSynthetic({ type: 'as:plan-delta', text: delta });
+        break;
+      }
+
+      case 'thread/tokenUsage/updated': {
+        const usage = params.usage as {
+          inputTokenCount?: number;
+          outputTokenCount?: number;
+          cacheReadTokenCount?: number;
+          cacheWriteTokenCount?: number;
+        } | null;
+        if (usage) {
+          const used =
+            (usage.inputTokenCount ?? 0) +
+            (usage.outputTokenCount ?? 0) +
+            (usage.cacheReadTokenCount ?? 0) +
+            (usage.cacheWriteTokenCount ?? 0);
+          // o4-mini context window is 200k tokens; use 200000 as the limit
+          // if Codex doesn't report an explicit limit.
+          const limit = 200000;
+          this.tokenUsage = { used, limit };
+          if (used / limit >= 0.8) {
+            this.triggerCompaction().catch((err: unknown) => {
+              console.error('[codex-app-server] compaction error:', err);
+            });
+          }
+        }
+        break;
+      }
+
       case 'error': {
         const errParams = params as { message?: string; error?: { message?: string } };
         const message =
@@ -484,7 +540,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       }
 
       // Ignore: codex/event/* are duplicate wrapped versions of bare notifications
-      // Ignore: thread/tokenUsage/updated, account/rateLimits/updated, etc.
+      // Ignore: account/rateLimits/updated, etc.
       default:
         break;
     }
@@ -500,8 +556,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     params: Record<string, unknown>,
   ): Promise<void> {
     if (method === 'item/commandExecution/requestApproval') {
-      const decision = await this.handleCommandApproval(params);
-      this.rpcRespond(id, { decision });
+      const result = await this.handleCommandApproval(params);
+      this.rpcRespond(id, result);
       return;
     }
 
@@ -522,8 +578,10 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.rpcRespond(id, { decision: 'decline' });
   }
 
-  private async handleCommandApproval(params: Record<string, unknown>): Promise<string> {
-    if (!this.approvalHandler) return 'accept';
+  private async handleCommandApproval(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!this.approvalHandler) return { decision: 'accept' };
 
     const command =
       (params.command as string | null) ??
@@ -531,6 +589,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       'unknown';
     const approvalId =
       (params.approvalId as string | null) ?? (params.itemId as string) ?? String(Date.now());
+    const proposedAmendment = params.proposedExecpolicyAmendment as string[] | null;
 
     let decision: PermissionDecision;
     try {
@@ -541,13 +600,28 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
           command,
           cwd: params.cwd as string,
           reason: params.reason as string | null,
+          proposedExecpolicyAmendment: proposedAmendment,
         },
       });
     } catch {
-      return 'decline';
+      return { decision: 'decline' };
     }
 
-    return mapDecisionToCodex(decision);
+    // acceptWithExecpolicyAmendment: remember the rule for this command pattern
+    if (
+      typeof decision === 'object' &&
+      'behavior' in decision &&
+      decision.behavior === 'allow' &&
+      'rememberForSession' in decision &&
+      decision.rememberForSession
+    ) {
+      const amendment = proposedAmendment ?? [command];
+      return {
+        decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } },
+      };
+    }
+
+    return { decision: mapDecisionToCodex(decision) };
   }
 
   private async handleFileChangeApproval(params: Record<string, unknown>): Promise<string> {
@@ -647,6 +721,42 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       answers[questionId] = { answers: [text] };
     }
     return answers;
+  }
+
+  // -------------------------------------------------------------------------
+  // Public: steer + rollback (Codex-specific controls)
+  // -------------------------------------------------------------------------
+
+  async steer(message: string): Promise<void> {
+    const threadId = this.threadId;
+    const turnId = this.currentTurnId;
+    if (!threadId || !turnId || !this.turnActive) return;
+    await this.rpcCall('turn/steer', {
+      threadId,
+      expectedTurnId: turnId,
+      input: [{ type: 'text', text: message, text_elements: [] }],
+    });
+  }
+
+  async rollback(numTurns = 1): Promise<void> {
+    const threadId = this.threadId;
+    if (!threadId) return;
+    await this.rpcCall('thread/rollback', { threadId, numTurns }, 15000);
+    this.emitSynthetic({
+      type: 'as:info',
+      message: `Rolled back ${numTurns} turn(s). File changes were NOT reverted.`,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: context compaction
+  // -------------------------------------------------------------------------
+
+  private async triggerCompaction(): Promise<void> {
+    if (this.compacting || !this.threadId) return;
+    this.compacting = true;
+    this.emitSynthetic({ type: 'as:info', message: 'Context window at 80% — compacting…' });
+    await this.rpcCall('thread/compact/start', { threadId: this.threadId }, 30000);
   }
 
   // -------------------------------------------------------------------------
@@ -767,6 +877,12 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
           id: item.id as string,
           text: (item.text as string) ?? '',
         };
+
+      case 'contextCompaction':
+        // Reset compaction state when the compaction item completes.
+        this.compacting = false;
+        this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
+        return { type: 'contextCompaction', id: item.id as string };
 
       default:
         return null;

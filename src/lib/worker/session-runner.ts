@@ -172,6 +172,7 @@ export async function runSession(
   const hasMcp =
     agent.mcpEnabled &&
     (binaryName === 'claude' || binaryName === 'gemini' || binaryName === 'codex');
+  let codexDeveloperInstructions: string | undefined;
   if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
     let preamble: string;
@@ -198,7 +199,13 @@ export async function runSession(
         `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
         `---\n`;
     }
-    prompt = preamble + prompt;
+    if (binaryName === 'codex') {
+      // Codex: inject preamble as developerInstructions (system-level, not a user turn)
+      // instead of prepending to the prompt. This keeps the user's initial message clean.
+      codexDeveloperInstructions = preamble;
+    } else {
+      prompt = preamble + prompt;
+    }
   }
 
   // Phase F: On cold resume, prepend a summary of recent task progress notes so
@@ -289,6 +296,7 @@ export async function runSession(
     initialImage,
     userResumeText,
     resumeSessionAt,
+    codexDeveloperInstructions,
   );
 
   // Wait until the session releases its pg-boss slot (first awaiting_input or
