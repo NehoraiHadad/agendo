@@ -40,7 +40,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
     .values({
       taskId: input.taskId ?? null,
       projectId: projectId ?? null,
-      kind: input.kind ?? 'execution',
+      kind: input.kind ?? 'conversation',
       agentId: input.agentId,
       capabilityId: input.capabilityId,
       idleTimeoutSec: input.idleTimeoutSec ?? 600,
@@ -117,6 +117,48 @@ export async function forkSession(
   }
 
   return fork;
+}
+
+/**
+ * Create a fresh child session for plan implementation.
+ *
+ * Unlike forkSession(), this does NOT carry over the parent's sessionRef —
+ * the child starts with a blank slate (no --resume) so Claude has no memory
+ * of the plan mode conversation. Used by the "Restart fresh" ExitPlanMode action.
+ *
+ * The caller is responsible for calling enqueueSession() when the time is right
+ * (immediately for idle parents; from the worker's onExit for active parents).
+ */
+export async function restartFreshFromSession(
+  parentId: string,
+  planContent: string | null,
+  permissionMode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
+): Promise<Session> {
+  const parent = await getSession(parentId);
+  const initialPrompt = planContent
+    ? `Implement the following plan:\n\n${planContent}`
+    : 'Continue implementing the plan from the previous conversation.';
+
+  const [newSession] = await db
+    .insert(sessions)
+    .values({
+      taskId: parent.taskId,
+      projectId: parent.projectId,
+      kind: parent.kind,
+      agentId: parent.agentId,
+      capabilityId: parent.capabilityId,
+      idleTimeoutSec: parent.idleTimeoutSec,
+      status: 'idle',
+      permissionMode,
+      allowedTools: parent.allowedTools as string[],
+      ...(parent.model ? { model: parent.model } : {}),
+      initialPrompt,
+      parentSessionId: parentId,
+      // No forkSourceRef — fresh conversation, no --resume
+    })
+    .returning();
+
+  return newSession;
 }
 
 export interface SessionWithAgent extends Session {
