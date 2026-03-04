@@ -8,6 +8,9 @@ import type {
 } from '@/lib/worker/adapters/types';
 import { AsyncLock } from '@/lib/utils/async-lock';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('claude-adapter');
 
 export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
@@ -325,9 +328,7 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
         response: innerResponse,
       },
     });
-    console.log(
-      `[claude-adapter] tool-approval: tool=${toolName} decision=${JSON.stringify(decision)} behavior=${behavior} payload=${payload}`,
-    );
+    log.debug({ toolName, decision, behavior }, 'tool-approval response');
     if (stdin?.writable) {
       stdin.write(payload + '\n');
     }
@@ -439,13 +440,14 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
             const req = msg.request as Record<string, unknown>;
             if (req?.subtype === 'can_use_tool') {
               this.handleToolApprovalRequest(msg).catch((err: unknown) => {
-                console.error('[claude-adapter] handleToolApprovalRequest failed:', err);
+                log.error({ err }, 'handleToolApprovalRequest failed');
               });
             } else {
               // Log unknown control_request subtypes so we can discover
               // new abstract mechanisms (e.g. AskUserQuestion, ExitPlanMode).
-              console.log(
-                `[claude-adapter] unknown control_request subtype="${String(req?.subtype)}" payload=${JSON.stringify(msg).slice(0, 300)}`,
+              log.debug(
+                { subtype: String(req?.subtype), payload: JSON.stringify(msg).slice(0, 300) },
+                'unknown control_request subtype',
               );
             }
           }

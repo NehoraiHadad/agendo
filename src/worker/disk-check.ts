@@ -1,5 +1,8 @@
 import { statfs } from 'node:fs/promises';
 import { mkdirSync, existsSync } from 'node:fs';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('disk-check');
 
 const MIN_FREE_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
 
@@ -17,6 +20,6 @@ export async function checkDiskSpace(logDir: string): Promise<boolean> {
   const freeBytes = stats.bavail * stats.bsize;
   const freeGB = (freeBytes / (1024 * 1024 * 1024)).toFixed(2);
 
-  console.log(`[worker] Disk space available: ${freeGB} GB`);
+  log.info({ freeGB }, 'Disk space available');
   return freeBytes >= MIN_FREE_BYTES;
 }

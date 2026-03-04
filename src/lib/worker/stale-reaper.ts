@@ -2,6 +2,9 @@ import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('stale-reaper');
 
 function killPid(pid: number): void {
   try {
@@ -79,15 +82,16 @@ export class StaleReaper {
         const row = staleSessions[i];
         const wasReaped = reaped[i].length > 0;
         if (wasReaped && row.pid != null) {
-          console.log(`[stale-reaper] Killing orphaned PID ${row.pid} for session ${row.id}`);
+          log.info({ pid: row.pid, sessionId: row.id }, 'Killing orphaned PID for session');
           killPid(row.pid);
         }
       }
 
       const actuallyReaped = reaped.filter((r) => r.length > 0).length;
       if (actuallyReaped < staleSessions.length) {
-        console.log(
-          `[stale-reaper] Skipped ${staleSessions.length - actuallyReaped} session(s) — heartbeat refreshed (re-claimed)`,
+        log.info(
+          { skipped: staleSessions.length - actuallyReaped },
+          'Skipped sessions — heartbeat refreshed (re-claimed)',
         );
       }
     }

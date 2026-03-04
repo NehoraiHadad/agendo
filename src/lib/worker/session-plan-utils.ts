@@ -9,6 +9,9 @@
 import { join } from 'node:path';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { db } from '@/lib/db';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('session-plan-utils');
 import { sessions, plans } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { Session } from '@/lib/types';
@@ -29,11 +32,9 @@ export async function capturePlanFilePath(sessionId: string): Promise<void> {
     if (files.length === 0) return;
     const planFilePath = join(homePlansDir, files[0].name);
     await db.update(sessions).set({ planFilePath }).where(eq(sessions.id, sessionId));
-    console.log(
-      `[session-plan-utils] Stored plan_file_path for session ${sessionId}: ${planFilePath}`,
-    );
+    log.info({ sessionId, planFilePath }, 'Stored plan_file_path');
   } catch (err) {
-    console.warn(`[session-plan-utils] Failed to capture plan file path:`, err);
+    log.warn({ err }, 'Failed to capture plan file path');
   }
 }
 
@@ -49,12 +50,10 @@ export async function readPlanFromFile(sessionId: string): Promise<string | null
     if (!row?.planFilePath) return null;
     const content = readFileSync(row.planFilePath, 'utf-8').trim();
     if (!content) return null;
-    console.log(
-      `[session-plan-utils] Read plan from ${row.planFilePath} (${content.length} chars)`,
-    );
+    log.info({ planFilePath: row.planFilePath, chars: content.length }, 'Read plan from file');
     return content;
   } catch (err) {
-    console.warn(`[session-plan-utils] Failed to read plan from DB path:`, err);
+    log.warn({ err }, 'Failed to read plan from DB path');
     return null;
   }
 }
@@ -68,15 +67,13 @@ export async function readPlanFromFile(sessionId: string): Promise<string | null
 export async function savePlanFromSession(session: Session): Promise<void> {
   const content = await readPlanFromFile(session.id);
   if (!content) {
-    console.warn(`[session-plan-utils] No plan content found for session ${session.id}`);
+    log.warn({ sessionId: session.id }, 'No plan content found for session');
     return;
   }
 
   const projectId = session.projectId;
   if (!projectId) {
-    console.warn(
-      `[session-plan-utils] Session ${session.id} has no projectId — skipping plan save`,
-    );
+    log.warn({ sessionId: session.id }, 'Session has no projectId — skipping plan save');
     return;
   }
 
@@ -101,8 +98,9 @@ export async function savePlanFromSession(session: Session): Promise<void> {
       .update(plans)
       .set({ content, title, status: 'ready', updatedAt: new Date() })
       .where(eq(plans.id, existingPlan.id));
-    console.log(
-      `[session-plan-utils] Updated plan ${existingPlan.id} from session ${session.id} (${content.length} chars)`,
+    log.info(
+      { planId: existingPlan.id, sessionId: session.id, chars: content.length },
+      'Updated plan from session',
     );
     return;
   }
@@ -120,7 +118,8 @@ export async function savePlanFromSession(session: Session): Promise<void> {
     })
     .returning({ id: plans.id });
 
-  console.log(
-    `[session-plan-utils] Created plan ${plan.id} from session ${session.id} (${content.length} chars)`,
+  log.info(
+    { planId: plan.id, sessionId: session.id, chars: content.length },
+    'Created plan from session',
   );
 }

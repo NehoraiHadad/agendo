@@ -10,6 +10,9 @@
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { TeamInboxMonitor } from '@/lib/worker/team-inbox-monitor';
 import { TeamTaskMonitor, type TeamTask } from '@/lib/worker/team-task-monitor';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('session-team-manager');
 
 export interface SessionTeamManagerCallbacks {
   /** Emit an event to the session channel. */
@@ -84,9 +87,7 @@ export class SessionTeamManager {
     }
     if (event.type === 'agent:tool-start' && event.toolName === 'TeamDelete') {
       if (this.monitor) {
-        console.log(
-          `[session-team-manager] TeamDelete detected — detaching monitor for session ${this.cb.sessionId}`,
-        );
+        log.info({ sessionId: this.cb.sessionId }, 'TeamDelete detected, detaching monitor');
         void this.cb.emitEvent({
           type: 'system:info',
           message: 'Team deleted — normal idle timeout restored.',
@@ -170,7 +171,7 @@ export class SessionTeamManager {
     const toInject = this.pendingInjections.splice(0);
     for (const text of toInject) {
       this.cb.pushMessage(text).catch((err: unknown) => {
-        console.error(`[session-team-manager] Failed to inject queued team message:`, err);
+        log.error({ err }, 'Failed to inject queued team message');
       });
     }
   }
@@ -180,9 +181,7 @@ export class SessionTeamManager {
     const teamName = teamNameHint ?? TeamInboxMonitor.findTeamForSession(this.cb.sessionId);
     if (!teamName) return false;
 
-    console.log(
-      `[session-team-manager] Team detected: "${teamName}" for session ${this.cb.sessionId}`,
-    );
+    log.info({ teamName, sessionId: this.cb.sessionId }, 'Team detected');
     this.monitor = new TeamInboxMonitor(teamName);
     this.taskMonitor = new TeamTaskMonitor(teamName);
 
@@ -253,23 +252,18 @@ export class SessionTeamManager {
         const teamText = `[Message from teammate ${msg.from}]:\n${msg.text}`;
         if (this.cb.getStatus() === 'awaiting_input') {
           this.cb.pushMessage(teamText).catch((err: unknown) => {
-            console.error(
-              `[session-team-manager] Failed to inject team message from ${msg.from}:`,
-              err,
-            );
+            log.error({ err, from: msg.from }, 'Failed to inject team message');
           });
         } else {
           this.pendingInjections.push(teamText);
-          console.log(
-            `[session-team-manager] Queued team message from ${msg.from} (status=${this.cb.getStatus()})`,
-          );
+          log.debug({ from: msg.from, status: this.cb.getStatus() }, 'Queued team message');
         }
       }
 
       // Check if this shutdown_approved completes the full set.
       if (msg.isStructured && msg.structuredPayload?.type === 'shutdown_approved') {
         if (this.monitor?.isTeamDisbanded()) {
-          console.log(`[session-team-manager] Team disbanded for session ${this.cb.sessionId}`);
+          log.info({ sessionId: this.cb.sessionId }, 'Team disbanded');
           void this.cb.emitEvent({
             type: 'system:info',
             message: 'All teammates shut down — normal idle timeout restored.',

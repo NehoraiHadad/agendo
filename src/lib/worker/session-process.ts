@@ -2,6 +2,9 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('session-process');
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { config } from '@/lib/config';
@@ -246,14 +249,14 @@ export class SessionProcess {
       .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
 
     if (!claimed) {
-      console.log(`[session-process] Session ${this.session.id} already claimed — skipping`);
+      log.info({ sessionId: this.session.id }, 'Session already claimed — skipping');
       // Resolve futures so callers don't hang indefinitely.
       this.slotReleaseFuture.resolve();
       this.exitFuture.resolve(null);
       return;
     }
 
-    console.log(`[session-process] claimed session ${this.session.id} workerId=${this.workerId}`);
+    log.info({ sessionId: this.session.id, workerId: this.workerId }, 'Session claimed');
 
     // Continue seq from wherever the previous session run left off so that
     // event IDs remain monotonically increasing across resumes and the SSE
@@ -272,10 +275,7 @@ export class SessionProcess {
       channelName('agendo_control', this.session.id),
       (payload) => {
         this.onControl(payload).catch((err: unknown) => {
-          console.error(
-            `[session-process] Control handler error for session ${this.session.id}:`,
-            err,
-          );
+          log.error({ err, sessionId: this.session.id }, 'Control handler error');
         });
       },
     );
@@ -361,10 +361,7 @@ export class SessionProcess {
         .set({ sessionRef: ref })
         .where(eq(sessions.id, this.session.id))
         .catch((err: unknown) => {
-          console.error(
-            `[session-process] Failed to persist sessionRef for session ${this.session.id}:`,
-            err,
-          );
+          log.error({ err, sessionId: this.session.id }, 'Failed to persist sessionRef');
         });
     });
 
@@ -511,19 +508,14 @@ export class SessionProcess {
                     })
                     .where(eq(sessions.id, this.session.id))
                     .catch((err: unknown) => {
-                      console.error(
-                        `[session-process] cost stats update failed for session ${this.session.id}:`,
-                        err,
-                      );
+                      log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
                     });
                 },
               });
         } catch (mapErr) {
-          console.warn(
-            `[session-process] mapJsonToEvents error for session ${this.session.id}:`,
-            mapErr,
-            'line:',
-            trimmed.slice(0, 200),
+          log.warn(
+            { err: mapErr, sessionId: this.session.id, line: trimmed.slice(0, 200) },
+            'mapJsonToEvents error',
           );
           continue;
         }
@@ -617,10 +609,7 @@ export class SessionProcess {
               })
               .where(eq(sessions.id, this.session.id))
               .catch((err: unknown) => {
-                console.error(
-                  `[session-process] web tool usage update failed for session ${this.session.id}:`,
-                  err,
-                );
+                log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
               });
           }
 
@@ -635,10 +624,7 @@ export class SessionProcess {
       } catch (err) {
         // Event emission failed (transient DB/publish error). Log but don't
         // surface raw JSON to the user — it would appear as a broken UI element.
-        console.error(
-          `[session-process] Failed to emit event for session ${this.session.id}:`,
-          err,
-        );
+        log.error({ err, sessionId: this.session.id }, 'Failed to emit event');
       }
     }
   }
@@ -652,7 +638,7 @@ export class SessionProcess {
     try {
       control = JSON.parse(payload) as AgendoControl;
     } catch {
-      console.warn(`[session-process] Malformed control payload for session ${this.session.id}`);
+      log.warn({ sessionId: this.session.id }, 'Malformed control payload');
       return;
     }
 
@@ -675,10 +661,7 @@ export class SessionProcess {
             /* ignore */
           }
         } catch (err) {
-          console.warn(
-            `[session-process] Failed to read image file ${control.imageRef.path}:`,
-            err,
-          );
+          log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
         }
       }
       await this.pushMessage(control.text, image);
@@ -755,7 +738,7 @@ export class SessionProcess {
             control.toolName === 'ExitPlanMode' || control.toolName === 'exit_plan_mode';
           if (isExitPlanMode) {
             savePlanFromSession(this.session).catch((err: unknown) => {
-              console.warn('[session-process] Failed to auto-save plan:', err);
+              log.warn({ err }, 'Failed to auto-save plan');
             });
           }
 
@@ -767,7 +750,7 @@ export class SessionProcess {
                 control.postApprovalMode as 'default' | 'acceptEdits' | 'bypassPermissions',
                 this.makeCtrl(),
               ).catch((err: unknown) => {
-                console.warn('[session-process] post-approval mode change failed:', err);
+                log.warn({ err }, 'post-approval mode change failed');
               });
             }, 500);
           }
@@ -776,7 +759,7 @@ export class SessionProcess {
             setTimeout(
               () => {
                 this.pushMessage('/compact').catch((err: unknown) => {
-                  console.warn('[session-process] post-approval compact failed:', err);
+                  log.warn({ err }, 'post-approval compact failed');
                 });
               },
               control.postApprovalMode ? 2000 : 500,
@@ -786,8 +769,9 @@ export class SessionProcess {
       }
     } else if (control.type === 'tool-result') {
       if (!['active', 'awaiting_input'].includes(this.status)) {
-        console.warn(
-          `[session-process] tool-result ignored — session ${this.session.id} is ${this.status}`,
+        log.warn(
+          { sessionId: this.session.id, status: this.status },
+          'tool-result ignored — wrong session status',
         );
         return;
       }
@@ -798,9 +782,7 @@ export class SessionProcess {
         const questions = this.approvalHandler.takeQuestions(control.requestId);
         resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
       } else {
-        console.warn(
-          `[session-process] answer-question for unknown requestId=${control.requestId}`,
-        );
+        log.warn({ requestId: control.requestId }, 'answer-question for unknown requestId');
       }
     } else if (control.type === 'set-permission-mode') {
       await handleSetPermissionMode(control.mode, ctrl);
@@ -823,8 +805,9 @@ export class SessionProcess {
    */
   async pushMessage(text: string, image?: ImageContent): Promise<void> {
     if (!['active', 'awaiting_input'].includes(this.status)) {
-      console.warn(
-        `[session-process] pushMessage ignored — session ${this.session.id} is ${this.status}`,
+      log.warn(
+        { sessionId: this.session.id, status: this.status },
+        'pushMessage ignored — wrong session status',
       );
       return;
     }
@@ -918,9 +901,7 @@ export class SessionProcess {
       this.teamManager.drainPendingInjections();
 
       const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
-      console.log(
-        `[session-process] awaiting_input session ${this.session.id} elapsed=${elapsedSec}s — slot released`,
-      );
+      log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
       // Session completed a turn — reset the zombie recovery counter so it
       // doesn't count previous restarts against future auto-recovery attempts.
       resetRecoveryCount(this.session.id);
@@ -948,8 +929,9 @@ export class SessionProcess {
     this.exitHandled = true;
 
     const totalSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
-    console.log(
-      `[session-process] exited session ${this.session.id} code=${exitCode ?? 'null'} status=${this.status} total=${totalSec}s`,
+    log.info(
+      { sessionId: this.session.id, exitCode, status: this.status, totalSec },
+      'Session exited',
     );
     // Resolve the slot future in case the process exits before ever reaching
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
@@ -1002,10 +984,7 @@ export class SessionProcess {
       try {
         await recordInterruptionEvent(this.session.taskId, inflight, this.session.agentId);
       } catch (err) {
-        console.warn(
-          `[session-process] Failed to record interruption event for session ${this.session.id}:`,
-          err,
-        );
+        log.warn({ err, sessionId: this.session.id }, 'Failed to record interruption event');
       }
     }
 
@@ -1055,9 +1034,9 @@ export class SessionProcess {
     if (this.modeChangeRestart && this.sessionRef) {
       enqueueSession({ sessionId: this.session.id, resumeRef: this.sessionRef }).catch(
         (err: unknown) => {
-          console.error(
-            `[session-process] Failed to re-enqueue session ${this.session.id} after mode change:`,
-            err,
+          log.error(
+            { err, sessionId: this.session.id },
+            'Failed to re-enqueue session after mode change',
           );
         },
       );
@@ -1069,9 +1048,9 @@ export class SessionProcess {
     // in the tool-approval handler before killing the process.
     if (this.clearContextRestart) {
       enqueueSession({ sessionId: this.session.id }).catch((err: unknown) => {
-        console.error(
-          `[session-process] Failed to re-enqueue session ${this.session.id} after clear-context restart:`,
-          err,
+        log.error(
+          { err, sessionId: this.session.id },
+          'Failed to re-enqueue session after clear-context restart',
         );
       });
     }
@@ -1088,13 +1067,14 @@ export class SessionProcess {
       !this.modeChangeRestart
     ) {
       enqueueSession({ sessionId: this.session.id, resumeRef }).catch((err: unknown) => {
-        console.error(
-          `[session-process] Failed to re-enqueue session ${this.session.id} after mid-turn interruption:`,
-          err,
+        log.error(
+          { err, sessionId: this.session.id },
+          'Failed to re-enqueue session after mid-turn interruption',
         );
       });
-      console.log(
-        `[session-process] Session ${this.session.id} auto-resumed after mid-turn worker restart`,
+      log.info(
+        { sessionId: this.session.id },
+        'Session auto-resumed after mid-turn worker restart',
       );
     }
 

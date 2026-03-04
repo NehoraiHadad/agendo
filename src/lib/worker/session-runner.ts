@@ -4,6 +4,9 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, projects } from '@/lib/db/schema';
 import { config } from '@/lib/config';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('session-runner');
 import { getSession } from '@/lib/services/session-service';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getCapabilityById } from '@/lib/services/capability-service';
@@ -142,7 +145,7 @@ export async function runSession(
     const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity);
     mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-    console.log(`[session-runner] Claude MCP config written for session ${sessionId}`);
+    log.info({ sessionId }, 'Claude MCP config written');
   }
 
   // Phase A2: For Gemini and Codex, inject MCP servers with session identity.
@@ -161,7 +164,7 @@ export async function runSession(
       projectId: resolvedProjectId,
     };
     mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity);
-    console.log(`[session-runner] ${binaryName} MCP injected for session ${sessionId}`);
+    log.info({ sessionId, binaryName }, 'MCP injected for session');
   }
 
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
@@ -269,12 +272,9 @@ export async function runSession(
         } catch {
           /* ignore */
         }
-        console.log(`[session-runner] Loaded pending resume image for session ${sessionId}`);
+        log.info({ sessionId }, 'Loaded pending resume image');
       } catch (err) {
-        console.warn(
-          `[session-runner] Failed to read pending resume image for session ${sessionId}:`,
-          err,
-        );
+        log.warn({ err, sessionId }, 'Failed to read pending resume image');
       }
     }
   }
@@ -306,18 +306,14 @@ export async function runSession(
 
   // Register the live session so the shutdown handler can terminate it gracefully.
   liveSessionProcs.set(sessionId, sessionProc);
-  console.log(
-    `[session-runner] slot released for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
-  );
+  log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot released for session');
 
   // Wire exit cleanup: remove from both maps when the process actually exits,
   // and clean up the ephemeral MCP config file written for this session.
   void sessionProc.waitForExit().then(() => {
     allSessionProcs.delete(sessionId);
     liveSessionProcs.delete(sessionId);
-    console.log(
-      `[session-runner] session ${sessionId} removed from live map — ${liveSessionProcs.size} live session(s) remaining`,
-    );
+    log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'session removed from live map');
     if (mcpConfigPath) {
       try {
         unlinkSync(mcpConfigPath);

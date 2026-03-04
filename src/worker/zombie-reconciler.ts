@@ -2,6 +2,9 @@ import { db } from '../lib/db/index';
 import { sessions } from '../lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { enqueueSession } from '../lib/worker/queue';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('zombie-reconciler');
 
 /**
  * On cold start: find sessions that were 'active' or 'awaiting_input'
@@ -34,7 +37,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
 
   if (orphaned.length === 0) return;
 
-  console.log(`[zombie] Found ${orphaned.length} orphaned session(s). Reconciling...`);
+  log.info({ count: orphaned.length }, 'Found orphaned sessions, reconciling');
 
   for (const session of orphaned) {
     // -----------------------------------------------------------------------
@@ -50,9 +53,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         .set({ status: 'idle', workerId: null, pid: null, lastActiveAt: new Date() })
         .where(and(eq(sessions.id, session.id), eq(sessions.status, 'awaiting_input')));
 
-      console.log(
-        `[zombie] Session ${session.id} (was awaiting_input) marked idle — not killed (harmless)`,
-      );
+      log.info({ sessionId: session.id }, 'Session was awaiting_input, marked idle (not killed)');
       continue;
     }
 
@@ -61,8 +62,9 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     // Kill the process and optionally re-enqueue for auto-recovery.
     // -----------------------------------------------------------------------
     if (session.pid != null && isPidAlive(session.pid)) {
-      console.log(
-        `[zombie] Session ${session.id} PID ${session.pid} still alive but orphaned — killing`,
+      log.info(
+        { sessionId: session.id, pid: session.pid },
+        'Session PID still alive but orphaned, killing',
       );
       try {
         process.kill(-session.pid, 'SIGTERM');
@@ -80,8 +82,9 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         and(eq(sessions.id, session.id), inArray(sessions.status, ['active', 'awaiting_input'])),
       );
 
-    console.log(
-      `[zombie] Session ${session.id} (was ${session.status}) marked idle — worker restarted`,
+    log.info(
+      { sessionId: session.id, wasStatus: session.status },
+      'Session marked idle after worker restart',
     );
 
     // Auto-recovery: re-enqueue only if the session was active (mid-work) and
@@ -91,8 +94,9 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     if (session.sessionRef != null) {
       const recoveryCount = zombieRecoveryCount.get(session.id) ?? 0;
       if (recoveryCount >= MAX_AUTO_RECOVERY_ATTEMPTS) {
-        console.log(
-          `[zombie] Session ${session.id} hit recovery limit (${recoveryCount}/${MAX_AUTO_RECOVERY_ATTEMPTS}) — leaving idle, no re-enqueue`,
+        log.info(
+          { sessionId: session.id, recoveryCount, maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS },
+          'Session hit recovery limit, leaving idle',
         );
         zombieRecoveryCount.delete(session.id);
         continue;
@@ -106,8 +110,13 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         .where(eq(sessions.id, session.id));
 
       await enqueueSession({ sessionId: session.id, resumeRef: session.sessionRef });
-      console.log(
-        `[zombie] Session ${session.id} re-enqueued for auto-recovery (attempt ${recoveryCount + 1}/${MAX_AUTO_RECOVERY_ATTEMPTS})`,
+      log.info(
+        {
+          sessionId: session.id,
+          attempt: recoveryCount + 1,
+          maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS,
+        },
+        'Session re-enqueued for auto-recovery',
       );
     }
   }
