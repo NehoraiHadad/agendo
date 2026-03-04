@@ -213,6 +213,8 @@ export class SessionProcess {
    * @param displayText - Optional override for the user:message event text. When
    *   provided (e.g. on cold resume), only this text is shown in the chat view
    *   instead of the full prompt (which may contain system context preambles).
+   * @param developerInstructions - Optional system-level instructions for Codex
+   *   sessions, passed as `developerInstructions` in thread/start (not a user turn).
    */
   async start(
     prompt: string,
@@ -224,6 +226,7 @@ export class SessionProcess {
     initialImage?: ImageContent,
     displayText?: string,
     resumeSessionAt?: string,
+    developerInstructions?: string,
   ): Promise<void> {
     // Atomic claim: prevent double-execution on pg-boss retry.
     // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
@@ -343,6 +346,8 @@ export class SessionProcess {
       ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
       // Skip session JSONL persistence for one-off execution sessions (never resumed)
       ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
+      // Codex: system-level context injected via developerInstructions (not a user turn)
+      ...(developerInstructions ? { developerInstructions } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval
@@ -789,6 +794,10 @@ export class SessionProcess {
       await handleSetPermissionMode(control.mode, ctrl);
     } else if (control.type === 'set-model') {
       await handleSetModel(control.model, ctrl);
+    } else if (control.type === 'steer') {
+      await this.adapter.steer?.(control.message);
+    } else if (control.type === 'rollback') {
+      await this.adapter.rollback?.(control.numTurns ?? 1);
     }
   }
 
