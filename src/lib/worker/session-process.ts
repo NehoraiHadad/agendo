@@ -341,6 +341,8 @@ export class SessionProcess {
       ...(this.session.model ? { model: this.session.model } : {}),
       // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
       ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
+      // Skip session JSONL persistence for one-off execution sessions (never resumed)
+      ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval

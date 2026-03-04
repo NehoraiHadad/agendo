@@ -46,6 +46,9 @@ export interface SpawnOpts {
   maxBudgetUsd?: number;
   /** Effort level for this session: controls depth of thinking and resource usage. */
   effort?: 'low' | 'medium' | 'high';
+  /** When true, Claude won't write a session JSONL file to ~/.claude/projects/.
+   *  Useful for one-shot execution sessions that will never be resumed. */
+  noSessionPersistence?: boolean;
   /** Fallback model when primary model is overloaded. */
   fallbackModel?: string;
   /** Override the default AI model (forwarded as --model / -m to the CLI). */

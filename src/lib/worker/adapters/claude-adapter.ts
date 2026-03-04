@@ -363,6 +363,8 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
       ...(opts.fallbackModel ? ['--fallback-model', opts.fallbackModel] : []),
       // Effort level: low/medium/high — controls depth of thinking and resource usage
       ...(opts.effort ? ['--effort', opts.effort] : []),
+      // Skip writing session JSONL to ~/.claude/projects/ (one-off sessions only)
+      ...(opts.noSessionPersistence ? ['--no-session-persistence'] : []),
       // Strict MCP config — only use our servers, ignore global
       ...(opts.strictMcpConfig ? ['--strict-mcp-config'] : []),
       // NOTE: --session-id is intentionally omitted. For new sessions Claude
