@@ -389,6 +389,13 @@ export function SessionMessageInput({
     }
 
     setIsSending(true);
+    // Capture image URL before clearing pendingImage state
+    const sentImageDataUrl = pendingImage?.dataUrl;
+    // Notify parent BEFORE the HTTP request so the optimistic-message baseline is
+    // captured before the SSE `user:message` event can arrive and update the count.
+    // If we called onSent after await, a fast SSE delivery would set baseUserMsgCount
+    // equal to the new count, making the clearing condition (newCount > base) never fire.
+    onSent?.(trimmed, sentImageDataUrl);
     try {
       const body: Record<string, unknown> = { message: trimmed };
       if (pendingImage) {
@@ -404,7 +411,6 @@ export function SessionMessageInput({
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
-      onSent?.(trimmed, pendingImage?.dataUrl);
     } catch {
       // transient error — user can retry
     } finally {

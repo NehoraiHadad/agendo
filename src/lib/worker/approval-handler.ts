@@ -8,6 +8,7 @@ import type {
 } from '@/lib/worker/adapters/types';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
+import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
 
 type AskUserQuestion = {
   question: string;
@@ -197,6 +198,22 @@ export class ApprovalHandler {
     // (AskUserQuestion does not need plan capture — only ExitPlanMode does.)
     if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {
       await this.capturePlanFilePath();
+
+      // In plan conversation sessions (plan chat on the plan page), auto-deny
+      // ExitPlanMode so the agent stays in plan mode. The plan file was captured
+      // above — save its content to the DB so the editor auto-refreshes.
+      // No approval card is shown; the agent can keep refining if the user asks.
+      if (this.session.kind === 'conversation') {
+        savePlanFromSession(this.session).catch((err: unknown) => {
+          console.warn('[approval-handler] Failed to auto-save plan:', err);
+        });
+        await this.emitEvent({
+          type: 'system:info',
+          message: 'Plan saved — content synced to the editor.',
+        });
+        this.pendingApprovalsByTool.delete(toolName);
+        return 'deny';
+      }
     }
 
     // Emit approval request event to frontend and block until user responds.

@@ -61,7 +61,9 @@ export async function readPlanFromFile(sessionId: string): Promise<string | null
 
 /**
  * Auto-save plan content to the plans table when ExitPlanMode is approved.
- * Reads the captured plan file, creates a plan record, and links it to the session's project.
+ *
+ * If this session is a plan's conversationSessionId, UPDATE that plan's content
+ * instead of creating a new one. Otherwise create a new plan record.
  */
 export async function savePlanFromSession(session: Session): Promise<void> {
   const content = await readPlanFromFile(session.id);
@@ -86,6 +88,26 @@ export async function savePlanFromSession(session: Session): Promise<void> {
       .trim()
       .slice(0, 200) || 'Untitled Plan';
 
+  // Check if this session is linked to an existing plan (via conversationSessionId).
+  // If so, update that plan instead of creating a duplicate.
+  const [existingPlan] = await db
+    .select({ id: plans.id })
+    .from(plans)
+    .where(eq(plans.conversationSessionId, session.id))
+    .limit(1);
+
+  if (existingPlan) {
+    await db
+      .update(plans)
+      .set({ content, title, status: 'ready', updatedAt: new Date() })
+      .where(eq(plans.id, existingPlan.id));
+    console.log(
+      `[session-plan-utils] Updated plan ${existingPlan.id} from session ${session.id} (${content.length} chars)`,
+    );
+    return;
+  }
+
+  // No linked plan — create a new record.
   const [plan] = await db
     .insert(plans)
     .values({
@@ -99,6 +121,6 @@ export async function savePlanFromSession(session: Session): Promise<void> {
     .returning({ id: plans.id });
 
   console.log(
-    `[session-plan-utils] Saved plan ${plan.id} from session ${session.id} (${content.length} chars)`,
+    `[session-plan-utils] Created plan ${plan.id} from session ${session.id} (${content.length} chars)`,
   );
 }
