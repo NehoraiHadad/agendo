@@ -14,7 +14,7 @@ interface EventBase {
 
 export type AgendoEvent =
   | (EventBase & { type: 'agent:text'; text: string })
-  | (EventBase & { type: 'agent:text-delta'; text: string })
+  | (EventBase & { type: 'agent:text-delta'; text: string; fromDelta?: boolean })
   | (EventBase & { type: 'agent:thinking'; text: string })
   | (EventBase & { type: 'agent:thinking-delta'; text: string })
   | (EventBase & {
@@ -260,6 +260,16 @@ export type AgendoControl =
       /** Switch the AI model of a live session via control_request. */
       type: 'set-model';
       model: string;
+    }
+  | {
+      /** Inject a steering message into the current Codex turn (mid-turn). */
+      type: 'steer';
+      message: string;
+    }
+  | {
+      /** Rollback the last N turns in a Codex thread (conversation-only, files unchanged). */
+      type: 'rollback';
+      numTurns?: number;
     };
 
 // ============================================================================
