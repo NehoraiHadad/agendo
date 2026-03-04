@@ -594,6 +594,24 @@ export class SessionProcess {
             }
           }
 
+          // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
+          if (event.type === 'agent:result' && event.serverToolUse) {
+            const { webSearchRequests, webFetchRequests } = event.serverToolUse;
+            void db
+              .update(sessions)
+              .set({
+                ...(webSearchRequests != null && { webSearchRequests }),
+                ...(webFetchRequests != null && { webFetchRequests }),
+              })
+              .where(eq(sessions.id, this.session.id))
+              .catch((err: unknown) => {
+                console.error(
+                  `[session-process] web tool usage update failed for session ${this.session.id}:`,
+                  err,
+                );
+              });
+          }
+
           // After the agent finishes a result, transition to awaiting_input.
           // Skip during an interrupt — handleInterrupt() manages the transition
           // based on whether the process survived (warm vs cold resume).
