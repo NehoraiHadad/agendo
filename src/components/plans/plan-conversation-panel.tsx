@@ -1,7 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, Loader2, Bot, Square, Plus } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  X,
+  Loader2,
+  Bot,
+  Square,
+  Plus,
+  Cpu,
+  PowerOff,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  BookOpen,
+} from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -26,6 +38,53 @@ import {
   ctxBarColor,
   ctxTrackColor,
 } from '@/lib/utils/context-stats';
+import {
+  type PermissionMode,
+  type ModeConfigEntry,
+  type DynamicModelOption,
+  nextMode as getNextMode,
+  modelDisplayLabel,
+  deriveProvider,
+} from '@/lib/utils/session-controls';
+
+// ---------------------------------------------------------------------------
+// Mode config (icon references are component-level)
+// ---------------------------------------------------------------------------
+
+const MODE_CONFIG: Record<PermissionMode, ModeConfigEntry> = {
+  plan: {
+    label: 'Plan',
+    icon: BookOpen,
+    className: 'text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20',
+    title: 'Plan mode (read-only). Click to cycle.',
+  },
+  default: {
+    label: 'Approve',
+    icon: Shield,
+    className: 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20',
+    title: 'Approve mode. Click to cycle.',
+  },
+  acceptEdits: {
+    label: 'Edit Only',
+    icon: ShieldCheck,
+    className: 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 border-blue-500/20',
+    title: 'Edit-only mode. Click to cycle.',
+  },
+  bypassPermissions: {
+    label: 'Auto',
+    icon: ShieldOff,
+    className:
+      'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20',
+    title: 'Auto mode. Click to cycle.',
+  },
+  dontAsk: {
+    label: 'Auto',
+    icon: ShieldOff,
+    className:
+      'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20',
+    title: 'Auto mode. Click to cycle.',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -285,6 +344,125 @@ export function PlanConversationPanel({
     }
   }, [planId, isStartingNew, onNewChat]);
 
+  // ---------------------------------------------------------------------------
+  // Session controls: model, permission mode, end session
+  // ---------------------------------------------------------------------------
+
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(
+    (initEvent?.permissionMode as PermissionMode) ?? 'plan',
+  );
+  const [isModeChanging, setIsModeChanging] = useState(false);
+  const [isModelChanging, setIsModelChanging] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [dynamicModels, setDynamicModels] = useState<DynamicModelOption[]>([]);
+  const [isEnding, setIsEnding] = useState(false);
+
+  // Sync permissionMode when init event arrives
+  useEffect(() => {
+    if (initEvent?.permissionMode) {
+      setPermissionMode(initEvent.permissionMode as PermissionMode);
+    }
+  }, [initEvent?.permissionMode]);
+
+  // Close model menu on outside click
+  useEffect(() => {
+    if (!showModelMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setShowModelMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showModelMenu]);
+
+  // Fetch available models from the agent's provider
+  useEffect(() => {
+    if (!initEvent?.cwd) return; // wait for init to know the agent
+    const provider = selectedAgent?.binaryPath
+      ? deriveProvider(selectedAgent.binaryPath)
+      : 'claude';
+    const controller = new AbortController();
+    fetch(`/api/models?provider=${encodeURIComponent(provider)}`, { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: DynamicModelOption[] }>) : null))
+      .then((body) => {
+        if (!controller.signal.aborted && body?.data) {
+          setDynamicModels(body.data.map((m) => ({ id: m.id, label: m.label })));
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [initEvent?.cwd, selectedAgent?.binaryPath]);
+
+  // Derive current model from stream events (same logic as session-detail-client)
+  const events = stream.events;
+  const lastModelInfoEvent = useMemo(
+    () =>
+      [...events]
+        .reverse()
+        .find(
+          (e) =>
+            e.type === 'system:info' &&
+            (e as Extract<typeof e, { type: 'system:info' }>).message.startsWith(
+              'Model switched to',
+            ),
+        ) as Extract<(typeof events)[number], { type: 'system:info' }> | undefined,
+    [events],
+  );
+  const modelFromInfo = lastModelInfoEvent
+    ? (lastModelInfoEvent.message.match(/Model switched to "(.+)"/)?.[1] ?? null)
+    : null;
+  const currentModel = modelFromInfo ?? initEvent?.model ?? null;
+  const modelLabel = currentModel ? modelDisplayLabel(currentModel) : null;
+
+  const handleModelChange = useCallback(
+    async (modelId: string) => {
+      if (isModelChanging || !conversationSessionId || currentStatus === 'ended') return;
+      setIsModelChanging(true);
+      setShowModelMenu(false);
+      try {
+        await fetch(`/api/sessions/${conversationSessionId}/model`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId }),
+        });
+      } finally {
+        setIsModelChanging(false);
+      }
+    },
+    [isModelChanging, conversationSessionId, currentStatus],
+  );
+
+  const handleModeChange = useCallback(async () => {
+    if (isModeChanging || !conversationSessionId || currentStatus === 'ended') return;
+    const target = getNextMode(permissionMode);
+    setIsModeChanging(true);
+    try {
+      const res = await fetch(`/api/sessions/${conversationSessionId}/mode`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: target }),
+      });
+      if (res.ok) setPermissionMode(target);
+    } finally {
+      setIsModeChanging(false);
+    }
+  }, [isModeChanging, conversationSessionId, currentStatus, permissionMode]);
+
+  const handleEndSession = useCallback(async () => {
+    if (isEnding || !conversationSessionId) return;
+    setIsEnding(true);
+    try {
+      await fetch(`/api/sessions/${conversationSessionId}/cancel`, { method: 'POST' });
+    } finally {
+      setIsEnding(false);
+    }
+  }, [isEnding, conversationSessionId]);
+
+  const modeCfg = MODE_CONFIG[permissionMode];
+  const ModeIcon = modeCfg.icon;
+
   // Pending edits not yet acted on
   const pendingEdits = planEdits.filter((edit) => !editStates[edit.id]);
 
@@ -356,6 +534,86 @@ export function PlanConversationPanel({
           </button>
         </div>
       </div>
+
+      {/* Session controls toolbar — compact strip below header */}
+      {conversationSessionId && currentStatus !== 'ended' && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/[0.04] shrink-0">
+          {/* Model selector */}
+          <div className="relative" ref={modelMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowModelMenu((v) => !v)}
+              disabled={isModelChanging}
+              title={currentModel ? `Model: ${currentModel}` : 'Select model'}
+              className="flex items-center gap-1 text-[11px] text-cyan-400/70 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/15 rounded-md px-1.5 py-0.5 transition-colors disabled:opacity-40"
+            >
+              {isModelChanging ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Cpu className="size-3" />
+              )}
+              <span className="max-w-[80px] truncate">{modelLabel ?? 'Model'}</span>
+            </button>
+            {showModelMenu && (
+              <div className="absolute top-full left-0 mt-1 z-50 min-w-[160px] rounded-lg border border-white/[0.1] bg-[oklch(0.12_0.005_240)] shadow-xl p-1">
+                {dynamicModels.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground/40 px-2 py-1.5">
+                    No models available
+                  </p>
+                ) : (
+                  dynamicModels.map((m) => {
+                    const isActive =
+                      currentModel?.toLowerCase() === m.id.toLowerCase() ||
+                      currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => void handleModelChange(m.id)}
+                        className={`w-full text-left px-2 py-1.5 text-[11px] rounded-md transition-colors hover:bg-white/[0.07] ${isActive ? 'text-cyan-400 font-medium' : 'text-foreground/70'}`}
+                      >
+                        {isActive && <span className="mr-1">&#10003;</span>}
+                        {m.label}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Permission mode */}
+          <button
+            type="button"
+            onClick={() => void handleModeChange()}
+            disabled={isModeChanging}
+            title={modeCfg.title}
+            className={`flex items-center gap-1 text-[11px] border rounded-md px-1.5 py-0.5 transition-all disabled:opacity-40 ${modeCfg.className}`}
+          >
+            {isModeChanging ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <ModeIcon className="size-3" />
+            )}
+            <span>{modeCfg.label}</span>
+          </button>
+
+          {/* End session */}
+          <button
+            type="button"
+            onClick={() => void handleEndSession()}
+            disabled={isEnding}
+            title="End session"
+            className="ml-auto flex items-center gap-1 text-[11px] text-red-400/60 hover:text-red-300 hover:bg-red-500/10 border border-red-500/15 rounded-md px-1.5 py-0.5 transition-colors disabled:opacity-40"
+          >
+            {isEnding ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <PowerOff className="size-3" />
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">

@@ -53,6 +53,14 @@ import {
   ctxBarColor,
   ctxTrackColor,
 } from '@/lib/utils/context-stats';
+import {
+  type PermissionMode,
+  type DynamicModelOption,
+  type ModeConfigEntry,
+  nextMode as getNextMode,
+  modelDisplayLabel,
+  deriveProvider,
+} from '@/lib/utils/session-controls';
 
 const WebTerminal = dynamic(
   () => import('@/components/terminal/web-terminal').then((m) => m.WebTerminal),
@@ -66,48 +74,7 @@ const WebTerminal = dynamic(
   },
 );
 
-type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
-
-const MODE_CYCLE: PermissionMode[] = ['plan', 'default', 'acceptEdits', 'bypassPermissions'];
-
-/** Extract a short human-readable label from a model ID string.
- *  e.g. "claude-sonnet-4-5-20250514" → "Sonnet 4.5" */
-function modelDisplayLabel(modelId: string): string {
-  const lower = modelId.toLowerCase();
-  // Match common Claude model families
-  const families = ['opus', 'sonnet', 'haiku'];
-  for (const fam of families) {
-    const idx = lower.indexOf(fam);
-    if (idx !== -1) {
-      // Try to extract version numbers after the family name
-      const rest = lower.slice(idx + fam.length).replace(/^-/, '');
-      const versionMatch = rest.match(/^(\d+)[.-](\d+)/);
-      const version = versionMatch ? ` ${versionMatch[1]}.${versionMatch[2]}` : '';
-      return fam.charAt(0).toUpperCase() + fam.slice(1) + version;
-    }
-  }
-  // Fallback: return the raw ID with claude- prefix stripped
-  return modelId.replace(/^claude-/, '');
-}
-
-interface DynamicModelOption {
-  id: string;
-  label: string;
-}
-
-/** Derive provider name from binary path for model API queries. */
-function deriveProvider(binaryPath: string): string {
-  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
-  if (base.startsWith('claude')) return 'claude';
-  if (base.startsWith('codex')) return 'codex';
-  if (base.startsWith('gemini')) return 'gemini';
-  return 'claude';
-}
-
-const MODE_CONFIG: Record<
-  PermissionMode,
-  { label: string; icon: React.ElementType; className: string; title: string }
-> = {
+const MODE_CONFIG: Record<PermissionMode, ModeConfigEntry> = {
   plan: {
     label: 'Plan',
     icon: BookOpen,
@@ -389,17 +356,16 @@ export function SessionDetailClient({
 
   async function handleModeChange() {
     if (isModeChanging || currentStatus === 'ended') return;
-    const nextIndex = (MODE_CYCLE.indexOf(permissionMode) + 1) % MODE_CYCLE.length;
-    const nextMode = MODE_CYCLE[nextIndex];
+    const target = getNextMode(permissionMode);
     setIsModeChanging(true);
     try {
       const res = await fetch(`/api/sessions/${session.id}/mode`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: nextMode }),
+        body: JSON.stringify({ mode: target }),
       });
       if (res.ok) {
-        setPermissionMode(nextMode);
+        setPermissionMode(target);
       }
     } finally {
       setIsModeChanging(false);
