@@ -17,7 +17,6 @@ import {
   ArrowDown,
   MessageSquare,
   Pencil,
-  GitFork,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -429,131 +428,16 @@ function InfoPill({ text }: { text: string }) {
   );
 }
 
-function ForkFromHerePopover({
-  sessionId,
-  messageUuid,
-}: {
-  sessionId: string;
-  messageUuid: string;
-}) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-focus textarea when popover opens
-  useEffect(() => {
-    if (open) {
-      setTimeout(() => textareaRef.current?.focus(), 50);
-    } else {
-      setText('');
-    }
-  }, [open]);
-
-  const handleConfirm = useCallback(async () => {
-    if (!text.trim() || loading) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeAt: messageUuid, initialPrompt: text.trim() }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Server error ${res.status}`);
-      }
-      const { data } = (await res.json()) as { data: { id: string } };
-      setOpen(false);
-      router.push(`/sessions/${data.id}`);
-    } catch (err) {
-      console.error('[ForkFromHerePopover] fork failed:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, messageUuid, text, loading, router]);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-[10px] text-primary/50 hover:text-primary/80 hover:bg-primary/10 rounded px-1.5 py-0.5 transition-colors"
-        title="Fork conversation from here"
-      >
-        <GitFork className="size-3" />
-        <span>Fork</span>
-      </button>
-
-      {open && (
-        <>
-          {/* Backdrop */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          {/* Bottom sheet on mobile, floating popover on desktop */}
-          <div
-            className="fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl border-t border-white/[0.10] bg-[oklch(0.12_0_0)] shadow-2xl p-4 pb-8 space-y-3 sm:absolute sm:bottom-full sm:left-1/2 sm:-translate-x-1/2 sm:mb-2 sm:w-72 sm:rounded-xl sm:border sm:p-3 sm:pb-3 sm:space-y-2.5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Grab handle — mobile only */}
-            <div className="sm:hidden flex justify-center -mt-1 mb-1">
-              <div className="w-10 h-1 rounded-full bg-white/20" />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <GitFork className="size-3.5 text-primary/70 shrink-0" />
-              <span className="text-xs font-medium text-foreground/80">Fork from here</span>
-            </div>
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={4}
-              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] text-sm text-foreground/90 p-2 resize-none focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40"
-              placeholder="Initial prompt for the new branch…"
-            />
-            <div className="flex gap-2 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="flex-1 sm:flex-none text-xs text-muted-foreground/60 hover:text-muted-foreground px-2.5 py-2 sm:py-1 rounded hover:bg-white/[0.05] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConfirm()}
-                disabled={!text.trim() || loading}
-                className="flex-1 sm:flex-none text-xs bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-2 sm:py-1 rounded-lg transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
-              >
-                {loading ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <GitFork className="size-3" />
-                )}
-                Fork →
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 function TurnCompletePill({
   text,
   costUsd,
   sessionCostUsd,
   isError,
-  sessionId,
-  messageUuid,
 }: {
   text: string;
   costUsd: number | null;
   sessionCostUsd: number | null;
   isError?: boolean;
-  sessionId: string;
-  messageUuid?: string;
 }) {
   const [open, setOpen] = useState(false);
   const hasCost = costUsd !== null;
@@ -575,11 +459,6 @@ function TurnCompletePill({
           {text}
           {hasCost && <span className="ml-1 opacity-40">{open ? '▲' : '▼'}</span>}
         </button>
-        {messageUuid && (
-          <span className="opacity-0 group-hover/turnpill:opacity-100 transition-opacity">
-            <ForkFromHerePopover sessionId={sessionId} messageUuid={messageUuid} />
-          </span>
-        )}
       </div>
       {open && hasCost && (
         <div className="bg-[oklch(0.12_0_0)] border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-muted-foreground/80 shadow-lg space-y-1 min-w-[160px]">
@@ -1251,8 +1130,6 @@ export function SessionChatView({
             costUsd={item.costUsd}
             sessionCostUsd={item.sessionCostUsd}
             isError={item.isError}
-            sessionId={sessionId}
-            messageUuid={item.messageUuid}
           />
         );
       case 'info':
