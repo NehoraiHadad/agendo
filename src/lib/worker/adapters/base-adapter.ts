@@ -11,7 +11,7 @@ import type {
  * Abstract base class for all agent adapters.
  *
  * Provides shared state (callback fields) and utility methods that are
- * identical across ClaudeAdapter, CodexAdapter, and GeminiAdapter.
+ * identical across ClaudeAdapter, CodexAppServerAdapter, and GeminiAdapter.
  * Adapter-specific protocol logic (ACP, NDJSON control_request, etc.)
  * stays in the concrete subclasses.
  */
@@ -76,7 +76,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
   /**
    * SIGTERM → wait → SIGKILL escalation for a child process group.
-   * Used by CodexAdapter.interrupt(); Claude and Gemini have unique interrupt logic.
+   * Used by CodexAppServerAdapter.interrupt() as a fallback; Claude and Gemini have unique interrupt logic.
    */
   protected static async killWithGrace(cp: ChildProcess, delayMs: number): Promise<void> {
     if (!cp.pid) return;

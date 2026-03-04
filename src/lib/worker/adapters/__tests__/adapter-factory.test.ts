@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { ClaudeAdapter } from '@/lib/worker/adapters/claude-adapter';
-import { CodexAdapter } from '@/lib/worker/adapters/codex-adapter';
+import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
 import type { Agent } from '@/lib/types';
 
@@ -40,9 +40,9 @@ describe('selectAdapter', () => {
     expect(adapter).toBeInstanceOf(ClaudeAdapter);
   });
 
-  it('returns CodexAdapter for codex binary', () => {
+  it('returns CodexAppServerAdapter for codex binary', () => {
     const adapter = selectAdapter(makeAgent('/usr/local/bin/codex'));
-    expect(adapter).toBeInstanceOf(CodexAdapter);
+    expect(adapter).toBeInstanceOf(CodexAppServerAdapter);
   });
 
   it('returns GeminiAdapter for gemini binary', () => {

@@ -1,13 +1,13 @@
 import type { AgentAdapter } from '@/lib/worker/adapters/types';
 import { ClaudeAdapter } from '@/lib/worker/adapters/claude-adapter';
-import { CodexAdapter } from '@/lib/worker/adapters/codex-adapter';
+import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
 import type { Agent } from '@/lib/types';
 
 /** Maps agent binary basenames to their adapter class. */
 const ADAPTER_MAP: Record<string, new () => AgentAdapter> = {
   claude: ClaudeAdapter,
-  codex: CodexAdapter,
+  codex: CodexAppServerAdapter,
   gemini: GeminiAdapter,
 };
 
