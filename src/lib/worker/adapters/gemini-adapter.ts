@@ -254,6 +254,9 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     } else {
       args.push('--allowed-mcp-server-names', '__none__');
     }
+    if (opts.policyFiles?.length) {
+      args.push('--policy', ...opts.policyFiles);
+    }
     args.push(...(opts.extraArgs ?? []));
     return args;
   }

@@ -38,10 +38,14 @@ export interface SpawnOpts {
   allowedTools?: string[];
   /** MCP servers to inject via ACP session/new (Gemini only). */
   mcpServers?: AcpMcpServer[];
+  /** TOML policy files to inject via --policy (Gemini only). */
+  policyFiles?: string[];
   /** Initial image to attach to the first user message (for cold resumes with image attachments). */
   initialImage?: ImageContent;
   /** Max budget in USD for this session. Claude will stop when exceeded. */
   maxBudgetUsd?: number;
+  /** Effort level for this session: controls depth of thinking and resource usage. */
+  effort?: 'low' | 'medium' | 'high';
   /** Fallback model when primary model is overloaded. */
   fallbackModel?: string;
   /** Override the default AI model (forwarded as --model / -m to the CLI). */
