@@ -5,6 +5,9 @@ import { getHelpText, quickParseHelp } from './schema-extractor';
 import type { ParsedSchema } from './schema-extractor';
 import { getPresetForBinary, AI_TOOL_PRESETS } from './presets';
 import type { AIToolPreset } from './presets';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('discovery');
 
 export interface DiscoveredTool {
   name: string;
@@ -31,9 +34,9 @@ export async function runDiscovery(
   existingSlugs?: Set<string>,
   existingBinaryPaths?: Set<string>,
 ): Promise<DiscoveredTool[]> {
-  console.log('[discovery] Stage 1: Scanning PATH...');
+  log.info('Stage 1: Scanning PATH...');
   const binaries = await scanPATH();
-  console.log(`[discovery] Found ${binaries.size} executables.`);
+  log.info({ count: binaries.size }, 'Found executables');
 
   const tools: DiscoveredTool[] = [];
 
@@ -43,7 +46,7 @@ export async function runDiscovery(
     (b) => presetNames.has(b.name) || schemaTargets?.has(b.name),
   );
 
-  console.log(`[discovery] Stage 2: Processing ${entries.length} candidate binaries...`);
+  log.info({ count: entries.length }, 'Stage 2: Processing candidate binaries');
 
   await Promise.all(
     entries.map(async (binary) => {

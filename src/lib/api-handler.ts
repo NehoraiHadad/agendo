@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 import { AppError, NotFoundError } from './errors';
+import { createLogger } from './logger';
+
+const log = createLogger('api-handler');
 
 type RouteHandler = (
   request: NextRequest,
@@ -50,7 +53,7 @@ export function withErrorBoundary(handler: RouteHandler): RouteHandler {
         );
       }
 
-      console.error('Unhandled API error:', error);
+      log.error({ err: error }, 'Unhandled API error');
       return NextResponse.json(
         {
           error: {

@@ -1,5 +1,8 @@
 import { db, pool } from './index';
 import { workerConfig } from './schema';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('seed');
 
 export async function seedWorkerConfig(): Promise<void> {
   await db
@@ -12,12 +15,12 @@ export async function seedWorkerConfig(): Promise<void> {
     ])
     .onConflictDoNothing();
 
-  console.log('[seed] Worker config seeded.');
+  log.info('Worker config seeded');
 }
 
 seedWorkerConfig()
   .then(() => pool.end())
   .catch((err) => {
-    console.error('[seed] Error:', err);
+    log.error({ err }, 'Seed error');
     process.exit(1);
   });
