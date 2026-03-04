@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { plans } from '@/lib/db/schema';
+import { plans, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { createSession } from '@/lib/services/session-service';
 import { createTask } from '@/lib/services/task-service';
@@ -235,9 +235,17 @@ Remember: create tasks only. Do NOT implement any code changes.`;
 }
 
 /**
- * Start a collaborative conversation session for a plan. The agent reviews
- * and helps improve the plan, outputting suggested edits in a structured
- * format that the frontend can parse and apply.
+ * Start a plan conversation using the agent's native plan mode.
+ *
+ * For Claude: `--permission-mode plan` puts the agent in read-only mode.
+ *   The agent reviews the codebase, discusses improvements, and when ready
+ *   calls ExitPlanMode which writes the plan to ~/.claude/plans/.
+ *   savePlanFromSession() then auto-saves the content to the plans table.
+ *
+ * For Codex: plan mode maps to `--sandbox read-only`.
+ *
+ * For Gemini: plan mode is not natively supported — the agent runs in
+ *   default mode, so each tool call is approved individually.
  */
 export async function startPlanConversation(
   planId: string,
@@ -247,94 +255,50 @@ export async function startPlanConversation(
 
   // PROMPT CHANGELOG
   // v1 (original): Thin prompt — described PLAN_EDIT syntax and one-liner MCP hint.
-  //   Had no knowledge of the Agendo execution model, task description quality, subtask
-  //   vs separate-task tradeoffs, orchestration patterns, or common pitfalls.
-  // v2 (2026-03-01): Full rewrite. Added:
-  //   - Agendo execution model (status lifecycle, sessions, subtasks, start_agent_session,
-  //     polling pattern) so the agent can give actionable structural advice.
-  //   - Criteria for a good agent-executable task description (scope, done criteria,
-  //     constraints, working directory, no assumed context).
-  //   - Guidance on subtasks vs separate tasks and parallel-agent risks.
-  //   - Common pitfalls checklist (vague scope, missing QA gate, oversized steps, etc.).
-  //   - Probing questions the agent should ask when the plan is vague.
-  //   - Expanded MCP tool list (list_projects, create_subtask added).
-  const initialPrompt = `You are a collaborative plan editor and Agendo execution architect. \
-Your job is to help improve this implementation plan so that AI agents can actually execute it — \
-not just produce a human-readable outline.
+  // v2 (2026-03-01): Full rewrite — Agendo execution model, task quality criteria,
+  //   subtask/separate-task guidance, common pitfalls, probing questions.
+  // v3 (2026-03-04): Native plan mode. Removed PLAN_EDIT hack — the agent uses
+  //   its CLI's native plan mode (ExitPlanMode for Claude, read-only sandbox for
+  //   Codex). Plan content is captured from the CLI's plan file (~/.claude/plans/)
+  //   and auto-saved to the plans table on approval. Kept Agendo execution context
+  //   so the agent can produce agent-executable plans.
+  const initialPrompt = `You are reviewing and improving an implementation plan for Agendo.
 
-## How Agendo Works
+Your session is in **plan mode** — you can read the codebase but cannot write files. \
+Explore the code to validate the plan's assumptions and identify gaps.
+
+When you are satisfied with the plan, use ExitPlanMode to finalize it. \
+The plan content will be saved automatically.
+
+## How Agendo Executes Plans
 
 **Tasks** are the unit of work assigned to agents:
-- Status lifecycle: \`todo → in_progress → done\` (cannot skip; todo→done requires two separate updates)
-- An agent reads its assignment with \`get_my_task\` and reports progress with \`add_progress_note\`
-- A task's \`description\` is the agent's only source of instructions — it must be fully self-contained
+- Status lifecycle: \`todo → in_progress → done\` (cannot skip)
+- A task's \`description\` is the agent's only source of instructions — fully self-contained
+- An agent reads its assignment with \`get_my_task\`, reports progress with \`add_progress_note\`
 
-**Subtasks** break a large task into tracked steps under a parent. An orchestrator agent creates them \
-with \`create_subtask\`, then fires \`start_agent_session\` on each, and polls \`get_task\` until \
-status = \`done\` before moving to the next step.
-
-**Sessions** are the live agent conversations. One session runs per task at a time.
-
-## What Makes a Good Task Description
-
-A description an agent can execute must have:
-- **Scope**: exact files, modules, or endpoints in scope — not "the auth system" but \
-"src/lib/auth.ts and src/app/api/login/route.ts"
-- **Done criteria**: how to verify completion — e.g., "pnpm test passes" or \
-"GET /api/health returns 200 with { status: 'ok' }"
-- **Constraints**: what NOT to change — e.g., "do not modify the public API surface"
-- **Working directory**: which project/repo the agent should operate in (agents default to /tmp \
-if the task is not linked to a project)
-- **No assumed context**: the agent knows only its task description and the codebase — \
-do not assume it knows any prior conversation or user intent
-
-## Subtasks vs Separate Tasks
-
-Use **subtasks** when steps share context and must happen in sequence \
-(e.g., schema migration → service update → API route → tests for one feature).
+**Subtasks** break a large task into tracked steps under a parent. Use for sequential steps \
+that share context (e.g., schema migration → service update → API route → tests).
 
 Use **separate tasks** for independent work streams that touch different files.
 
-**Never run multiple agents on the same files in parallel** — merge conflicts are hard to recover from. \
-Partition work by file ownership, or force sequential execution.
+## What Makes a Good Task Description
 
-## Common Pitfalls — Flag These Proactively
+Each step should have:
+- **Scope**: exact files, modules, or endpoints — not "the auth system" but \
+"src/lib/auth.ts and src/app/api/login/route.ts"
+- **Done criteria**: how to verify — "pnpm test passes", "GET /api/health returns 200"
+- **Constraints**: what NOT to change — "do not modify the public API surface"
+- **No assumed context**: the agent knows only its description and the codebase
 
-- **Vague scope** ("clean up the codebase", "improve performance") — agents will guess and may make unwanted changes
-- **Missing QA gate** — always include a "run tests and lint" step after implementation steps
-- **Steps too large** — if a task would take more than ~30 min of reading + writing, break it into subtasks
-- **Ambiguous done criteria** — the agent won't know when to stop if success is not testable
-- **Missing project link** — without it the agent works in /tmp, not the target codebase
-- **Parallel agents on shared files** — forces sequential ordering or file partitioning
+## Common Pitfalls to Flag
 
-## Probing Questions
+- Vague scope ("clean up the codebase") — agents will guess
+- Missing QA gate — always include "run tests and lint" after implementation
+- Steps too large — break into subtasks if > 30 min of work
+- Parallel agents on shared files — forces sequential ordering or file partitioning
 
-When the plan is vague, ask before suggesting edits:
-1. What project and working directory does each step operate in?
-2. Are the steps sequential, or can any run in parallel? (Check for shared files first.)
-3. What is the explicit done criterion for each step? (Tests pass? Endpoint responds? Manual review?)
-4. Should the steps be one task with subtasks, or separate independent tasks?
-5. Which agent handles each step — Claude (claude-code-1), Codex (codex-cli-1), or Gemini (gemini-cli-1)?
-
----
-
-When you want to suggest changes to the plan, output your complete revised plan wrapped in:
-<<<PLAN_EDIT
-[the complete new plan content here]
-PLAN_EDIT>>>
-
-The user can apply or skip your suggestion directly in the editor.
-
-You have access to these MCP tools:
-- \`mcp__agendo__list_projects\` — list available projects (to find the right projectId)
-- \`mcp__agendo__list_tasks\` — see existing tasks in this project
-- \`mcp__agendo__create_task\` — create a task (always include projectId, title, and a fully self-contained description)
-- \`mcp__agendo__create_subtask\` — create a subtask under a parent task
-
-If the user asks you to create tasks from the plan, use these tools — one task per major step, \
-with descriptions an agent can execute without any additional context.
-
-Here is the current plan:
+## Current Plan
 
 ${plan.content}`;
 
@@ -344,7 +308,7 @@ ${plan.content}`;
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt,
-    permissionMode: 'bypassPermissions',
+    permissionMode: 'plan',
     model: opts.model,
   });
 
@@ -371,6 +335,85 @@ function getGitHead(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Save or update a plan from an MCP tool call.
+ *
+ * Resolution order:
+ * 1. If planId provided: update that plan directly.
+ * 2. If sessionId provided and session is linked to an existing plan
+ *    (via conversationSessionId): update that plan.
+ * 3. Otherwise: create a new plan record linked to the session's project.
+ */
+export async function savePlanFromMcp(
+  sessionId: string | undefined,
+  content: string,
+  title?: string,
+  planId?: string,
+): Promise<{ planId: string; title: string; action: 'created' | 'updated' }> {
+  // Extract title from first heading if not provided
+  const resolvedTitle =
+    title?.trim() ||
+    (() => {
+      const firstLine = content.split('\n').find((l) => l.trim().length > 0) ?? 'Untitled Plan';
+      return (
+        firstLine
+          .replace(/^#+\s*/, '')
+          .trim()
+          .slice(0, 200) || 'Untitled Plan'
+      );
+    })();
+
+  // 1. Explicit planId — update directly.
+  if (planId) {
+    const updated = await updatePlan(planId, { content, title: resolvedTitle, status: 'ready' });
+    return { planId: updated.id, title: updated.title, action: 'updated' };
+  }
+
+  // 2. Look up session to find linked plan or project.
+  if (sessionId) {
+    const [session] = await db
+      .select({ id: sessions.id, projectId: sessions.projectId })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    if (session) {
+      // Check for a plan linked to this session.
+      const [linked] = await db
+        .select({ id: plans.id })
+        .from(plans)
+        .where(eq(plans.conversationSessionId, sessionId))
+        .limit(1);
+
+      if (linked) {
+        const updated = await updatePlan(linked.id, {
+          content,
+          title: resolvedTitle,
+          status: 'ready',
+        });
+        return { planId: updated.id, title: updated.title, action: 'updated' };
+      }
+
+      // Create new plan linked to the session's project.
+      if (session.projectId) {
+        const created = await createPlan({
+          projectId: session.projectId,
+          title: resolvedTitle,
+          content,
+          sourceSessionId: sessionId,
+        });
+        // Set status to 'ready' (createPlan defaults to 'draft').
+        await updatePlan(created.id, { status: 'ready' });
+        return { planId: created.id, title: created.title, action: 'created' };
+      }
+    }
+  }
+
+  throw new Error(
+    'Cannot save plan: no planId provided, no session found, or session has no projectId.',
+  );
 }
 
 export async function validatePlan(

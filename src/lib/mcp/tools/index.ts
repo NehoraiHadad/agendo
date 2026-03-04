@@ -11,6 +11,7 @@ import { registerProgressTools } from './progress-tools.js';
 import { registerProjectTools } from './project-tools.js';
 import { registerSessionTools } from './session-tools.js';
 import { registerSnapshotTools } from './snapshot-tools.js';
+import { registerPlanTools } from './plan-tools.js';
 
 export function registerAll(server: McpServer): void {
   registerTaskTools(server);
@@ -19,6 +20,7 @@ export function registerAll(server: McpServer): void {
   registerProjectTools(server);
   registerSessionTools(server);
   registerSnapshotTools(server);
+  registerPlanTools(server);
 }
 
 // Re-export handlers for testing
@@ -34,3 +36,4 @@ export { handleAddProgressNote } from './progress-tools.js';
 export { handleListProjects, handleGetProject } from './project-tools.js';
 export { handleStartAgentSession, handleAssignTask } from './session-tools.js';
 export { handleSaveSnapshot, handleUpdateSnapshot } from './snapshot-tools.js';
+export { handleSavePlan } from './plan-tools.js';
