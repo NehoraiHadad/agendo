@@ -67,5 +67,6 @@ export {
   handleAssignTask,
   handleSaveSnapshot,
   handleUpdateSnapshot,
+  handleSavePlan,
 } from './tools/index.js';
 export { apiCall, resolveAgentSlug, parsePriority } from './tools/shared.js';
