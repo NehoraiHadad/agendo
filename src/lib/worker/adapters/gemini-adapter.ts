@@ -517,7 +517,6 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
           clientInfo: { name: 'agendo', version: '1.0.0' },
           clientCapabilities: {
             fs: { readTextFile: true, writeTextFile: true },
-            terminal: true,
           },
         }),
         new Promise<never>((_, reject) =>
