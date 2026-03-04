@@ -238,6 +238,8 @@ export type AgendoControl =
       postApprovalCompact?: boolean;
       /** ExitPlanMode option 1: deny tool, kill process, restart fresh with plan as context. */
       clearContextRestart?: boolean;
+      /** Codex only: remember this command approval as a session-scoped exec policy rule. */
+      rememberForSession?: boolean;
     }
   | {
       /** Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion). */

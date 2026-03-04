@@ -88,6 +88,8 @@ export interface ToolApprovalCardProps {
   toolInput: Record<string, unknown>;
   dangerLevel: number;
   onResolved: () => void;
+  /** Agent slug — enables Codex-specific options (e.g. execpolicy amendment). */
+  agentSlug?: string;
 }
 
 type Decision = 'allow' | 'deny' | 'allow-session';
@@ -100,12 +102,14 @@ export function ToolApprovalCard({
   toolInput,
   dangerLevel,
   onResolved,
+  agentSlug,
 }: ToolApprovalCardProps) {
   const [pending, setPending] = useState<Decision | null>(null);
   const [decided, setDecided] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [rememberForSession, setRememberForSession] = useState(false);
 
   // For Bash: edit the command string directly. For others: edit full JSON.
   const isBash = toolName === 'Bash';
@@ -147,6 +151,7 @@ export function ToolApprovalCard({
           ...(extra?.postApprovalMode ? { postApprovalMode: extra.postApprovalMode } : {}),
           ...(extra?.postApprovalCompact ? { postApprovalCompact: true } : {}),
           ...(extra?.clearContextRestart ? { clearContextRestart: true } : {}),
+          ...(decision === 'allow' && rememberForSession ? { rememberForSession: true } : {}),
         }),
       });
 
@@ -321,6 +326,20 @@ export function ToolApprovalCard({
                 <Pencil className="size-3.5" />
                 Edit &amp; Approve
               </Button>
+
+              {/* Codex-only: remember this Bash command as a session-level exec policy rule */}
+              {agentSlug === 'codex-cli-1' && isBash && (
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground/50 cursor-pointer select-none ml-auto">
+                  <input
+                    type="checkbox"
+                    checked={rememberForSession}
+                    onChange={(e) => setRememberForSession(e.target.checked)}
+                    disabled={isDisabled}
+                    className="size-3 accent-primary"
+                  />
+                  Remember for session
+                </label>
+              )}
             </>
           ) : (
             <>

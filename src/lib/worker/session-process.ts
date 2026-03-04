@@ -723,10 +723,15 @@ export class SessionProcess {
           return;
         }
 
-        // If the user edited the tool input before approving, pass through updatedInput.
+        // If the user edited the tool input before approving, or requested session-scoped
+        // command memory (Codex), pass through as a structured PermissionDecision.
         const decision: PermissionDecision =
-          control.decision === 'allow' && control.updatedInput
-            ? { behavior: 'allow', updatedInput: control.updatedInput }
+          control.decision === 'allow' && (control.updatedInput || control.rememberForSession)
+            ? {
+                behavior: 'allow',
+                ...(control.updatedInput ? { updatedInput: control.updatedInput } : {}),
+                ...(control.rememberForSession ? { rememberForSession: true } : {}),
+              }
             : control.decision;
         resolver(decision);
 
