@@ -258,6 +258,12 @@ function getEventConfig(event: AgendoEvent): EventDisplayConfig {
           return `${ev.agentId.slice(0, 8)} — ${ev.success ? 'success' : 'failed'}`;
         },
       };
+    default:
+      return {
+        color: 'text-zinc-600',
+        label: (event as AgendoEvent).type,
+        summary: () => '—',
+      };
   }
 }
 
