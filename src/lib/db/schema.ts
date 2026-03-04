@@ -305,6 +305,8 @@ export const sessions = pgTable(
     title: text('title'),
     // AI model reported by the agent CLI (e.g. "claude-sonnet-4-5-20250514").
     model: text('model'),
+    // Claude --effort flag: controls depth of thinking and resource usage per session.
+    effort: text('effort', { enum: ['low', 'medium', 'high'] }),
     // Full path to the plan file captured when ExitPlanMode fires.
     planFilePath: text('plan_file_path'),
     totalDurationMs: integer('total_duration_ms'),

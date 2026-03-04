@@ -23,6 +23,7 @@ const createSessionSchema = z.object({
   permissionMode: z.enum(['default', 'bypassPermissions', 'acceptEdits']).optional(),
   allowedTools: z.array(z.string()).optional(),
   model: z.string().optional(),
+  effort: z.enum(['low', 'medium', 'high']).optional(),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -72,6 +73,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     permissionMode: body.permissionMode,
     allowedTools: body.allowedTools,
     model: body.model,
+    effort: body.effort,
   });
 
   if (body.initialPrompt) {
