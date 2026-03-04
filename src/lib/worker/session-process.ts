@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
@@ -120,6 +120,8 @@ export class SessionProcess {
   private activityTracker!: ActivityTracker;
   /** Manages team inbox monitoring and TeamCreate/Delete lifecycle. */
   private teamManager!: SessionTeamManager;
+  /** Temp TOML policy file path written for Gemini sessions; cleaned up on exit. */
+  private policyFilePath: string | null = null;
 
   constructor(
     private session: Session,
@@ -306,6 +308,17 @@ export class SessionProcess {
       childEnv['AGENDO_TASK_ID'] = this.session.taskId;
     }
 
+    // For Gemini sessions with the Agendo MCP server injected, write a temporary
+    // TOML policy file that auto-allows all agendo MCP tools. This eliminates
+    // unnecessary requestPermission calls for mcp__agendo__* tools even in
+    // default mode. The file is cleaned up when the session exits.
+    if (mcpServers?.some((s) => s.name === 'agendo')) {
+      const policyToml =
+        '[[rule]]\nmcpName = "agendo"\ntoolName = "*"\ndecision = "allow"\npriority = 200\n';
+      this.policyFilePath = `/tmp/agendo-policy-${this.session.id}.toml`;
+      writeFileSync(this.policyFilePath, policyToml, 'utf-8');
+    }
+
     this.spawnCwd = spawnCwd ?? '/tmp';
     const spawnOpts: SpawnOpts = {
       cwd: this.spawnCwd,
@@ -318,6 +331,7 @@ export class SessionProcess {
       allowedTools: this.session.allowedTools ?? [],
       ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      ...(this.policyFilePath ? { policyFiles: [this.policyFilePath] } : {}),
       ...(initialImage ? { initialImage } : {}),
       // Sync Claude's session ID with agendo's DB session ID
       sessionId: this.session.id,
@@ -325,7 +339,8 @@ export class SessionProcess {
       strictMcpConfig: !!mcpConfigPath,
       // Forward model if set on the session (e.g. from DB or API)
       ...(this.session.model ? { model: this.session.model } : {}),
-      // TODO: wire maxBudgetUsd and fallbackModel when session config supports them
+      // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
+      ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
     };
 
     // Wire approval handler so adapter can request per-tool approval
@@ -909,6 +924,15 @@ export class SessionProcess {
     this.approvalHandler.drain('deny');
     // Stop team inbox monitoring.
     this.teamManager.stop();
+    // Clean up temp Gemini policy file (best-effort).
+    if (this.policyFilePath) {
+      try {
+        unlinkSync(this.policyFilePath);
+      } catch {
+        // File may already be gone.
+      }
+      this.policyFilePath = null;
+    }
     // Unsubscribe from the control channel to release the pg pool connection.
     // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
