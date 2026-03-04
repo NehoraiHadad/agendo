@@ -253,6 +253,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
       capabilities: { experimentalApi: true },
     });
+    // Required by JSON-RPC handshake: client must send `initialized` notification
+    this.sendNotification('initialized', {});
 
     // 2. Start or resume thread
     if (resumeThreadId) {
@@ -577,6 +579,13 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     const cp = this.childProcess;
     if (!cp?.stdin?.writable) return;
     cp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+  }
+
+  /** Send a JSON-RPC notification (no id — no response expected). */
+  private sendNotification(method: string, params: Record<string, unknown>): void {
+    const cp = this.childProcess;
+    if (!cp?.stdin?.writable) return;
+    cp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
   }
 
   // -------------------------------------------------------------------------
