@@ -63,14 +63,13 @@ export const POST = withErrorBoundary(
       return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
     }
 
-    // Execution mode: create scratch task (isAdHoc=true so it is excluded from the Kanban board)
+    // Execution mode: create a task to track the quick launch
     const task = await createTask({
-      title: `Ad-hoc · ${format(new Date(), 'MMM d, HH:mm')}`,
+      title: `Quick launch · ${format(new Date(), 'MMM d, HH:mm')}`,
       description: 'Auto-created for quick agent launch.',
       projectId: id,
       status: 'in_progress',
       assigneeAgentId: body.agentId,
-      isAdHoc: true,
     });
 
     // Create and enqueue session

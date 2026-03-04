@@ -25,7 +25,6 @@ export interface CreateTaskInput {
   projectId?: string;
   inputContext?: Record<string, unknown>;
   dueAt?: Date;
-  isAdHoc?: boolean;
 }
 
 export interface UpdateTaskInput {
@@ -56,7 +55,6 @@ export interface ListTasksOptions {
   parentTaskId?: string;
   projectId?: string;
   q?: string;
-  includeAdHoc?: boolean;
 }
 
 // --- Implementation ---
@@ -107,15 +105,13 @@ async function touchTask(id: string): Promise<void> {
  */
 export async function listTasksBoardItems(
   conditions: ReturnType<typeof and>[],
-  options: { limit?: number; includeAdHoc?: boolean } = {},
+  options: { limit?: number } = {},
 ): Promise<TaskBoardItem[]> {
   const limit = options.limit;
 
   // Filter out tasks belonging to soft-deleted projects
   const activeProjectFilter = sql`(${tasks.projectId} IS NULL OR ${projects.isActive} = true)`;
-  // Exclude ad-hoc tasks from board views unless explicitly requested
-  const adHocFilter = options.includeAdHoc ? undefined : sql`${tasks.isAdHoc} = false`;
-  const baseConditions = adHocFilter ? [activeProjectFilter, adHocFilter] : [activeProjectFilter];
+  const baseConditions = [activeProjectFilter];
   const allConditions =
     conditions.length > 0
       ? and(...(conditions as Parameters<typeof and>), ...baseConditions)
@@ -160,7 +156,6 @@ export async function listTasksBoardItems(
     assigneeAgentId: (row.assignee_agent_id as string | null) ?? null,
     projectId: (row.project_id as string | null) ?? null,
     inputContext: (row.input_context as Record<string, unknown>) ?? {},
-    isAdHoc: Boolean(row.is_ad_hoc),
     dueAt: row.due_at != null ? new Date(row.due_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -184,7 +179,6 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       assigneeAgentId: input.assigneeAgentId,
       projectId: input.projectId,
       inputContext: input.inputContext ?? {},
-      isAdHoc: input.isAdHoc ?? false,
       dueAt: input.dueAt,
     })
     .returning();
@@ -349,10 +343,7 @@ export async function listTasksByStatus(
     conditions.push(ilike(tasks.title, `%${options.q}%`));
   }
 
-  const result = await listTasksBoardItems(conditions, {
-    limit: limit + 1,
-    includeAdHoc: options.includeAdHoc,
-  });
+  const result = await listTasksBoardItems(conditions, { limit: limit + 1 });
 
   const hasMore = result.length > limit;
   const page = hasMore ? result.slice(0, limit) : result;

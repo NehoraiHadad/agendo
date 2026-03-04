@@ -26,8 +26,7 @@ export function useBoardSse() {
       es.addEventListener('snapshot', (e: MessageEvent) => {
         try {
           const { tasks } = JSON.parse(e.data) as { tasks: Task[] };
-          const { purgeAdHocTasks, applyServerUpdate } = useTaskBoardStore.getState();
-          purgeAdHocTasks();
+          const { applyServerUpdate } = useTaskBoardStore.getState();
           for (const task of tasks) {
             applyServerUpdate(task);
           }
@@ -48,8 +47,6 @@ export function useBoardSse() {
       es.addEventListener('task_created', (e: MessageEvent) => {
         try {
           const task = JSON.parse(e.data) as Task;
-          // Skip ad-hoc tasks — they are managed via the ad-hoc panel, not the main board
-          if (task.isAdHoc) return;
           useTaskBoardStore.getState().applyServerCreate(task);
         } catch {
           // ignore

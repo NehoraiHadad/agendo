@@ -7,7 +7,6 @@ import { ConflictError, BadRequestError } from '@/lib/errors';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities, sessions, projects } from '@/lib/db/schema';
 import { createSession } from '@/lib/services/session-service';
-import { createTask } from '@/lib/services/task-service';
 import { convertClaudeJsonl, writeImportedLog } from '@/lib/services/cli-import';
 
 const importSchema = z.object({
@@ -77,21 +76,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     if (project) projectId = project.id;
   }
 
-  // Resolve or create task
-  let taskId = body.taskId ?? null;
-  if (!taskId) {
-    const title = metadata.firstPrompt
-      ? metadata.firstPrompt.slice(0, 80)
-      : `Imported CLI session ${body.cliSessionId.slice(0, 8)}`;
-    const task = await createTask({
-      title,
-      description: `Imported from Claude CLI session ${body.cliSessionId}`,
-      status: 'in_progress',
-      projectId: projectId ?? undefined,
-      isAdHoc: true,
-    });
-    taskId = task.id;
-  }
+  const taskId = body.taskId ?? undefined;
 
   // Create session row
   const session = await createSession({

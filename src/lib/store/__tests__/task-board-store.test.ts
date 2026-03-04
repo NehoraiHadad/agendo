@@ -17,7 +17,6 @@ function createMockTask(
     sortOrder: 1000,
     assigneeAgentId: null,
     inputContext: {},
-    isAdHoc: false,
     dueAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
