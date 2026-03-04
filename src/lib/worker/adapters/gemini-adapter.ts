@@ -4,6 +4,7 @@ import {
   ClientSideConnection,
   ndJsonStream,
   PROTOCOL_VERSION,
+  type AgentCapabilities,
   type Client,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -560,36 +561,75 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Load an existing session (via session/load) or create a new one (via session/new).
+   * Resume or load an existing session, or create a new one.
+   *
+   * Resolution order for cold-resume:
+   *   1. session/resume (unstable) — no history replay, fastest path
+   *   2. session/load              — replays full conversation history
+   *   3. session/new               — fallback when no prior session exists
+   *
+   * `session/resume` is only attempted when the agent advertises the
+   * `sessionCapabilities.resume` capability. `session/load` is only attempted
+   * when the agent advertises `loadSession: true`. Both are optional; absence
+   * of either capability falls through to session/new.
    */
   private async loadOrCreateSession(
-    agentCaps: { loadSession?: boolean } | undefined,
+    agentCaps: AgentCapabilities | undefined,
     opts: SpawnOpts,
     resumeSessionId: string | null,
   ): Promise<void> {
     if (!this.connection) throw new Error('No ACP connection');
 
-    if (resumeSessionId && agentCaps?.loadSession) {
-      try {
-        await this.connection.loadSession({
-          sessionId: resumeSessionId,
-          cwd: opts.cwd,
-          mcpServers: (opts.mcpServers ?? []) as Parameters<
-            ClientSideConnection['loadSession']
-          >[0]['mcpServers'],
-        });
-        return; // session/load succeeded
-      } catch (loadErr) {
-        const msg = extractMessage(loadErr);
-        console.warn(`[GeminiAdapter] session/load failed, falling back to session/new: ${msg}`);
+    // Shared mcpServers cast used by all three paths.
+    type McpServersParam = Parameters<ClientSideConnection['newSession']>[0]['mcpServers'];
+    const mcpServers = (opts.mcpServers ?? []) as McpServersParam;
+
+    if (resumeSessionId) {
+      // --- Path 1: session/resume (unstable) — preferred; no history replay ---
+      if (agentCaps?.sessionCapabilities?.resume) {
+        try {
+          await this.connection.unstable_resumeSession({
+            sessionId: resumeSessionId,
+            cwd: opts.cwd,
+            mcpServers: mcpServers as Parameters<
+              ClientSideConnection['unstable_resumeSession']
+            >[0]['mcpServers'],
+          });
+          this.sessionId = resumeSessionId;
+          console.info(`[GeminiAdapter] session/resume succeeded for ${resumeSessionId}`);
+          return;
+        } catch (resumeErr) {
+          console.warn(
+            `[GeminiAdapter] session/resume failed, trying session/load: ${extractMessage(resumeErr)}`,
+          );
+        }
+      }
+
+      // --- Path 2: session/load — replays full history ---
+      if (agentCaps?.loadSession) {
+        try {
+          await this.connection.loadSession({
+            sessionId: resumeSessionId,
+            cwd: opts.cwd,
+            mcpServers: mcpServers as Parameters<
+              ClientSideConnection['loadSession']
+            >[0]['mcpServers'],
+          });
+          this.sessionId = resumeSessionId;
+          console.info(`[GeminiAdapter] session/load succeeded for ${resumeSessionId}`);
+          return;
+        } catch (loadErr) {
+          console.warn(
+            `[GeminiAdapter] session/load failed, falling back to session/new: ${extractMessage(loadErr)}`,
+          );
+        }
       }
     }
 
+    // --- Path 3: session/new ---
     const result = await this.connection.newSession({
       cwd: opts.cwd,
-      mcpServers: (opts.mcpServers ?? []) as Parameters<
-        ClientSideConnection['newSession']
-      >[0]['mcpServers'],
+      mcpServers,
     });
     this.sessionId = result.sessionId;
   }

@@ -236,11 +236,12 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
       return [{ type: 'agent:text-delta', text: event.text, fromDelta: true }];
 
     // -----------------------------------------------------------------------
-    // plan-delta → agent:text-delta (streaming plan text)
+    // plan-delta → agent:text-delta (streaming plan text; fromDelta=true
+    // prevents double-render when item/completed with type plan fires)
     // -----------------------------------------------------------------------
     case 'as:plan-delta':
       if (!event.text) return [];
-      return [{ type: 'agent:text-delta', text: event.text }];
+      return [{ type: 'agent:text-delta', text: event.text, fromDelta: true }];
 
     // -----------------------------------------------------------------------
     // info → system:info
