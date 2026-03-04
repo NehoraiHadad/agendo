@@ -7,7 +7,6 @@ import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { TaskCard } from './task-card';
 import { TaskQuickAdd } from './task-quick-add';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import type { TaskStatus } from '@/lib/types';
 
@@ -126,8 +125,15 @@ export const TaskColumn = memo(function TaskColumn({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 px-2 pb-2">
-        <div ref={setNodeRef} className="flex min-h-[40px] flex-col gap-2">
+      {/*
+       * Native overflow-y-auto instead of Radix ScrollArea for two reasons:
+       * 1. dnd-kit auto-scroll detects native overflow containers reliably.
+       * 2. The radix ScrollArea wraps children in a display:table div, breaking
+       *    min-height:100% resolution on the droppable zone.
+       * Global CSS (globals.css) already styles scrollbars project-wide.
+       */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 pb-2">
+        <div ref={setNodeRef} className="flex min-h-full flex-col gap-2">
           <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
             {taskIds.map((id) => (
               <TaskCard key={id} taskId={id} />
@@ -168,7 +174,7 @@ export const TaskColumn = memo(function TaskColumn({
             <div className="h-16 rounded-lg border-2 border-dashed border-primary/30 bg-primary/[0.03] animate-pulse" />
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       <TaskQuickAdd status={status} />
     </div>

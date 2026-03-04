@@ -94,7 +94,7 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
       style={style}
       className={cn(
         /* base */
-        'group relative w-full rounded-lg border border-l-[3px] border-white/[0.07] bg-card text-left',
+        'group relative w-full overflow-hidden rounded-lg border border-l-[3px] border-white/[0.07] bg-card text-left',
         /* left border color (overridden by project color via inline style) */
         !projectColor && pCfg.borderLeft,
         /* priority left-glow (only when no project color) */
