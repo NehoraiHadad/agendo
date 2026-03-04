@@ -46,23 +46,72 @@ type ViewMode = 'edit' | 'preview' | 'split';
 
 const PLAN_STATUS_CONFIG: Record<
   PlanStatus,
-  { label: string; dotColor: string; pillBg: string; pillBorder: string; textColor: string; pulse: boolean }
+  {
+    label: string;
+    dotColor: string;
+    pillBg: string;
+    pillBorder: string;
+    textColor: string;
+    pulse: boolean;
+  }
 > = {
-  draft:     { label: 'Draft',     dotColor: 'bg-zinc-400',    pillBg: 'bg-zinc-500/10',    pillBorder: 'border-zinc-500/20',    textColor: 'text-zinc-400',    pulse: false },
-  ready:     { label: 'Ready',     dotColor: 'bg-blue-400',    pillBg: 'bg-blue-500/10',    pillBorder: 'border-blue-500/25',    textColor: 'text-blue-400',    pulse: false },
-  stale:     { label: 'Stale',     dotColor: 'bg-amber-400',   pillBg: 'bg-amber-500/10',   pillBorder: 'border-amber-500/25',   textColor: 'text-amber-400',   pulse: false },
-  executing: { label: 'Executing', dotColor: 'bg-violet-400',  pillBg: 'bg-violet-500/10',  pillBorder: 'border-violet-500/25',  textColor: 'text-violet-400',  pulse: true  },
-  done:      { label: 'Done',      dotColor: 'bg-emerald-400', pillBg: 'bg-emerald-500/10', pillBorder: 'border-emerald-500/25', textColor: 'text-emerald-400', pulse: false },
-  archived:  { label: 'Archived',  dotColor: 'bg-zinc-600',    pillBg: 'bg-zinc-700/10',    pillBorder: 'border-zinc-700/20',    textColor: 'text-zinc-500',    pulse: false },
+  draft: {
+    label: 'Draft',
+    dotColor: 'bg-zinc-400',
+    pillBg: 'bg-zinc-500/10',
+    pillBorder: 'border-zinc-500/20',
+    textColor: 'text-zinc-400',
+    pulse: false,
+  },
+  ready: {
+    label: 'Ready',
+    dotColor: 'bg-blue-400',
+    pillBg: 'bg-blue-500/10',
+    pillBorder: 'border-blue-500/25',
+    textColor: 'text-blue-400',
+    pulse: false,
+  },
+  stale: {
+    label: 'Stale',
+    dotColor: 'bg-amber-400',
+    pillBg: 'bg-amber-500/10',
+    pillBorder: 'border-amber-500/25',
+    textColor: 'text-amber-400',
+    pulse: false,
+  },
+  executing: {
+    label: 'Executing',
+    dotColor: 'bg-violet-400',
+    pillBg: 'bg-violet-500/10',
+    pillBorder: 'border-violet-500/25',
+    textColor: 'text-violet-400',
+    pulse: true,
+  },
+  done: {
+    label: 'Done',
+    dotColor: 'bg-emerald-400',
+    pillBg: 'bg-emerald-500/10',
+    pillBorder: 'border-emerald-500/25',
+    textColor: 'text-emerald-400',
+    pulse: false,
+  },
+  archived: {
+    label: 'Archived',
+    dotColor: 'bg-zinc-600',
+    pillBg: 'bg-zinc-700/10',
+    pillBorder: 'border-zinc-700/20',
+    textColor: 'text-zinc-500',
+    pulse: false,
+  },
 };
 
 const STATUS_ACCENT: Record<PlanStatus, string> = {
-  draft:     'linear-gradient(90deg, oklch(0.5 0 0 / 0.25) 0%, transparent 70%)',
-  ready:     'linear-gradient(90deg, oklch(0.6 0.18 250 / 0.7) 0%, transparent 70%)',
-  stale:     'linear-gradient(90deg, oklch(0.65 0.14 85 / 0.6) 0%, transparent 70%)',
+  draft: 'linear-gradient(90deg, oklch(0.5 0 0 / 0.25) 0%, transparent 70%)',
+  ready: 'linear-gradient(90deg, oklch(0.6 0.18 250 / 0.7) 0%, transparent 70%)',
+  stale: 'linear-gradient(90deg, oklch(0.65 0.14 85 / 0.6) 0%, transparent 70%)',
   executing: 'linear-gradient(90deg, oklch(0.65 0.2 280 / 0.85) 0%, transparent 70%)',
-  done:      'linear-gradient(90deg, oklch(0.65 0.2 145 / 0.7) 0%, transparent 70%)',
-  archived:  'linear-gradient(90deg, oklch(0.35 0 0 / 0.2) 0%, transparent 70%)',
+  done: 'linear-gradient(90deg, oklch(0.65 0.2 145 / 0.7) 0%, transparent 70%)',
+  archived: 'linear-gradient(90deg, oklch(0.35 0 0 / 0.2) 0%, transparent 70%)',
 };
 
 // ---------------------------------------------------------------------------
@@ -110,29 +159,32 @@ function PlanStatusSelect({ status, disabled, onChange }: PlanStatusSelectProps)
           className="z-50 min-w-[130px] overflow-hidden rounded-lg border border-white/[0.1] bg-[oklch(0.12_0.005_240)] shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
           <SelectPrimitive.Viewport className="p-1">
-            {(Object.entries(PLAN_STATUS_CONFIG) as [PlanStatus, (typeof PLAN_STATUS_CONFIG)[PlanStatus]][]).map(
-              ([s, scfg]) => (
-                <SelectPrimitive.Item
-                  key={s}
-                  value={s}
-                  className={cn(
-                    'relative flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs cursor-pointer outline-none select-none',
-                    'data-[highlighted]:bg-white/[0.07]',
-                    scfg.textColor,
-                  )}
-                >
-                  <span
-                    className={cn('inline-block size-1.5 rounded-full shrink-0', scfg.dotColor, {
-                      'animate-pulse': scfg.pulse,
-                    })}
-                  />
-                  <SelectPrimitive.ItemText>{scfg.label}</SelectPrimitive.ItemText>
-                  <SelectPrimitive.ItemIndicator className="ml-auto opacity-60 text-[10px]">
-                    ✓
-                  </SelectPrimitive.ItemIndicator>
-                </SelectPrimitive.Item>
-              ),
-            )}
+            {(
+              Object.entries(PLAN_STATUS_CONFIG) as [
+                PlanStatus,
+                (typeof PLAN_STATUS_CONFIG)[PlanStatus],
+              ][]
+            ).map(([s, scfg]) => (
+              <SelectPrimitive.Item
+                key={s}
+                value={s}
+                className={cn(
+                  'relative flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs cursor-pointer outline-none select-none',
+                  'data-[highlighted]:bg-white/[0.07]',
+                  scfg.textColor,
+                )}
+              >
+                <span
+                  className={cn('inline-block size-1.5 rounded-full shrink-0', scfg.dotColor, {
+                    'animate-pulse': scfg.pulse,
+                  })}
+                />
+                <SelectPrimitive.ItemText>{scfg.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemIndicator className="ml-auto opacity-60 text-[10px]">
+                  ✓
+                </SelectPrimitive.ItemIndicator>
+              </SelectPrimitive.Item>
+            ))}
           </SelectPrimitive.Viewport>
         </SelectPrimitive.Content>
       </SelectPrimitive.Portal>
@@ -326,6 +378,31 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     setSaveError(null);
   }, []);
 
+  // Poll for plan content updates while a conversation is active.
+  // When the agent finalizes a plan via ExitPlanMode, the worker updates
+  // the plan content in the DB. This detects those changes and syncs the editor.
+  const lastKnownContentRef = useRef(initialPlan.content);
+  useEffect(() => {
+    if (!conversationOpen || !conversationSessionId) return;
+    const interval = setInterval(async () => {
+      // Don't overwrite unsaved user edits
+      if (isDirty) return;
+      try {
+        const res = await apiFetch<ApiResponse<Plan>>(`/api/plans/${plan.id}`);
+        const remote = res.data;
+        if (remote.content !== lastKnownContentRef.current) {
+          lastKnownContentRef.current = remote.content;
+          setContent(remote.content);
+          setPlan(remote);
+          if (remote.title !== title) setTitle(remote.title);
+        }
+      } catch {
+        // Silently ignore — polling is best-effort
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [conversationOpen, conversationSessionId, isDirty, plan.id, title]);
+
   // Ctrl+S / Cmd+S to save
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -407,6 +484,10 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
 
   const handleSessionCreated = useCallback((sessionId: string) => {
     setConversationSessionId(sessionId);
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    setConversationSessionId(null);
   }, []);
 
   const showEditor = viewMode === 'edit' || viewMode === 'split';
@@ -495,9 +576,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                       <span className="text-muted-foreground/30">saving</span>
                     </>
                   )}
-                  {!isSaving && isDirty && (
-                    <span className="text-amber-400/50">unsaved</span>
-                  )}
+                  {!isSaving && isDirty && <span className="text-amber-400/50">unsaved</span>}
                   {!isSaving && !isDirty && lastSavedAt && (
                     <span className="text-muted-foreground/25" suppressHydrationWarning>
                       saved
@@ -582,7 +661,8 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 {plan.lastValidatedAt && (
                   <span className="flex items-center gap-1" suppressHydrationWarning>
                     <Clock className="size-3 shrink-0" />
-                    validated {formatDistanceToNow(new Date(plan.lastValidatedAt), { addSuffix: true })}
+                    validated{' '}
+                    {formatDistanceToNow(new Date(plan.lastValidatedAt), { addSuffix: true })}
                   </span>
                 )}
                 {plan.executingSessionId && (
@@ -708,6 +788,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
               onContentChange={handleAgentContentChange}
               onClose={() => setConversationOpen(false)}
               onSessionCreated={handleSessionCreated}
+              onNewChat={handleNewChat}
             />
           </div>
           {/* Mobile: bottom sheet overlay */}
@@ -724,6 +805,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 onContentChange={handleAgentContentChange}
                 onClose={() => setConversationOpen(false)}
                 onSessionCreated={handleSessionCreated}
+                onNewChat={handleNewChat}
               />
             </div>
           </div>
