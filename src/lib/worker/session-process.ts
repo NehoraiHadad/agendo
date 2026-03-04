@@ -1045,19 +1045,21 @@ export class SessionProcess {
     // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
     // Only fires when the session was genuinely mid-work (active, not awaiting_input),
     // has a resumable sessionRef, and no other re-enqueue path is already running.
-    // Excluded when terminateKilled=true (graceful pm2 restart): in that case the
-    // session is left idle so the next user message triggers a clean cold-resume
-    // with the correct prompt, instead of re-sending the original initialPrompt.
+    // resumePrompt is explicitly set so the agent gets a sensible continuation
+    // message instead of the original initialPrompt (first message of the session).
     const resumeRef = this.sessionRef ?? this.session.sessionRef ?? null;
     if (
       wasInterruptedMidTurn &&
       resumeRef &&
-      !this.terminateKilled &&
       !this.cancelKilled &&
       !this.clearContextRestart &&
       !this.modeChangeRestart
     ) {
-      enqueueSession({ sessionId: this.session.id, resumeRef }).catch((err: unknown) => {
+      enqueueSession({
+        sessionId: this.session.id,
+        resumeRef,
+        resumePrompt: 'The worker restarted. Please continue where you left off.',
+      }).catch((err: unknown) => {
         log.error(
           { err, sessionId: this.session.id },
           'Failed to re-enqueue session after mid-turn interruption',
