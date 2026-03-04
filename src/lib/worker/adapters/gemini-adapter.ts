@@ -106,12 +106,12 @@ class GeminiClientHandler implements Client {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
         if (update.content.type === 'text') {
-          this.emitNdjson({ type: 'gemini:text', text: update.content.text });
+          this.emitNdjson({ type: 'gemini:text-delta', text: update.content.text });
         }
         break;
       case 'agent_thought_chunk':
         if (update.content.type === 'text') {
-          this.emitNdjson({ type: 'gemini:thinking', text: update.content.text });
+          this.emitNdjson({ type: 'gemini:thinking-delta', text: update.content.text });
         }
         break;
       case 'tool_call': {

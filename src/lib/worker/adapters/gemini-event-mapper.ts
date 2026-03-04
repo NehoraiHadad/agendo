@@ -10,7 +10,9 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 export type GeminiEvent =
   | { type: 'gemini:text'; text: string }
+  | { type: 'gemini:text-delta'; text: string }
   | { type: 'gemini:thinking'; text: string }
+  | { type: 'gemini:thinking-delta'; text: string }
   | {
       type: 'gemini:tool-start';
       toolName: string;
@@ -49,10 +51,22 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
       return [{ type: 'agent:text', text: event.text }];
 
     // -----------------------------------------------------------------------
+    // gemini:text-delta → agent:text-delta (streaming chunk)
+    // -----------------------------------------------------------------------
+    case 'gemini:text-delta':
+      return [{ type: 'agent:text-delta', text: event.text }];
+
+    // -----------------------------------------------------------------------
     // gemini:thinking → agent:thinking
     // -----------------------------------------------------------------------
     case 'gemini:thinking':
       return [{ type: 'agent:thinking', text: event.text }];
+
+    // -----------------------------------------------------------------------
+    // gemini:thinking-delta → agent:thinking-delta (streaming chunk)
+    // -----------------------------------------------------------------------
+    case 'gemini:thinking-delta':
+      return [{ type: 'agent:thinking-delta', text: event.text }];
 
     // -----------------------------------------------------------------------
     // gemini:tool-start → agent:tool-start
