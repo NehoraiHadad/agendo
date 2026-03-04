@@ -34,7 +34,7 @@ export async function GET(_req: NextRequest) {
         const allTasks = await listTasksBoardItems([]);
         send('snapshot', { tasks: allTasks });
       } catch (err) {
-        log.error('SSE snapshot error:', err);
+        log.error({ err }, 'SSE snapshot error');
         send('error', { message: 'Failed to load snapshot' });
       }
 
@@ -54,7 +54,7 @@ export async function GET(_req: NextRequest) {
 
           lastPoll = new Date();
         } catch (err) {
-          log.error('SSE poll error:', err);
+          log.error({ err }, 'SSE poll error');
         }
       }, POLL_INTERVAL_MS);
 

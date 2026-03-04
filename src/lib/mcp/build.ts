@@ -1,4 +1,7 @@
 import { build } from 'esbuild';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('mcp-build');
 
 async function main() {
   await build({
@@ -11,10 +14,10 @@ async function main() {
     banner: { js: '#!/usr/bin/env node\n' },
     sourcemap: true,
   });
-  console.log('MCP server built: dist/mcp-server.js');
+  log.info('MCP server built: dist/mcp-server.js');
 }
 
 main().catch((err) => {
-  console.error('Build failed:', err);
+  log.error({ err }, 'Build failed');
   process.exit(1);
 });

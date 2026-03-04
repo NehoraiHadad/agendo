@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { createLogger } from './logger';
+
+const log = createLogger('config');
 
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
@@ -26,8 +29,10 @@ export type EnvConfig = z.infer<typeof envSchema>;
 function loadConfig(): EnvConfig {
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
-    console.error('Invalid environment configuration:');
-    console.error(result.error.format());
+    log.error(
+      { err: result.error, issues: result.error.format() },
+      'Invalid environment configuration',
+    );
     process.exit(1);
   }
   return result.data;

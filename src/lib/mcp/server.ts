@@ -5,15 +5,18 @@
  * IMPORTANT: No `@/` path aliases — this file is bundled with esbuild.
  */
 
+import pino from 'pino';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { registerAll } from './tools/index.js';
 
 const AGENDO_URL = process.env.AGENDO_URL ?? 'http://localhost:4100';
 
-function log(msg: string): void {
-  process.stderr.write(`[agendo-mcp] ${msg}\n`);
-}
+// Logs MUST go to stderr (fd 2) — stdout is the JSON-RPC protocol channel.
+const log = pino(
+  { level: process.env.LOG_LEVEL ?? 'info', base: { service: 'agendo-mcp' } },
+  pino.destination({ dest: 2, sync: true }),
+);
 
 // ---------------------------------------------------------------------------
 // MCP Server setup
@@ -35,17 +38,17 @@ function createServer(): McpServer {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  log(`Starting MCP server (API: ${AGENDO_URL})`);
+  log.info({ agendoUrl: AGENDO_URL }, 'Starting MCP server');
 
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  log('MCP server connected via stdio');
+  log.info('MCP server connected via stdio');
 }
 
 main().catch((err) => {
-  log(`Fatal: ${err instanceof Error ? err.message : String(err)}`);
+  log.fatal({ err }, 'Fatal error');
   process.exit(1);
 });
 
