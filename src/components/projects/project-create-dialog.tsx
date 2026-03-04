@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -224,164 +225,166 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
           <DialogTitle>New Project</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="proj-name">Name</Label>
-            <Input
-              id="proj-name"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                saveCombinedDraft(e.target.value);
-              }}
-              placeholder="My App"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="proj-path">Root Path</Label>
-            <div className="flex gap-2">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="proj-name">Name</Label>
               <Input
-                id="proj-path"
-                value={rootPath}
+                id="proj-name"
+                value={name}
                 onChange={(e) => {
-                  setRootPath(e.target.value);
-                  setPathTouched(true);
+                  setName(e.target.value);
+                  saveCombinedDraft(e.target.value);
                 }}
-                placeholder="/home/ubuntu/projects/myapp"
+                placeholder="My App"
                 required
-                className="flex-1 font-mono text-sm"
               />
-              <Popover open={showSuggestions} onOpenChange={setShowSuggestions}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleDiscover}
-                    disabled={discovering}
-                    aria-label="Discover projects"
-                    className="shrink-0"
-                  >
-                    {discovering ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Search className="size-3.5" />
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80 p-1" align="end">
-                  {suggestions.length === 0 ? (
-                    <p className="px-3 py-4 text-sm text-muted-foreground text-center">
-                      No new projects found
-                    </p>
-                  ) : (
-                    <ul
-                      className="max-h-60 overflow-y-auto"
-                      onTouchMove={(e) => e.stopPropagation()}
-                    >
-                      {suggestions.map((s) => (
-                        <li key={s.path}>
-                          <button
-                            type="button"
-                            onClick={() => handleSelectSuggestion(s)}
-                            className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground focus:outline-none focus:bg-accent"
-                          >
-                            <Folder className="size-4 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0">
-                              <p className="font-medium truncate">{s.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono truncate">
-                                {s.path}
-                              </p>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </PopoverContent>
-              </Popover>
             </div>
-            {/* Path status indicator */}
-            {pathStatus === 'checking' && (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
-                Checking path...
-              </p>
-            )}
-            {pathStatus === 'exists' && (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Check className="size-3" />
-                Directory exists
-              </p>
-            )}
-            {pathStatus === 'creatable' && (
-              <p className="flex items-center gap-1.5 text-xs text-blue-400">
-                <FolderPlus className="size-3" />
-                Directory will be created
-              </p>
-            )}
-            {pathStatus === 'denied' && (
-              <p className="flex items-center gap-1.5 text-xs text-destructive">
-                <XCircle className="size-3" />
-                {pathDeniedReason || 'Path not allowed'}
-              </p>
-            )}
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="proj-desc">
-              Description <span className="font-normal text-muted-foreground">(optional)</span>
-            </Label>
-            <Textarea
-              id="proj-desc"
-              value={description}
-              onChange={(e) => {
-                setDescription(e.target.value);
-                saveCombinedDraft(undefined, e.target.value);
-              }}
-              placeholder="Short description of this project..."
-              className="min-h-[72px] resize-none"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Color</Label>
-            <div className="flex gap-2 flex-wrap">
-              {PRESET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  className="size-7 rounded-full ring-offset-2 ring-offset-background transition-all focus:outline-none focus:ring-2 focus:ring-ring"
-                  style={{
-                    backgroundColor: c,
-                    outline: color === c ? `2px solid ${c}` : undefined,
-                    outlineOffset: color === c ? '2px' : undefined,
+            <div className="space-y-2">
+              <Label htmlFor="proj-path">Root Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="proj-path"
+                  value={rootPath}
+                  onChange={(e) => {
+                    setRootPath(e.target.value);
+                    setPathTouched(true);
                   }}
-                  aria-label={`Select color ${c}`}
-                  aria-pressed={color === c}
+                  placeholder="/home/ubuntu/projects/myapp"
+                  required
+                  className="flex-1 font-mono text-sm"
                 />
-              ))}
+                <Popover open={showSuggestions} onOpenChange={setShowSuggestions}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleDiscover}
+                      disabled={discovering}
+                      aria-label="Discover projects"
+                      className="shrink-0"
+                    >
+                      {discovering ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Search className="size-3.5" />
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-1" align="end">
+                    {suggestions.length === 0 ? (
+                      <p className="px-3 py-4 text-sm text-muted-foreground text-center">
+                        No new projects found
+                      </p>
+                    ) : (
+                      <ul
+                        className="max-h-60 overflow-y-auto"
+                        onTouchMove={(e) => e.stopPropagation()}
+                      >
+                        {suggestions.map((s) => (
+                          <li key={s.path}>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectSuggestion(s)}
+                              className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground focus:outline-none focus:bg-accent"
+                            >
+                              <Folder className="size-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0">
+                                <p className="font-medium truncate">{s.name}</p>
+                                <p className="text-xs text-muted-foreground font-mono truncate">
+                                  {s.path}
+                                </p>
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </div>
+              {/* Path status indicator */}
+              {pathStatus === 'checking' && (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" />
+                  Checking path...
+                </p>
+              )}
+              {pathStatus === 'exists' && (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Check className="size-3" />
+                  Directory exists
+                </p>
+              )}
+              {pathStatus === 'creatable' && (
+                <p className="flex items-center gap-1.5 text-xs text-blue-400">
+                  <FolderPlus className="size-3" />
+                  Directory will be created
+                </p>
+              )}
+              {pathStatus === 'denied' && (
+                <p className="flex items-center gap-1.5 text-xs text-destructive">
+                  <XCircle className="size-3" />
+                  {pathDeniedReason || 'Path not allowed'}
+                </p>
+              )}
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="proj-icon">
-              Icon <span className="font-normal text-muted-foreground">(optional emoji)</span>
-            </Label>
-            <Input
-              id="proj-icon"
-              value={icon}
-              onChange={(e) => setIcon(e.target.value.slice(0, 2))}
-              placeholder="🚀"
-              className="w-20"
-              maxLength={2}
-            />
-          </div>
+            <div className="space-y-2">
+              <Label htmlFor="proj-desc">
+                Description <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <Textarea
+                id="proj-desc"
+                value={description}
+                onChange={(e) => {
+                  setDescription(e.target.value);
+                  saveCombinedDraft(undefined, e.target.value);
+                }}
+                placeholder="Short description of this project..."
+                className="min-h-[72px] resize-none"
+              />
+            </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="space-y-2">
+              <Label>Color</Label>
+              <div className="flex gap-2 flex-wrap">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setColor(c)}
+                    className="size-7 rounded-full ring-offset-2 ring-offset-background transition-all focus:outline-none focus:ring-2 focus:ring-ring"
+                    style={{
+                      backgroundColor: c,
+                      outline: color === c ? `2px solid ${c}` : undefined,
+                      outlineOffset: color === c ? '2px' : undefined,
+                    }}
+                    aria-label={`Select color ${c}`}
+                    aria-pressed={color === c}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="proj-icon">
+                Icon <span className="font-normal text-muted-foreground">(optional emoji)</span>
+              </Label>
+              <Input
+                id="proj-icon"
+                value={icon}
+                onChange={(e) => setIcon(e.target.value.slice(0, 2))}
+                placeholder="🚀"
+                className="w-20"
+                maxLength={2}
+              />
+            </div>
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </DialogBody>
 
           <DialogFooter>
             <Button type="submit" disabled={isCreateDisabled}>

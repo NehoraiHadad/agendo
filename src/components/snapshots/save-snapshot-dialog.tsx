@@ -6,10 +6,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -195,7 +196,7 @@ export function SaveSnapshotDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 pt-1">
+        <DialogBody className="flex flex-col gap-4">
           {/* Name */}
           <div className="space-y-2">
             <Label
@@ -275,7 +276,7 @@ export function SaveSnapshotDialog({
               />
             </div>
           )}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)}>

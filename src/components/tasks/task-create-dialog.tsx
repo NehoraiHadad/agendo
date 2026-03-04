@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -97,56 +98,58 @@ export function TaskCreateDialog() {
           <DialogTitle>Create Task</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <Input
-            autoFocus
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              saveDraft(JSON.stringify({ title: e.target.value, description }));
-            }}
-            placeholder="Task title"
-            required
-          />
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody className="space-y-4">
+            <Input
+              autoFocus
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                saveDraft(JSON.stringify({ title: e.target.value, description }));
+              }}
+              placeholder="Task title"
+              required
+            />
 
-          <Textarea
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              saveDraft(JSON.stringify({ title, description: e.target.value }));
-            }}
-            placeholder="Description (optional)"
-            rows={3}
-          />
+            <Textarea
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                saveDraft(JSON.stringify({ title, description: e.target.value }));
+              }}
+              placeholder="Description (optional)"
+              rows={3}
+            />
 
-          <Select value={priority} onValueChange={setPriority}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Critical</SelectItem>
-              <SelectItem value="2">High</SelectItem>
-              <SelectItem value="3">Medium</SelectItem>
-              <SelectItem value="4">Low</SelectItem>
-              <SelectItem value="5">Lowest</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {projects.length > 0 && (
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+            <Select value={priority} onValueChange={setPriority}>
               <SelectTrigger>
-                <SelectValue placeholder="No project" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No project</SelectItem>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    {project.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="1">Critical</SelectItem>
+                <SelectItem value="2">High</SelectItem>
+                <SelectItem value="3">Medium</SelectItem>
+                <SelectItem value="4">Low</SelectItem>
+                <SelectItem value="5">Lowest</SelectItem>
               </SelectContent>
             </Select>
-          )}
+
+            {projects.length > 0 && (
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="No project" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No project</SelectItem>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </DialogBody>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
