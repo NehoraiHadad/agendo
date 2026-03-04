@@ -291,6 +291,12 @@ export class SessionProcess {
       }
     }
 
+    // Enable lazy MCP schema loading — reduces initial context window usage by 32K+
+    // tokens by deferring MCP tool schema injection until tools are actually needed.
+    // Undocumented/experimental flag: https://paddo.dev/blog/claude-code-hidden-mcp-flag/
+    // Remove if it causes issues or if Claude Code makes this the default behavior.
+    childEnv['ENABLE_EXPERIMENTAL_MCP_CLI'] = 'true';
+
     // Session identity vars — available to hooks and sub-processes via env.
     // These are already baked into the MCP config file; setting them in the
     // child env as well lets hooks (pre/post tool) read them without parsing JSON.
