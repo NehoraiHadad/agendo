@@ -1146,6 +1146,7 @@ export function SessionChatView({
             toolInput={item.toolInput}
             dangerLevel={item.dangerLevel}
             onResolved={() => handleApprovalResolved(item.approvalId)}
+            agentSlug={agentSlug}
           />
         );
       }
