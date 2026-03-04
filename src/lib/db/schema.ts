@@ -307,6 +307,9 @@ export const sessions = pgTable(
     model: text('model'),
     // Claude --effort flag: controls depth of thinking and resource usage per session.
     effort: text('effort', { enum: ['low', 'medium', 'high'] }),
+    // Server-side tool usage counters (from Claude's result.usage.server_tool_use).
+    webSearchRequests: integer('web_search_requests').default(0),
+    webFetchRequests: integer('web_fetch_requests').default(0),
     // Full path to the plan file captured when ExitPlanMode fires.
     planFilePath: text('plan_file_path'),
     totalDurationMs: integer('total_duration_ms'),
