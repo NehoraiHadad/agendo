@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { format } from 'date-fns';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getProject } from '@/lib/services/project-service';
-import { createTask } from '@/lib/services/task-service';
 import { createSession } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import { BadRequestError } from '@/lib/errors';
@@ -63,18 +61,8 @@ export const POST = withErrorBoundary(
       return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
     }
 
-    // Execution mode: create a task to track the quick launch
-    const task = await createTask({
-      title: `Quick launch · ${format(new Date(), 'MMM d, HH:mm')}`,
-      description: 'Auto-created for quick agent launch.',
-      projectId: id,
-      status: 'in_progress',
-      assigneeAgentId: body.agentId,
-    });
-
-    // Create and enqueue session
+    // Execution mode: session without a task — user links it to a task manually if needed
     const session = await createSession({
-      taskId: task.id,
       projectId: id,
       kind: 'execution',
       agentId: body.agentId,
@@ -87,6 +75,6 @@ export const POST = withErrorBoundary(
       await enqueueSession({ sessionId: session.id });
     }
 
-    return NextResponse.json({ data: { sessionId: session.id, taskId: task.id } }, { status: 201 });
+    return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
   },
 );
