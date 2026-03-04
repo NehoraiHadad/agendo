@@ -96,6 +96,16 @@ export type AgendoEvent =
       permissionMode?: string;
     })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
+  | (EventBase & { type: 'session:mode-change'; mode: string })
+  | (EventBase & {
+      type: 'agent:plan';
+      entries: Array<{
+        content: string;
+        priority: 'high' | 'medium' | 'low';
+        status: 'pending' | 'in_progress' | 'completed';
+      }>;
+    })
+  | (EventBase & { type: 'agent:usage'; used: number; size: number })
   | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
   | (EventBase & {
       type: 'system:info';
