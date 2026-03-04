@@ -145,9 +145,15 @@ export async function runSession(
     console.log(`[session-runner] Claude MCP config written for session ${sessionId}`);
   }
 
-  // Phase A2: For Gemini, inject MCP servers via the ACP session/new request.
+  // Phase A2: For Gemini and Codex, inject MCP servers with session identity.
+  // Gemini: passed via ACP session/new mcpServers field.
+  // Codex: passed via SpawnOpts.mcpServers → config/batchWrite in the adapter.
   let mcpServers: AcpMcpServer[] | undefined;
-  if (agent.mcpEnabled && config.MCP_SERVER_PATH && binaryName === 'gemini') {
+  if (
+    agent.mcpEnabled &&
+    config.MCP_SERVER_PATH &&
+    (binaryName === 'gemini' || binaryName === 'codex')
+  ) {
     const identity = {
       sessionId,
       taskId: session.taskId,
@@ -155,7 +161,7 @@ export async function runSession(
       projectId: resolvedProjectId,
     };
     mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity);
-    console.log(`[session-runner] Gemini MCP injected for session ${sessionId}`);
+    console.log(`[session-runner] ${binaryName} MCP injected for session ${sessionId}`);
   }
 
   // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
