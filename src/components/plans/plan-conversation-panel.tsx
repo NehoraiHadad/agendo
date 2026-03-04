@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, Loader2, Bot, Square } from 'lucide-react';
+import { X, Loader2, Bot, Square, Plus } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -75,6 +75,7 @@ interface PlanConversationPanelProps {
   onContentChange: (newContent: string) => void;
   onClose: () => void;
   onSessionCreated: (sessionId: string) => void;
+  onNewChat: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ export function PlanConversationPanel({
   onContentChange,
   onClose,
   onSessionCreated,
+  onNewChat,
 }: PlanConversationPanelProps) {
   // Agent picker state
   const [agents, setAgents] = useState<AgentWithCapabilities[]>([]);
@@ -267,6 +269,22 @@ export function PlanConversationPanel({
     [persistEditState],
   );
 
+  const [isStartingNew, setIsStartingNew] = useState(false);
+
+  const handleNewChat = useCallback(async () => {
+    if (isStartingNew) return;
+    setIsStartingNew(true);
+    try {
+      await apiFetch(`/api/plans/${planId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ conversationSessionId: null }),
+      });
+      onNewChat();
+    } finally {
+      setIsStartingNew(false);
+    }
+  }, [planId, isStartingNew, onNewChat]);
+
   // Pending edits not yet acted on
   const pendingEdits = planEdits.filter((edit) => !editStates[edit.id]);
 
@@ -311,14 +329,32 @@ export function PlanConversationPanel({
             </span>
           </span>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          className="ml-auto text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors rounded-md p-0.5 hover:bg-white/[0.05]"
-          aria-label="Close plan chat"
-        >
-          <X className="size-4" />
-        </button>
+        <div className="ml-auto flex items-center gap-0.5">
+          {conversationSessionId && (
+            <button
+              type="button"
+              onClick={() => void handleNewChat()}
+              disabled={isStartingNew}
+              className="text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors rounded-md p-0.5 hover:bg-white/[0.05] disabled:opacity-40"
+              aria-label="Start new chat"
+              title="New chat"
+            >
+              {isStartingNew ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors rounded-md p-0.5 hover:bg-white/[0.05]"
+            aria-label="Close plan chat"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       </div>
 
       {/* Body */}
@@ -327,9 +363,9 @@ export function PlanConversationPanel({
           /* Agent picker */
           <div className="flex flex-col gap-4 p-4">
             <p className="text-xs text-muted-foreground/60">
-              Start a conversation with an AI agent about this plan. The agent can suggest edits
-              using the <code className="bg-white/[0.06] px-1 rounded text-[10px]">PLAN_EDIT</code>{' '}
-              marker.
+              Start a plan conversation with an AI agent. The agent will review the codebase in{' '}
+              <strong className="text-foreground/70">plan mode</strong> (read-only) and finalize the
+              plan via ExitPlanMode when ready.
             </p>
 
             {agentError && (
@@ -392,7 +428,7 @@ export function PlanConversationPanel({
           /* Active session */
           <div className="flex flex-col flex-1 min-h-0">
             {/* Chat view */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex flex-col flex-1 min-h-0">
               <SessionChatView
                 sessionId={conversationSessionId}
                 stream={adaptedStream}
