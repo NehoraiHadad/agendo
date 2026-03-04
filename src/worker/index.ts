@@ -7,6 +7,9 @@ import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
 import { StaleReaper } from '../lib/worker/stale-reaper';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('worker');
 
 const WORKER_ID = config.WORKER_ID;
 
@@ -15,18 +18,14 @@ const inFlightJobs = new Set<Promise<void>>();
 
 async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
   const { sessionId, resumeRef, resumeSessionAt, resumePrompt } = job.data;
-  console.log(
-    `[worker] slot claimed for session ${sessionId} — ${inFlightJobs.size + 1} slot(s) in use`,
-  );
+  log.info({ sessionId, slotsInUse: inFlightJobs.size + 1 }, 'slot claimed for session');
 
   const promise = (async () => {
     try {
       await runSession(sessionId, WORKER_ID, resumeRef, resumeSessionAt, resumePrompt);
-      console.log(
-        `[worker] slot freed for session ${sessionId} — ${liveSessionProcs.size} live session(s)`,
-      );
+      log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot freed for session');
     } catch (err) {
-      console.error(`[worker] Session ${sessionId} failed:`, err);
+      log.error({ err, sessionId }, 'Session failed');
       throw err;
     }
   })();
@@ -55,12 +54,12 @@ async function updateHeartbeat(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log(`[worker] Starting worker ${WORKER_ID}...`);
+  log.info({ workerId: WORKER_ID }, 'Starting worker');
 
   // Pre-flight: disk space check
   const hasDiskSpace = await checkDiskSpace(config.LOG_DIR);
   if (!hasDiskSpace) {
-    console.error('[worker] Insufficient disk space (< 5GB free). Refusing to start.');
+    log.error('Insufficient disk space (< 5GB free). Refusing to start.');
     process.exit(1);
   }
 
@@ -69,7 +68,7 @@ async function main(): Promise<void> {
 
   // Register session job handler
   await registerSessionWorker(handleSessionJob);
-  console.log(`[worker] Listening for session jobs...`);
+  log.info('Listening for session jobs');
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);
@@ -78,14 +77,14 @@ async function main(): Promise<void> {
   // Stale job reaper
   const staleReaper = new StaleReaper();
   staleReaper.start();
-  console.log(`[worker] Stale job reaper started (threshold: ${config.STALE_JOB_THRESHOLD_MS}ms)`);
+  log.info({ thresholdMs: config.STALE_JOB_THRESHOLD_MS }, 'Stale job reaper started');
 
   // Graceful shutdown: stop accepting new jobs, wait for in-flight sessions
   // to finish their final DB update, then close the pool.
   // kill_timeout in ecosystem.config.js must be > SHUTDOWN_GRACE_MS + stopBoss timeout.
   const SHUTDOWN_GRACE_MS = 25_000;
   const shutdown = async (signal: string) => {
-    console.log(`[worker] Received ${signal}, shutting down...`);
+    log.info({ signal }, 'Received signal, shutting down');
     clearInterval(heartbeatInterval);
     staleReaper.stop();
 
@@ -101,7 +100,7 @@ async function main(): Promise<void> {
     await stopBoss();
     // Wait for in-flight slot-holding jobs (sessions not yet at awaiting_input)
     if (inFlightJobs.size > 0) {
-      console.log(`[worker] Waiting for ${inFlightJobs.size} in-flight job(s) to release slots...`);
+      log.info({ count: inFlightJobs.size }, 'Waiting for in-flight jobs to release slots');
       await Promise.race([
         Promise.allSettled([...inFlightJobs]),
         new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
@@ -109,7 +108,7 @@ async function main(): Promise<void> {
     }
     // Terminate live sessions (awaiting_input sessions whose process is still running)
     if (liveSessionProcs.size > 0) {
-      console.log(`[worker] Terminating ${liveSessionProcs.size} live session(s)...`);
+      log.info({ count: liveSessionProcs.size }, 'Terminating live sessions');
       const exitPromises = [...liveSessionProcs.values()].map((proc) => {
         proc.terminate();
         return proc.waitForExit();
@@ -128,6 +127,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[worker] Fatal error:', err);
+  log.error({ err }, 'Fatal error');
   process.exit(1);
 });

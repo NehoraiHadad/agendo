@@ -2,6 +2,9 @@ import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('activity-tracker');
 
 /**
  * ActivityTracker manages all timer state, kill-flag state, and delta-buffer
@@ -102,10 +105,7 @@ export class ActivityTracker {
           this.onIdleKill();
         })
         .catch((err: unknown) => {
-          console.error(
-            `[activity-tracker] Failed to emit idle timeout event for session ${this.sessionId}:`,
-            err,
-          );
+          log.error({ err, sessionId: this.sessionId }, 'Failed to emit idle timeout event');
           // Still kill the process even if event emission fails.
           this.idleTimeoutKilled = true;
           this.onIdleKill();
@@ -137,14 +137,12 @@ export class ActivityTracker {
             try {
               process.kill(pid, 0);
             } catch {
-              console.warn(
-                `[activity-tracker] Session ${this.sessionId}: process ${pid} died silently, recovering`,
-              );
+              log.warn({ sessionId: this.sessionId, pid }, 'Process died silently, recovering');
               this.onSilentCrash();
             }
           }
         } catch (err) {
-          console.error(`[activity-tracker] Heartbeat failed for session ${this.sessionId}:`, err);
+          log.error({ err, sessionId: this.sessionId }, 'Heartbeat failed');
         }
       })();
     }, 30_000);
@@ -187,10 +185,7 @@ export class ActivityTracker {
             });
           }
         } catch (err) {
-          console.warn(
-            `[activity-tracker] MCP health check failed for session ${this.sessionId}:`,
-            err,
-          );
+          log.warn({ err, sessionId: this.sessionId }, 'MCP health check failed');
         }
       })();
     }, 60_000);

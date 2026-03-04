@@ -9,6 +9,9 @@
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('session-control');
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
 import type { AgentAdapter, ManagedProcess } from '@/lib/worker/adapters/types';
@@ -128,9 +131,9 @@ export async function handleSetPermissionMode(
         return;
       }
     } catch (err) {
-      console.warn(
-        `[session-control] In-place setPermissionMode failed for session ${ctx.session.id}, falling back to restart:`,
-        err,
+      log.warn(
+        { err, sessionId: ctx.session.id },
+        'In-place setPermissionMode failed, falling back to restart',
       );
     }
   }

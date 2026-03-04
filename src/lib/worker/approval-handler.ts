@@ -1,6 +1,9 @@
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('approval-handler');
 import type {
   AgentAdapter,
   ApprovalRequest,
@@ -205,7 +208,7 @@ export class ApprovalHandler {
       // No approval card is shown; the agent can keep refining if the user asks.
       if (this.session.kind === 'conversation') {
         savePlanFromSession(this.session).catch((err: unknown) => {
-          console.warn('[approval-handler] Failed to auto-save plan:', err);
+          log.warn({ err }, 'Failed to auto-save plan');
         });
         await this.emitEvent({
           type: 'system:info',
@@ -271,7 +274,7 @@ export class ApprovalHandler {
     }
 
     if (!this.adapter.sendToolResult) {
-      console.warn(`[approval-handler] adapter does not support sendToolResult`);
+      log.warn('adapter does not support sendToolResult');
       return;
     }
     await this.adapter.sendToolResult(toolUseId, content);

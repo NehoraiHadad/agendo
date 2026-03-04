@@ -1,5 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('gemini-adapter');
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -92,7 +95,7 @@ class GeminiClientHandler implements Client {
       this.emitNdjson({ type: 'gemini:tool-end', toolUseId });
       return { outcome: { outcome: 'selected', optionId: chosenOption?.optionId ?? '' } };
     } catch (err) {
-      console.error('[gemini-adapter] approvalHandler failed, auto-allowing:', err);
+      log.error({ err }, 'approvalHandler failed, auto-allowing');
       const allowOption =
         options.find((o) => o.kind === 'allow_always') ??
         options.find((o) => o.kind === 'allow_once') ??
@@ -455,7 +458,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
     this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
-      console.error('[GeminiAdapter] init failed:', err.message);
+      log.error({ err }, 'init failed');
       if (!exitFired) {
         exitFired = true;
         for (const cb of exitCallbacks) cb(0);
@@ -552,7 +555,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         (message.includes('429') || message.includes('Rate limit exceeded')) && attempt < 3;
       if (isRetryable) {
         const delay = Math.pow(2, attempt) * 2000; // 4s, 8s
-        console.warn(`[GeminiAdapter] initialize failed with 429, retrying in ${delay}ms...`);
+        log.warn({ attempt, delay }, 'initialize failed with 429, retrying');
         await new Promise((r) => setTimeout(r, delay));
         return this.acpInitialize(attempt + 1);
       }
@@ -596,11 +599,12 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
             >[0]['mcpServers'],
           });
           this.sessionId = resumeSessionId;
-          console.info(`[GeminiAdapter] session/resume succeeded for ${resumeSessionId}`);
+          log.info({ resumeSessionId }, 'session/resume succeeded');
           return;
         } catch (resumeErr) {
-          console.warn(
-            `[GeminiAdapter] session/resume failed, trying session/load: ${extractMessage(resumeErr)}`,
+          log.warn(
+            { err: extractMessage(resumeErr) },
+            'session/resume failed, trying session/load',
           );
         }
       }
@@ -616,11 +620,12 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
             >[0]['mcpServers'],
           });
           this.sessionId = resumeSessionId;
-          console.info(`[GeminiAdapter] session/load succeeded for ${resumeSessionId}`);
+          log.info({ resumeSessionId }, 'session/load succeeded');
           return;
         } catch (loadErr) {
-          console.warn(
-            `[GeminiAdapter] session/load failed, falling back to session/new: ${extractMessage(loadErr)}`,
+          log.warn(
+            { err: extractMessage(loadErr) },
+            'session/load failed, falling back to session/new',
           );
         }
       }

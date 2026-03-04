@@ -1,7 +1,9 @@
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { createLogger } from '@/lib/logger';
 
+const log = createLogger('session-heartbeat');
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
@@ -35,7 +37,7 @@ export class SessionHeartbeat {
         .set({ heartbeatAt: new Date() })
         .where(eq(sessions.id, this.sessionId));
     } catch (err) {
-      console.error(`[session-heartbeat] Failed for session ${this.sessionId}:`, err);
+      log.error({ err, sessionId: this.sessionId }, 'Heartbeat failed');
     }
   }
 }

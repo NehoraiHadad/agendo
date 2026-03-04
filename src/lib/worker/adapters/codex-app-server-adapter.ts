@@ -1,5 +1,6 @@
 import * as readline from 'node:readline';
 import * as tmux from '@/lib/worker/tmux-manager';
+import { createLogger } from '@/lib/logger';
 import type {
   AgentAdapter,
   AcpMcpServer,
@@ -20,6 +21,8 @@ import {
   type AppServerReasoningItem,
 } from '@/lib/worker/adapters/codex-app-server-event-mapper';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
+
+const log = createLogger('codex-app-server');
 
 // ---------------------------------------------------------------------------
 // Permission mode → Codex app-server approval / sandbox settings
@@ -263,7 +266,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   ): void {
     this.runInitChain(initialPrompt, opts, resumeThreadId).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      console.error('[codex-app-server] init chain failed:', message);
+      log.error({ err }, 'init chain failed');
       this.emitSynthetic({ type: 'as:error', message });
       // Trigger exit so session-process can clean up
       this.alive = false;
@@ -297,7 +300,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       await this.rpcCall('config/batchWrite', {
         edits: [{ type: 'set', key: 'mcp_servers', value: mcpValue }],
       });
-      console.log(`[codex-app-server] MCP config injected (${this.mcpServers.length} server(s))`);
+      log.info({ count: this.mcpServers.length }, 'MCP config injected');
     }
 
     // 2. Start or resume thread
@@ -434,7 +437,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       const id = msg.id as RpcId;
       const params = msg.params as Record<string, unknown>;
       this.handleServerRequest(id, method, params).catch((err: unknown) => {
-        console.error('[codex-app-server] handleServerRequest error:', err);
+        log.error({ err }, 'handleServerRequest error');
       });
       return;
     }
@@ -546,7 +549,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
           this.tokenUsage = { used, limit };
           if (used / limit >= 0.8) {
             this.triggerCompaction().catch((err: unknown) => {
-              console.error('[codex-app-server] compaction error:', err);
+              log.error({ err }, 'compaction error');
             });
           }
         }
@@ -598,7 +601,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
 
     // Unknown server request — auto-decline
-    console.warn(`[codex-app-server] Unknown server request method: ${method}`);
+    log.warn({ method }, 'Unknown server request method');
     this.rpcRespond(id, { decision: 'decline' });
   }
 
@@ -817,7 +820,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         })
         .catch((err: unknown) => {
           // Non-fatal: health check failure just gets logged, not propagated
-          console.warn('[codex-app-server] MCP health check failed:', err);
+          log.warn({ err }, 'MCP health check failed');
         });
     }, MCP_HEALTH_INTERVAL_MS);
   }
