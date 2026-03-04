@@ -2,6 +2,7 @@ import * as readline from 'node:readline';
 import * as tmux from '@/lib/worker/tmux-manager';
 import type {
   AgentAdapter,
+  AcpMcpServer,
   ManagedProcess,
   SpawnOpts,
   PermissionDecision,
@@ -95,6 +96,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private permissionMode: string | undefined;
   /** Current model (updated by setModel). */
   private model: string | undefined;
+  /** MCP servers to inject via config/batchWrite during initialization. */
+  private mcpServers: AcpMcpServer[] | undefined;
 
   /** JSON-RPC pending requests keyed by request ID. */
   private pending = new Map<RpcId, PendingRequest>();
@@ -112,6 +115,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     this.permissionMode = opts.permissionMode;
     this.model = opts.model;
+    this.mcpServers = opts.mcpServers;
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -127,6 +131,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.threadId = sessionRef;
     this.permissionMode = opts.permissionMode;
     this.model = opts.model;
+    this.mcpServers = opts.mcpServers;
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -255,6 +260,22 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     });
     // Required by JSON-RPC handshake: client must send `initialized` notification
     this.sendNotification('initialized', {});
+
+    // 2a. Inject MCP servers via config/batchWrite (when provided by session-runner).
+    //     Must happen after initialized and before thread/start so Codex loads MCPs
+    //     for the session. env is converted from ACP array format to a plain dict.
+    if (this.mcpServers && this.mcpServers.length > 0) {
+      const mcpValue = this.mcpServers.map((srv) => ({
+        name: srv.name,
+        command: srv.command,
+        args: srv.args,
+        env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
+      }));
+      await this.rpcCall('config/batchWrite', {
+        edits: [{ type: 'set', key: 'mcp_servers', value: mcpValue }],
+      });
+      console.log(`[codex-app-server] MCP config injected (${this.mcpServers.length} server(s))`);
+    }
 
     // 2. Start or resume thread
     if (resumeThreadId) {
