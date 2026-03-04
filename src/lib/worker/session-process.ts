@@ -22,7 +22,6 @@ import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
 import {
   capturePlanFilePath,
-  readPlanFromFile,
   savePlanFromSession,
 } from '@/lib/worker/session-plan-utils';
 import {
@@ -88,6 +87,8 @@ export class SessionProcess {
   private modeChangeRestart = false;
   /** Set by clearContextRestart (ExitPlanMode option 1): deny tool, kill, restart fresh. */
   private clearContextRestart = false;
+  /** New child session ID to enqueue from onExit when clearContextRestart is set. */
+  private clearContextRestartNewSessionId: string | null = null;
   /** Stored cwd for plan file reading during clearContextRestart. */
   private spawnCwd: string | null = null;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
@@ -678,30 +679,17 @@ export class SessionProcess {
         if (control.clearContextRestart) {
           resolver('deny');
 
-          // Read plan content from the stored plan_file_path in DB
-          const planContent = await readPlanFromFile(this.session.id);
+          // The API route already created the new child session and passed its
+          // ID here via newSessionIdForWorker. Store it so onExit can enqueue it.
           const newMode = control.postApprovalMode ?? 'acceptEdits';
-          const initialPrompt = planContent
-            ? `Implement the following plan:\n\n${planContent}`
-            : 'Continue implementing the plan from the previous conversation.';
-
-          // Update DB: clear sessionRef so re-enqueue spawns fresh (not resume),
-          // set new initialPrompt and permissionMode.
-          await db
-            .update(sessions)
-            .set({
-              sessionRef: null,
-              initialPrompt,
-              permissionMode: newMode,
-            })
-            .where(eq(sessions.id, this.session.id));
+          this.clearContextRestartNewSessionId = control.newSessionIdForWorker ?? null;
 
           await this.emitEvent({
             type: 'system:info',
-            message: `Plan approved — clearing context and restarting with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
+            message: `Plan approved — restarting fresh with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
           });
 
-          // Kill process → onExit will re-enqueue without resumeRef.
+          // Kill process → onExit will enqueue the new child session.
           this.clearContextRestart = true;
           this.terminateKilled = true;
           this.approvalHandler.drain('deny');
@@ -1042,15 +1030,14 @@ export class SessionProcess {
       );
     }
 
-    // Clear-context restart (ExitPlanMode option 1): re-enqueue WITHOUT resumeRef
-    // so the session-runner calls adapter.spawn() (not resume) → fresh conversation.
-    // DB was already updated (sessionRef=null, new initialPrompt, new permissionMode)
-    // in the tool-approval handler before killing the process.
+    // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
+    // session that was created by the API route (Direction B — new session record).
     if (this.clearContextRestart) {
-      enqueueSession({ sessionId: this.session.id }).catch((err: unknown) => {
+      const targetSessionId = this.clearContextRestartNewSessionId ?? this.session.id;
+      enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
         log.error(
-          { err, sessionId: this.session.id },
-          'Failed to re-enqueue session after clear-context restart',
+          { err, sessionId: targetSessionId },
+          'Failed to enqueue new session after clear-context restart',
         );
       });
     }
@@ -1058,10 +1045,14 @@ export class SessionProcess {
     // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
     // Only fires when the session was genuinely mid-work (active, not awaiting_input),
     // has a resumable sessionRef, and no other re-enqueue path is already running.
+    // Excluded when terminateKilled=true (graceful pm2 restart): in that case the
+    // session is left idle so the next user message triggers a clean cold-resume
+    // with the correct prompt, instead of re-sending the original initialPrompt.
     const resumeRef = this.sessionRef ?? this.session.sessionRef ?? null;
     if (
       wasInterruptedMidTurn &&
       resumeRef &&
+      !this.terminateKilled &&
       !this.cancelKilled &&
       !this.clearContextRestart &&
       !this.modeChangeRestart
