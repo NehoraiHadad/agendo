@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.14.1
+        version: 0.14.1(zod@3.25.76)
       '@anthropic-ai/sdk':
         specifier: ^0.77.0
         version: 0.77.0(zod@3.25.76)
@@ -107,6 +110,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       socket.io:
         specifier: ^4.8.3
         version: 4.8.3
@@ -183,6 +189,9 @@ importers:
       lint-staged:
         specifier: ^16.2.7
         version: 16.2.7
+      nano-banana:
+        specifier: ^0.0.0
+        version: 0.0.0
       prettier:
         specifier: ^3.8.1
         version: 3.8.1
@@ -209,6 +218,11 @@ packages:
 
   '@acemir/cssom@0.9.31':
     resolution: {integrity: sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==}
+
+  '@agentclientprotocol/sdk@0.14.1':
+    resolution: {integrity: sha512-b6r3PS3Nly+Wyw9U+0nOr47bV8tfS476EgyEMhoKvJCZLbgqoDFN7DJwkxL88RR0aiOqOYV1ZnESHqb+RmdH8w==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -4436,6 +4450,9 @@ packages:
     resolution: {integrity: sha512-WWdIxpyjEn+FhQJQQv9aQAYlHoNVdzIzUySNV1gHUPDSdZJ3yZn7pAAbQcV7B56Mvu881q9FZV+0Vx2xC44VWA==}
     engines: {node: ^18.17.0 || >=20.5.0}
 
+  nano-banana@0.0.0:
+    resolution: {integrity: sha512-GCPR1ApPeIb9+1pu2qk1Rlb8XPzcNb1m4NXolIvW4sTlD1j2E0flkXSoyy3h6z8sxB3GnYaz7SWAzXTCgiCU2w==}
+
   nano-spawn@2.0.0:
     resolution: {integrity: sha512-tacvGzUY5o2D8CBh2rrwxyNojUsZNU2zjNTzKQrkgGJQTbGAfArVWXSKMBokBeeg6C7OLRGUEyoFlYbfeWQIqw==}
     engines: {node: '>=20.17'}
@@ -5742,6 +5759,10 @@ snapshots:
 
   '@acemir/cssom@0.9.31': {}
 
+  '@agentclientprotocol/sdk@0.14.1(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
   '@alloc/quick-lru@5.2.0': {}
 
   '@ampproject/remapping@2.3.0':
@@ -6374,8 +6395,7 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@img/colour@1.0.0':
-    optional: true
+  '@img/colour@1.0.0': {}
 
   '@img/sharp-darwin-arm64@0.34.5':
     optionalDependencies:
@@ -10136,6 +10156,8 @@ snapshots:
 
   mute-stream@2.0.0: {}
 
+  nano-banana@0.0.0: {}
+
   nano-spawn@2.0.0: {}
 
   nanoid@3.3.11: {}
@@ -10944,7 +10966,6 @@ snapshots:
       '@img/sharp-win32-arm64': 0.34.5
       '@img/sharp-win32-ia32': 0.34.5
       '@img/sharp-win32-x64': 0.34.5
-    optional: true
 
   shebang-command@2.0.0:
     dependencies:
