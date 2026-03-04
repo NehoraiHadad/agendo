@@ -106,6 +106,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private compacting = false;
   /** Whether the current turn is active (set on turn/started, cleared on turn/completed). */
   private turnActive = false;
+  /** Interval handle for the MCP server health check (mcpServerStatus/list). */
+  private mcpHealthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   /** JSON-RPC pending requests keyed by request ID. */
   private pending = new Map<RpcId, PendingRequest>();
@@ -229,6 +231,11 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     cp.on('exit', (code) => {
       this.alive = false;
       this.rl?.close();
+      // Stop the MCP health check if running
+      if (this.mcpHealthCheckInterval) {
+        clearInterval(this.mcpHealthCheckInterval);
+        this.mcpHealthCheckInterval = null;
+      }
       // Reject all pending requests
       for (const [, req] of this.pending) {
         clearTimeout(req.timeoutHandle);
@@ -237,6 +244,12 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       this.pending.clear();
       for (const cb of this.exitCallbacks) cb(code);
     });
+
+    // Start polling MCP server health only when MCP servers are configured.
+    // The health check begins immediately; the first poll fires after 60s.
+    if (opts.mcpServers && opts.mcpServers.length > 0) {
+      this.startMcpHealthCheck();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -503,6 +516,17 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         break;
       }
 
+      case 'turn/planUpdated': {
+        // params.steps is an array of plan step objects emitted when Codex
+        // updates the structured step list during a plan-mode turn.
+        const steps = params.steps as Array<{ text?: string; status?: string }> | null;
+        if (steps && steps.length > 0) {
+          const text = steps.map((s) => `[${s.status ?? 'pending'}] ${s.text ?? ''}`).join('\n');
+          this.emitSynthetic({ type: 'as:info', message: `Plan updated:\n${text}` });
+        }
+        break;
+      }
+
       case 'thread/tokenUsage/updated': {
         const usage = params.usage as {
           inputTokenCount?: number;
@@ -746,6 +770,56 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       type: 'as:info',
       message: `Rolled back ${numTurns} turn(s). File changes were NOT reverted.`,
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: MCP server health check (60s interval)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Polls `mcpServerStatus/list` every 60 seconds and emits a system warning
+   * if any configured MCP server has no tools registered (a proxy for a failed
+   * or disconnected server, since a healthy server always exposes at least one
+   * tool).
+   *
+   * Note: `mcpServerStatus/list` is a v2 API confirmed present in the installed
+   * Codex binary (verified via `codex app-server generate-ts`). The response
+   * shape is `{ data: Array<{ name, tools, resources, resourceTemplates, authStatus }> }`.
+   * There is no explicit connection-state field, so we infer disconnection from
+   * an empty tools map combined with a `notLoggedIn` auth status.
+   */
+  private startMcpHealthCheck(): void {
+    const MCP_HEALTH_INTERVAL_MS = 60_000;
+
+    this.mcpHealthCheckInterval = setInterval(() => {
+      if (!this.alive) {
+        if (this.mcpHealthCheckInterval) {
+          clearInterval(this.mcpHealthCheckInterval);
+          this.mcpHealthCheckInterval = null;
+        }
+        return;
+      }
+
+      this.rpcCall('mcpServerStatus/list', {}, 10_000)
+        .then((result) => {
+          type McpEntry = { name: string; tools: Record<string, unknown>; authStatus: string };
+          const servers = (result.data as McpEntry[] | undefined) ?? [];
+          const disconnected = servers.filter(
+            (s) => Object.keys(s.tools ?? {}).length === 0 && s.authStatus === 'notLoggedIn',
+          );
+          if (disconnected.length > 0) {
+            const names = disconnected.map((s) => s.name).join(', ');
+            this.emitSynthetic({
+              type: 'as:info',
+              message: `Warning: MCP server(s) appear disconnected or have no tools: ${names}`,
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          // Non-fatal: health check failure just gets logged, not propagated
+          console.warn('[codex-app-server] MCP health check failed:', err);
+        });
+    }, MCP_HEALTH_INTERVAL_MS);
   }
 
   // -------------------------------------------------------------------------

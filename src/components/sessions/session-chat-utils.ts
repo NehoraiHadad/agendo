@@ -34,6 +34,8 @@ export type DisplayItem =
       sessionCostUsd: number | null;
       isError?: boolean;
       errors?: string[];
+      /** UUID of this assistant turn — present for Claude sessions only. Used for fork. */
+      messageUuid?: string;
     }
   | { kind: 'thinking'; id: number; text: string }
   | {
@@ -274,6 +276,7 @@ export function buildDisplayItems(
           sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
           isError: ev.isError,
           errors: ev.errors,
+          messageUuid: ev.messageUuid,
         });
         break;
       }
