@@ -134,6 +134,22 @@ class GeminiClientHandler implements Client {
         });
         break;
       }
+      case 'plan':
+        this.emitNdjson({
+          type: 'gemini:plan',
+          entries: update.entries.map((e) => ({
+            content: e.content,
+            priority: e.priority,
+            status: e.status,
+          })),
+        });
+        break;
+      case 'current_mode_update':
+        this.emitNdjson({ type: 'gemini:mode-change', modeId: update.currentModeId });
+        break;
+      case 'usage_update':
+        this.emitNdjson({ type: 'gemini:usage', used: update.used, size: update.size });
+        break;
       case 'tool_call_update': {
         const { toolCallId, content, status } = update;
         if (toolCallId && this.activeToolCalls.has(toolCallId)) {

@@ -22,7 +22,13 @@ export type GeminiEvent =
   | { type: 'gemini:tool-end'; toolUseId: string; resultText?: string; failed?: boolean }
   | { type: 'gemini:turn-complete'; result: Record<string, unknown> }
   | { type: 'gemini:turn-error'; message: string }
-  | { type: 'gemini:init'; model: string; sessionId: string };
+  | { type: 'gemini:init'; model: string; sessionId: string }
+  | {
+      type: 'gemini:plan';
+      entries: Array<{ content: string; priority: string; status: string }>;
+    }
+  | { type: 'gemini:mode-change'; modeId: string }
+  | { type: 'gemini:usage'; used: number; size: number };
 
 // ---------------------------------------------------------------------------
 // Main mapper: GeminiEvent → AgendoEventPayload[]
@@ -137,6 +143,41 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
           message: `Gemini turn failed: ${event.message}`,
         },
       ];
+
+    // -----------------------------------------------------------------------
+    // gemini:plan → agent:plan (Gemini plan mode execution steps)
+    // -----------------------------------------------------------------------
+    case 'gemini:plan':
+      return [
+        {
+          type: 'agent:plan',
+          entries: event.entries.map((e) => ({
+            content: e.content,
+            priority: e.priority as 'high' | 'medium' | 'low',
+            status: e.status as 'pending' | 'in_progress' | 'completed',
+          })),
+        },
+      ];
+
+    // -----------------------------------------------------------------------
+    // gemini:mode-change → session:mode-change (permission mode updated)
+    // -----------------------------------------------------------------------
+    case 'gemini:mode-change': {
+      const modeMap: Record<string, string> = {
+        default: 'default',
+        autoEdit: 'acceptEdits',
+        yolo: 'bypassPermissions',
+        plan: 'plan',
+      };
+      const mode = modeMap[event.modeId] ?? event.modeId;
+      return [{ type: 'session:mode-change', mode }];
+    }
+
+    // -----------------------------------------------------------------------
+    // gemini:usage → agent:usage (real-time context window stats)
+    // -----------------------------------------------------------------------
+    case 'gemini:usage':
+      return [{ type: 'agent:usage', used: event.used, size: event.size }];
 
     default:
       return [];
