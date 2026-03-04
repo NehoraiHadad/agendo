@@ -73,11 +73,14 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     // Map Agendo permission mode to Gemini --approval-mode.
     // bypassPermissions/dontAsk → yolo (suppresses ALL ACP permission requests)
     // acceptEdits → auto_edit (auto-approve file edits, prompt for shell)
+    // plan → plan (read-only enforcement; requires experimental.plan=true in settings.json)
     const permMode = opts.permissionMode;
     if (permMode === 'bypassPermissions' || permMode === 'dontAsk') {
       args.push('--approval-mode', 'yolo');
     } else if (permMode === 'acceptEdits') {
       args.push('--approval-mode', 'auto_edit');
+    } else if (permMode === 'plan') {
+      args.push('--approval-mode', 'plan');
     }
     // Restrict global MCP servers: only load servers injected via ACP session/new.
     // Pass the names of injected servers so they are not filtered out by the allowlist.
