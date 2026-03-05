@@ -7,10 +7,7 @@ import {
   type SessionKind,
 } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
-import { db } from '@/lib/db';
-import { agentCapabilities } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
-import { BadRequestError } from '@/lib/errors';
+import { assertPromptModeCapability } from '@/lib/services/capability-service';
 import { z } from 'zod';
 
 const createSessionSchema = z.object({
@@ -51,17 +48,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
 export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = createSessionSchema.parse(await req.json());
 
-  // Validate capability is prompt-mode
-  const [cap] = await db
-    .select({ interactionMode: agentCapabilities.interactionMode })
-    .from(agentCapabilities)
-    .where(eq(agentCapabilities.id, body.capabilityId))
-    .limit(1);
-
-  if (!cap) throw new BadRequestError('Capability not found');
-  if (cap.interactionMode !== 'prompt') {
-    throw new BadRequestError('Only prompt-mode capabilities can be used for sessions.');
-  }
+  await assertPromptModeCapability(body.capabilityId);
 
   const session = await createSession({
     taskId: body.taskId,

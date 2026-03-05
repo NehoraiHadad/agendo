@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { sessions } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
 import { existsSync, readFileSync } from 'node:fs';
 import { subscribe, channelName, publish } from '@/lib/realtime/pg-notify';
 import { readEventsFromLog } from '@/lib/realtime/events';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { getSession } from '@/lib/services/session-service';
 
 function makeSessionStateEvent(session: {
   id: string;
@@ -37,9 +35,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       10,
     ) || 0;
 
-  const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
-
-  if (!session) {
+  let session;
+  try {
+    session = await getSession(id);
+  } catch {
     return new Response('Session not found', { status: 404 });
   }
 
@@ -112,16 +111,8 @@ export const POST = withErrorBoundary(
     const { id } = await params;
     assertUUID(id, 'Session');
 
-    // Verify session exists
-    const [session] = await db
-      .select({ id: sessions.id })
-      .from(sessions)
-      .where(eq(sessions.id, id))
-      .limit(1);
-
-    if (!session) {
-      return new NextResponse('Session not found', { status: 404 });
-    }
+    // Verify session exists (throws NotFoundError if not)
+    await getSession(id);
 
     const body = (await req.json()) as Record<string, unknown>;
 
