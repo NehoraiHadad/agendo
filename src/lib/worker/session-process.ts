@@ -1,6 +1,5 @@
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 
@@ -27,6 +26,11 @@ import {
   handleSetModel,
   handleMessage,
   handleToolApproval,
+  handleRedirect,
+  handleToolResult,
+  handleAnswerQuestion,
+  handleSteer,
+  handleRollback,
   handleReEnqueue,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
@@ -46,7 +50,12 @@ import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
-import { recordInterruptionEvent, type InFlightTool } from '@/lib/worker/interruption-marker';
+import type { InFlightTool } from '@/lib/worker/interruption-marker';
+import {
+  ExitContext,
+  cleanupResources,
+  determineExitStatus,
+} from '@/lib/worker/session-exit-logic';
 
 /**
  * Derive a log file path for a session.
@@ -99,17 +108,7 @@ export class SessionProcess {
   private managedProcess: ManagedProcess | null = null;
   private logWriter: FileLogWriter | null = null;
   private unsubscribeControl: (() => void) | null = null;
-  private interruptInProgress = false;
-  /** Set by terminate() so onExit transitions to 'idle' (resumable) instead of 'ended'. */
-  private terminateKilled = false;
-  /** Set by handleCancel() so onExit skips the "unexpected exit" error message. */
-  private cancelKilled = false;
-  /** Set by handleSetPermissionMode() so onExit re-enqueues for immediate restart. */
-  private modeChangeRestart = false;
-  /** Set by clearContextRestart (ExitPlanMode option 1): deny tool, kill, restart fresh. */
-  private clearContextRestart = false;
-  /** New child session ID to enqueue from onExit when clearContextRestart is set. */
-  private clearContextRestartNewSessionId: string | null = null;
+  private exitCtx = new ExitContext();
   /** Stored cwd for plan file reading during clearContextRestart. */
   private spawnCwd: string | null = null;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
@@ -134,7 +133,6 @@ export class SessionProcess {
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
   private slotReleaseFuture = new Future<void>();
-  private exitHandled = false;
   private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
   /** Maps toolUseId → {toolName, input} for tools currently in-flight, used to build interruption notes. */
@@ -322,7 +320,7 @@ export class SessionProcess {
       void this.emitEvent({ type: 'agent:activity', thinking });
       // When thinking stops, transition to awaiting_input (works for all adapters:
       // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
-      if (!thinking && !this.interruptInProgress) {
+      if (!thinking && !this.exitCtx.interruptInProgress) {
         void this.transitionTo('awaiting_input').then(() => this.activityTracker.recordActivity());
       }
     });
@@ -581,7 +579,7 @@ export class SessionProcess {
     // After the agent finishes a result, transition to awaiting_input.
     // Skip during an interrupt — handleInterrupt() manages the transition
     // based on whether the process survived (warm vs cold resume).
-    if (event.type === 'agent:result' && !this.interruptInProgress) {
+    if (event.type === 'agent:result' && !this.exitCtx.interruptInProgress) {
       await this.transitionTo('awaiting_input');
       this.activityTracker.recordActivity();
     }
@@ -609,34 +607,21 @@ export class SessionProcess {
     } else if (control.type === 'message') {
       await handleMessage(control, ctrl);
     } else if (control.type === 'redirect') {
-      await this.pushMessage(control.newPrompt);
+      await handleRedirect(control, ctrl);
     } else if (control.type === 'tool-approval') {
       await handleToolApproval(control, ctrl);
     } else if (control.type === 'tool-result') {
-      if (!['active', 'awaiting_input'].includes(this.status)) {
-        log.warn(
-          { sessionId: this.session.id, status: this.status },
-          'tool-result ignored — wrong session status',
-        );
-        return;
-      }
-      await this.approvalHandler.pushToolResult(control.toolUseId, control.content);
+      await handleToolResult(control, ctrl, this.status);
     } else if (control.type === 'answer-question') {
-      const resolver = this.approvalHandler.takeResolver(control.requestId);
-      if (resolver) {
-        const questions = this.approvalHandler.takeQuestions(control.requestId);
-        resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
-      } else {
-        log.warn({ requestId: control.requestId }, 'answer-question for unknown requestId');
-      }
+      await handleAnswerQuestion(control, ctrl);
     } else if (control.type === 'set-permission-mode') {
       await handleSetPermissionMode(control.mode, ctrl);
     } else if (control.type === 'set-model') {
       await handleSetModel(control.model, ctrl);
     } else if (control.type === 'steer') {
-      await this.adapter.steer?.(control.message);
+      await handleSteer(control, ctrl);
     } else if (control.type === 'rollback') {
-      await this.adapter.rollback?.(control.numTurns ?? 1);
+      await handleRollback(control, ctrl);
     }
   }
 
@@ -688,24 +673,7 @@ export class SessionProcess {
       activeToolUseIds: this.activeToolUseIds,
       emitEvent: (p) => this.emitEvent(p),
       transitionTo: (s) => this.transitionTo(s),
-      setCancelKilled: (v) => {
-        this.cancelKilled = v;
-      },
-      setTerminateKilled: (v) => {
-        this.terminateKilled = v;
-      },
-      setModeChangeRestart: (v) => {
-        this.modeChangeRestart = v;
-      },
-      setInterruptInProgress: (v) => {
-        this.interruptInProgress = v;
-      },
-      setClearContextRestart: (v) => {
-        this.clearContextRestart = v;
-      },
-      setClearContextRestartNewSessionId: (id) => {
-        this.clearContextRestartNewSessionId = id;
-      },
+      exitContext: this.exitCtx,
       pushMessage: (text, image) => this.pushMessage(text, image),
       makeCtrl: () => this.makeCtrl(),
     };
@@ -783,8 +751,8 @@ export class SessionProcess {
     // Guard against double-invocation: the heartbeat liveness check and the
     // real process exit handler can both call onExit. The second call must be
     // a no-op to prevent double-releasing the PG pool client.
-    if (this.exitHandled) return;
-    this.exitHandled = true;
+    if (this.exitCtx.exitHandled) return;
+    this.exitCtx.exitHandled = true;
 
     const totalSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
     log.info(
@@ -795,21 +763,44 @@ export class SessionProcess {
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
 
-    this.cleanupResources();
+    cleanupResources({
+      activityTracker: this.activityTracker,
+      sigkillTimers: this.sigkillTimers,
+      approvalHandler: this.approvalHandler,
+      teamManager: this.teamManager,
+      policyFilePath: this.policyFilePath,
+      unsubscribeControl: this.unsubscribeControl,
+    });
+    this.unsubscribeControl = null;
+    this.policyFilePath = null;
+
+    // Map ActivityTracker flags to ExitContext reasons for the extracted determineExitStatus.
+    if (this.activityTracker.idleTimeoutKilled && this.exitCtx.reason === 'none') {
+      this.exitCtx.reason = 'idle-timeout';
+    }
+    if (this.activityTracker.interruptKilled && this.exitCtx.reason === 'none') {
+      this.exitCtx.reason = 'interrupt';
+    }
 
     // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
-    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
+    const wasInterruptedMidTurn = this.exitCtx.terminateKilled && this.status === 'active';
 
-    await this.determineExitStatus(exitCode, wasInterruptedMidTurn);
+    await determineExitStatus(this.exitCtx, exitCode, wasInterruptedMidTurn, {
+      sessionId: this.session.id,
+      taskId: this.session.taskId,
+      agentId: this.session.agentId,
+      currentStatus: this.status,
+      activeToolInfo: this.activeToolInfo,
+      emitEvent: (p) => this.emitEvent(p),
+      transitionTo: (s) => this.transitionTo(s),
+    });
+
     handleReEnqueue(
       {
         sessionId: this.session.id,
         sessionRef: this.sessionRef,
         dbSessionRef: this.session.sessionRef ?? null,
-        modeChangeRestart: this.modeChangeRestart,
-        clearContextRestart: this.clearContextRestart,
-        clearContextRestartNewSessionId: this.clearContextRestartNewSessionId,
-        cancelKilled: this.cancelKilled,
+        exitContext: this.exitCtx,
       },
       wasInterruptedMidTurn,
     );
@@ -820,109 +811,6 @@ export class SessionProcess {
     }
 
     this.exitFuture.resolve(exitCode);
-  }
-
-  /**
-   * Release all resources held by the session: stop timers, drain approvals,
-   * stop team monitoring, clean up temp files, and unsubscribe from PG NOTIFY.
-   */
-  private cleanupResources(): void {
-    this.activityTracker.stopAllTimers();
-    // Clear any pending SIGKILL escalation timers — the process has already exited.
-    for (const t of this.sigkillTimers) {
-      clearTimeout(t);
-    }
-    this.sigkillTimers = [];
-    // Drain any approval promises so blocked adapters unblock immediately.
-    this.approvalHandler.drain('deny');
-    // Stop team inbox monitoring.
-    this.teamManager.stop();
-    // Clean up temp Gemini policy file (best-effort).
-    if (this.policyFilePath) {
-      try {
-        unlinkSync(this.policyFilePath);
-      } catch {
-        // File may already be gone.
-      }
-      this.policyFilePath = null;
-    }
-    // Unsubscribe from the control channel to release the pg pool connection.
-    // Null it out immediately to prevent any subsequent re-entry from releasing twice.
-    this.unsubscribeControl?.();
-    this.unsubscribeControl = null;
-  }
-
-  /**
-   * Map exit code and session flags to the final session status, emit
-   * interruption notes, and persist endedAt when appropriate.
-   */
-  private async determineExitStatus(
-    exitCode: number | null,
-    wasInterruptedMidTurn: boolean,
-  ): Promise<void> {
-    // When a session is interrupted mid-turn by a worker restart (terminateKilled && active),
-    // record an interruption note in the task event log. On the next cold resume, the
-    // [Previous Work Summary] preamble will include this note, so the agent knows it was
-    // interrupted and can verify whether its last action completed.
-    if (wasInterruptedMidTurn && this.session.taskId) {
-      const inflight = [...this.activeToolInfo.values()];
-      try {
-        await this.emitEvent({
-          type: 'system:info',
-          message:
-            inflight.length > 0
-              ? `Session interrupted mid-turn. In-flight tool(s): ${inflight.map((t) => t.toolName).join(', ')}.`
-              : 'Session interrupted mid-turn (worker restart).',
-        });
-      } catch {
-        // Best-effort: log writer may already be closing
-      }
-      try {
-        await recordInterruptionEvent(this.session.taskId, inflight, this.session.agentId);
-      } catch (err) {
-        log.warn({ err, sessionId: this.session.id }, 'Failed to record interruption event');
-      }
-    }
-
-    // Determine final session status based on exit code.
-    // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
-    // Clean exit (0) = agent finished normally → idle (resumable).
-    // terminateKilled = graceful worker shutdown → idle (auto-resumable on next message).
-    // interruptKilled / idleTimeoutKilled → idle (resumable).
-    // Anything else → ended (crash / unsupported command).
-    if (this.status === 'active' || this.status === 'awaiting_input') {
-      if (this.cancelKilled) {
-        // Cancel route may have already set status='ended' in DB, but if the process
-        // died before the cancel route could update, status may still be 'active'.
-        // Explicitly transition to 'ended' to cover both cases.
-        await this.transitionTo('ended');
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      } else if (
-        exitCode === 0 ||
-        this.activityTracker.idleTimeoutKilled ||
-        this.activityTracker.interruptKilled ||
-        this.terminateKilled
-      ) {
-        await this.transitionTo('idle');
-      } else {
-        await this.emitEvent({
-          type: 'system:error',
-          message:
-            `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
-            `This may be caused by an unsupported slash command (/mcp, /permissions) or a Claude CLI crash.`,
-        });
-        await this.transitionTo('ended');
-        // Kill the companion terminal tmux session — session is no longer resumable.
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      }
-    }
-
-    if (this.status === 'ended') {
-      await db
-        .update(sessions)
-        .set({ endedAt: new Date() })
-        .where(eq(sessions.id, this.session.id));
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -991,9 +879,9 @@ export class SessionProcess {
    * Used during worker shutdown to terminate live sessions that are awaiting input.
    */
   terminate(): void {
-    // Set flag BEFORE sending SIGTERM so onExit transitions to 'idle' (resumable)
+    // Set reason BEFORE sending SIGTERM so onExit transitions to 'idle' (resumable)
     // instead of 'ended'. This allows cold-resume after a graceful worker restart.
-    this.terminateKilled = true;
+    this.exitCtx.reason = 'terminate';
     this.managedProcess?.kill('SIGTERM');
   }
 
@@ -1007,6 +895,6 @@ export class SessionProcess {
    * we must set the flag before the I/O event loop tick that fires onExit.
    */
   markTerminating(): void {
-    this.terminateKilled = true;
+    this.exitCtx.reason = 'terminate';
   }
 }
