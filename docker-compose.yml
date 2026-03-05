@@ -1,6 +1,9 @@
 # PostgreSQL for Agendo
 # The application itself runs natively with PM2 — see README.md
 #
+# Credentials are read from .env.local (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB).
+# Defaults match the DATABASE_URL in .env.example.
+#
 # Usage:
 #   docker compose up -d        # start
 #   docker compose down          # stop (data preserved in volume)
@@ -11,9 +14,9 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: agendo
-      POSTGRES_PASSWORD: agendo
-      POSTGRES_DB: agendo
+      POSTGRES_USER: ${POSTGRES_USER:-agendo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agendo}
+      POSTGRES_DB: ${POSTGRES_DB:-agendo}
     ports:
       - "5432:5432"
     volumes:
