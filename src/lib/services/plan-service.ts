@@ -29,6 +29,8 @@ export interface StartPlanConversationOpts {
   agentId: string;
   capabilityId: string;
   model?: string;
+  /** Optional user feedback to prepend to the agent-specific preamble. */
+  initialPrompt?: string;
 }
 
 export interface ExecutePlanOpts {
@@ -339,12 +341,19 @@ The plan content will be saved automatically.
 ${PLAN_CONTEXT}`;
   }
 
+  // If the caller supplies an initialPrompt (e.g. serialized plan annotations),
+  // prepend it before the agent-specific preamble so the agent sees the user's
+  // feedback first and can incorporate it while reviewing/refining the plan.
+  const finalPrompt = opts.initialPrompt
+    ? `## User Feedback on the Plan\n\n${opts.initialPrompt}\n\n---\n\n${initialPrompt}`
+    : initialPrompt;
+
   const session = await createSession({
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
-    initialPrompt,
+    initialPrompt: finalPrompt,
     permissionMode,
     model: opts.model,
   });
