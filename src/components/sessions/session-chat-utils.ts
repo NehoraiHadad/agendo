@@ -59,6 +59,7 @@ export type DisplayItem =
       branchUuid?: string | null;
     }
   | { kind: 'info'; id: number; text: string }
+  | { kind: 'compact-loading'; id: number; trigger: 'auto' | 'manual' }
   | { kind: 'error'; id: number; text: string }
   | {
       kind: 'tool-approval';
@@ -323,6 +324,11 @@ export function buildDisplayItems(
         });
         // Reset: a new user turn starts; next agent:result will set a fresh UUID.
         lastAgentResultUuid = undefined;
+        break;
+      }
+
+      case 'system:compact-start': {
+        items.push({ kind: 'compact-loading', id: ev.id, trigger: ev.trigger });
         break;
       }
 

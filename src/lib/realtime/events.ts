@@ -112,6 +112,7 @@ export type AgendoEvent =
       message: string;
       compactMeta?: { trigger: 'auto' | 'manual'; preTokens: number };
     })
+  | (EventBase & { type: 'system:compact-start'; trigger: 'auto' | 'manual' })
   | (EventBase & { type: 'system:error'; message: string })
   | (EventBase & {
       type: 'system:mcp-status';
@@ -238,6 +239,9 @@ export type AgendoControl =
       postApprovalCompact?: boolean;
       /** ExitPlanMode option 1: deny tool, kill process, restart fresh with plan as context. */
       clearContextRestart?: boolean;
+      /** Internal: new child session ID pre-created by the API route for active-session restarts.
+       *  The worker reads this in session-process.ts and enqueues it from onExit. */
+      newSessionIdForWorker?: string;
       /** Codex only: remember this command approval as a session-scoped exec policy rule. */
       rememberForSession?: boolean;
     }

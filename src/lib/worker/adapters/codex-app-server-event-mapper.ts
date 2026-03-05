@@ -15,6 +15,7 @@ export type AppServerSyntheticEvent =
   | { type: 'as:cmd-delta'; text: string }
   | { type: 'as:plan-delta'; text: string }
   | { type: 'as:info'; message: string }
+  | { type: 'as:compact-start' }
   | { type: 'as:turn.completed'; status: string; error: AppServerTurnError | null }
   | { type: 'as:error'; message: string };
 
@@ -248,6 +249,9 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
     // -----------------------------------------------------------------------
     case 'as:info':
       return [{ type: 'system:info', message: event.message }];
+
+    case 'as:compact-start':
+      return [{ type: 'system:compact-start', trigger: 'auto' }];
 
     // -----------------------------------------------------------------------
     // turn.completed → agent:result

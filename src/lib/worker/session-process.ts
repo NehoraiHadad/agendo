@@ -20,10 +20,7 @@ import { FileLogWriter } from '@/lib/worker/log-writer';
 import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
-import {
-  capturePlanFilePath,
-  savePlanFromSession,
-} from '@/lib/worker/session-plan-utils';
+import { capturePlanFilePath, savePlanFromSession } from '@/lib/worker/session-plan-utils';
 import {
   handleCancel,
   handleInterrupt,
@@ -806,6 +803,11 @@ export class SessionProcess {
     // still as 'awaiting_input' and the transitionTo('awaiting_input') would
     // be a no-op — leaving the session stuck in 'active' forever.
     await this.emitEvent({ type: 'user:message', text, hasImage: !!image });
+    // Emit a compact-start indicator when the user manually triggers /compact.
+    // Claude's stream gives no start signal — only a compact_boundary at the end.
+    if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
+      await this.emitEvent({ type: 'system:compact-start', trigger: 'manual' });
+    }
     await this.transitionTo('active');
     this.activityTracker.recordActivity();
     await this.adapter.sendMessage(text, image);
