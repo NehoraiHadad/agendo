@@ -7,6 +7,7 @@ const startSchema = z.object({
   agentId: z.string().uuid(),
   capabilityId: z.string().uuid(),
   model: z.string().optional(),
+  initialPrompt: z.string().optional(),
 });
 
 export const POST = withErrorBoundary(

@@ -19,6 +19,7 @@ import {
   ExternalLink,
   ChevronDown,
   Archive,
+  PenLine,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from 'radix-ui';
 import ReactMarkdown from 'react-markdown';
@@ -34,6 +35,9 @@ import {
 } from '@/components/ui/dialog';
 import { PlanActions } from '@/components/plans/plan-actions';
 import { PlanConversationPanel } from '@/components/plans/plan-conversation-panel';
+import { AnnotatablePlanPreview } from '@/components/plans/annotatable-plan-preview';
+import { InlineAnnotationSidebar } from '@/components/plans/inline-annotation-sidebar';
+import type { PlanAnnotation, BlockSelection } from '@/lib/types/annotations';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { Plan, PlanStatus, Project } from '@/lib/types';
@@ -323,6 +327,13 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     (initialPlan as Plan & { conversationSessionId?: string | null }).conversationSessionId ?? null,
   );
 
+  // Annotation mode
+  const [isAnnotationMode, setIsAnnotationMode] = useState(false);
+  const [annotations, setAnnotations] = useState<PlanAnnotation[]>([]);
+  const [annotationSelection, setAnnotationSelection] = useState<BlockSelection | null>(null);
+  // Mobile annotation sheet
+  const [mobileAnnotationOpen, setMobileAnnotationOpen] = useState(false);
+
   // Title editing
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState(initialPlan.title);
@@ -490,6 +501,43 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     setConversationSessionId(null);
   }, []);
 
+  const handleAnnotationAdd = useCallback((ann: PlanAnnotation) => {
+    setAnnotations((prev) => [...prev, ann]);
+  }, []);
+
+  const handleAnnotationDelete = useCallback((id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const handleAnnotationFeedbackSent = useCallback(() => {
+    setIsAnnotationMode(false);
+    setMobileAnnotationOpen(false);
+    setAnnotations([]);
+    setAnnotationSelection(null);
+    setConversationOpen(true); // open chat panel so user sees the agent's response
+  }, []);
+
+  const handleAnnotationSelectionChange = useCallback((sel: BlockSelection | null) => {
+    setAnnotationSelection(sel);
+    // On mobile: auto-open the bottom sheet when user selects a block
+    if (sel !== null) setMobileAnnotationOpen(true);
+  }, []);
+
+  const toggleAnnotationMode = useCallback(() => {
+    setIsAnnotationMode((prev) => {
+      if (!prev) {
+        // Entering annotation mode: close chat panel to give preview full width
+        setConversationOpen(false);
+      } else {
+        // Exiting: reset all annotation state
+        setAnnotations([]);
+        setAnnotationSelection(null);
+        setMobileAnnotationOpen(false);
+      }
+      return !prev;
+    });
+  }, []);
+
   const showEditor = viewMode === 'edit' || viewMode === 'split';
   const showPreview = viewMode === 'preview' || viewMode === 'split';
 
@@ -589,6 +637,24 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                   )}
                 </div>
 
+                {/* Annotate toggle */}
+                <button
+                  onClick={toggleAnnotationMode}
+                  title={isAnnotationMode ? 'Exit annotation mode' : 'Annotate plan'}
+                  aria-pressed={isAnnotationMode}
+                  className={cn(
+                    'flex items-center gap-1 h-7 px-2 rounded-md text-[11px] border transition-colors',
+                    isAnnotationMode
+                      ? 'bg-violet-500/15 border-violet-500/30 text-violet-400'
+                      : 'border-white/[0.07] bg-white/[0.02] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.05]',
+                  )}
+                >
+                  <PenLine className="size-3" />
+                  <span className="hidden sm:inline">
+                    {isAnnotationMode ? 'Annotating' : 'Annotate'}
+                  </span>
+                </button>
+
                 {/* View toggle — icon only, segmented */}
                 <div className="flex items-center h-7 rounded-md border border-white/[0.07] bg-white/[0.02] overflow-hidden divide-x divide-white/[0.05]">
                   <button
@@ -679,62 +745,106 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
           </div>
         </div>
 
-        {/* Editor / Preview split */}
-        <div
-          className={cn(
-            'flex-1 min-h-0 rounded-xl border border-white/[0.06] bg-[oklch(0.08_0_0)] overflow-hidden',
-            viewMode === 'split'
-              ? 'grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/[0.06]'
-              : 'flex flex-col',
-          )}
-        >
-          {/* Editor panel */}
-          {showEditor && (
-            <div className="flex flex-col min-h-0 h-full">
-              {viewMode === 'split' && (
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.05] shrink-0">
-                  <AlignLeft className="size-3 text-muted-foreground/30" />
-                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-medium">
-                    Editor
-                  </span>
-                  <span className="ml-auto text-[10px] text-muted-foreground/25">
-                    Ctrl+S to save
-                  </span>
-                </div>
+        {isAnnotationMode ? (
+          /* ── Annotation mode layout ─────────────────────────────── */
+          <div className="flex-1 min-h-0 rounded-xl border border-white/[0.06] bg-[oklch(0.08_0_0)] overflow-hidden flex">
+            {/* Annotatable preview — takes all available width */}
+            <div className="flex-1 min-w-0 min-h-0 overflow-hidden relative">
+              <AnnotatablePlanPreview
+                content={content}
+                annotations={annotations}
+                selection={annotationSelection}
+                onSelectionChange={handleAnnotationSelectionChange}
+                annotationMode={true}
+              />
+              {/* Mobile FAB: open annotation sheet */}
+              {!mobileAnnotationOpen && (
+                <button
+                  className="lg:hidden fixed bottom-6 right-4 z-30 flex items-center gap-2 bg-violet-600 text-white text-xs font-medium rounded-full px-4 py-2.5 shadow-lg shadow-violet-900/40 border border-violet-500/30"
+                  onClick={() => setMobileAnnotationOpen(true)}
+                  aria-label="Open annotations panel"
+                >
+                  <PenLine className="size-3.5" />
+                  {annotations.length > 0
+                    ? `${annotations.length} annotation${annotations.length !== 1 ? 's' : ''}`
+                    : 'Annotations'}
+                </button>
               )}
-              <textarea
-                value={content}
-                onChange={(e) => handleContentChange(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onBlur={handleContentBlur}
-                spellCheck={false}
-                placeholder="Write your plan in markdown..."
-                className={cn(
-                  'flex-1 w-full bg-transparent px-4 py-4 font-mono text-sm text-foreground/80 placeholder:text-muted-foreground/20',
-                  'resize-none focus:outline-none leading-relaxed',
-                  'min-h-[300px]',
-                )}
+            </div>
+            {/* Desktop annotation sidebar — hidden on mobile (uses bottom sheet instead) */}
+            <div className="hidden lg:flex w-72 shrink-0 border-l border-white/[0.06]">
+              <InlineAnnotationSidebar
+                planId={plan.id}
+                conversationSessionId={conversationSessionId}
+                selection={annotationSelection}
+                annotations={annotations}
+                onAnnotationAdd={handleAnnotationAdd}
+                onAnnotationDelete={handleAnnotationDelete}
+                onClearSelection={() => setAnnotationSelection(null)}
+                onSessionCreated={setConversationSessionId}
+                onFeedbackSent={handleAnnotationFeedbackSent}
+                className="flex-1"
               />
             </div>
-          )}
-
-          {/* Preview panel */}
-          {showPreview && (
-            <div className="flex flex-col min-h-0 h-full overflow-hidden">
-              {viewMode === 'split' && (
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.05] shrink-0">
-                  <Eye className="size-3 text-muted-foreground/30" />
-                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-medium">
-                    Preview
-                  </span>
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto">
-                <PlanMarkdownPreview content={content} />
+          </div>
+        ) : (
+          /* ── Normal editor / preview layout (unchanged) ─────────── */
+          <div
+            className={cn(
+              'flex-1 min-h-0 rounded-xl border border-white/[0.06] bg-[oklch(0.08_0_0)] overflow-hidden',
+              viewMode === 'split'
+                ? 'grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/[0.06]'
+                : 'flex flex-col',
+            )}
+          >
+            {/* Editor panel */}
+            {showEditor && (
+              <div className="flex flex-col min-h-0 h-full">
+                {viewMode === 'split' && (
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.05] shrink-0">
+                    <AlignLeft className="size-3 text-muted-foreground/30" />
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-medium">
+                      Editor
+                    </span>
+                    <span className="ml-auto text-[10px] text-muted-foreground/25">
+                      Ctrl+S to save
+                    </span>
+                  </div>
+                )}
+                <textarea
+                  value={content}
+                  onChange={(e) => handleContentChange(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onBlur={handleContentBlur}
+                  spellCheck={false}
+                  placeholder="Write your plan in markdown..."
+                  className={cn(
+                    'flex-1 w-full bg-transparent px-4 py-4 font-mono text-sm text-foreground/80 placeholder:text-muted-foreground/20',
+                    'resize-none focus:outline-none leading-relaxed',
+                    'min-h-[300px]',
+                  )}
+                />
               </div>
-            </div>
-          )}
-        </div>
+            )}
+
+            {/* Preview panel */}
+            {showPreview && (
+              <div className="flex flex-col min-h-0 h-full overflow-hidden">
+                {viewMode === 'split' && (
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.05] shrink-0">
+                    <Eye className="size-3 text-muted-foreground/30" />
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-medium">
+                      Preview
+                    </span>
+                  </div>
+                )}
+                <div className="flex-1 overflow-y-auto">
+                  <PlanMarkdownPreview content={content} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Archive confirmation dialog */}
@@ -810,6 +920,37 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
             </div>
           </div>
         </>
+      )}
+
+      {/* Mobile annotation sidebar — bottom sheet */}
+      {isAnnotationMode && mobileAnnotationOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setMobileAnnotationOpen(false)}
+          />
+          <div className="absolute bottom-0 left-0 right-0 h-[72vh] rounded-t-xl overflow-hidden bg-[oklch(0.075_0.003_240)] border-t border-white/[0.08] flex flex-col">
+            {/* Drag handle */}
+            <div className="flex justify-center pt-2 pb-1 shrink-0">
+              <div className="w-8 h-1 rounded-full bg-white/20" />
+            </div>
+            <InlineAnnotationSidebar
+              planId={plan.id}
+              conversationSessionId={conversationSessionId}
+              selection={annotationSelection}
+              annotations={annotations}
+              onAnnotationAdd={handleAnnotationAdd}
+              onAnnotationDelete={handleAnnotationDelete}
+              onClearSelection={() => {
+                setAnnotationSelection(null);
+                setMobileAnnotationOpen(false);
+              }}
+              onSessionCreated={setConversationSessionId}
+              onFeedbackSent={handleAnnotationFeedbackSent}
+              className="flex-1 min-h-0"
+            />
+          </div>
+        </div>
       )}
     </div>
   );
