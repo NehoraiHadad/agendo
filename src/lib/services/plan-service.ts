@@ -165,7 +165,7 @@ Start by creating subtasks for each major step, then execute them one by one.`;
   const session = await createSession({
     projectId: plan.projectId,
     taskId: task.id,
-    kind: 'execution',
+    kind: 'conversation',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt,
@@ -222,7 +222,7 @@ Remember: create tasks only. Do NOT implement any code changes.`;
 
   const session = await createSession({
     projectId: plan.projectId,
-    kind: 'execution',
+    kind: 'conversation',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt,

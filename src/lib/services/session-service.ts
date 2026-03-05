@@ -144,7 +144,7 @@ export async function restartFreshFromSession(
     .values({
       taskId: parent.taskId,
       projectId: parent.projectId,
-      kind: parent.kind,
+      kind: 'conversation',
       agentId: parent.agentId,
       capabilityId: parent.capabilityId,
       idleTimeoutSec: parent.idleTimeoutSec,
