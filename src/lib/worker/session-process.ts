@@ -60,6 +60,27 @@ function resolveSessionLogPath(sessionId: string): string {
 }
 
 /**
+ * Enrich an agent:result payload with per-call context stats and the
+ * assistant message UUID (used for conversation branching). Pure function.
+ */
+function enrichResultPayload(
+  partial: AgendoEventPayload,
+  perCallContextStats: {
+    inputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+  } | null,
+  lastAssistantUuid: string | undefined,
+): AgendoEventPayload {
+  if (partial.type !== 'agent:result') return partial;
+  return {
+    ...partial,
+    ...(perCallContextStats ? { perCallContextStats } : {}),
+    ...(lastAssistantUuid ? { messageUuid: lastAssistantUuid } : {}),
+  };
+}
+
+/**
  * SessionProcess manages the full lifecycle of a single long-running agent
  * process tied to a session row. It handles:
  *   - Atomic session claim to prevent pg-boss double-execution
@@ -499,95 +520,97 @@ export class SessionProcess {
             continue; // suppress — keep in activeToolUseIds until human responds
           }
 
-          // Attach per-call context stats and assistant UUID to agent:result.
-          // perCallContextStats reflects actual per-API-call context usage.
-          // messageUuid is the Claude JSONL UUID of the last assistant turn,
-          // used by the frontend when branching (--resume-session-at).
-          const enrichedPartial: AgendoEventPayload =
-            partial.type === 'agent:result'
-              ? {
-                  ...partial,
-                  ...(this.lastPerCallContextStats
-                    ? { perCallContextStats: this.lastPerCallContextStats }
-                    : {}),
-                  ...(this.lastAssistantUuid ? { messageUuid: this.lastAssistantUuid } : {}),
-                }
-              : partial;
-
+          const enrichedPartial = enrichResultPayload(
+            partial,
+            this.lastPerCallContextStats,
+            this.lastAssistantUuid,
+          );
           const event = await this.emitEvent(enrichedPartial);
-
-          // Track in-flight tool calls to enable synthetic cleanup on cancel
-          // and to build informative interruption notes on worker restart.
-          if (event.type === 'agent:tool-start') {
-            this.activeToolUseIds.add(event.toolUseId);
-            this.activeToolInfo.set(event.toolUseId, {
-              toolName: event.toolName,
-              input: event.input,
-            });
-          }
-          if (event.type === 'agent:tool-end') {
-            this.activeToolUseIds.delete(event.toolUseId);
-            this.activeToolInfo.delete(event.toolUseId);
-          }
-
-          // Detect TeamCreate / TeamDelete tool events for team lifecycle.
-          if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
-            this.teamManager.onToolEvent(event);
-          }
-
-          // Persist sessionRef and model once the agent announces its session ID.
-          if (event.type === 'session:init') {
-            const updates: Record<string, string> = {};
-            if (event.sessionRef) {
-              this.sessionRef = event.sessionRef;
-              updates.sessionRef = event.sessionRef;
-            }
-            if (event.model) {
-              updates.model = event.model;
-            }
-            if (Object.keys(updates).length > 0) {
-              await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
-            }
-          }
-
-          // Cache context window size for real-time agent:usage emission on next message_start.
-          if (event.type === 'agent:result' && event.modelUsage) {
-            for (const usage of Object.values(event.modelUsage)) {
-              if (usage.contextWindow) {
-                this.lastContextWindow = usage.contextWindow;
-                break;
-              }
-            }
-          }
-
-          // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
-          if (event.type === 'agent:result' && event.serverToolUse) {
-            const { webSearchRequests, webFetchRequests } = event.serverToolUse;
-            void db
-              .update(sessions)
-              .set({
-                ...(webSearchRequests != null && { webSearchRequests }),
-                ...(webFetchRequests != null && { webFetchRequests }),
-              })
-              .where(eq(sessions.id, this.session.id))
-              .catch((err: unknown) => {
-                log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
-              });
-          }
-
-          // After the agent finishes a result, transition to awaiting_input.
-          // Skip during an interrupt — handleInterrupt() manages the transition
-          // based on whether the process survived (warm vs cold resume).
-          if (event.type === 'agent:result' && !this.interruptInProgress) {
-            await this.transitionTo('awaiting_input');
-            this.activityTracker.recordActivity();
-          }
+          await this.onEmittedEvent(event);
         }
       } catch (err) {
         // Event emission failed (transient DB/publish error). Log but don't
         // surface raw JSON to the user — it would appear as a broken UI element.
         log.error({ err, sessionId: this.session.id }, 'Failed to emit event');
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: post-emit event side-effects
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Process side-effects triggered by a newly emitted event.
+   * Handles tool tracking, team lifecycle, session:init persistence,
+   * context window caching, web tool usage persistence, and state transitions.
+   */
+  private async onEmittedEvent(event: AgendoEvent): Promise<void> {
+    // Track in-flight tool calls to enable synthetic cleanup on cancel
+    // and to build informative interruption notes on worker restart.
+    if (event.type === 'agent:tool-start') {
+      this.activeToolUseIds.add(event.toolUseId);
+      this.activeToolInfo.set(event.toolUseId, {
+        toolName: event.toolName,
+        input: event.input,
+      });
+    }
+    if (event.type === 'agent:tool-end') {
+      this.activeToolUseIds.delete(event.toolUseId);
+      this.activeToolInfo.delete(event.toolUseId);
+    }
+
+    // Detect TeamCreate / TeamDelete tool events for team lifecycle.
+    if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
+      this.teamManager.onToolEvent(event);
+    }
+
+    // Persist sessionRef and model once the agent announces its session ID.
+    if (event.type === 'session:init') {
+      const updates: Record<string, string> = {};
+      if (event.sessionRef) {
+        this.sessionRef = event.sessionRef;
+        updates.sessionRef = event.sessionRef;
+      }
+      if (event.model) {
+        updates.model = event.model;
+      }
+      if (Object.keys(updates).length > 0) {
+        await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
+      }
+    }
+
+    // Cache context window size for real-time agent:usage emission on next message_start.
+    if (event.type === 'agent:result' && event.modelUsage) {
+      for (const usage of Object.values(event.modelUsage)) {
+        if (usage.contextWindow) {
+          this.lastContextWindow = usage.contextWindow;
+          break;
+        }
+      }
+    }
+
+    // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
+    if (event.type === 'agent:result' && event.serverToolUse) {
+      const { webSearchRequests, webFetchRequests } = event.serverToolUse;
+      void db
+        .update(sessions)
+        .set({
+          ...(webSearchRequests != null && { webSearchRequests }),
+          ...(webFetchRequests != null && { webFetchRequests }),
+        })
+        .where(eq(sessions.id, this.session.id))
+        .catch((err: unknown) => {
+          log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
+        });
+    }
+
+    // After the agent finishes a result, transition to awaiting_input.
+    // Skip during an interrupt — handleInterrupt() manages the transition
+    // based on whether the process survived (warm vs cold resume).
+    if (event.type === 'agent:result' && !this.interruptInProgress) {
+      await this.transitionTo('awaiting_input');
+      this.activityTracker.recordActivity();
     }
   }
 
