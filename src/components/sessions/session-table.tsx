@@ -6,7 +6,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatDistanceStrict, formatDistanceToNow } from 'date-fns';
 import {
   Activity,
-  MessageCircle,
   MessageSquare,
   MinusCircle,
   Pause,
@@ -119,14 +118,7 @@ export function SessionStatusBadge({ status, className }: SessionStatusBadgeProp
 // ---------------------------------------------------------------------------
 
 function KindBadge({ kind }: { kind: string }) {
-  if (kind === 'conversation') {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60">
-        <MessageCircle className="size-3" />
-        Chat
-      </span>
-    );
-  }
+  if (kind !== 'execution') return null;
   return (
     <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60">
       <Play className="size-3" />

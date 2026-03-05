@@ -521,10 +521,10 @@ export function SessionDetailClient({
                   <span className="truncate max-w-[200px]">{taskTitle}</span>
                 </>
               )}
-              {session.kind === 'conversation' && (
+              {session.kind === 'conversation' && !taskTitle && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
-                  <span className="text-muted-foreground/50">Conversation</span>
+                  <span className="text-muted-foreground/50">Chat</span>
                 </>
               )}
               {contextStats && (
@@ -598,10 +598,10 @@ export function SessionDetailClient({
                 <span className="truncate min-w-0">{taskTitle}</span>
               </>
             )}
-            {session.kind === 'conversation' && (
+            {session.kind === 'conversation' && !taskTitle && (
               <>
                 <span className="text-muted-foreground/25 shrink-0">·</span>
-                <span className="shrink-0 text-muted-foreground/40">Conversation</span>
+                <span className="shrink-0 text-muted-foreground/40">Chat</span>
               </>
             )}
           </div>

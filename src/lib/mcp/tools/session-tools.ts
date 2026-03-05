@@ -32,7 +32,7 @@ export async function handleStartAgentSession(args: {
     throw new Error(`Agent "${args.agent}" has no prompt-mode capability. Cannot start a session.`);
   }
 
-  // 3. Create and enqueue the session (fire-and-forget)
+  // 3. Create and enqueue the session (fire-and-forget).
   const session = (await apiCall('/api/sessions', {
     method: 'POST',
     body: {

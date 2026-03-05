@@ -1,4 +1,15 @@
-import { eq, and, desc, count, getTableColumns, or, ilike, inArray } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  desc,
+  count,
+  getTableColumns,
+  or,
+  ilike,
+  inArray,
+  isNull,
+  isNotNull,
+} from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -166,7 +177,7 @@ export interface SessionWithAgent extends Session {
   taskTitle: string | null;
 }
 
-export async function listConversationsByProject(
+export async function listFreeChatsByProject(
   projectId: string,
   limit = 20,
 ): Promise<SessionWithAgent[]> {
@@ -179,13 +190,13 @@ export async function listConversationsByProject(
     .from(sessions)
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
     .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .where(and(eq(sessions.projectId, projectId), eq(sessions.kind, 'conversation')))
+    .where(and(eq(sessions.projectId, projectId), isNull(sessions.taskId)))
     .orderBy(desc(sessions.createdAt))
     .limit(limit);
   return rows as SessionWithAgent[];
 }
 
-export async function listExecutionSessionsByProject(
+export async function listTaskSessionsByProject(
   projectId: string,
   limit = 20,
 ): Promise<SessionWithAgent[]> {
@@ -198,7 +209,7 @@ export async function listExecutionSessionsByProject(
     .from(sessions)
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
     .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .where(and(eq(sessions.projectId, projectId), eq(sessions.kind, 'execution')))
+    .where(and(eq(sessions.projectId, projectId), isNotNull(sessions.taskId)))
     .orderBy(desc(sessions.createdAt))
     .limit(limit);
   return rows as SessionWithAgent[];

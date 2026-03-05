@@ -33,8 +33,8 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { PlanAnnotator } from '@/components/sessions/plan-annotator';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -549,8 +549,7 @@ function ExitPlanModeRenderer({
   onResolved,
 }: InteractiveToolProps) {
   const [pending, setPending] = useState<PlanAction | null>(null);
-  const [feedbackMode, setFeedbackMode] = useState(false);
-  const [feedbackText, setFeedbackText] = useState('');
+  const [annotatorOpen, setAnnotatorOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planContent, setPlanContent] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
@@ -607,10 +606,11 @@ function ExitPlanModeRenderer({
     }
   }
 
-  async function handleFeedback() {
-    if (!feedbackText.trim()) return;
+  async function handleAnnotatorSend(feedback: string) {
+    if (!feedback.trim()) return;
     setError(null);
     setPending('revise');
+    setAnnotatorOpen(false);
     try {
       // For live sessions, deny the ExitPlanMode approval first so the agent
       // returns to plan mode and receives the feedback.
@@ -622,7 +622,7 @@ function ExitPlanModeRenderer({
       await fetch(`/api/sessions/${sessionId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: feedbackText.trim() }),
+        body: JSON.stringify({ message: feedback }),
       });
       onResolved?.();
     } catch (err) {
@@ -632,7 +632,7 @@ function ExitPlanModeRenderer({
   }
 
   // Compact "answered" state shown after the user has acted
-  if (isAnswered && !feedbackMode) {
+  if (isAnswered && !annotatorOpen) {
     return (
       <div className="rounded-md border border-violet-500/15 bg-violet-500/[0.03] px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground/60">
         <CheckCircle2 className="size-3.5 text-violet-400/60 shrink-0" />
@@ -702,137 +702,111 @@ function ExitPlanModeRenderer({
 
       {/* ── Action buttons ─────────────────────────────────────────────── */}
       <div className="px-3.5 py-3 space-y-2.5">
-        {!feedbackMode ? (
-          <>
-            {/* Idle session notice */}
-            {isSessionIdle && !isAnswered && (
-              <div className="flex items-start gap-2 text-[11px] text-amber-400/65 bg-amber-500/[0.05] border border-amber-700/[0.18] rounded-lg px-2.5 py-2">
-                <span className="shrink-0 mt-px">⏸</span>
-                <span>Session is paused — approving will resume from where you left off.</span>
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-1.5">
-              {/* ▶ Implement (primary) */}
-              <button
-                type="button"
-                disabled={isDisabled}
-                onClick={() => void handleApprove('approve')}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
-                  isDisabled
-                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
-                    : 'border-violet-500/50 bg-violet-500/[0.12] text-violet-200 hover:bg-violet-500/[0.22] hover:border-violet-500/65 active:scale-[0.98]',
-                )}
-              >
-                {pending === 'approve' ? (
-                  <Loader2 className="size-3.5 animate-spin shrink-0" />
-                ) : (
-                  <Play className="size-3.5 shrink-0" />
-                )}
-                Implement
-              </button>
-
-              {/* ▶ Implement + compact */}
-              <button
-                type="button"
-                disabled={isDisabled}
-                onClick={() => void handleApprove('compact')}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
-                  isDisabled
-                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
-                    : 'border-white/[0.10] bg-white/[0.03] text-foreground/65 hover:bg-white/[0.07] hover:border-white/[0.16] active:scale-[0.98]',
-                )}
-              >
-                {pending === 'compact' ? (
-                  <Loader2 className="size-3.5 animate-spin shrink-0" />
-                ) : (
-                  <Layers className="size-3.5 shrink-0" />
-                )}
-                Implement + compact
-              </button>
-
-              {/* ↺ Restart fresh (clear context) */}
-              <button
-                type="button"
-                disabled={isDisabled}
-                onClick={() => void handleApprove('restart')}
-                title="Clear the current conversation and restart fresh with the plan as context"
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
-                  isDisabled
-                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
-                    : 'border-white/[0.10] bg-white/[0.03] text-foreground/65 hover:bg-white/[0.07] hover:border-white/[0.16] active:scale-[0.98]',
-                )}
-              >
-                {pending === 'restart' ? (
-                  <Loader2 className="size-3.5 animate-spin shrink-0" />
-                ) : (
-                  <RotateCcw className="size-3.5 shrink-0" />
-                )}
-                Restart fresh
-              </button>
-
-              {/* ✏ Revise */}
-              <button
-                type="button"
-                disabled={isDisabled}
-                onClick={() => setFeedbackMode(true)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
-                  isDisabled
-                    ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
-                    : 'border-white/[0.07] bg-transparent text-muted-foreground/45 hover:bg-white/[0.04] hover:border-white/[0.12] hover:text-foreground/65 active:scale-[0.98]',
-                )}
-              >
-                <MessageSquare className="size-3.5 shrink-0" />
-                Revise
-              </button>
+        <>
+          {/* Idle session notice */}
+          {isSessionIdle && !isAnswered && (
+            <div className="flex items-start gap-2 text-[11px] text-amber-400/65 bg-amber-500/[0.05] border border-amber-700/[0.18] rounded-lg px-2.5 py-2">
+              <span className="shrink-0 mt-px">⏸</span>
+              <span>Session is paused — approving will resume from where you left off.</span>
             </div>
-          </>
-        ) : (
-          /* ── Feedback / revise mode ─────────────────────────────────── */
-          <div className="space-y-2">
-            <p className="text-[11px] text-muted-foreground/45">Tell Claude what to change:</p>
-            <textarea
-              value={feedbackText}
-              onChange={(e) => setFeedbackText(e.target.value)}
+          )}
+
+          {/* Sending feedback indicator */}
+          {pending === 'revise' && (
+            <div className="flex items-center gap-2 text-[11px] text-violet-400/60">
+              <Loader2 className="size-3.5 animate-spin shrink-0" />
+              <span>Sending feedback…</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-1.5">
+            {/* ▶ Implement (primary) */}
+            <button
+              type="button"
               disabled={isDisabled}
-              rows={3}
-              placeholder="Describe the changes you want…"
-              className="w-full text-xs bg-black/30 border border-violet-500/20 rounded-lg px-2.5 py-2 text-foreground/75 focus:outline-none focus:border-violet-500/35 resize-y placeholder:text-muted-foreground/25 transition-colors"
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                disabled={isDisabled || !feedbackText.trim()}
-                onClick={() => void handleFeedback()}
-                className="bg-violet-600/80 hover:bg-violet-600 text-white border-0 text-xs h-7"
-              >
-                {pending === 'revise' ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Check className="size-3.5" />
-                )}
-                Send feedback
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={isDisabled}
-                onClick={() => {
-                  setFeedbackMode(false);
-                  setFeedbackText('');
-                }}
-                className="text-muted-foreground hover:text-foreground text-xs h-7"
-              >
-                Back
-              </Button>
-            </div>
+              onClick={() => void handleApprove('approve')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                isDisabled
+                  ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                  : 'border-violet-500/50 bg-violet-500/[0.12] text-violet-200 hover:bg-violet-500/[0.22] hover:border-violet-500/65 active:scale-[0.98]',
+              )}
+            >
+              {pending === 'approve' ? (
+                <Loader2 className="size-3.5 animate-spin shrink-0" />
+              ) : (
+                <Play className="size-3.5 shrink-0" />
+              )}
+              Implement
+            </button>
+
+            {/* ▶ Implement + compact */}
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={() => void handleApprove('compact')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                isDisabled
+                  ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                  : 'border-white/[0.10] bg-white/[0.03] text-foreground/65 hover:bg-white/[0.07] hover:border-white/[0.16] active:scale-[0.98]',
+              )}
+            >
+              {pending === 'compact' ? (
+                <Loader2 className="size-3.5 animate-spin shrink-0" />
+              ) : (
+                <Layers className="size-3.5 shrink-0" />
+              )}
+              Implement + compact
+            </button>
+
+            {/* ↺ Restart fresh (clear context) */}
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={() => void handleApprove('restart')}
+              title="Clear the current conversation and restart fresh with the plan as context"
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                isDisabled
+                  ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                  : 'border-white/[0.10] bg-white/[0.03] text-foreground/65 hover:bg-white/[0.07] hover:border-white/[0.16] active:scale-[0.98]',
+              )}
+            >
+              {pending === 'restart' ? (
+                <Loader2 className="size-3.5 animate-spin shrink-0" />
+              ) : (
+                <RotateCcw className="size-3.5 shrink-0" />
+              )}
+              Restart fresh
+            </button>
+
+            {/* ✏ Revise — opens annotator sheet */}
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={() => setAnnotatorOpen(true)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-150',
+                isDisabled
+                  ? 'opacity-40 cursor-default border-white/[0.05] bg-white/[0.01] text-muted-foreground/40'
+                  : 'border-white/[0.07] bg-transparent text-muted-foreground/45 hover:bg-white/[0.04] hover:border-white/[0.12] hover:text-foreground/65 active:scale-[0.98]',
+              )}
+            >
+              <MessageSquare className="size-3.5 shrink-0" />
+              Revise
+            </button>
           </div>
-        )}
+        </>
+
+        {/* PlanAnnotator sheet — mounts alongside the card */}
+        <PlanAnnotator
+          open={annotatorOpen}
+          onOpenChange={setAnnotatorOpen}
+          planContent={planContent ?? null}
+          onSend={(feedback) => void handleAnnotatorSend(feedback)}
+          isSending={pending === 'revise'}
+        />
 
         {error && (
           <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded px-2 py-1">
@@ -842,62 +816,58 @@ function ExitPlanModeRenderer({
       </div>
 
       {/* ── Plan preview ───────────────────────────────────────────────── */}
-      {!feedbackMode && (
-        <div className="border-t border-violet-500/[0.08] px-3.5 pt-3 pb-3.5">
-          {planLoading ? (
-            <div className="flex items-center gap-2 py-2 text-[11px] text-muted-foreground/35">
-              <Loader2 className="size-3 animate-spin" />
-              Loading plan…
-            </div>
-          ) : hasPlanContent ? (
-            <>
-              {/* Scrollable preview with gradient fade */}
-              <div className="relative">
-                <div className="max-h-52 overflow-hidden">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={planMdComponents}>
-                    {planContent ?? ''}
-                  </ReactMarkdown>
-                </div>
-                {/* Bottom fade overlay */}
-                <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[oklch(0.085_0.015_280)] to-transparent pointer-events-none" />
+      <div className="border-t border-violet-500/[0.08] px-3.5 pt-3 pb-3.5">
+        {planLoading ? (
+          <div className="flex items-center gap-2 py-2 text-[11px] text-muted-foreground/35">
+            <Loader2 className="size-3 animate-spin" />
+            Loading plan…
+          </div>
+        ) : hasPlanContent ? (
+          <>
+            {/* Scrollable preview with gradient fade */}
+            <div className="relative">
+              <div className="max-h-52 overflow-hidden">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={planMdComponents}>
+                  {planContent ?? ''}
+                </ReactMarkdown>
               </div>
-              <button
-                type="button"
-                onClick={() => setPlanSheetOpen(true)}
-                className="mt-2 flex items-center gap-1 text-[11px] text-violet-400/45 hover:text-violet-300/65 transition-colors"
-              >
-                <Maximize2 className="size-3" />
-                View full plan
-              </button>
-            </>
-          ) : hasAllowedPrompts ? (
-            /* Fallback: show allowedPrompts when no plan file is available */
-            <div className="space-y-1">
-              <p className="text-[10px] text-muted-foreground/35 uppercase tracking-widest mb-1.5">
-                Planned actions
-              </p>
-              {allowedPrompts.map((p, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-2 text-xs bg-black/25 rounded-md px-2 py-1.5 border border-white/[0.04]"
-                >
-                  <Terminal className="size-3 text-violet-400/50 shrink-0 mt-0.5" />
-                  <span className="font-mono text-violet-300/65">{p.tool ?? '—'}</span>
-                  {p.prompt && (
-                    <span className="text-muted-foreground/40 truncate text-[11px]">
-                      {p.prompt}
-                    </span>
-                  )}
-                </div>
-              ))}
+              {/* Bottom fade overlay */}
+              <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[oklch(0.085_0.015_280)] to-transparent pointer-events-none" />
             </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground/35 py-1">
-              Review the plan in the conversation above, then approve or ask Claude to revise.
+            <button
+              type="button"
+              onClick={() => setPlanSheetOpen(true)}
+              className="mt-2 flex items-center gap-1 text-[11px] text-violet-400/45 hover:text-violet-300/65 transition-colors"
+            >
+              <Maximize2 className="size-3" />
+              View full plan
+            </button>
+          </>
+        ) : hasAllowedPrompts ? (
+          /* Fallback: show allowedPrompts when no plan file is available */
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground/35 uppercase tracking-widest mb-1.5">
+              Planned actions
             </p>
-          )}
-        </div>
-      )}
+            {allowedPrompts.map((p, i) => (
+              <div
+                key={i}
+                className="flex items-start gap-2 text-xs bg-black/25 rounded-md px-2 py-1.5 border border-white/[0.04]"
+              >
+                <Terminal className="size-3 text-violet-400/50 shrink-0 mt-0.5" />
+                <span className="font-mono text-violet-300/65">{p.tool ?? '—'}</span>
+                {p.prompt && (
+                  <span className="text-muted-foreground/40 truncate text-[11px]">{p.prompt}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground/35 py-1">
+            Review the plan in the conversation above, then approve or ask Claude to revise.
+          </p>
+        )}
+      </div>
 
       {/* ── Full plan Sheet ─────────────────────────────────────────────── */}
       <Sheet open={planSheetOpen} onOpenChange={setPlanSheetOpen}>
@@ -1033,7 +1003,7 @@ function ExitPlanModeRenderer({
                 disabled={isDisabled}
                 onClick={() => {
                   setPlanSheetOpen(false);
-                  setFeedbackMode(true);
+                  setAnnotatorOpen(true);
                 }}
                 className={cn(
                   'flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-xs font-medium transition-all duration-150',
