@@ -31,6 +31,7 @@ import {
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
+import { buildChildEnv } from '@/lib/worker/session-env';
 import type {
   AgentAdapter,
   SpawnOpts,
@@ -252,7 +253,11 @@ export class SessionProcess {
       },
     );
 
-    const childEnv = this.buildChildEnv(envOverrides);
+    const childEnv = buildChildEnv(
+      process.env,
+      { sessionId: this.session.id, agentId: this.session.agentId, taskId: this.session.taskId },
+      envOverrides,
+    );
 
     // For Gemini sessions with the Agendo MCP server injected, write a temporary
     // TOML policy file that auto-allows all agendo MCP tools. This eliminates
@@ -387,40 +392,6 @@ export class SessionProcess {
     // client never sees duplicate IDs.
     this.eventSeq = claimed.eventSeq;
     return true;
-  }
-
-  /**
-   * Build the child process environment: start from the worker's own env,
-   * strip vars that would prevent agent CLIs from starting, apply overrides,
-   * and inject session identity vars.
-   */
-  private buildChildEnv(envOverrides?: Record<string, string>): Record<string, string> {
-    // Strip CLAUDECODE (nested-session guard) and CLAUDE_CODE_ENTRYPOINT.
-    const childEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
-        childEnv[key] = value;
-      }
-    }
-    // Apply project/task env overrides on top of the base env.
-    if (envOverrides) {
-      for (const [k, v] of Object.entries(envOverrides)) {
-        childEnv[k] = v;
-      }
-    }
-
-    // Enable lazy MCP schema loading — reduces initial context window usage by 32K+
-    // tokens by deferring MCP tool schema injection until tools are actually needed.
-    childEnv['ENABLE_EXPERIMENTAL_MCP_CLI'] = 'true';
-
-    // Session identity vars — available to hooks and sub-processes via env.
-    childEnv['AGENDO_SESSION_ID'] = this.session.id;
-    childEnv['AGENDO_AGENT_ID'] = this.session.agentId;
-    if (this.session.taskId) {
-      childEnv['AGENDO_TASK_ID'] = this.session.taskId;
-    }
-
-    return childEnv;
   }
 
   /**
