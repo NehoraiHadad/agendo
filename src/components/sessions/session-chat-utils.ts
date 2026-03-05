@@ -9,6 +9,12 @@ export interface ToolCallResult {
   isError: boolean;
 }
 
+export interface SubagentInfo {
+  agentId: string;
+  description?: string;
+  subagentType?: string;
+}
+
 export interface ToolState {
   toolUseId: string;
   toolName: string;
@@ -17,6 +23,8 @@ export interface ToolState {
   durationMs?: number;
   numFiles?: number;
   truncated?: boolean;
+  /** Present when this tool call spawned a subagent (Task / Agent tools). */
+  subagentInfo?: SubagentInfo;
 }
 
 export type AssistantPart =
@@ -120,6 +128,20 @@ export function buildDisplayItems(
   toolResultMap: Map<string, ToolCallResult>,
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
+  // Pre-pass: collect subagent info keyed by the Task/Agent toolUseId.
+  // subagent:start is emitted on agent:tool-end (after the subagent completes),
+  // so it always exists before or after the tool-start in the events array.
+  const subagentByToolUseId = new Map<string, SubagentInfo>();
+  for (const ev of events) {
+    if (ev.type === 'subagent:start') {
+      subagentByToolUseId.set(ev.toolUseId, {
+        agentId: ev.agentId,
+        description: ev.description,
+        subagentType: ev.subagentType,
+      });
+    }
+  }
+
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
   let sessionInitCount = 0;
@@ -199,6 +221,7 @@ export function buildDisplayItems(
           toolName: ev.toolName,
           input: ev.input,
           result,
+          subagentInfo: subagentByToolUseId.get(ev.toolUseId),
         };
         pendingTools.set(ev.toolUseId, toolState);
 

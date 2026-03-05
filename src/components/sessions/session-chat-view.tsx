@@ -17,6 +17,7 @@ import {
   ArrowDown,
   MessageSquare,
   Pencil,
+  Cpu,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -239,6 +240,7 @@ const ToolCard = memo(function ToolCard({
   const hasResult = tool.result !== undefined;
   const isError = tool.result?.isError ?? false;
   const open = manualOpen !== null ? manualOpen : !hasResult || isError;
+  const isSubagent = !!tool.subagentInfo;
 
   const statusIcon = !hasResult ? (
     <Loader2 className="size-3 text-zinc-400 animate-spin" />
@@ -249,6 +251,82 @@ const ToolCard = memo(function ToolCard({
   );
 
   const inputStr = Object.keys(tool.input).length > 0 ? JSON.stringify(tool.input, null, 2) : null;
+
+  // Subagent delegation card — visually distinct from regular tool calls
+  if (isSubagent && tool.subagentInfo) {
+    const { description, subagentType } = tool.subagentInfo;
+    const label = subagentType ?? tool.toolName;
+    // Prompt is the primary description of what was delegated
+    const prompt =
+      description ??
+      (typeof tool.input.prompt === 'string' ? tool.input.prompt : null) ??
+      (typeof tool.input.description === 'string' ? tool.input.description : null);
+    const promptPreview = prompt
+      ? prompt.length > 120
+        ? prompt.slice(0, 120) + '…'
+        : prompt
+      : null;
+
+    return (
+      <div
+        className={`rounded-lg text-xs overflow-hidden flex ${
+          isError
+            ? 'border border-red-500/20 bg-red-500/[0.04]'
+            : 'border border-indigo-500/20 bg-[oklch(0.08_0.01_275)]'
+        }`}
+      >
+        {/* Left accent rail — pulses while running */}
+        <div
+          className={`w-0.5 shrink-0 rounded-l-lg ${
+            isError
+              ? 'bg-red-500/50'
+              : !hasResult
+                ? 'bg-indigo-400/70 animate-pulse'
+                : 'bg-indigo-500/50'
+          }`}
+        />
+
+        <div className="flex-1 min-w-0">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-white/[0.03] transition-colors"
+            onClick={() => setManualOpen((v) => (v !== null ? !v : !open))}
+            aria-expanded={open}
+          >
+            <Cpu className="size-3 shrink-0 text-indigo-400/70" />
+            <span className="font-mono text-[11px] text-indigo-200/80 font-medium tracking-tight">
+              {label}
+            </span>
+            {/* Subagent badge */}
+            <span className="inline-flex items-center rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-widest bg-indigo-500/15 text-indigo-300/70 border border-indigo-500/20 leading-4">
+              subagent
+            </span>
+            <span className="ml-1">{statusIcon}</span>
+            {/* Description preview in header when collapsed */}
+            {!open && promptPreview && (
+              <span className="ml-1 text-muted-foreground/40 truncate text-[10px] font-normal max-w-[160px]">
+                {promptPreview}
+              </span>
+            )}
+            <span className="ml-auto text-muted-foreground/30">
+              {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+            </span>
+          </button>
+
+          {open && (
+            <div className="px-2.5 pb-2 border-t border-indigo-500/[0.08]">
+              {promptPreview && (
+                <p className="text-[10px] text-indigo-200/50 mt-1.5 mb-1 leading-relaxed">
+                  {prompt}
+                </p>
+              )}
+              {tool.result && <ToolOutput name={tool.toolName} result={tool.result} />}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
