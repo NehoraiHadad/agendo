@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
+  ArrowLeftRight,
   Loader2,
   PowerOff,
   Shield,
@@ -43,6 +44,9 @@ import { SessionLogViewer } from '@/components/sessions/session-log-viewer';
 import { SaveSnapshotDialog } from '@/components/snapshots/save-snapshot-dialog';
 import { TeamPanel } from '@/components/sessions/team-panel';
 import { TeamDiagram } from '@/components/sessions/team-diagram';
+import { AgentSwitchButton } from '@/components/sessions/agent-switch-button';
+import { AgentSwitchDialog } from '@/components/sessions/agent-switch-dialog';
+import { SessionLineage } from '@/components/sessions/session-lineage';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
@@ -119,6 +123,8 @@ interface SessionDetailClientProps {
   capLabel: string;
   taskTitle: string;
   projectName: string;
+  parentAgentName: string;
+  parentTurns: number | null;
 }
 
 interface StatusConfig {
@@ -188,6 +194,8 @@ export function SessionDetailClient({
   capLabel,
   taskTitle,
   projectName,
+  parentAgentName,
+  parentTurns,
 }: SessionDetailClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -201,6 +209,11 @@ export function SessionDetailClient({
   const [showTeamSheet, setShowTeamSheet] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [agentSwitchTarget, setAgentSwitchTarget] = useState<{
+    agentId: string;
+    capabilityId: string;
+    agentName: string;
+  } | null>(null);
   const [isEnding, setIsEnding] = useState(false);
   const [isForkingSession, setIsForkingSession] = useState(false);
   const [showSaveSnapshot, setShowSaveSnapshot] = useState(false);
@@ -490,7 +503,18 @@ export function SessionDetailClient({
             {/* Meta breadcrumb — desktop only (mobile gets its own row below) */}
             <div className="hidden sm:flex mt-1 items-center gap-1.5 text-xs text-muted-foreground/40 flex-wrap">
               <span className="text-muted-foreground/60">{agentName}</span>
-              {session.parentSessionId && (
+              {session.parentSessionId && parentAgentName && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <SessionLineage
+                    parentSessionId={session.parentSessionId}
+                    parentAgentName={parentAgentName}
+                    parentTurns={parentTurns}
+                    currentAgentName={agentName}
+                  />
+                </>
+              )}
+              {session.parentSessionId && !parentAgentName && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
                   <Link
@@ -757,6 +781,19 @@ export function SessionDetailClient({
                     </span>
                   </button>
 
+                  {/* Switch Agent */}
+                  <button
+                    onClick={() => {
+                      setShowMobileMenu(false);
+                      // Open agent switch via a transient picker state
+                      setAgentSwitchTarget({ agentId: '', capabilityId: '', agentName: '' });
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-orange-400 hover:bg-orange-500/[0.08] active:bg-orange-500/[0.12] transition-colors"
+                  >
+                    <ArrowLeftRight className="size-4 shrink-0" />
+                    <span>Switch Agent</span>
+                  </button>
+
                   <div className="h-px bg-white/[0.06] mx-3" />
 
                   {/* End session */}
@@ -920,6 +957,16 @@ export function SessionDetailClient({
                 <span>Fork</span>
               </Button>
 
+              {/* Switch agent */}
+              <AgentSwitchButton
+                currentAgentId={session.agentId}
+                currentAgentName={agentName}
+                sessionEnded={false}
+                onSelect={(agentId, capabilityId, name) =>
+                  setAgentSwitchTarget({ agentId, capabilityId, agentName: name })
+                }
+              />
+
               {/* End session */}
               <Button
                 variant="ghost"
@@ -1081,6 +1128,23 @@ export function SessionDetailClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Agent switch dialog */}
+      <AgentSwitchDialog
+        open={agentSwitchTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setAgentSwitchTarget(null);
+        }}
+        sourceAgentName={agentName}
+        targetAgentId={agentSwitchTarget?.agentId ?? ''}
+        targetAgentName={agentSwitchTarget?.agentName ?? ''}
+        targetCapabilityId={agentSwitchTarget?.capabilityId ?? ''}
+        sessionId={session.id}
+        onSuccess={(newSessionId) => {
+          setAgentSwitchTarget(null);
+          router.push(`/sessions/${newSessionId}`);
+        }}
+      />
     </div>
   );
 }

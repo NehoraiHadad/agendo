@@ -26,6 +26,8 @@ interface Props {
   capLabel: string;
   taskTitle: string;
   projectName: string;
+  parentAgentName: string;
+  parentTurns: number | null;
 }
 
 export function SessionDetailWrapper(props: Props) {
