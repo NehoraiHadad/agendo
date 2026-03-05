@@ -16,6 +16,11 @@ import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
 import { listTaskEvents } from '@/lib/services/task-event-service';
+import {
+  generateExecutionPreamble,
+  generatePlanningPreamble,
+  generateResumeContext,
+} from '@/lib/worker/session-preambles';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
 
 /**
@@ -179,30 +184,9 @@ export async function runSession(
   let codexDeveloperInstructions: string | undefined;
   if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
-    let preamble: string;
-    if (session.taskId) {
-      // Execution preamble — agent is working on a specific task.
-      preamble =
-        `[Agendo Context: task_id=${session.taskId}, project=${projectName}]\n` +
-        `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
-        `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
-        `  - A clear title: "Add MCP tool: <tool_name>"\n` +
-        `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
-        `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
-        `---\n`;
-    } else {
-      // Planning/conversation preamble — no assigned task, free-form session.
-      // Kept intentionally brief; the full agent-execution guidance lives in the
-      // initialPrompt constructed by plan-service.ts startPlanConversation().
-      preamble =
-        `[Agendo Context: project=${projectName}, mode=planning]\n` +
-        `Agendo MCP tools are available. You are in a planning conversation.\n` +
-        `- create_task / create_subtask — turn plan steps into actionable tasks\n` +
-        `- list_tasks / get_task — inspect existing tasks and their status\n` +
-        `- list_projects — list all projects (needed to resolve projectId for create_task)\n` +
-        `- start_agent_session — spawn an agent on a task when ready to execute\n` +
-        `---\n`;
-    }
+    const preamble = session.taskId
+      ? generateExecutionPreamble(projectName, session.taskId)
+      : generatePlanningPreamble(projectName);
     if (binaryName === 'codex') {
       // Codex: inject preamble as developerInstructions (system-level, not a user turn)
       // instead of prepending to the prompt. This keeps the user's initial message clean.
@@ -222,31 +206,13 @@ export async function runSession(
     const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
 
     if (progressNotes.length > 0 || task) {
-      const notesText =
-        progressNotes.length > 0
-          ? progressNotes
-              .map((e) => `  - "${(e.payload as { note?: string }).note ?? ''}"`)
-              .join('\n')
-          : '  (none yet)';
-
-      // Check if the most recent note is an interruption marker so we can
-      // give the agent a more precise instruction than "continue from where you left off".
       const mostRecentNote = progressNotes[0];
       const mostRecentNoteText =
         (mostRecentNote?.payload as { note?: string } | undefined)?.note ?? '';
       const wasInterrupted = mostRecentNoteText.includes('Session interrupted mid-turn');
-      const continuationInstruction = wasInterrupted
-        ? 'Your previous session was interrupted mid-turn. Review the most recent note above and verify whether your last action completed before proceeding.'
-        : 'Continue from where you left off.';
 
-      const resumeContext =
-        `[Previous Work Summary]\n` +
-        `Task: ${task.title}\n` +
-        `Recent progress notes:\n` +
-        `${notesText}\n` +
-        `---\n` +
-        `${continuationInstruction}\n\n`;
-      prompt = resumeContext + prompt;
+      const resumeCtx = generateResumeContext(task.title, progressNotes, wasInterrupted);
+      prompt = resumeCtx + prompt;
     }
   }
 

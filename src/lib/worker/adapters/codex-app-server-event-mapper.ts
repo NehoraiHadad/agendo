@@ -1,4 +1,5 @@
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 
 // ---------------------------------------------------------------------------
 // Synthetic event types emitted by CodexAppServerAdapter to dataCallbacks.
@@ -154,14 +155,7 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
     case 'as:item.started': {
       const { item } = event;
       if (!TOOL_ITEM_TYPES.has(item.type)) return [];
-      return [
-        {
-          type: 'agent:tool-start',
-          toolUseId: item.id,
-          toolName: toolNameForItem(item),
-          input: toolInputForItem(item),
-        },
-      ];
+      return [buildToolStartEvent(item.id, toolNameForItem(item), toolInputForItem(item))];
     }
 
     // -----------------------------------------------------------------------
@@ -189,19 +183,19 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
         const exitCode = cmd.exitCode ?? 0;
         const output = cmd.aggregatedOutput ?? '';
         const content = exitCode !== 0 ? `[exit ${exitCode}] ${output}` : output;
-        return [{ type: 'agent:tool-end', toolUseId: cmd.id, content }];
+        return [buildToolEndEvent(cmd.id, content)];
       }
 
       if (item.type === 'fileChange') {
         const fc = item as AppServerFileChangeItem;
         const content = fc.changes.map((c) => `${c.kind}: ${c.path}`).join('\n');
-        return [{ type: 'agent:tool-end', toolUseId: fc.id, content }];
+        return [buildToolEndEvent(fc.id, content)];
       }
 
       if (item.type === 'mcpToolCall') {
         const mcp = item as AppServerMcpToolCallItem;
         const content = mcp.result?.output ?? mcp.error?.message ?? '';
-        return [{ type: 'agent:tool-end', toolUseId: mcp.id, content }];
+        return [buildToolEndEvent(mcp.id, content)];
       }
 
       if (item.type === 'plan') {
@@ -299,4 +293,90 @@ export function isAppServerSyntheticEvent(
   parsed: Record<string, unknown>,
 ): parsed is AppServerSyntheticEvent {
   return typeof parsed.type === 'string' && parsed.type.startsWith('as:');
+}
+
+// ---------------------------------------------------------------------------
+// ThreadItem normalization (camelCase app-server → adapter format)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize a raw Codex app-server ThreadItem into our typed AppServerItem.
+ *
+ * @param item - Raw ThreadItem from the app-server notification params.
+ * @param onCompactingReset - Optional callback invoked when a `contextCompaction`
+ *   item is received, signalling the adapter to reset its compacting flag.
+ */
+export function normalizeThreadItem(
+  item: Record<string, unknown>,
+  onCompactingReset?: () => void,
+): AppServerItem | null {
+  const type = item.type as string;
+
+  switch (type) {
+    case 'agentMessage':
+      return {
+        type: 'agentMessage',
+        id: item.id as string,
+        text: (item.text as string) ?? '',
+      } as AppServerAgentMessageItem;
+
+    case 'reasoning':
+      return {
+        type: 'reasoning',
+        id: item.id as string,
+        summary: (item.summary as string[]) ?? [],
+        content: (item.content as string[]) ?? [],
+      } as AppServerReasoningItem;
+
+    case 'commandExecution':
+      return {
+        type: 'commandExecution',
+        id: item.id as string,
+        command: (item.command as string) ?? '',
+        cwd: (item.cwd as string) ?? '',
+        exitCode: (item.exitCode as number | null) ?? null,
+        aggregatedOutput: (item.aggregatedOutput as string | null) ?? null,
+        status: (item.status as string) ?? '',
+      } as AppServerCommandExecutionItem;
+
+    case 'fileChange': {
+      const rawChanges = (item.changes as Array<Record<string, unknown>>) ?? [];
+      return {
+        type: 'fileChange',
+        id: item.id as string,
+        changes: rawChanges.map((c) => ({
+          path: (c.path as string) ?? (c.oldPath as string) ?? '',
+          kind: (c.kind as string) ?? '',
+          newPath: c.newPath as string | null,
+        })),
+        status: (item.status as string) ?? '',
+      } as AppServerFileChangeItem;
+    }
+
+    case 'mcpToolCall':
+      return {
+        type: 'mcpToolCall',
+        id: item.id as string,
+        server: (item.server as string) ?? '',
+        tool: (item.tool as string) ?? '',
+        arguments: (item.arguments as Record<string, unknown>) ?? {},
+        result: (item.result as { output?: string | null } | null) ?? null,
+        error: (item.error as { message: string } | null) ?? null,
+        status: (item.status as string) ?? '',
+      } as AppServerMcpToolCallItem;
+
+    case 'plan':
+      return {
+        type: 'plan',
+        id: item.id as string,
+        text: (item.text as string) ?? '',
+      };
+
+    case 'contextCompaction':
+      onCompactingReset?.();
+      return { type: 'contextCompaction', id: item.id as string };
+
+    default:
+      return null;
+  }
 }

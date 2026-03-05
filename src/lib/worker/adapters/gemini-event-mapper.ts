@@ -1,4 +1,5 @@
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 
 // ---------------------------------------------------------------------------
 // Gemini synthetic NDJSON event types
@@ -78,26 +79,13 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
     // gemini:tool-start → agent:tool-start
     // -----------------------------------------------------------------------
     case 'gemini:tool-start':
-      return [
-        {
-          type: 'agent:tool-start',
-          toolUseId: event.toolUseId,
-          toolName: event.toolName,
-          input: event.toolInput,
-        },
-      ];
+      return [buildToolStartEvent(event.toolUseId, event.toolName, event.toolInput)];
 
     // -----------------------------------------------------------------------
     // gemini:tool-end → agent:tool-end
     // -----------------------------------------------------------------------
     case 'gemini:tool-end':
-      return [
-        {
-          type: 'agent:tool-end',
-          toolUseId: event.toolUseId,
-          content: event.resultText ?? '',
-        },
-      ];
+      return [buildToolEndEvent(event.toolUseId, event.resultText ?? '')];
 
     // -----------------------------------------------------------------------
     // gemini:turn-complete → agent:result

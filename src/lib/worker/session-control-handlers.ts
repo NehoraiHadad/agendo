@@ -31,6 +31,7 @@ import type { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
 import { enqueueSession } from '@/lib/worker/queue';
+import type { ExitContext } from '@/lib/worker/session-exit-logic';
 
 /** Human-readable labels for permission modes. */
 export const MODE_LABELS: Record<string, string> = {
@@ -51,12 +52,7 @@ export interface SessionControlCtx {
   activeToolUseIds: Set<string>;
   emitEvent(payload: AgendoEventPayload): Promise<AgendoEvent>;
   transitionTo(status: SessionStatus): Promise<void>;
-  setCancelKilled(v: boolean): void;
-  setTerminateKilled(v: boolean): void;
-  setModeChangeRestart(v: boolean): void;
-  setInterruptInProgress(v: boolean): void;
-  setClearContextRestart(v: boolean): void;
-  setClearContextRestartNewSessionId(id: string | null): void;
+  exitContext: ExitContext;
   pushMessage(text: string, image?: ImageContent): Promise<void>;
   /** Build a fresh SessionControlCtx — needed when scheduling a delayed handleSetPermissionMode. */
   makeCtrl(): SessionControlCtx;
@@ -69,7 +65,7 @@ export interface SessionControlCtx {
 export async function handleCancel(ctx: SessionControlCtx): Promise<void> {
   // Set flag BEFORE sending the interrupt so onExit doesn't emit "Session ended
   // unexpectedly" — a user-initiated cancel is not a crash.
-  ctx.setCancelKilled(true);
+  ctx.exitContext.reason = 'cancel';
   await ctx.emitEvent({ type: 'system:info', message: 'Cancellation requested' });
   // Emit synthetic tool-end for every in-flight tool call to prevent forever-spinners.
   for (const toolUseId of ctx.activeToolUseIds) {
@@ -92,8 +88,8 @@ export async function handleCancel(ctx: SessionControlCtx): Promise<void> {
  * If the process survives, the session stays warm for immediate follow-up.
  */
 export async function handleInterrupt(ctx: SessionControlCtx): Promise<void> {
-  ctx.setInterruptInProgress(true);
-  // Pre-set interruptKilled so that if the process dies during the interrupt,
+  ctx.exitContext.interruptInProgress = true;
+  // Pre-set reason so that if the process dies during the interrupt,
   // onExit transitions to 'idle' (resumable) instead of 'ended'.
   ctx.activityTracker.interruptKilled = true;
 
@@ -110,7 +106,7 @@ export async function handleInterrupt(ctx: SessionControlCtx): Promise<void> {
   // if it dies or times out, adapter.isAlive() will be false afterwards.
   await ctx.adapter.interrupt();
 
-  ctx.setInterruptInProgress(false);
+  ctx.exitContext.interruptInProgress = false;
 
   if (ctx.adapter.isAlive()) {
     // Claude stopped the current action but is still running — warm session,
@@ -161,9 +157,7 @@ export async function handleSetPermissionMode(
     type: 'system:info',
     message: `Permission mode \u2192 ${label}. Session will restart automatically.`,
   });
-  ctx.setModeChangeRestart(true);
-  // terminateKilled=true ensures onExit transitions to 'idle' (not 'ended').
-  ctx.setTerminateKilled(true);
+  ctx.exitContext.reason = 'mode-change-restart';
   ctx.approvalHandler.drain('deny');
   ctx.managedProcess?.kill('SIGTERM');
   const t = setTimeout(() => {
@@ -259,7 +253,7 @@ export async function handleToolApproval(
     // The API route already created the new child session and passed its
     // ID here via newSessionIdForWorker. Store it so onExit can enqueue it.
     const newMode = control.postApprovalMode ?? 'acceptEdits';
-    ctx.setClearContextRestartNewSessionId(control.newSessionIdForWorker ?? null);
+    ctx.exitContext.clearContextRestartNewSessionId = control.newSessionIdForWorker ?? null;
 
     await ctx.emitEvent({
       type: 'system:info',
@@ -267,8 +261,7 @@ export async function handleToolApproval(
     });
 
     // Kill process → onExit will enqueue the new child session.
-    ctx.setClearContextRestart(true);
-    ctx.setTerminateKilled(true);
+    ctx.exitContext.reason = 'clear-context-restart';
     ctx.approvalHandler.drain('deny');
     ctx.managedProcess?.kill('SIGTERM');
     const t = setTimeout(() => {
@@ -333,6 +326,69 @@ export async function handleToolApproval(
   }
 }
 
+/**
+ * Handle a redirect control: push the new prompt as a message to the agent.
+ */
+export async function handleRedirect(
+  control: Extract<AgendoControl, { type: 'redirect' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  await ctx.pushMessage(control.newPrompt);
+}
+
+/**
+ * Handle a tool-result control: forward a tool_result to the agent if the
+ * session is in a valid state.
+ */
+export async function handleToolResult(
+  control: Extract<AgendoControl, { type: 'tool-result' }>,
+  ctx: SessionControlCtx,
+  status: string,
+): Promise<void> {
+  if (!['active', 'awaiting_input'].includes(status)) {
+    log.warn({ sessionId: ctx.session.id, status }, 'tool-result ignored — wrong session status');
+    return;
+  }
+  await ctx.approvalHandler.pushToolResult(control.toolUseId, control.content);
+}
+
+/**
+ * Handle an answer-question control: resolve the pending AskUserQuestion
+ * approval with the user's answers.
+ */
+export async function handleAnswerQuestion(
+  control: Extract<AgendoControl, { type: 'answer-question' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  const resolver = ctx.approvalHandler.takeResolver(control.requestId);
+  if (resolver) {
+    const questions = ctx.approvalHandler.takeQuestions(control.requestId);
+    resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
+  } else {
+    log.warn({ requestId: control.requestId }, 'answer-question for unknown requestId');
+  }
+}
+
+/**
+ * Handle a steer control: inject a steering message into the current turn.
+ */
+export async function handleSteer(
+  control: Extract<AgendoControl, { type: 'steer' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  await ctx.adapter.steer?.(control.message);
+}
+
+/**
+ * Handle a rollback control: undo the last N turns in the agent thread.
+ */
+export async function handleRollback(
+  control: Extract<AgendoControl, { type: 'rollback' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  await ctx.adapter.rollback?.(control.numTurns ?? 1);
+}
+
 // ---------------------------------------------------------------------------
 // Post-exit re-enqueue logic
 // ---------------------------------------------------------------------------
@@ -343,10 +399,7 @@ export interface ReEnqueueContext {
   sessionRef: string | null;
   /** Persisted session ref from DB (fallback). */
   dbSessionRef: string | null;
-  modeChangeRestart: boolean;
-  clearContextRestart: boolean;
-  clearContextRestartNewSessionId: string | null;
-  cancelKilled: boolean;
+  exitContext: ExitContext;
 }
 
 /**
@@ -357,7 +410,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // Mode-change restart: re-enqueue immediately so the session cold-resumes
   // with the updated permissionMode (already written to DB by the PATCH endpoint).
   // The session status is now 'idle', so the next session-runner job can claim it.
-  if (ctx.modeChangeRestart && ctx.sessionRef) {
+  if (ctx.exitContext.modeChangeRestart && ctx.sessionRef) {
     enqueueSession({ sessionId: ctx.sessionId, resumeRef: ctx.sessionRef }).catch(
       (err: unknown) => {
         log.error(
@@ -370,8 +423,8 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
 
   // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
   // session that was created by the API route (Direction B — new session record).
-  if (ctx.clearContextRestart) {
-    const targetSessionId = ctx.clearContextRestartNewSessionId ?? ctx.sessionId;
+  if (ctx.exitContext.clearContextRestart) {
+    const targetSessionId = ctx.exitContext.clearContextRestartNewSessionId ?? ctx.sessionId;
     enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
       log.error(
         { err, sessionId: targetSessionId },
@@ -389,9 +442,9 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   if (
     wasInterruptedMidTurn &&
     resumeRef &&
-    !ctx.cancelKilled &&
-    !ctx.clearContextRestart &&
-    !ctx.modeChangeRestart
+    !ctx.exitContext.cancelKilled &&
+    !ctx.exitContext.clearContextRestart &&
+    !ctx.exitContext.modeChangeRestart
   ) {
     enqueueSession({
       sessionId: ctx.sessionId,

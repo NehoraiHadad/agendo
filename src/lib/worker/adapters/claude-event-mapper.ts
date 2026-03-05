@@ -12,6 +12,7 @@
  */
 
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 
 export interface ClaudeEventMapperCallbacks {
   /** Called when a complete assistant message arrives — clear any pending delta buffer. */
@@ -105,12 +106,13 @@ export function mapClaudeJsonToEvents(
       } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
         events.push({ type: 'agent:thinking', text: block.thinking });
       } else if (block.type === 'tool_use') {
-        events.push({
-          type: 'agent:tool-start',
-          toolUseId: (block.id as string | undefined) ?? '',
-          toolName: (block.name as string | undefined) ?? '',
-          input: (block.input as Record<string, unknown> | undefined) ?? {},
-        });
+        events.push(
+          buildToolStartEvent(
+            (block.id as string | undefined) ?? '',
+            (block.name as string | undefined) ?? '',
+            (block.input as Record<string, unknown> | undefined) ?? {},
+          ),
+        );
       }
     }
     return events;
@@ -124,9 +126,10 @@ export function mapClaudeJsonToEvents(
     for (const block of message?.content ?? []) {
       if (block.type === 'tool_result') {
         events.push({
-          type: 'agent:tool-end',
-          toolUseId: (block.tool_use_id as string | undefined) ?? '',
-          content: block.content ?? null,
+          ...buildToolEndEvent(
+            (block.tool_use_id as string | undefined) ?? '',
+            block.content ?? null,
+          ),
           durationMs: toolUseResult?.durationMs as number | undefined,
           numFiles: toolUseResult?.numFiles as number | undefined,
           truncated: toolUseResult?.truncated as boolean | undefined,
