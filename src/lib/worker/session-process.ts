@@ -232,37 +232,8 @@ export class SessionProcess {
     resumeSessionAt?: string,
     developerInstructions?: string,
   ): Promise<void> {
-    // Atomic claim: prevent double-execution on pg-boss retry.
-    // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
-    // reconciler always resets orphaned 'active' sessions back to 'idle' before
-    // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
-    // 'active' here caused a double-claim race: the retried old job and the
-    // reconciler's new job both claimed the same session concurrently.
-    const [claimed] = await db
-      .update(sessions)
-      .set({
-        status: 'active',
-        workerId: this.workerId,
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-      })
-      .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
-      .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
-
-    if (!claimed) {
-      log.info({ sessionId: this.session.id }, 'Session already claimed — skipping');
-      // Resolve futures so callers don't hang indefinitely.
-      this.slotReleaseFuture.resolve();
-      this.exitFuture.resolve(null);
-      return;
-    }
-
-    log.info({ sessionId: this.session.id, workerId: this.workerId }, 'Session claimed');
-
-    // Continue seq from wherever the previous session run left off so that
-    // event IDs remain monotonically increasing across resumes and the SSE
-    // client never sees duplicate IDs.
-    this.eventSeq = claimed.eventSeq;
+    const claimed = await this.claimSession();
+    if (!claimed) return;
 
     const logPath = resolveSessionLogPath(this.session.id);
     this.logWriter = new FileLogWriter(logPath);
@@ -281,36 +252,7 @@ export class SessionProcess {
       },
     );
 
-    // Build child env: start from the worker's own env, then strip vars that
-    // would prevent claude from starting (e.g. CLAUDECODE causes a nested-session
-    // guard error; CLAUDE_CODE_ENTRYPOINT is also stripped for safety).
-    const childEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
-        childEnv[key] = value;
-      }
-    }
-    // Apply project/task env overrides on top of the base env.
-    if (envOverrides) {
-      for (const [k, v] of Object.entries(envOverrides)) {
-        childEnv[k] = v;
-      }
-    }
-
-    // Enable lazy MCP schema loading — reduces initial context window usage by 32K+
-    // tokens by deferring MCP tool schema injection until tools are actually needed.
-    // Undocumented/experimental flag: https://paddo.dev/blog/claude-code-hidden-mcp-flag/
-    // Remove if it causes issues or if Claude Code makes this the default behavior.
-    childEnv['ENABLE_EXPERIMENTAL_MCP_CLI'] = 'true';
-
-    // Session identity vars — available to hooks and sub-processes via env.
-    // These are already baked into the MCP config file; setting them in the
-    // child env as well lets hooks (pre/post tool) read them without parsing JSON.
-    childEnv['AGENDO_SESSION_ID'] = this.session.id;
-    childEnv['AGENDO_AGENT_ID'] = this.session.agentId;
-    if (this.session.taskId) {
-      childEnv['AGENDO_TASK_ID'] = this.session.taskId;
-    }
+    const childEnv = this.buildChildEnv(envOverrides);
 
     // For Gemini sessions with the Agendo MCP server injected, write a temporary
     // TOML policy file that auto-allows all agendo MCP tools. This eliminates
@@ -324,32 +266,12 @@ export class SessionProcess {
     }
 
     this.spawnCwd = spawnCwd ?? '/tmp';
-    const spawnOpts: SpawnOpts = {
-      cwd: this.spawnCwd,
-      env: childEnv,
-      executionId: this.session.id,
-      timeoutSec: this.session.idleTimeoutSec,
-      maxOutputBytes: 10 * 1024 * 1024,
-      persistentSession: true, // keep process alive after result for multi-turn
-      permissionMode: this.session.permissionMode ?? 'default',
-      allowedTools: this.session.allowedTools ?? [],
-      ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
-      ...(mcpServers ? { mcpServers } : {}),
-      ...(this.policyFilePath ? { policyFiles: [this.policyFilePath] } : {}),
-      ...(initialImage ? { initialImage } : {}),
-      // Sync Claude's session ID with agendo's DB session ID
-      sessionId: this.session.id,
-      // Only use our MCP servers when an MCP config is provided
-      strictMcpConfig: !!mcpConfigPath,
-      // Forward model if set on the session (e.g. from DB or API)
-      ...(this.session.model ? { model: this.session.model } : {}),
-      // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
-      ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
-      // Skip session JSONL persistence for one-off execution sessions (never resumed)
-      ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
-      // Codex: system-level context injected via developerInstructions (not a user turn)
-      ...(developerInstructions ? { developerInstructions } : {}),
-    };
+    const spawnOpts = this.buildSpawnOpts(childEnv, {
+      mcpConfigPath,
+      mcpServers,
+      initialImage,
+      developerInstructions,
+    });
 
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
@@ -427,6 +349,118 @@ export class SessionProcess {
     // Attach team monitor immediately if a team exists on disk (cold-resume),
     // or wait for TeamCreate tool event (event-driven path).
     this.teamManager.start();
+  }
+
+  /**
+   * Atomically claim the session row to prevent double-execution on pg-boss retry.
+   * Returns true if the claim succeeded, false if the session was already claimed.
+   */
+  private async claimSession(): Promise<boolean> {
+    // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
+    // reconciler always resets orphaned 'active' sessions back to 'idle' before
+    // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
+    // 'active' here caused a double-claim race: the retried old job and the
+    // reconciler's new job both claimed the same session concurrently.
+    const [claimed] = await db
+      .update(sessions)
+      .set({
+        status: 'active',
+        workerId: this.workerId,
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+      })
+      .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
+      .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
+
+    if (!claimed) {
+      log.info({ sessionId: this.session.id }, 'Session already claimed — skipping');
+      // Resolve futures so callers don't hang indefinitely.
+      this.slotReleaseFuture.resolve();
+      this.exitFuture.resolve(null);
+      return false;
+    }
+
+    log.info({ sessionId: this.session.id, workerId: this.workerId }, 'Session claimed');
+
+    // Continue seq from wherever the previous session run left off so that
+    // event IDs remain monotonically increasing across resumes and the SSE
+    // client never sees duplicate IDs.
+    this.eventSeq = claimed.eventSeq;
+    return true;
+  }
+
+  /**
+   * Build the child process environment: start from the worker's own env,
+   * strip vars that would prevent agent CLIs from starting, apply overrides,
+   * and inject session identity vars.
+   */
+  private buildChildEnv(envOverrides?: Record<string, string>): Record<string, string> {
+    // Strip CLAUDECODE (nested-session guard) and CLAUDE_CODE_ENTRYPOINT.
+    const childEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
+        childEnv[key] = value;
+      }
+    }
+    // Apply project/task env overrides on top of the base env.
+    if (envOverrides) {
+      for (const [k, v] of Object.entries(envOverrides)) {
+        childEnv[k] = v;
+      }
+    }
+
+    // Enable lazy MCP schema loading — reduces initial context window usage by 32K+
+    // tokens by deferring MCP tool schema injection until tools are actually needed.
+    childEnv['ENABLE_EXPERIMENTAL_MCP_CLI'] = 'true';
+
+    // Session identity vars — available to hooks and sub-processes via env.
+    childEnv['AGENDO_SESSION_ID'] = this.session.id;
+    childEnv['AGENDO_AGENT_ID'] = this.session.agentId;
+    if (this.session.taskId) {
+      childEnv['AGENDO_TASK_ID'] = this.session.taskId;
+    }
+
+    return childEnv;
+  }
+
+  /**
+   * Assemble SpawnOpts from the session, capability, and agent configuration.
+   */
+  private buildSpawnOpts(
+    env: Record<string, string>,
+    opts: {
+      mcpConfigPath?: string;
+      mcpServers?: AcpMcpServer[];
+      initialImage?: ImageContent;
+      developerInstructions?: string;
+    },
+  ): SpawnOpts {
+    return {
+      cwd: this.spawnCwd ?? '/tmp',
+      env,
+      executionId: this.session.id,
+      timeoutSec: this.session.idleTimeoutSec,
+      maxOutputBytes: 10 * 1024 * 1024,
+      persistentSession: true, // keep process alive after result for multi-turn
+      permissionMode: this.session.permissionMode ?? 'default',
+      allowedTools: this.session.allowedTools ?? [],
+      ...(opts.mcpConfigPath ? { extraArgs: ['--mcp-config', opts.mcpConfigPath] } : {}),
+      ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
+      ...(this.policyFilePath ? { policyFiles: [this.policyFilePath] } : {}),
+      ...(opts.initialImage ? { initialImage: opts.initialImage } : {}),
+      // Sync Claude's session ID with agendo's DB session ID
+      sessionId: this.session.id,
+      // Only use our MCP servers when an MCP config is provided
+      strictMcpConfig: !!opts.mcpConfigPath,
+      // Forward model if set on the session (e.g. from DB or API)
+      ...(this.session.model ? { model: this.session.model } : {}),
+      // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
+      ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
+      // Skip session JSONL persistence for one-off execution sessions (never resumed)
+      ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
+      // Codex: system-level context injected via developerInstructions (not a user turn)
+      ...(opts.developerInstructions ? { developerInstructions: opts.developerInstructions } : {}),
+    };
   }
 
   // ---------------------------------------------------------------------------
