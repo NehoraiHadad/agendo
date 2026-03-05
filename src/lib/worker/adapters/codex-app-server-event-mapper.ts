@@ -1,4 +1,5 @@
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 
 // ---------------------------------------------------------------------------
 // Synthetic event types emitted by CodexAppServerAdapter to dataCallbacks.
@@ -154,14 +155,7 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
     case 'as:item.started': {
       const { item } = event;
       if (!TOOL_ITEM_TYPES.has(item.type)) return [];
-      return [
-        {
-          type: 'agent:tool-start',
-          toolUseId: item.id,
-          toolName: toolNameForItem(item),
-          input: toolInputForItem(item),
-        },
-      ];
+      return [buildToolStartEvent(item.id, toolNameForItem(item), toolInputForItem(item))];
     }
 
     // -----------------------------------------------------------------------
@@ -189,19 +183,19 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
         const exitCode = cmd.exitCode ?? 0;
         const output = cmd.aggregatedOutput ?? '';
         const content = exitCode !== 0 ? `[exit ${exitCode}] ${output}` : output;
-        return [{ type: 'agent:tool-end', toolUseId: cmd.id, content }];
+        return [buildToolEndEvent(cmd.id, content)];
       }
 
       if (item.type === 'fileChange') {
         const fc = item as AppServerFileChangeItem;
         const content = fc.changes.map((c) => `${c.kind}: ${c.path}`).join('\n');
-        return [{ type: 'agent:tool-end', toolUseId: fc.id, content }];
+        return [buildToolEndEvent(fc.id, content)];
       }
 
       if (item.type === 'mcpToolCall') {
         const mcp = item as AppServerMcpToolCallItem;
         const content = mcp.result?.output ?? mcp.error?.message ?? '';
-        return [{ type: 'agent:tool-end', toolUseId: mcp.id, content }];
+        return [buildToolEndEvent(mcp.id, content)];
       }
 
       if (item.type === 'plan') {
