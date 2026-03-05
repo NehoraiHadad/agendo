@@ -882,6 +882,8 @@ function InitialPromptBanner({ prompt }: { prompt: string }) {
 interface SessionChatViewProps {
   sessionId: string;
   stream: UseSessionStreamReturn;
+  /** Events from the parent session to display before the fork point. */
+  parentStream?: UseSessionStreamReturn;
   currentStatus: SessionStatus | null | string;
   initialPrompt?: string | null;
   agentBinaryPath?: string;
@@ -896,6 +898,7 @@ interface SessionChatViewProps {
 export function SessionChatView({
   sessionId,
   stream,
+  parentStream,
   currentStatus,
   initialPrompt,
   agentBinaryPath,
@@ -1055,6 +1058,15 @@ export function SessionChatView({
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [stream.events.length, optimisticMessages.length]);
+
+  const parentToolResultMap = useMemo(
+    () => (parentStream ? buildToolResultMap(parentStream.events) : new Map()),
+    [parentStream],
+  );
+  const parentDisplayItems = useMemo(
+    () => (parentStream ? buildDisplayItems(parentStream.events, parentToolResultMap) : []),
+    [parentStream, parentToolResultMap],
+  );
 
   const toolResultMap = useMemo(() => buildToolResultMap(stream.events), [stream.events]);
   const displayItems = useMemo(
@@ -1217,6 +1229,31 @@ export function SessionChatView({
 
         {/* Initial prompt banner — shown once at the top if present */}
         {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
+
+        {/* Parent session history for forked sessions */}
+        {parentDisplayItems.length > 0 && (
+          <>
+            {parentDisplayItems.map((item, i) =>
+              renderDisplayItem(item, i, parentDisplayItems[i - 1]),
+            )}
+            <div className="flex items-center gap-3 py-3 px-1">
+              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+              <span className="text-[11px] text-muted-foreground/40 flex items-center gap-1.5">
+                <svg
+                  className="size-3"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <path d="M5 3v4m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6-4v2m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 4v4M5 7h6" />
+                </svg>
+                Forked here
+              </span>
+              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+            </div>
+          </>
+        )}
 
         {augmentedDisplayItems.map((item, i) =>
           renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),

@@ -193,6 +193,7 @@ export function SessionDetailClient({
   const searchParams = useSearchParams();
   const defaultTab = searchParams.get('tab') ?? 'chat';
   const stream = useSessionStream(session.id);
+  const parentStream = useSessionStream(session.parentSessionId ?? null);
   const currentStatus = stream.sessionStatus ?? session.status;
   const logStream = useSessionLogStream(session.id);
   const teamState = useTeamState(stream.events);
@@ -960,6 +961,7 @@ export function SessionDetailClient({
               <SessionChatView
                 sessionId={session.id}
                 stream={stream}
+                parentStream={session.parentSessionId ? parentStream : undefined}
                 currentStatus={currentStatus}
                 initialPrompt={session.initialPrompt}
                 agentBinaryPath={agentBinaryPath}
