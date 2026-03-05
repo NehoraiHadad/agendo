@@ -534,7 +534,7 @@ export function SessionDetailClient({
                     className="inline-flex items-center gap-1.5"
                     title={
                       contextStats.contextWindow
-                        ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${fmtPct(contextStats.inputTokens / contextStats.contextWindow)} full)`
+                        ? `Context: ${contextStats.inputTokens.toLocaleString()} / ${contextStats.contextWindow.toLocaleString()} tokens (${fmtPct(contextStats.inputTokens / contextStats.contextWindow)} full) · Auto-compact triggers at ~83.5%`
                         : `Context: ${contextStats.inputTokens.toLocaleString()} tokens used`
                     }
                   >
@@ -557,6 +557,11 @@ export function SessionDetailClient({
                               contextStats.inputTokens / contextStats.contextWindow,
                             ),
                           }}
+                        />
+                        {/* Auto-compact threshold marker at ~83.5% */}
+                        <span
+                          className="absolute inset-y-0 w-px opacity-40"
+                          style={{ left: '83.5%', backgroundColor: 'oklch(0.75 0.1 60)' }}
                         />
                       </span>
                     )}
@@ -620,6 +625,11 @@ export function SessionDetailClient({
                       contextStats.inputTokens / contextStats.contextWindow,
                     ),
                   }}
+                />
+                {/* Auto-compact threshold marker at ~83.5% */}
+                <div
+                  className="absolute inset-y-0 w-px opacity-40"
+                  style={{ left: '83.5%', backgroundColor: 'oklch(0.75 0.1 60)' }}
                 />
               </div>
               <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
