@@ -32,9 +32,9 @@ import {
 } from '@/lib/worker/session-control-handlers';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { buildChildEnv } from '@/lib/worker/session-env';
+import { buildSpawnOpts } from '@/lib/worker/spawn-opts-builder';
 import type {
   AgentAdapter,
-  SpawnOpts,
   ManagedProcess,
   ImageContent,
   AcpMcpServer,
@@ -271,7 +271,8 @@ export class SessionProcess {
     }
 
     this.spawnCwd = spawnCwd ?? '/tmp';
-    const spawnOpts = this.buildSpawnOpts(childEnv, {
+    const spawnOpts = buildSpawnOpts(this.session, this.spawnCwd, childEnv, {
+      policyFilePath: this.policyFilePath ?? undefined,
       mcpConfigPath,
       mcpServers,
       initialImage,
@@ -392,46 +393,6 @@ export class SessionProcess {
     // client never sees duplicate IDs.
     this.eventSeq = claimed.eventSeq;
     return true;
-  }
-
-  /**
-   * Assemble SpawnOpts from the session, capability, and agent configuration.
-   */
-  private buildSpawnOpts(
-    env: Record<string, string>,
-    opts: {
-      mcpConfigPath?: string;
-      mcpServers?: AcpMcpServer[];
-      initialImage?: ImageContent;
-      developerInstructions?: string;
-    },
-  ): SpawnOpts {
-    return {
-      cwd: this.spawnCwd ?? '/tmp',
-      env,
-      executionId: this.session.id,
-      timeoutSec: this.session.idleTimeoutSec,
-      maxOutputBytes: 10 * 1024 * 1024,
-      persistentSession: true, // keep process alive after result for multi-turn
-      permissionMode: this.session.permissionMode ?? 'default',
-      allowedTools: this.session.allowedTools ?? [],
-      ...(opts.mcpConfigPath ? { extraArgs: ['--mcp-config', opts.mcpConfigPath] } : {}),
-      ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
-      ...(this.policyFilePath ? { policyFiles: [this.policyFilePath] } : {}),
-      ...(opts.initialImage ? { initialImage: opts.initialImage } : {}),
-      // Sync Claude's session ID with agendo's DB session ID
-      sessionId: this.session.id,
-      // Only use our MCP servers when an MCP config is provided
-      strictMcpConfig: !!opts.mcpConfigPath,
-      // Forward model if set on the session (e.g. from DB or API)
-      ...(this.session.model ? { model: this.session.model } : {}),
-      // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
-      ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
-      // Skip session JSONL persistence for one-off execution sessions (never resumed)
-      ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
-      // Codex: system-level context injected via developerInstructions (not a user turn)
-      ...(opts.developerInstructions ? { developerInstructions: opts.developerInstructions } : {}),
-    };
   }
 
   // ---------------------------------------------------------------------------
