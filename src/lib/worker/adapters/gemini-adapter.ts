@@ -1,17 +1,11 @@
-import { Readable, Writable } from 'node:stream';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('gemini-adapter');
-import {
-  ClientSideConnection,
-  ndJsonStream,
-  PROTOCOL_VERSION,
-  type AgentCapabilities,
-} from '@agentclientprotocol/sdk';
 import { AsyncLock } from '@/lib/utils/async-lock';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import { extractMessage, GeminiClientHandler } from '@/lib/worker/adapters/gemini-client-handler';
+import { GeminiAcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
 import type {
   AgentAdapter,
   ImageContent,
@@ -22,7 +16,7 @@ import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 
 export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
-  private connection: ClientSideConnection | null = null;
+  private transport = new GeminiAcpTransport();
   private clientHandler: GeminiClientHandler | null = null;
   private sessionId: string | null = null;
   private currentTurn: Promise<void> = Promise.resolve();
@@ -45,7 +39,6 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
-  private static readonly INIT_TIMEOUT_MS = 30_000;
 
   /**
    * Build Gemini CLI args from SpawnOpts.
@@ -82,18 +75,15 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     return args;
   }
 
-  /** Create an ACP ClientSideConnection for the given child process. */
-  private createConnection(
-    cp: ReturnType<typeof BaseAgentAdapter.spawnDetached>,
-  ): ClientSideConnection {
+  /** Create an ACP connection for the given child process via the transport. */
+  private createTransportConnection(cp: ReturnType<typeof BaseAgentAdapter.spawnDetached>): void {
     if (!cp.stdin || !cp.stdout) throw new Error('Child process has no stdio');
-    const stream = ndJsonStream(
-      Writable.toWeb(cp.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(cp.stdout) as ReadableStream<Uint8Array>,
-    );
     if (!this.clientHandler) throw new Error('clientHandler not initialized');
-    const handler = this.clientHandler;
-    return new ClientSideConnection((_agent) => handler, stream);
+    this.transport.createConnection(
+      cp.stdin as NodeJS.WritableStream,
+      cp.stdout as NodeJS.ReadableStream,
+      this.clientHandler,
+    );
   }
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
@@ -119,8 +109,9 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
   async interrupt(): Promise<void> {
     // Step 1: Send ACP session/cancel notification
-    if (this.sessionId && this.connection) {
-      this.connection.cancel({ sessionId: this.sessionId }).catch(() => {
+    const conn = this.transport.getConnection();
+    if (this.sessionId && conn) {
+      conn.cancel({ sessionId: this.sessionId }).catch(() => {
         // Ignore errors — process may already be exiting
       });
     }
@@ -164,7 +155,8 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   async setPermissionMode(mode: string): Promise<boolean> {
-    if (!this.sessionId || !this.connection) return false;
+    const conn = this.transport.getConnection();
+    if (!this.sessionId || !conn) return false;
     // ACP mode IDs: "default", "autoEdit", "yolo".
     // "plan" is NOT a valid ACP mode (rejected with -32603).
     const modeMap: Record<string, string> = {
@@ -175,7 +167,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     };
     const geminiMode = modeMap[mode];
     if (!geminiMode) return false;
-    await this.connection.setSessionMode({ sessionId: this.sessionId, modeId: geminiMode });
+    await conn.setSessionMode({ sessionId: this.sessionId, modeId: geminiMode });
     return true;
   }
 
@@ -218,12 +210,16 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     });
 
     // Create new ACP connection for the new process
-    this.connection = this.createConnection(cp);
+    this.createTransportConnection(cp);
 
     // Re-initialize ACP and reload session
     try {
-      const initResult = await this.acpInitialize();
-      await this.loadOrCreateSession(initResult.agentCapabilities, opts, this.sessionId);
+      const initResult = await this.transport.initialize();
+      this.sessionId = await this.transport.loadOrCreateSession(
+        initResult.agentCapabilities,
+        { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
+        this.sessionId,
+      );
     } catch (err) {
       this.modelSwitching = false;
       const message = extractMessage(err);
@@ -258,8 +254,8 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
 
-    // Create ACP connection
-    this.connection = this.createConnection(cp);
+    // Create ACP connection via transport
+    this.createTransportConnection(cp);
 
     cp.stderr?.on('data', (chunk: Buffer) => {
       for (const cb of dataCallbacks) cb(chunk.toString('utf-8'));
@@ -321,8 +317,12 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   ): Promise<void> {
     // 1–2: Handshake + session creation
     try {
-      const initResult = await this.acpInitialize();
-      await this.loadOrCreateSession(initResult.agentCapabilities, opts, resumeSessionId);
+      const initResult = await this.transport.initialize();
+      this.sessionId = await this.transport.loadOrCreateSession(
+        initResult.agentCapabilities,
+        { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
+        resumeSessionId,
+      );
       if (!resumeSessionId && this.sessionId) {
         this.sessionRefCallback?.(this.sessionId);
       }
@@ -341,155 +341,19 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     await this.sendPrompt(prompt);
   }
 
-  /**
-   * Send ACP initialize with retry on 429.
-   * Timeout: 30s per attempt.
-   */
-  private async acpInitialize(
-    attempt = 1,
-  ): Promise<Awaited<ReturnType<ClientSideConnection['initialize']>>> {
-    if (!this.connection) throw new Error('No ACP connection');
-    const timeoutMs = GeminiAdapter.INIT_TIMEOUT_MS;
-    try {
-      return await Promise.race([
-        this.connection.initialize({
-          protocolVersion: PROTOCOL_VERSION,
-          clientInfo: { name: 'agendo', version: '1.0.0' },
-          clientCapabilities: {
-            terminal: true,
-            fs: { readTextFile: true, writeTextFile: true },
-          },
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`ACP initialize timed out after ${timeoutMs}ms`)),
-            timeoutMs,
-          ),
-        ),
-      ]);
-    } catch (err) {
-      const message = extractMessage(err);
-      const isRetryable =
-        (message.includes('429') || message.includes('Rate limit exceeded')) && attempt < 3;
-      if (isRetryable) {
-        const delay = Math.pow(2, attempt) * 2000; // 4s, 8s
-        log.warn({ attempt, delay }, 'initialize failed with 429, retrying');
-        await new Promise((r) => setTimeout(r, delay));
-        return this.acpInitialize(attempt + 1);
-      }
-      throw err;
-    }
-  }
-
-  /**
-   * Resume or load an existing session, or create a new one.
-   *
-   * Resolution order for cold-resume:
-   *   1. session/resume (unstable) — no history replay, fastest path
-   *   2. session/load              — replays full conversation history
-   *   3. session/new               — fallback when no prior session exists
-   *
-   * `session/resume` is only attempted when the agent advertises the
-   * `sessionCapabilities.resume` capability. `session/load` is only attempted
-   * when the agent advertises `loadSession: true`. Both are optional; absence
-   * of either capability falls through to session/new.
-   */
-  private async loadOrCreateSession(
-    agentCaps: AgentCapabilities | undefined,
-    opts: SpawnOpts,
-    resumeSessionId: string | null,
-  ): Promise<void> {
-    if (!this.connection) throw new Error('No ACP connection');
-
-    // Shared mcpServers cast used by all three paths.
-    type McpServersParam = Parameters<ClientSideConnection['newSession']>[0]['mcpServers'];
-    const mcpServers = (opts.mcpServers ?? []) as McpServersParam;
-
-    if (resumeSessionId) {
-      // --- Path 1: session/resume (unstable) — preferred; no history replay ---
-      if (agentCaps?.sessionCapabilities?.resume) {
-        try {
-          await this.connection.unstable_resumeSession({
-            sessionId: resumeSessionId,
-            cwd: opts.cwd,
-            mcpServers: mcpServers as Parameters<
-              ClientSideConnection['unstable_resumeSession']
-            >[0]['mcpServers'],
-          });
-          this.sessionId = resumeSessionId;
-          log.info({ resumeSessionId }, 'session/resume succeeded');
-          return;
-        } catch (resumeErr) {
-          log.warn(
-            { err: extractMessage(resumeErr) },
-            'session/resume failed, trying session/load',
-          );
-        }
-      }
-
-      // --- Path 2: session/load — replays full history ---
-      if (agentCaps?.loadSession) {
-        try {
-          await this.connection.loadSession({
-            sessionId: resumeSessionId,
-            cwd: opts.cwd,
-            mcpServers: mcpServers as Parameters<
-              ClientSideConnection['loadSession']
-            >[0]['mcpServers'],
-          });
-          this.sessionId = resumeSessionId;
-          log.info({ resumeSessionId }, 'session/load succeeded');
-          return;
-        } catch (loadErr) {
-          log.warn(
-            { err: extractMessage(loadErr) },
-            'session/load failed, falling back to session/new',
-          );
-        }
-      }
-    }
-
-    // --- Path 3: session/new ---
-    const result = await this.connection.newSession({
-      cwd: opts.cwd,
-      mcpServers,
-    });
-    this.sessionId = result.sessionId;
-  }
-
   private async sendPrompt(text: string): Promise<void> {
-    if (!this.sessionId || !this.connection) throw new Error('No active session');
+    if (!this.sessionId) throw new Error('No active session');
     this.thinkingCallback?.(true);
 
-    // Build prompt content blocks — text always present, image optional
-    const promptContent: Parameters<ClientSideConnection['prompt']>[0]['prompt'] = [
-      { type: 'text', text },
-    ];
-    if (this.pendingImage) {
-      promptContent.push({
-        type: 'image',
-        data: this.pendingImage.data,
-        mimeType: this.pendingImage.mimeType,
-      } as (typeof promptContent)[number]);
-      this.pendingImage = null;
-    }
+    const image = this.pendingImage ?? undefined;
+    this.pendingImage = null;
 
     try {
-      const conn = this.connection;
-      const timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
-      const promptResponse = await Promise.race([
-        conn.prompt({ sessionId: this.sessionId, prompt: promptContent }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
-            timeoutMs,
-          ),
-        ),
-      ]);
+      const promptResponse = await this.transport.sendPrompt(this.sessionId, text, image);
       // Emit synthetic result event so session-process emits agent:result
       this.emitNdjson({
         type: 'gemini:turn-complete',
-        result: (promptResponse as Record<string, unknown>) ?? {},
+        result: promptResponse,
       });
     } catch (err) {
       const message = extractMessage(err);
