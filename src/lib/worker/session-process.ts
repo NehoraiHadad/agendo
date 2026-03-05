@@ -1,12 +1,12 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-process');
 import { sessions } from '@/lib/db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
 import { serializeEvent } from '@/lib/realtime/events';
@@ -17,25 +17,28 @@ import type {
   SessionStatus,
 } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
-import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
-import { capturePlanFilePath, savePlanFromSession } from '@/lib/worker/session-plan-utils';
+import { capturePlanFilePath } from '@/lib/worker/session-plan-utils';
 import {
   handleCancel,
   handleInterrupt,
   handleSetPermissionMode,
   handleSetModel,
+  handleMessage,
+  handleToolApproval,
+  handleReEnqueue,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
+import { buildChildEnv } from '@/lib/worker/session-env';
+import { buildSpawnOpts } from '@/lib/worker/spawn-opts-builder';
+import { claimSession } from '@/lib/worker/session-claim';
 import type {
   AgentAdapter,
-  SpawnOpts,
   ManagedProcess,
   ImageContent,
-  PermissionDecision,
-  AcpMcpServer,
+  SessionStartOptions,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
@@ -54,6 +57,27 @@ function resolveSessionLogPath(sessionId: string): string {
   const yyyy = now.getFullYear().toString();
   const mm = (now.getMonth() + 1).toString().padStart(2, '0');
   return join(config.LOG_DIR, 'sessions', yyyy, mm, `${sessionId}.log`);
+}
+
+/**
+ * Enrich an agent:result payload with per-call context stats and the
+ * assistant message UUID (used for conversation branching). Pure function.
+ */
+function enrichResultPayload(
+  partial: AgendoEventPayload,
+  perCallContextStats: {
+    inputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+  } | null,
+  lastAssistantUuid: string | undefined,
+): AgendoEventPayload {
+  if (partial.type !== 'agent:result') return partial;
+  return {
+    ...partial,
+    ...(perCallContextStats ? { perCallContextStats } : {}),
+    ...(lastAssistantUuid ? { messageUuid: lastAssistantUuid } : {}),
+  };
 }
 
 /**
@@ -106,8 +130,6 @@ export class SessionProcess {
     cacheReadInputTokens: number;
     cacheCreationInputTokens: number;
   } | null = null;
-  /** UUID of the last assistant JSONL message — used as --resume-session-at for branching. */
-  private lastAssistantUuid: string | undefined;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -204,59 +226,26 @@ export class SessionProcess {
   /**
    * Claim the session row atomically, set up log writer, subscribe to the
    * control channel, and spawn (or resume) the agent process.
-   *
-   * @param prompt - The initial prompt to pass to the agent
-   * @param resumeRef - If provided, the adapter resumes an existing session
-   * @param spawnCwd - Working directory for the spawned process
-   * @param envOverrides - Additional env vars to merge into the child environment
-   * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
-   *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
-   * @param mcpServers - Optional MCP server list for ACP session/new (Gemini).
-   * @param initialImage - Optional image attachment for cold resume.
-   * @param displayText - Optional override for the user:message event text. When
-   *   provided (e.g. on cold resume), only this text is shown in the chat view
-   *   instead of the full prompt (which may contain system context preambles).
-   * @param developerInstructions - Optional system-level instructions for Codex
-   *   sessions, passed as `developerInstructions` in thread/start (not a user turn).
    */
-  async start(
-    prompt: string,
-    resumeRef?: string,
-    spawnCwd?: string,
-    envOverrides?: Record<string, string>,
-    mcpConfigPath?: string,
-    mcpServers?: AcpMcpServer[],
-    initialImage?: ImageContent,
-    displayText?: string,
-    resumeSessionAt?: string,
-    developerInstructions?: string,
-  ): Promise<void> {
-    // Atomic claim: prevent double-execution on pg-boss retry.
-    // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
-    // reconciler always resets orphaned 'active' sessions back to 'idle' before
-    // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
-    // 'active' here caused a double-claim race: the retried old job and the
-    // reconciler's new job both claimed the same session concurrently.
-    const [claimed] = await db
-      .update(sessions)
-      .set({
-        status: 'active',
-        workerId: this.workerId,
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-      })
-      .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
-      .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
-
+  async start(opts: SessionStartOptions): Promise<void> {
+    const {
+      prompt,
+      resumeRef,
+      spawnCwd: spawnCwdOpt,
+      envOverrides,
+      mcpConfigPath,
+      mcpServers,
+      initialImage,
+      displayText,
+      resumeSessionAt,
+      developerInstructions,
+    } = opts;
+    const claimed = await claimSession(this.session.id, this.workerId);
     if (!claimed) {
-      log.info({ sessionId: this.session.id }, 'Session already claimed — skipping');
-      // Resolve futures so callers don't hang indefinitely.
       this.slotReleaseFuture.resolve();
       this.exitFuture.resolve(null);
       return;
     }
-
-    log.info({ sessionId: this.session.id, workerId: this.workerId }, 'Session claimed');
 
     // Continue seq from wherever the previous session run left off so that
     // event IDs remain monotonically increasing across resumes and the SSE
@@ -280,36 +269,11 @@ export class SessionProcess {
       },
     );
 
-    // Build child env: start from the worker's own env, then strip vars that
-    // would prevent claude from starting (e.g. CLAUDECODE causes a nested-session
-    // guard error; CLAUDE_CODE_ENTRYPOINT is also stripped for safety).
-    const childEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
-        childEnv[key] = value;
-      }
-    }
-    // Apply project/task env overrides on top of the base env.
-    if (envOverrides) {
-      for (const [k, v] of Object.entries(envOverrides)) {
-        childEnv[k] = v;
-      }
-    }
-
-    // Enable lazy MCP schema loading — reduces initial context window usage by 32K+
-    // tokens by deferring MCP tool schema injection until tools are actually needed.
-    // Undocumented/experimental flag: https://paddo.dev/blog/claude-code-hidden-mcp-flag/
-    // Remove if it causes issues or if Claude Code makes this the default behavior.
-    childEnv['ENABLE_EXPERIMENTAL_MCP_CLI'] = 'true';
-
-    // Session identity vars — available to hooks and sub-processes via env.
-    // These are already baked into the MCP config file; setting them in the
-    // child env as well lets hooks (pre/post tool) read them without parsing JSON.
-    childEnv['AGENDO_SESSION_ID'] = this.session.id;
-    childEnv['AGENDO_AGENT_ID'] = this.session.agentId;
-    if (this.session.taskId) {
-      childEnv['AGENDO_TASK_ID'] = this.session.taskId;
-    }
+    const childEnv = buildChildEnv(
+      process.env,
+      { sessionId: this.session.id, agentId: this.session.agentId, taskId: this.session.taskId },
+      envOverrides,
+    );
 
     // For Gemini sessions with the Agendo MCP server injected, write a temporary
     // TOML policy file that auto-allows all agendo MCP tools. This eliminates
@@ -322,36 +286,24 @@ export class SessionProcess {
       writeFileSync(this.policyFilePath, policyToml, 'utf-8');
     }
 
-    this.spawnCwd = spawnCwd ?? '/tmp';
-    const spawnOpts: SpawnOpts = {
-      cwd: this.spawnCwd,
-      env: childEnv,
-      executionId: this.session.id,
-      timeoutSec: this.session.idleTimeoutSec,
-      maxOutputBytes: 10 * 1024 * 1024,
-      persistentSession: true, // keep process alive after result for multi-turn
-      permissionMode: this.session.permissionMode ?? 'default',
-      allowedTools: this.session.allowedTools ?? [],
-      ...(mcpConfigPath ? { extraArgs: ['--mcp-config', mcpConfigPath] } : {}),
-      ...(mcpServers ? { mcpServers } : {}),
-      ...(this.policyFilePath ? { policyFiles: [this.policyFilePath] } : {}),
-      ...(initialImage ? { initialImage } : {}),
-      // Sync Claude's session ID with agendo's DB session ID
-      sessionId: this.session.id,
-      // Only use our MCP servers when an MCP config is provided
-      strictMcpConfig: !!mcpConfigPath,
-      // Forward model if set on the session (e.g. from DB or API)
-      ...(this.session.model ? { model: this.session.model } : {}),
-      // Forward effort level if set on the session (Claude: low/medium/high thinking depth)
-      ...(this.session.effort ? { effort: this.session.effort as 'low' | 'medium' | 'high' } : {}),
-      // Skip session JSONL persistence for one-off execution sessions (never resumed)
-      ...(this.session.kind === 'execution' ? { noSessionPersistence: true } : {}),
-      // Codex: system-level context injected via developerInstructions (not a user turn)
-      ...(developerInstructions ? { developerInstructions } : {}),
-    };
+    this.spawnCwd = spawnCwdOpt ?? '/tmp';
+    const spawnOpts = buildSpawnOpts(this.session, this.spawnCwd, childEnv, {
+      policyFilePath: this.policyFilePath ?? undefined,
+      mcpConfigPath,
+      mcpServers,
+      initialImage,
+      developerInstructions,
+    });
 
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
+
+    // Wire pre-process context for Claude-specific NDJSON detection
+    // (interactive tool failure check + assistant UUID capture).
+    this.adapter.setPreProcessContext?.(
+      (content, toolIds) => this.approvalHandler.checkForHumanResponseBlocks(content, toolIds),
+      this.activeToolUseIds,
+    );
 
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
@@ -465,28 +417,9 @@ export class SessionProcess {
       }
 
       try {
-        // Generic interactive tool detection: when Claude's own NDJSON output
-        // contains a type:'user' block with is_error:true tool_results, it means
-        // the CLI tried to handle an interactive tool (AskUserQuestion, ExitPlanMode,
-        // or any future tool) natively but failed in pipe mode. We detect this
-        // from the raw parsed object BEFORE emitting events, so the suppression
-        // check below can immediately catch the resulting agent:tool-end partial.
-        //
-        // This is fully generic — no hardcoded tool name list needed for the
-        // NDJSON path. The is_error flag in Claude's own output is the signal.
-        if (parsed.type === 'user') {
-          const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-          this.approvalHandler.checkForHumanResponseBlocks(
-            msg?.content ?? [],
-            this.activeToolUseIds,
-          );
-        }
-
-        // Capture the UUID from Claude's assistant messages so branching knows
-        // which message to pass to --resume-session-at when the user forks.
-        if (parsed.type === 'assistant' && typeof parsed.uuid === 'string') {
-          this.lastAssistantUuid = parsed.uuid;
-        }
+        // Delegate adapter-specific pre-processing (Claude: interactive tool failure
+        // detection + assistant UUID capture). No-op for Codex/Gemini.
+        this.adapter.preProcessLine?.(parsed);
 
         let partials: AgendoEventPayload[];
         try {
@@ -560,95 +493,97 @@ export class SessionProcess {
             continue; // suppress — keep in activeToolUseIds until human responds
           }
 
-          // Attach per-call context stats and assistant UUID to agent:result.
-          // perCallContextStats reflects actual per-API-call context usage.
-          // messageUuid is the Claude JSONL UUID of the last assistant turn,
-          // used by the frontend when branching (--resume-session-at).
-          const enrichedPartial: AgendoEventPayload =
-            partial.type === 'agent:result'
-              ? {
-                  ...partial,
-                  ...(this.lastPerCallContextStats
-                    ? { perCallContextStats: this.lastPerCallContextStats }
-                    : {}),
-                  ...(this.lastAssistantUuid ? { messageUuid: this.lastAssistantUuid } : {}),
-                }
-              : partial;
-
+          const enrichedPartial = enrichResultPayload(
+            partial,
+            this.lastPerCallContextStats,
+            this.adapter.lastAssistantUuid,
+          );
           const event = await this.emitEvent(enrichedPartial);
-
-          // Track in-flight tool calls to enable synthetic cleanup on cancel
-          // and to build informative interruption notes on worker restart.
-          if (event.type === 'agent:tool-start') {
-            this.activeToolUseIds.add(event.toolUseId);
-            this.activeToolInfo.set(event.toolUseId, {
-              toolName: event.toolName,
-              input: event.input,
-            });
-          }
-          if (event.type === 'agent:tool-end') {
-            this.activeToolUseIds.delete(event.toolUseId);
-            this.activeToolInfo.delete(event.toolUseId);
-          }
-
-          // Detect TeamCreate / TeamDelete tool events for team lifecycle.
-          if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
-            this.teamManager.onToolEvent(event);
-          }
-
-          // Persist sessionRef and model once the agent announces its session ID.
-          if (event.type === 'session:init') {
-            const updates: Record<string, string> = {};
-            if (event.sessionRef) {
-              this.sessionRef = event.sessionRef;
-              updates.sessionRef = event.sessionRef;
-            }
-            if (event.model) {
-              updates.model = event.model;
-            }
-            if (Object.keys(updates).length > 0) {
-              await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
-            }
-          }
-
-          // Cache context window size for real-time agent:usage emission on next message_start.
-          if (event.type === 'agent:result' && event.modelUsage) {
-            for (const usage of Object.values(event.modelUsage)) {
-              if (usage.contextWindow) {
-                this.lastContextWindow = usage.contextWindow;
-                break;
-              }
-            }
-          }
-
-          // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
-          if (event.type === 'agent:result' && event.serverToolUse) {
-            const { webSearchRequests, webFetchRequests } = event.serverToolUse;
-            void db
-              .update(sessions)
-              .set({
-                ...(webSearchRequests != null && { webSearchRequests }),
-                ...(webFetchRequests != null && { webFetchRequests }),
-              })
-              .where(eq(sessions.id, this.session.id))
-              .catch((err: unknown) => {
-                log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
-              });
-          }
-
-          // After the agent finishes a result, transition to awaiting_input.
-          // Skip during an interrupt — handleInterrupt() manages the transition
-          // based on whether the process survived (warm vs cold resume).
-          if (event.type === 'agent:result' && !this.interruptInProgress) {
-            await this.transitionTo('awaiting_input');
-            this.activityTracker.recordActivity();
-          }
+          await this.onEmittedEvent(event);
         }
       } catch (err) {
         // Event emission failed (transient DB/publish error). Log but don't
         // surface raw JSON to the user — it would appear as a broken UI element.
         log.error({ err, sessionId: this.session.id }, 'Failed to emit event');
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: post-emit event side-effects
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Process side-effects triggered by a newly emitted event.
+   * Handles tool tracking, team lifecycle, session:init persistence,
+   * context window caching, web tool usage persistence, and state transitions.
+   */
+  private async onEmittedEvent(event: AgendoEvent): Promise<void> {
+    // Track in-flight tool calls to enable synthetic cleanup on cancel
+    // and to build informative interruption notes on worker restart.
+    if (event.type === 'agent:tool-start') {
+      this.activeToolUseIds.add(event.toolUseId);
+      this.activeToolInfo.set(event.toolUseId, {
+        toolName: event.toolName,
+        input: event.input,
+      });
+    }
+    if (event.type === 'agent:tool-end') {
+      this.activeToolUseIds.delete(event.toolUseId);
+      this.activeToolInfo.delete(event.toolUseId);
+    }
+
+    // Detect TeamCreate / TeamDelete tool events for team lifecycle.
+    if (event.type === 'agent:tool-start' || event.type === 'agent:tool-end') {
+      this.teamManager.onToolEvent(event);
+    }
+
+    // Persist sessionRef and model once the agent announces its session ID.
+    if (event.type === 'session:init') {
+      const updates: Record<string, string> = {};
+      if (event.sessionRef) {
+        this.sessionRef = event.sessionRef;
+        updates.sessionRef = event.sessionRef;
+      }
+      if (event.model) {
+        updates.model = event.model;
+      }
+      if (Object.keys(updates).length > 0) {
+        await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
+      }
+    }
+
+    // Cache context window size for real-time agent:usage emission on next message_start.
+    if (event.type === 'agent:result' && event.modelUsage) {
+      for (const usage of Object.values(event.modelUsage)) {
+        if (usage.contextWindow) {
+          this.lastContextWindow = usage.contextWindow;
+          break;
+        }
+      }
+    }
+
+    // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
+    if (event.type === 'agent:result' && event.serverToolUse) {
+      const { webSearchRequests, webFetchRequests } = event.serverToolUse;
+      void db
+        .update(sessions)
+        .set({
+          ...(webSearchRequests != null && { webSearchRequests }),
+          ...(webFetchRequests != null && { webFetchRequests }),
+        })
+        .where(eq(sessions.id, this.session.id))
+        .catch((err: unknown) => {
+          log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
+        });
+    }
+
+    // After the agent finishes a result, transition to awaiting_input.
+    // Skip during an interrupt — handleInterrupt() manages the transition
+    // based on whether the process survived (warm vs cold resume).
+    if (event.type === 'agent:result' && !this.interruptInProgress) {
+      await this.transitionTo('awaiting_input');
+      this.activityTracker.recordActivity();
     }
   }
 
@@ -672,111 +607,11 @@ export class SessionProcess {
     } else if (control.type === 'interrupt') {
       await handleInterrupt(ctrl);
     } else if (control.type === 'message') {
-      let image: ImageContent | undefined;
-      if (control.imageRef) {
-        try {
-          const data = readFileSync(control.imageRef.path).toString('base64');
-          image = { mimeType: control.imageRef.mimeType, data };
-          // Clean up the temp file (best-effort)
-          try {
-            unlinkSync(control.imageRef.path);
-          } catch {
-            /* ignore */
-          }
-        } catch (err) {
-          log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
-        }
-      }
-      await this.pushMessage(control.text, image);
+      await handleMessage(control, ctrl);
     } else if (control.type === 'redirect') {
       await this.pushMessage(control.newPrompt);
     } else if (control.type === 'tool-approval') {
-      const resolver = this.approvalHandler.takeResolver(control.approvalId);
-      if (resolver) {
-        // ---------------------------------------------------------------
-        // ExitPlanMode Option 1: clear context + restart fresh
-        // Identical to the CLI TUI behavior: deny the tool, read plan
-        // content, kill process, restart with plan as initialPrompt.
-        // ---------------------------------------------------------------
-        if (control.clearContextRestart) {
-          resolver('deny');
-
-          // The API route already created the new child session and passed its
-          // ID here via newSessionIdForWorker. Store it so onExit can enqueue it.
-          const newMode = control.postApprovalMode ?? 'acceptEdits';
-          this.clearContextRestartNewSessionId = control.newSessionIdForWorker ?? null;
-
-          await this.emitEvent({
-            type: 'system:info',
-            message: `Plan approved — restarting fresh with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
-          });
-
-          // Kill process → onExit will enqueue the new child session.
-          this.clearContextRestart = true;
-          this.terminateKilled = true;
-          this.approvalHandler.drain('deny');
-          this.managedProcess?.kill('SIGTERM');
-          const t = setTimeout(() => {
-            this.managedProcess?.kill('SIGKILL');
-          }, SIGKILL_DELAY_MS);
-          this.sigkillTimers.push(t);
-          return;
-        }
-
-        // If the user edited the tool input before approving, or requested session-scoped
-        // command memory (Codex), pass through as a structured PermissionDecision.
-        const decision: PermissionDecision =
-          control.decision === 'allow' && (control.updatedInput || control.rememberForSession)
-            ? {
-                behavior: 'allow',
-                ...(control.updatedInput ? { updatedInput: control.updatedInput } : {}),
-                ...(control.rememberForSession ? { rememberForSession: true } : {}),
-              }
-            : control.decision;
-        resolver(decision);
-
-        if (control.decision === 'allow-session') {
-          await this.approvalHandler.persistAllowedTool(control.toolName);
-        }
-
-        // ExitPlanMode side-effects: apply AFTER resolving the approval so the
-        // control_response reaches Claude first (otherwise set_permission_mode
-        // control_request times out while Claude waits for the tool response).
-        if (control.decision === 'allow') {
-          // Auto-save plan to plans table when ExitPlanMode is approved
-          const isExitPlanMode =
-            control.toolName === 'ExitPlanMode' || control.toolName === 'exit_plan_mode';
-          if (isExitPlanMode) {
-            savePlanFromSession(this.session).catch((err: unknown) => {
-              log.warn({ err }, 'Failed to auto-save plan');
-            });
-          }
-
-          if (control.postApprovalMode) {
-            // Small delay to let the allow response reach Claude before sending
-            // the set_permission_mode control_request on the same stdin pipe.
-            setTimeout(() => {
-              handleSetPermissionMode(
-                control.postApprovalMode as 'default' | 'acceptEdits' | 'bypassPermissions',
-                this.makeCtrl(),
-              ).catch((err: unknown) => {
-                log.warn({ err }, 'post-approval mode change failed');
-              });
-            }, 500);
-          }
-          if (control.postApprovalCompact) {
-            // Compact after a delay to let both the allow response and mode change settle.
-            setTimeout(
-              () => {
-                this.pushMessage('/compact').catch((err: unknown) => {
-                  log.warn({ err }, 'post-approval compact failed');
-                });
-              },
-              control.postApprovalMode ? 2000 : 500,
-            );
-          }
-        }
-      }
+      await handleToolApproval(control, ctrl);
     } else if (control.type === 'tool-result') {
       if (!['active', 'awaiting_input'].includes(this.status)) {
         log.warn(
@@ -865,6 +700,14 @@ export class SessionProcess {
       setInterruptInProgress: (v) => {
         this.interruptInProgress = v;
       },
+      setClearContextRestart: (v) => {
+        this.clearContextRestart = v;
+      },
+      setClearContextRestartNewSessionId: (id) => {
+        this.clearContextRestartNewSessionId = id;
+      },
+      pushMessage: (text, image) => this.pushMessage(text, image),
+      makeCtrl: () => this.makeCtrl(),
     };
   }
 
@@ -952,6 +795,38 @@ export class SessionProcess {
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
 
+    this.cleanupResources();
+
+    // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
+    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
+
+    await this.determineExitStatus(exitCode, wasInterruptedMidTurn);
+    handleReEnqueue(
+      {
+        sessionId: this.session.id,
+        sessionRef: this.sessionRef,
+        dbSessionRef: this.session.sessionRef ?? null,
+        modeChangeRestart: this.modeChangeRestart,
+        clearContextRestart: this.clearContextRestart,
+        clearContextRestartNewSessionId: this.clearContextRestartNewSessionId,
+        cancelKilled: this.cancelKilled,
+      },
+      wasInterruptedMidTurn,
+    );
+
+    if (this.logWriter) {
+      await this.logWriter.close();
+      this.logWriter = null;
+    }
+
+    this.exitFuture.resolve(exitCode);
+  }
+
+  /**
+   * Release all resources held by the session: stop timers, drain approvals,
+   * stop team monitoring, clean up temp files, and unsubscribe from PG NOTIFY.
+   */
+  private cleanupResources(): void {
     this.activityTracker.stopAllTimers();
     // Clear any pending SIGKILL escalation timers — the process has already exited.
     for (const t of this.sigkillTimers) {
@@ -975,10 +850,16 @@ export class SessionProcess {
     // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
     this.unsubscribeControl = null;
+  }
 
-    // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
-    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
-
+  /**
+   * Map exit code and session flags to the final session status, emit
+   * interruption notes, and persist endedAt when appropriate.
+   */
+  private async determineExitStatus(
+    exitCode: number | null,
+    wasInterruptedMidTurn: boolean,
+  ): Promise<void> {
     // When a session is interrupted mid-turn by a worker restart (terminateKilled && active),
     // record an interruption note in the task event log. On the next cold resume, the
     // [Previous Work Summary] preamble will include this note, so the agent knows it was
@@ -1042,68 +923,6 @@ export class SessionProcess {
         .set({ endedAt: new Date() })
         .where(eq(sessions.id, this.session.id));
     }
-
-    // Mode-change restart: re-enqueue immediately so the session cold-resumes
-    // with the updated permissionMode (already written to DB by the PATCH endpoint).
-    // The session status is now 'idle', so the next session-runner job can claim it.
-    if (this.modeChangeRestart && this.sessionRef) {
-      enqueueSession({ sessionId: this.session.id, resumeRef: this.sessionRef }).catch(
-        (err: unknown) => {
-          log.error(
-            { err, sessionId: this.session.id },
-            'Failed to re-enqueue session after mode change',
-          );
-        },
-      );
-    }
-
-    // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
-    // session that was created by the API route (Direction B — new session record).
-    if (this.clearContextRestart) {
-      const targetSessionId = this.clearContextRestartNewSessionId ?? this.session.id;
-      enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
-        log.error(
-          { err, sessionId: targetSessionId },
-          'Failed to enqueue new session after clear-context restart',
-        );
-      });
-    }
-
-    // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
-    // Only fires when the session was genuinely mid-work (active, not awaiting_input),
-    // has a resumable sessionRef, and no other re-enqueue path is already running.
-    // resumePrompt is explicitly set so the agent gets a sensible continuation
-    // message instead of the original initialPrompt (first message of the session).
-    const resumeRef = this.sessionRef ?? this.session.sessionRef ?? null;
-    if (
-      wasInterruptedMidTurn &&
-      resumeRef &&
-      !this.cancelKilled &&
-      !this.clearContextRestart &&
-      !this.modeChangeRestart
-    ) {
-      enqueueSession({
-        sessionId: this.session.id,
-        resumeRef,
-        resumePrompt: 'The worker restarted. Please continue where you left off.',
-      }).catch((err: unknown) => {
-        log.error(
-          { err, sessionId: this.session.id },
-          'Failed to re-enqueue session after mid-turn interruption',
-        );
-      });
-      log.info(
-        { sessionId: this.session.id },
-        'Session auto-resumed after mid-turn worker restart',
-      );
-    }
-
-    if (this.logWriter) {
-      await this.logWriter.close();
-      this.logWriter = null;
-    }
-
-    this.exitFuture.resolve(exitCode);
   }
 
   // ---------------------------------------------------------------------------

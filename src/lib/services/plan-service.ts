@@ -1,12 +1,12 @@
-import { execFileSync } from 'child_process';
 import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { plans, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { createSession } from '@/lib/services/session-service';
+import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getAgentById } from '@/lib/services/agent-service';
 import { createTask } from '@/lib/services/task-service';
-import { enqueueSession } from '@/lib/worker/queue';
+import { getBinaryName } from '@/lib/worker/agent-utils';
+import { getGitHead } from '@/lib/utils/git';
 import type { Plan, PlanStatus, PlanMetadata } from '@/lib/types';
 
 export interface CreatePlanInput {
@@ -164,7 +164,7 @@ Start by creating subtasks for each major step, then execute them one by one.`;
     .set({ status: 'executing', updatedAt: new Date() })
     .where(eq(plans.id, planId));
 
-  const session = await createSession({
+  const session = await createAndEnqueueSession({
     projectId: plan.projectId,
     taskId: task.id,
     kind: 'conversation',
@@ -173,18 +173,17 @@ Start by creating subtasks for each major step, then execute them one by one.`;
     initialPrompt,
     permissionMode: 'bypassPermissions',
     model: opts.model,
+    beforeEnqueue: async (s) => {
+      await db
+        .update(plans)
+        .set({
+          executingSessionId: s.id,
+          metadata: { ...plan.metadata, executingTaskId: task.id },
+          updatedAt: new Date(),
+        })
+        .where(eq(plans.id, planId));
+    },
   });
-
-  await db
-    .update(plans)
-    .set({
-      executingSessionId: session.id,
-      metadata: { ...plan.metadata, executingTaskId: task.id },
-      updatedAt: new Date(),
-    })
-    .where(eq(plans.id, planId));
-
-  await enqueueSession({ sessionId: session.id });
 
   return { sessionId: session.id, taskId: task.id };
 }
@@ -222,7 +221,7 @@ ${plan.content}
 
 Remember: create tasks only. Do NOT implement any code changes.`;
 
-  const session = await createSession({
+  const session = await createAndEnqueueSession({
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
@@ -231,8 +230,6 @@ Remember: create tasks only. Do NOT implement any code changes.`;
     permissionMode: 'bypassPermissions',
     model: opts.model,
   });
-
-  await enqueueSession({ sessionId: session.id });
 
   return { sessionId: session.id };
 }
@@ -256,7 +253,7 @@ export async function startPlanConversation(
 ): Promise<{ sessionId: string }> {
   const [plan, agent] = await Promise.all([getPlan(planId), getAgentById(opts.agentId)]);
 
-  const binaryName = agent.binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  const binaryName = getBinaryName(agent);
 
   // PROMPT CHANGELOG
   // v1 (original): Thin prompt — described PLAN_EDIT syntax and one-liner MCP hint.
@@ -348,7 +345,7 @@ ${PLAN_CONTEXT}`;
     ? `## User Feedback on the Plan\n\n${opts.initialPrompt}\n\n---\n\n${initialPrompt}`
     : initialPrompt;
 
-  const session = await createSession({
+  const session = await createAndEnqueueSession({
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
@@ -356,14 +353,13 @@ ${PLAN_CONTEXT}`;
     initialPrompt: finalPrompt,
     permissionMode,
     model: opts.model,
+    beforeEnqueue: async (s) => {
+      await db
+        .update(plans)
+        .set({ conversationSessionId: s.id, updatedAt: new Date() })
+        .where(eq(plans.id, planId));
+    },
   });
-
-  await db
-    .update(plans)
-    .set({ conversationSessionId: session.id, updatedAt: new Date() })
-    .where(eq(plans.id, planId));
-
-  await enqueueSession({ sessionId: session.id });
 
   return { sessionId: session.id };
 }
@@ -371,17 +367,7 @@ ${PLAN_CONTEXT}`;
 /**
  * Validate a plan by launching an agent session that reviews the plan against
  * the current codebase. Records the git HEAD hash and validation timestamp.
- * Uses execFileSync with a hardcoded argument array — no shell injection risk.
  */
-/** Returns the current git HEAD hash, or undefined if git is unavailable. */
-function getGitHead(): string | undefined {
-  try {
-    // Hardcoded args array — no shell interpolation, no injection risk.
-    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * Save or update a plan from an MCP tool call.
@@ -470,26 +456,25 @@ export async function validatePlan(
 
   const initialPrompt = `Review this plan against the current codebase. Report if anything is broken or outdated:\n\n${plan.content}`;
 
-  const session = await createSession({
+  const codebaseHash = getGitHead();
+
+  const session = await createAndEnqueueSession({
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt,
+    beforeEnqueue: async () => {
+      await db
+        .update(plans)
+        .set({
+          lastValidatedAt: new Date(),
+          ...(codebaseHash ? { codebaseHash } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(plans.id, planId));
+    },
   });
-
-  const codebaseHash = getGitHead();
-
-  await db
-    .update(plans)
-    .set({
-      lastValidatedAt: new Date(),
-      ...(codebaseHash ? { codebaseHash } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(plans.id, planId));
-
-  await enqueueSession({ sessionId: session.id });
 
   return { sessionId: session.id };
 }
