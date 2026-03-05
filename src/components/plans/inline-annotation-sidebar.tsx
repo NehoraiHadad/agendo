@@ -252,9 +252,9 @@ export function InlineAnnotationSidebar({
     setSendError(null);
     try {
       const feedback = serializeAnnotations(annotations, globalComment);
-      await apiFetch(`/api/sessions/${conversationSessionId}/messages`, {
+      await apiFetch(`/api/sessions/${conversationSessionId}/message`, {
         method: 'POST',
-        body: JSON.stringify({ text: feedback }),
+        body: JSON.stringify({ message: feedback }),
       });
       onFeedbackSent();
     } catch (err: unknown) {
