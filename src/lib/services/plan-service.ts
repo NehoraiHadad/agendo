@@ -6,6 +6,7 @@ import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getAgentById } from '@/lib/services/agent-service';
 import { createTask } from '@/lib/services/task-service';
 import { getBinaryName } from '@/lib/worker/agent-utils';
+import { buildPlanContext, generatePlanConversationPreamble } from '@/lib/worker/session-preambles';
 import { getGitHead } from '@/lib/utils/git';
 import type { Plan, PlanStatus, PlanMetadata } from '@/lib/types';
 
@@ -268,75 +269,11 @@ export async function startPlanConversation(
   //   Gemini get tailored prompts using mcp__agendo__save_plan as the finalization
   //   mechanism. permissionMode is set per agent (Gemini uses bypassPermissions since
   //   ACP doesn't support plan mode yet).
-  const PLAN_CONTEXT = `
-## How Agendo Executes Plans
-
-**Tasks** are the unit of work assigned to agents:
-- Status lifecycle: \`todo → in_progress → done\` (cannot skip)
-- A task's \`description\` is the agent's only source of instructions — fully self-contained
-- An agent reads its assignment with \`get_my_task\`, reports progress with \`add_progress_note\`
-
-**Subtasks** break a large task into tracked steps under a parent. Use for sequential steps \
-that share context (e.g., schema migration → service update → API route → tests).
-
-Use **separate tasks** for independent work streams that touch different files.
-
-## What Makes a Good Task Description
-
-Each step should have:
-- **Scope**: exact files, modules, or endpoints — not "the auth system" but \
-"src/lib/auth.ts and src/app/api/login/route.ts"
-- **Done criteria**: how to verify — "pnpm test passes", "GET /api/health returns 200"
-- **Constraints**: what NOT to change — "do not modify the public API surface"
-- **No assumed context**: the agent knows only its description and the codebase
-
-## Common Pitfalls to Flag
-
-- Vague scope ("clean up the codebase") — agents will guess
-- Missing QA gate — always include "run tests and lint" after implementation
-- Steps too large — break into subtasks if > 30 min of work
-- Parallel agents on shared files — forces sequential ordering or file partitioning
-
-## Current Plan
-
-${plan.content}`;
-
-  type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
-  let initialPrompt: string;
-  let permissionMode: PermissionMode;
-
-  if (binaryName === 'codex') {
-    permissionMode = 'plan';
-    initialPrompt = `You are in read-only sandbox mode — you can read files but cannot write or execute.
-Explore the codebase, analyze the existing plan, and refine it.
-
-When your plan is finalized, save it using the \`mcp__agendo__save_plan\` tool with the \
-full plan content in markdown. Do NOT try to write files or run commands — you are in read-only mode.
-
-Focus on: implementation steps, file paths, architecture decisions, risk areas.
-${PLAN_CONTEXT}`;
-  } else if (binaryName === 'gemini') {
-    permissionMode = 'bypassPermissions';
-    initialPrompt = `You are reviewing an implementation plan in read-only mode — you can read the \
-codebase but cannot write files. Explore the code to validate assumptions and identify gaps.
-
-When satisfied, save your finalized plan using the \`mcp__agendo__save_plan\` tool with the \
-full plan content in markdown.
-
-Focus on: feasibility, missing edge cases, concrete file paths, step ordering.
-${PLAN_CONTEXT}`;
-  } else {
-    // Claude (and any other agent): native ExitPlanMode
-    permissionMode = 'plan';
-    initialPrompt = `You are reviewing and improving an implementation plan for Agendo.
-
-Your session is in **plan mode** — you can read the codebase but cannot write files. \
-Explore the code to validate the plan's assumptions and identify gaps.
-
-When you are satisfied with the plan, use ExitPlanMode to finalize it. \
-The plan content will be saved automatically.
-${PLAN_CONTEXT}`;
-  }
+  const planContext = buildPlanContext(plan.content);
+  const { prompt: initialPrompt, permissionMode } = generatePlanConversationPreamble(
+    binaryName,
+    planContext,
+  );
 
   // If the caller supplies an initialPrompt (e.g. serialized plan annotations),
   // prepend it before the agent-specific preamble so the agent sees the user's
