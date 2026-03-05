@@ -10,6 +10,7 @@ import type {
 } from '@/lib/worker/adapters/types';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import { NdjsonRpcTransport } from '@/lib/worker/adapters/ndjson-rpc-transport';
 import {
   mapAppServerEventToPayloads,
   isAppServerSyntheticEvent,
@@ -51,19 +52,6 @@ function getSandboxMode(mode?: string): SandboxMode {
     default:
       return 'workspace-write';
   }
-}
-
-// ---------------------------------------------------------------------------
-// JSON-RPC helpers
-// ---------------------------------------------------------------------------
-
-type RpcId = number;
-type RpcResult = Record<string, unknown>;
-
-interface PendingRequest {
-  resolve: (result: RpcResult) => void;
-  reject: (err: Error) => void;
-  timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -112,10 +100,15 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   /** Interval handle for the MCP server health check (mcpServerStatus/list). */
   private mcpHealthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-  /** JSON-RPC pending requests keyed by request ID. */
-  private pending = new Map<RpcId, PendingRequest>();
-  private nextReqId = 1;
+  /** NDJSON JSON-RPC transport layer (handles send/receive/dispatch). */
+  private _transport: NdjsonRpcTransport | null = null;
   private alive = false;
+
+  /** Access the transport with a runtime guard (avoids non-null assertions). */
+  private get transport(): NdjsonRpcTransport {
+    if (!this._transport) throw new Error('transport not initialized');
+    return this._transport;
+  }
 
   /** Stable callbacks that persist across calls (like virtual process pattern). */
   private dataCallbacks: Array<(chunk: string) => void> = [];
@@ -175,7 +168,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     if (!threadId || !turnId) return;
 
     try {
-      await this.rpcCall('turn/interrupt', { threadId, turnId }, 5000);
+      await this.transport.call('turn/interrupt', { threadId, turnId }, 5000);
     } catch {
       // Interrupt timed out or failed — fall back to SIGTERM
       const cp = this.childProcess;
@@ -220,10 +213,23 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     if (!cp.stdout) {
       throw new Error('codex app-server stdout is not available');
     }
+
+    this._transport = new NdjsonRpcTransport({
+      getStdin: () => cp.stdin ?? null,
+      onServerRequest: (id, method, params) => {
+        this.handleServerRequest(id, method, params).catch((err: unknown) => {
+          log.error({ err }, 'handleServerRequest error');
+        });
+      },
+      onNotification: (method, params) => {
+        this.handleNotification(method, params);
+      },
+    });
+
     this.rl = readline.createInterface({ input: cp.stdout });
 
     this.rl.on('line', (line) => {
-      this.onLine(line);
+      this.transport.processLine(line);
     });
 
     cp.stderr?.on('data', (chunk: Buffer) => {
@@ -240,11 +246,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         this.mcpHealthCheckInterval = null;
       }
       // Reject all pending requests
-      for (const [, req] of this.pending) {
-        clearTimeout(req.timeoutHandle);
-        req.reject(new Error('codex app-server exited'));
-      }
-      this.pending.clear();
+      this._transport?.rejectAll('codex app-server exited');
       for (const cb of this.exitCallbacks) cb(code);
     });
 
@@ -280,12 +282,12 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     resumeThreadId: string | null,
   ): Promise<void> {
     // 1. Initialize
-    await this.rpcCall('initialize', {
+    await this.transport.call('initialize', {
       clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
       capabilities: { experimentalApi: true },
     });
     // Required by JSON-RPC handshake: client must send `initialized` notification
-    this.sendNotification('initialized', {});
+    this.transport.notify('initialized', {});
 
     // 2a. Inject MCP servers via config/batchWrite (when provided by session-runner).
     //     Must happen after initialized and before thread/start so Codex loads MCPs
@@ -297,7 +299,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         args: srv.args,
         env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
       }));
-      await this.rpcCall('config/batchWrite', {
+      await this.transport.call('config/batchWrite', {
         edits: [{ type: 'set', key: 'mcp_servers', value: mcpValue }],
       });
       log.info({ count: this.mcpServers.length }, 'MCP config injected');
@@ -306,7 +308,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     // 2. Start or resume thread
     if (resumeThreadId) {
       // Resume an existing thread
-      const result = await this.rpcCall('thread/resume', {
+      const result = await this.transport.call('thread/resume', {
         threadId: resumeThreadId,
         cwd: opts.cwd,
         approvalPolicy: getApprovalPolicy(opts.permissionMode),
@@ -330,7 +332,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       void thread; // suppress unused warning
     } else {
       // Start a new thread
-      const result = await this.rpcCall('thread/start', {
+      const result = await this.transport.call('thread/start', {
         model: opts.model ?? null,
         cwd: opts.cwd,
         approvalPolicy: getApprovalPolicy(opts.permissionMode),
@@ -345,9 +347,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       this.threadId = thread.id as string;
       this.threadModel = (result.model as string) ?? '';
       this.sessionRefCallback?.(this.threadId);
-      // The thread/started notification will be emitted from onLine() below,
+      // The thread/started notification will be emitted from the transport below,
       // but the model isn't in the notification params, so we also emit it here.
-      // The session:init from onLine's thread/started will be followed by this one;
       // session-process ignores duplicate session:init so this is safe.
       this.emitSynthetic({
         type: 'as:thread.started',
@@ -385,7 +386,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
               exclude_slash_tmp: false,
             };
 
-    await this.rpcCall('turn/start', {
+    await this.transport.call('turn/start', {
       threadId: this.threadId,
       input: [{ type: 'text', text: prompt, text_elements: [] }],
       approvalPolicy,
@@ -395,56 +396,6 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       summary: 'auto',
       outputSchema: null,
     });
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: NDJSON line handler
-  // -------------------------------------------------------------------------
-
-  private onLine(line: string): void {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith('{')) return;
-
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      return;
-    }
-
-    // ---- JSON-RPC response (id + result/error, no method) ----
-    if (msg.id != null && !msg.method) {
-      const id = msg.id as RpcId;
-      const req = this.pending.get(id);
-      if (req) {
-        clearTimeout(req.timeoutHandle);
-        this.pending.delete(id);
-        if (msg.error) {
-          const errMsg = (msg.error as Record<string, unknown>).message as string;
-          req.reject(new Error(errMsg));
-        } else {
-          req.resolve((msg.result as RpcResult) ?? {});
-        }
-      }
-      return;
-    }
-
-    const method = msg.method as string | undefined;
-    if (!method) return;
-
-    // ---- Server request (id + method = approval request) ----
-    if (msg.id != null && method) {
-      const id = msg.id as RpcId;
-      const params = msg.params as Record<string, unknown>;
-      this.handleServerRequest(id, method, params).catch((err: unknown) => {
-        log.error({ err }, 'handleServerRequest error');
-      });
-      return;
-    }
-
-    // ---- Notification (no id, just method + params) ----
-    const params = msg.params as Record<string, unknown> | undefined;
-    this.handleNotification(method, params ?? {});
   }
 
   // -------------------------------------------------------------------------
@@ -578,31 +529,31 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   // -------------------------------------------------------------------------
 
   private async handleServerRequest(
-    id: RpcId,
+    id: number,
     method: string,
     params: Record<string, unknown>,
   ): Promise<void> {
     if (method === 'item/commandExecution/requestApproval') {
       const result = await this.handleCommandApproval(params);
-      this.rpcRespond(id, result);
+      this.transport.respond(id, result);
       return;
     }
 
     if (method === 'item/fileChange/requestApproval') {
       const decision = await this.handleFileChangeApproval(params);
-      this.rpcRespond(id, { decision });
+      this.transport.respond(id, { decision });
       return;
     }
 
     if (method === 'tool/requestUserInput') {
       const answers = await this.handleUserInputRequest(params);
-      this.rpcRespond(id, { answers });
+      this.transport.respond(id, { answers });
       return;
     }
 
     // Unknown server request — auto-decline
     log.warn({ method }, 'Unknown server request method');
-    this.rpcRespond(id, { decision: 'decline' });
+    this.transport.respond(id, { decision: 'decline' });
   }
 
   private async handleCommandApproval(
@@ -758,7 +709,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     const threadId = this.threadId;
     const turnId = this.currentTurnId;
     if (!threadId || !turnId || !this.turnActive) return;
-    await this.rpcCall('turn/steer', {
+    await this.transport.call('turn/steer', {
       threadId,
       expectedTurnId: turnId,
       input: [{ type: 'text', text: message, text_elements: [] }],
@@ -768,7 +719,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   async rollback(numTurns = 1): Promise<void> {
     const threadId = this.threadId;
     if (!threadId) return;
-    await this.rpcCall('thread/rollback', { threadId, numTurns }, 15000);
+    await this.transport.call('thread/rollback', { threadId, numTurns }, 15000);
     this.emitSynthetic({
       type: 'as:info',
       message: `Rolled back ${numTurns} turn(s). File changes were NOT reverted.`,
@@ -803,7 +754,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         return;
       }
 
-      this.rpcCall('mcpServerStatus/list', {}, 10_000)
+      this.transport
+        .call('mcpServerStatus/list', {}, 10_000)
         .then((result) => {
           type McpEntry = { name: string; tools: Record<string, unknown>; authStatus: string };
           const servers = (result.data as McpEntry[] | undefined) ?? [];
@@ -833,50 +785,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     if (this.compacting || !this.threadId) return;
     this.compacting = true;
     this.emitSynthetic({ type: 'as:compact-start' });
-    await this.rpcCall('thread/compact/start', { threadId: this.threadId }, 30000);
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: JSON-RPC send/receive
-  // -------------------------------------------------------------------------
-
-  private rpcCall(
-    method: string,
-    params: Record<string, unknown>,
-    timeoutMs = 10000,
-  ): Promise<RpcResult> {
-    const id = this.nextReqId++;
-    const cp = this.childProcess;
-    if (!cp?.stdin?.writable) {
-      return Promise.reject(new Error('codex app-server stdin not writable'));
-    }
-
-    const msg = JSON.stringify({ jsonrpc: '2.0', id, method, params });
-    cp.stdin.write(msg + '\n');
-
-    return new Promise<RpcResult>((resolve, reject) => {
-      const timeoutHandle = setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`RPC timeout: ${method}`));
-        }
-      }, timeoutMs);
-
-      this.pending.set(id, { resolve, reject, timeoutHandle });
-    });
-  }
-
-  private rpcRespond(id: RpcId, result: Record<string, unknown>): void {
-    const cp = this.childProcess;
-    if (!cp?.stdin?.writable) return;
-    cp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
-  }
-
-  /** Send a JSON-RPC notification (no id — no response expected). */
-  private sendNotification(method: string, params: Record<string, unknown>): void {
-    const cp = this.childProcess;
-    if (!cp?.stdin?.writable) return;
-    cp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+    await this.transport.call('thread/compact/start', { threadId: this.threadId }, 30000);
   }
 
   // -------------------------------------------------------------------------
