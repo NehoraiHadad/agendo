@@ -11,11 +11,13 @@ import {
   isNotNull,
 } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { sessions, agents, tasks } from '@/lib/db/schema';
+import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { ConflictError } from '@/lib/errors';
+import { ConflictError, NotFoundError } from '@/lib/errors';
+import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
+import type { AgendoControl } from '@/lib/realtime/events';
 
 export type SessionKind = 'conversation' | 'execution';
 
@@ -69,6 +71,108 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 export async function getSession(id: string): Promise<Session> {
   const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
   return requireFound(session, 'Session', id);
+}
+
+export interface SessionWithDetails extends Session {
+  agentName: string | null;
+  agentSlug: string | null;
+  capLabel: string | null;
+  taskTitle: string | null;
+  projectName: string | null;
+}
+
+export async function getSessionWithDetails(id: string): Promise<SessionWithDetails> {
+  const [row] = await db
+    .select({
+      session: sessions,
+      agentName: agents.name,
+      agentSlug: agents.slug,
+      capLabel: agentCapabilities.label,
+      taskTitle: tasks.title,
+      projectName: projects.name,
+    })
+    .from(sessions)
+    .leftJoin(agents, eq(sessions.agentId, agents.id))
+    .leftJoin(agentCapabilities, eq(sessions.capabilityId, agentCapabilities.id))
+    .leftJoin(tasks, eq(sessions.taskId, tasks.id))
+    .leftJoin(projects, eq(projects.id, sessions.projectId))
+    .where(eq(sessions.id, id))
+    .limit(1);
+
+  if (!row) throw new NotFoundError('Session', id);
+
+  return {
+    ...row.session,
+    agentName: row.agentName,
+    agentSlug: row.agentSlug,
+    capLabel: row.capLabel,
+    taskTitle: row.taskTitle,
+    projectName: row.projectName,
+  };
+}
+
+export async function updateSessionTitle(
+  id: string,
+  title: string | null,
+): Promise<{ id: string; title: string | null }> {
+  const [updated] = await db
+    .update(sessions)
+    .set({ title })
+    .where(eq(sessions.id, id))
+    .returning({ id: sessions.id, title: sessions.title });
+
+  if (!updated) throw new NotFoundError('Session', id);
+  return updated;
+}
+
+export async function cancelSession(id: string): Promise<void> {
+  const result = await db
+    .update(sessions)
+    .set({ status: 'ended', endedAt: new Date() })
+    .where(and(eq(sessions.id, id), inArray(sessions.status, ['active', 'awaiting_input'])))
+    .returning({ id: sessions.id });
+
+  if (result.length === 0) {
+    throw new ConflictError('Session not active or already ended');
+  }
+
+  const control: AgendoControl = { type: 'cancel' };
+  await publish(channelName('agendo_control', id), control);
+}
+
+export async function interruptSession(id: string): Promise<void> {
+  const [session] = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(and(eq(sessions.id, id), eq(sessions.status, 'active')))
+    .limit(1);
+
+  if (!session) {
+    throw new ConflictError('Session not active');
+  }
+
+  const control: AgendoControl = { type: 'interrupt' };
+  await publish(channelName('agendo_control', id), control);
+}
+
+export async function getSessionLogInfo(
+  id: string,
+): Promise<{ logFilePath: string | null; status: string } | null> {
+  const [row] = await db
+    .select({ logFilePath: sessions.logFilePath, status: sessions.status })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getSessionStatus(id: string): Promise<{ status: string } | null> {
+  const [row] = await db
+    .select({ status: sessions.status })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+    .limit(1);
+  return row ?? null;
 }
 
 /** Create a fork of an existing session.
@@ -177,10 +281,12 @@ export interface SessionWithAgent extends Session {
   taskTitle: string | null;
 }
 
-export async function listFreeChatsByProject(
+export async function listSessionsByProject(
   projectId: string,
+  filter: 'free-chats' | 'task-sessions',
   limit = 20,
 ): Promise<SessionWithAgent[]> {
+  const taskFilter = filter === 'free-chats' ? isNull(sessions.taskId) : isNotNull(sessions.taskId);
   const rows = await db
     .select({
       ...getTableColumns(sessions),
@@ -190,29 +296,26 @@ export async function listFreeChatsByProject(
     .from(sessions)
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
     .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .where(and(eq(sessions.projectId, projectId), isNull(sessions.taskId)))
+    .where(and(eq(sessions.projectId, projectId), taskFilter))
     .orderBy(desc(sessions.createdAt))
     .limit(limit);
   return rows as SessionWithAgent[];
 }
 
+/** @deprecated Use listSessionsByProject(projectId, 'free-chats', limit) */
+export async function listFreeChatsByProject(
+  projectId: string,
+  limit = 20,
+): Promise<SessionWithAgent[]> {
+  return listSessionsByProject(projectId, 'free-chats', limit);
+}
+
+/** @deprecated Use listSessionsByProject(projectId, 'task-sessions', limit) */
 export async function listTaskSessionsByProject(
   projectId: string,
   limit = 20,
 ): Promise<SessionWithAgent[]> {
-  const rows = await db
-    .select({
-      ...getTableColumns(sessions),
-      agentName: agents.name,
-      taskTitle: tasks.title,
-    })
-    .from(sessions)
-    .leftJoin(tasks, eq(sessions.taskId, tasks.id))
-    .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .where(and(eq(sessions.projectId, projectId), isNotNull(sessions.taskId)))
-    .orderBy(desc(sessions.createdAt))
-    .limit(limit);
-  return rows as SessionWithAgent[];
+  return listSessionsByProject(projectId, 'task-sessions', limit);
 }
 
 export interface SearchSessionResult {
