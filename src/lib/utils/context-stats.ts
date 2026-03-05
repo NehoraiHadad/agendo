@@ -6,19 +6,26 @@ export interface ContextStats {
 }
 
 /**
- * Return token stats from the most recent agent:result event, or null if none yet.
+ * Return token stats from the most recent relevant event, or null if none yet.
  *
- * Priority:
- * 1. `perCallContextStats` — captured from the last `message_start` stream event before
- *    this result. Represents a single API call, so it's always ≤ contextWindow and accurate.
- * 2. `modelUsage` fallback — aggregated across all API calls in the turn. For turns with
- *    many tool calls (e.g. 10 tool calls × 150K cache each = 1.5M aggregated), this far
- *    exceeds the context window. We cap it at contextWindow so the bar shows 100% rather
- *    than an absurdly wrong near-zero value from inputTokens alone.
+ * Priority (most-recent-first scan):
+ * 1. `agent:usage` — emitted at message_start time (start of each API call). Gives real-time
+ *    updates during an active turn, before agent:result fires.
+ * 2. `agent:result` with `perCallContextStats` — attached after each turn completes. More
+ *    accurate than modelUsage because it represents a single API call, not an aggregation.
+ * 3. `agent:result` with `modelUsage` fallback — aggregated across all API calls in the turn.
+ *    For turns with many tool calls (e.g. 10 tool calls × 150K cache each = 1.5M aggregated),
+ *    this far exceeds the context window. We cap it at contextWindow so the bar shows 100%.
  */
 export function getLatestContextStats(events: AgendoEvent[]): ContextStats | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
+
+    // agent:usage — real-time during active streaming (message_start fires mid-turn)
+    if (e.type === 'agent:usage' && e.size > 0) {
+      return { inputTokens: e.used, contextWindow: e.size };
+    }
+
     if (e.type === 'agent:result' && e.modelUsage) {
       // Extract contextWindow from modelUsage (it's the same across all model entries).
       let contextWindow: number | null = null;

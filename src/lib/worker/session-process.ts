@@ -99,6 +99,8 @@ export class SessionProcess {
    * Injected into the next `agent:result` payload so context-stats.ts can show
    * accurate context usage instead of the aggregated (and often overflowed) modelUsage.
    */
+  /** Context window size (tokens) from the most recent agent:result — used to emit real-time agent:usage. */
+  private lastContextWindow: number | null = null;
   private lastPerCallContextStats: {
     inputTokens: number;
     cacheReadInputTokens: number;
@@ -496,6 +498,19 @@ export class SessionProcess {
                 appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
                 onMessageStart: (stats) => {
                   this.lastPerCallContextStats = stats;
+                  // Emit real-time context bar update so the workspace header
+                  // well updates mid-turn, not just after agent:result fires.
+                  if (this.lastContextWindow) {
+                    const used =
+                      stats.inputTokens +
+                      stats.cacheReadInputTokens +
+                      stats.cacheCreationInputTokens;
+                    void this.emitEvent({
+                      type: 'agent:usage',
+                      used,
+                      size: this.lastContextWindow,
+                    });
+                  }
                 },
                 onResultStats: (costUsd, turns) => {
                   void db
@@ -593,6 +608,16 @@ export class SessionProcess {
             }
             if (Object.keys(updates).length > 0) {
               await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
+            }
+          }
+
+          // Cache context window size for real-time agent:usage emission on next message_start.
+          if (event.type === 'agent:result' && event.modelUsage) {
+            for (const usage of Object.values(event.modelUsage)) {
+              if (usage.contextWindow) {
+                this.lastContextWindow = usage.contextWindow;
+                break;
+              }
             }
           }
 
