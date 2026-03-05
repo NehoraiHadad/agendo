@@ -1227,11 +1227,8 @@ export function SessionChatView({
           </div>
         )}
 
-        {/* Initial prompt banner — shown once at the top if present */}
-        {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
-
         {/* Parent session history for forked sessions */}
-        {parentDisplayItems.length > 0 && (
+        {parentDisplayItems.length > 0 ? (
           <>
             {parentDisplayItems.map((item, i) =>
               renderDisplayItem(item, i, parentDisplayItems[i - 1]),
@@ -1252,7 +1249,12 @@ export function SessionChatView({
               </span>
               <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
             </div>
+            {/* Fork's initial prompt appears after the separator, not at the top */}
+            {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
           </>
+        ) : (
+          /* Non-fork: initial prompt banner at the top as usual */
+          effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />
         )}
 
         {augmentedDisplayItems.map((item, i) =>
