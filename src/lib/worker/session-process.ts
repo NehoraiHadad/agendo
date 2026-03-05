@@ -1,6 +1,5 @@
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 
@@ -27,6 +26,11 @@ import {
   handleSetModel,
   handleMessage,
   handleToolApproval,
+  handleRedirect,
+  handleToolResult,
+  handleAnswerQuestion,
+  handleSteer,
+  handleRollback,
   handleReEnqueue,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
@@ -46,7 +50,13 @@ import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
-import { recordInterruptionEvent, type InFlightTool } from '@/lib/worker/interruption-marker';
+import type { InFlightTool } from '@/lib/worker/interruption-marker';
+import {
+  ExitContext,
+  cleanupResources,
+  determineExitStatus,
+} from '@/lib/worker/session-exit-logic';
+import { SessionDataPipeline } from '@/lib/worker/session-data-pipeline';
 
 /**
  * Derive a log file path for a session.
@@ -57,27 +67,6 @@ function resolveSessionLogPath(sessionId: string): string {
   const yyyy = now.getFullYear().toString();
   const mm = (now.getMonth() + 1).toString().padStart(2, '0');
   return join(config.LOG_DIR, 'sessions', yyyy, mm, `${sessionId}.log`);
-}
-
-/**
- * Enrich an agent:result payload with per-call context stats and the
- * assistant message UUID (used for conversation branching). Pure function.
- */
-function enrichResultPayload(
-  partial: AgendoEventPayload,
-  perCallContextStats: {
-    inputTokens: number;
-    cacheReadInputTokens: number;
-    cacheCreationInputTokens: number;
-  } | null,
-  lastAssistantUuid: string | undefined,
-): AgendoEventPayload {
-  if (partial.type !== 'agent:result') return partial;
-  return {
-    ...partial,
-    ...(perCallContextStats ? { perCallContextStats } : {}),
-    ...(lastAssistantUuid ? { messageUuid: lastAssistantUuid } : {}),
-  };
 }
 
 /**
@@ -99,17 +88,7 @@ export class SessionProcess {
   private managedProcess: ManagedProcess | null = null;
   private logWriter: FileLogWriter | null = null;
   private unsubscribeControl: (() => void) | null = null;
-  private interruptInProgress = false;
-  /** Set by terminate() so onExit transitions to 'idle' (resumable) instead of 'ended'. */
-  private terminateKilled = false;
-  /** Set by handleCancel() so onExit skips the "unexpected exit" error message. */
-  private cancelKilled = false;
-  /** Set by handleSetPermissionMode() so onExit re-enqueues for immediate restart. */
-  private modeChangeRestart = false;
-  /** Set by clearContextRestart (ExitPlanMode option 1): deny tool, kill, restart fresh. */
-  private clearContextRestart = false;
-  /** New child session ID to enqueue from onExit when clearContextRestart is set. */
-  private clearContextRestartNewSessionId: string | null = null;
+  private exitCtx = new ExitContext();
   /** Stored cwd for plan file reading during clearContextRestart. */
   private spawnCwd: string | null = null;
   /** SIGKILL escalation timers — tracked so they can be cleared if the process exits early. */
@@ -117,24 +96,12 @@ export class SessionProcess {
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
-  private dataBuffer = '';
-  /**
-   * Per-call context stats from the most recent `message_start` stream event.
-   * Injected into the next `agent:result` payload so context-stats.ts can show
-   * accurate context usage instead of the aggregated (and often overflowed) modelUsage.
-   */
-  /** Context window size (tokens) from the most recent agent:result — used to emit real-time agent:usage. */
-  private lastContextWindow: number | null = null;
-  private lastPerCallContextStats: {
-    inputTokens: number;
-    cacheReadInputTokens: number;
-    cacheCreationInputTokens: number;
-  } | null = null;
+  /** Handles NDJSON line buffering, parsing, event mapping, suppression, and enrichment. */
+  private dataPipeline!: SessionDataPipeline;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
   private slotReleaseFuture = new Future<void>();
-  private exitHandled = false;
   private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
   /** Maps toolUseId → {toolName, input} for tools currently in-flight, used to build interruption notes. */
@@ -256,6 +223,47 @@ export class SessionProcess {
     this.logWriter = new FileLogWriter(logPath);
     this.logWriter.open();
 
+    this.dataPipeline = new SessionDataPipeline({
+      sessionId: this.session.id,
+      logWriter: this.logWriter,
+      adapter: this.adapter,
+      approvalHandler: this.approvalHandler,
+      activityTracker: this.activityTracker,
+      activeToolUseIds: this.activeToolUseIds,
+      emitEvent: (payload) => this.emitEvent(payload),
+      onEmittedEvent: (event) => this.onEmittedEvent(event),
+      mapClaudeJson: (parsed, callbacks) =>
+        mapClaudeJsonToEvents(parsed, {
+          ...callbacks,
+          onMessageStart: (stats) => {
+            callbacks.onMessageStart?.(stats);
+            // Emit real-time context bar update so the workspace header
+            // updates mid-turn, not just after agent:result fires.
+            if (this.dataPipeline.lastContextWindow) {
+              const used =
+                stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
+              void this.emitEvent({
+                type: 'agent:usage',
+                used,
+                size: this.dataPipeline.lastContextWindow,
+              });
+            }
+          },
+          onResultStats: (costUsd, turns) => {
+            void db
+              .update(sessions)
+              .set({
+                ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
+                ...(turns !== null && { totalTurns: turns }),
+              })
+              .where(eq(sessions.id, this.session.id))
+              .catch((err: unknown) => {
+                log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
+              });
+          },
+        }),
+    });
+
     // Persist the log file path so the frontend can fetch it later.
     await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
 
@@ -322,7 +330,7 @@ export class SessionProcess {
       void this.emitEvent({ type: 'agent:activity', thinking });
       // When thinking stops, transition to awaiting_input (works for all adapters:
       // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
-      if (!thinking && !this.interruptInProgress) {
+      if (!thinking && !this.exitCtx.interruptInProgress) {
         void this.transitionTo('awaiting_input').then(() => this.activityTracker.recordActivity());
       }
     });
@@ -385,128 +393,7 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   private async onData(chunk: string): Promise<void> {
-    // Write raw chunk to the session log file under the 'stdout' stream prefix.
-    this.logWriter?.write(chunk, 'stdout');
-
-    // Buffer partial lines: NDJSON lines from large tool results can span multiple
-    // data chunks. Splitting only on '\n' without buffering would emit the tail of
-    // a split line as agent:text, showing raw JSON fragments in the UI.
-    const combined = this.dataBuffer + chunk;
-    const lines = combined.split('\n');
-    this.dataBuffer = lines.pop() ?? ''; // last element is incomplete (no trailing \n yet)
-
-    // Parse each NDJSON line and map to a structured AgendoEvent.
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!trimmed.startsWith('{')) {
-        await this.emitEvent({ type: 'agent:text', text: trimmed });
-        continue;
-      }
-
-      // Separate try-catch for JSON parsing vs event emission so that a
-      // transient emit failure (DB error, etc.) never causes raw JSON to leak
-      // into the chat as a system:info message.
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        // Line is not JSON — treat as plain text info (shell output, etc.)
-        await this.emitEvent({ type: 'system:info', message: trimmed });
-        continue;
-      }
-
-      try {
-        // Delegate adapter-specific pre-processing (Claude: interactive tool failure
-        // detection + assistant UUID capture). No-op for Codex/Gemini.
-        this.adapter.preProcessLine?.(parsed);
-
-        let partials: AgendoEventPayload[];
-        try {
-          partials = this.adapter.mapJsonToEvents
-            ? this.adapter.mapJsonToEvents(parsed)
-            : mapClaudeJsonToEvents(parsed, {
-                clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
-                appendDelta: (text) => this.activityTracker.appendDelta(text),
-                appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
-                onMessageStart: (stats) => {
-                  this.lastPerCallContextStats = stats;
-                  // Emit real-time context bar update so the workspace header
-                  // well updates mid-turn, not just after agent:result fires.
-                  if (this.lastContextWindow) {
-                    const used =
-                      stats.inputTokens +
-                      stats.cacheReadInputTokens +
-                      stats.cacheCreationInputTokens;
-                    void this.emitEvent({
-                      type: 'agent:usage',
-                      used,
-                      size: this.lastContextWindow,
-                    });
-                  }
-                },
-                onResultStats: (costUsd, turns) => {
-                  void db
-                    .update(sessions)
-                    .set({
-                      ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-                      ...(turns !== null && { totalTurns: turns }),
-                    })
-                    .where(eq(sessions.id, this.session.id))
-                    .catch((err: unknown) => {
-                      log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
-                    });
-                },
-              });
-        } catch (mapErr) {
-          log.warn(
-            { err: mapErr, sessionId: this.session.id, line: trimmed.slice(0, 200) },
-            'mapJsonToEvents error',
-          );
-          continue;
-        }
-
-        for (const partial of partials) {
-          // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
-          // These appear only as control_request approval cards — not as ToolCard widgets.
-          if (
-            partial.type === 'agent:tool-start' &&
-            ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
-          ) {
-            this.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
-            this.approvalHandler.suppressToolStart(partial.toolUseId);
-            continue;
-          }
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isSuppressedToolEnd(partial.toolUseId, this.activeToolUseIds)
-          ) {
-            continue;
-          }
-
-          // Suppress the error tool-end for any interactive tool: the UI card
-          // stays live and pushToolResult routes the human's answer when it arrives.
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isPendingHumanResponse(partial.toolUseId)
-          ) {
-            continue; // suppress — keep in activeToolUseIds until human responds
-          }
-
-          const enrichedPartial = enrichResultPayload(
-            partial,
-            this.lastPerCallContextStats,
-            this.adapter.lastAssistantUuid,
-          );
-          const event = await this.emitEvent(enrichedPartial);
-          await this.onEmittedEvent(event);
-        }
-      } catch (err) {
-        // Event emission failed (transient DB/publish error). Log but don't
-        // surface raw JSON to the user — it would appear as a broken UI element.
-        log.error({ err, sessionId: this.session.id }, 'Failed to emit event');
-      }
-    }
+    await this.dataPipeline.processChunk(chunk);
   }
 
   // ---------------------------------------------------------------------------
@@ -538,50 +425,28 @@ export class SessionProcess {
       this.teamManager.onToolEvent(event);
     }
 
-    // Persist sessionRef and model once the agent announces its session ID.
-    if (event.type === 'session:init') {
-      const updates: Record<string, string> = {};
-      if (event.sessionRef) {
-        this.sessionRef = event.sessionRef;
-        updates.sessionRef = event.sessionRef;
-      }
-      if (event.model) {
-        updates.model = event.model;
-      }
-      if (Object.keys(updates).length > 0) {
-        await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
-      }
+    // Persist sessionRef locally (needed for re-enqueue on exit).
+    if (event.type === 'session:init' && event.sessionRef) {
+      this.sessionRef = event.sessionRef;
     }
+
+    // Persist DB side-effects (sessionRef, model, web tool usage counters).
+    await this.dataPipeline.persistEventSideEffects(event);
 
     // Cache context window size for real-time agent:usage emission on next message_start.
     if (event.type === 'agent:result' && event.modelUsage) {
       for (const usage of Object.values(event.modelUsage)) {
         if (usage.contextWindow) {
-          this.lastContextWindow = usage.contextWindow;
+          this.dataPipeline.lastContextWindow = usage.contextWindow;
           break;
         }
       }
     }
 
-    // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
-    if (event.type === 'agent:result' && event.serverToolUse) {
-      const { webSearchRequests, webFetchRequests } = event.serverToolUse;
-      void db
-        .update(sessions)
-        .set({
-          ...(webSearchRequests != null && { webSearchRequests }),
-          ...(webFetchRequests != null && { webFetchRequests }),
-        })
-        .where(eq(sessions.id, this.session.id))
-        .catch((err: unknown) => {
-          log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
-        });
-    }
-
     // After the agent finishes a result, transition to awaiting_input.
     // Skip during an interrupt — handleInterrupt() manages the transition
     // based on whether the process survived (warm vs cold resume).
-    if (event.type === 'agent:result' && !this.interruptInProgress) {
+    if (event.type === 'agent:result' && !this.exitCtx.interruptInProgress) {
       await this.transitionTo('awaiting_input');
       this.activityTracker.recordActivity();
     }
@@ -609,34 +474,21 @@ export class SessionProcess {
     } else if (control.type === 'message') {
       await handleMessage(control, ctrl);
     } else if (control.type === 'redirect') {
-      await this.pushMessage(control.newPrompt);
+      await handleRedirect(control, ctrl);
     } else if (control.type === 'tool-approval') {
       await handleToolApproval(control, ctrl);
     } else if (control.type === 'tool-result') {
-      if (!['active', 'awaiting_input'].includes(this.status)) {
-        log.warn(
-          { sessionId: this.session.id, status: this.status },
-          'tool-result ignored — wrong session status',
-        );
-        return;
-      }
-      await this.approvalHandler.pushToolResult(control.toolUseId, control.content);
+      await handleToolResult(control, ctrl, this.status);
     } else if (control.type === 'answer-question') {
-      const resolver = this.approvalHandler.takeResolver(control.requestId);
-      if (resolver) {
-        const questions = this.approvalHandler.takeQuestions(control.requestId);
-        resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
-      } else {
-        log.warn({ requestId: control.requestId }, 'answer-question for unknown requestId');
-      }
+      await handleAnswerQuestion(control, ctrl);
     } else if (control.type === 'set-permission-mode') {
       await handleSetPermissionMode(control.mode, ctrl);
     } else if (control.type === 'set-model') {
       await handleSetModel(control.model, ctrl);
     } else if (control.type === 'steer') {
-      await this.adapter.steer?.(control.message);
+      await handleSteer(control, ctrl);
     } else if (control.type === 'rollback') {
-      await this.adapter.rollback?.(control.numTurns ?? 1);
+      await handleRollback(control, ctrl);
     }
   }
 
@@ -688,24 +540,7 @@ export class SessionProcess {
       activeToolUseIds: this.activeToolUseIds,
       emitEvent: (p) => this.emitEvent(p),
       transitionTo: (s) => this.transitionTo(s),
-      setCancelKilled: (v) => {
-        this.cancelKilled = v;
-      },
-      setTerminateKilled: (v) => {
-        this.terminateKilled = v;
-      },
-      setModeChangeRestart: (v) => {
-        this.modeChangeRestart = v;
-      },
-      setInterruptInProgress: (v) => {
-        this.interruptInProgress = v;
-      },
-      setClearContextRestart: (v) => {
-        this.clearContextRestart = v;
-      },
-      setClearContextRestartNewSessionId: (id) => {
-        this.clearContextRestartNewSessionId = id;
-      },
+      exitContext: this.exitCtx,
       pushMessage: (text, image) => this.pushMessage(text, image),
       makeCtrl: () => this.makeCtrl(),
     };
@@ -743,9 +578,11 @@ export class SessionProcess {
     // Gemini's ACP adapter may not emit a trailing newline after the last text chunk,
     // leaving partial text stuck in the buffer. Without this flush, the user would
     // never see the final text fragment.
-    if (status === 'awaiting_input' && this.dataBuffer.trim()) {
-      await this.emitEvent({ type: 'agent:text', text: this.dataBuffer.trim() });
-      this.dataBuffer = '';
+    if (status === 'awaiting_input') {
+      const remaining = this.dataPipeline.flushBuffer();
+      if (remaining.trim()) {
+        await this.emitEvent({ type: 'agent:text', text: remaining.trim() });
+      }
     }
 
     await db
@@ -783,8 +620,8 @@ export class SessionProcess {
     // Guard against double-invocation: the heartbeat liveness check and the
     // real process exit handler can both call onExit. The second call must be
     // a no-op to prevent double-releasing the PG pool client.
-    if (this.exitHandled) return;
-    this.exitHandled = true;
+    if (this.exitCtx.exitHandled) return;
+    this.exitCtx.exitHandled = true;
 
     const totalSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
     log.info(
@@ -795,21 +632,44 @@ export class SessionProcess {
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
 
-    this.cleanupResources();
+    cleanupResources({
+      activityTracker: this.activityTracker,
+      sigkillTimers: this.sigkillTimers,
+      approvalHandler: this.approvalHandler,
+      teamManager: this.teamManager,
+      policyFilePath: this.policyFilePath,
+      unsubscribeControl: this.unsubscribeControl,
+    });
+    this.unsubscribeControl = null;
+    this.policyFilePath = null;
+
+    // Map ActivityTracker flags to ExitContext reasons for the extracted determineExitStatus.
+    if (this.activityTracker.idleTimeoutKilled && this.exitCtx.reason === 'none') {
+      this.exitCtx.reason = 'idle-timeout';
+    }
+    if (this.activityTracker.interruptKilled && this.exitCtx.reason === 'none') {
+      this.exitCtx.reason = 'interrupt';
+    }
 
     // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
-    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
+    const wasInterruptedMidTurn = this.exitCtx.terminateKilled && this.status === 'active';
 
-    await this.determineExitStatus(exitCode, wasInterruptedMidTurn);
+    await determineExitStatus(this.exitCtx, exitCode, wasInterruptedMidTurn, {
+      sessionId: this.session.id,
+      taskId: this.session.taskId,
+      agentId: this.session.agentId,
+      currentStatus: this.status,
+      activeToolInfo: this.activeToolInfo,
+      emitEvent: (p) => this.emitEvent(p),
+      transitionTo: (s) => this.transitionTo(s),
+    });
+
     handleReEnqueue(
       {
         sessionId: this.session.id,
         sessionRef: this.sessionRef,
         dbSessionRef: this.session.sessionRef ?? null,
-        modeChangeRestart: this.modeChangeRestart,
-        clearContextRestart: this.clearContextRestart,
-        clearContextRestartNewSessionId: this.clearContextRestartNewSessionId,
-        cancelKilled: this.cancelKilled,
+        exitContext: this.exitCtx,
       },
       wasInterruptedMidTurn,
     );
@@ -820,109 +680,6 @@ export class SessionProcess {
     }
 
     this.exitFuture.resolve(exitCode);
-  }
-
-  /**
-   * Release all resources held by the session: stop timers, drain approvals,
-   * stop team monitoring, clean up temp files, and unsubscribe from PG NOTIFY.
-   */
-  private cleanupResources(): void {
-    this.activityTracker.stopAllTimers();
-    // Clear any pending SIGKILL escalation timers — the process has already exited.
-    for (const t of this.sigkillTimers) {
-      clearTimeout(t);
-    }
-    this.sigkillTimers = [];
-    // Drain any approval promises so blocked adapters unblock immediately.
-    this.approvalHandler.drain('deny');
-    // Stop team inbox monitoring.
-    this.teamManager.stop();
-    // Clean up temp Gemini policy file (best-effort).
-    if (this.policyFilePath) {
-      try {
-        unlinkSync(this.policyFilePath);
-      } catch {
-        // File may already be gone.
-      }
-      this.policyFilePath = null;
-    }
-    // Unsubscribe from the control channel to release the pg pool connection.
-    // Null it out immediately to prevent any subsequent re-entry from releasing twice.
-    this.unsubscribeControl?.();
-    this.unsubscribeControl = null;
-  }
-
-  /**
-   * Map exit code and session flags to the final session status, emit
-   * interruption notes, and persist endedAt when appropriate.
-   */
-  private async determineExitStatus(
-    exitCode: number | null,
-    wasInterruptedMidTurn: boolean,
-  ): Promise<void> {
-    // When a session is interrupted mid-turn by a worker restart (terminateKilled && active),
-    // record an interruption note in the task event log. On the next cold resume, the
-    // [Previous Work Summary] preamble will include this note, so the agent knows it was
-    // interrupted and can verify whether its last action completed.
-    if (wasInterruptedMidTurn && this.session.taskId) {
-      const inflight = [...this.activeToolInfo.values()];
-      try {
-        await this.emitEvent({
-          type: 'system:info',
-          message:
-            inflight.length > 0
-              ? `Session interrupted mid-turn. In-flight tool(s): ${inflight.map((t) => t.toolName).join(', ')}.`
-              : 'Session interrupted mid-turn (worker restart).',
-        });
-      } catch {
-        // Best-effort: log writer may already be closing
-      }
-      try {
-        await recordInterruptionEvent(this.session.taskId, inflight, this.session.agentId);
-      } catch (err) {
-        log.warn({ err, sessionId: this.session.id }, 'Failed to record interruption event');
-      }
-    }
-
-    // Determine final session status based on exit code.
-    // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
-    // Clean exit (0) = agent finished normally → idle (resumable).
-    // terminateKilled = graceful worker shutdown → idle (auto-resumable on next message).
-    // interruptKilled / idleTimeoutKilled → idle (resumable).
-    // Anything else → ended (crash / unsupported command).
-    if (this.status === 'active' || this.status === 'awaiting_input') {
-      if (this.cancelKilled) {
-        // Cancel route may have already set status='ended' in DB, but if the process
-        // died before the cancel route could update, status may still be 'active'.
-        // Explicitly transition to 'ended' to cover both cases.
-        await this.transitionTo('ended');
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      } else if (
-        exitCode === 0 ||
-        this.activityTracker.idleTimeoutKilled ||
-        this.activityTracker.interruptKilled ||
-        this.terminateKilled
-      ) {
-        await this.transitionTo('idle');
-      } else {
-        await this.emitEvent({
-          type: 'system:error',
-          message:
-            `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
-            `This may be caused by an unsupported slash command (/mcp, /permissions) or a Claude CLI crash.`,
-        });
-        await this.transitionTo('ended');
-        // Kill the companion terminal tmux session — session is no longer resumable.
-        spawnSync('tmux', ['kill-session', '-t', `shell-${this.session.id}`], { stdio: 'ignore' });
-      }
-    }
-
-    if (this.status === 'ended') {
-      await db
-        .update(sessions)
-        .set({ endedAt: new Date() })
-        .where(eq(sessions.id, this.session.id));
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -991,9 +748,9 @@ export class SessionProcess {
    * Used during worker shutdown to terminate live sessions that are awaiting input.
    */
   terminate(): void {
-    // Set flag BEFORE sending SIGTERM so onExit transitions to 'idle' (resumable)
+    // Set reason BEFORE sending SIGTERM so onExit transitions to 'idle' (resumable)
     // instead of 'ended'. This allows cold-resume after a graceful worker restart.
-    this.terminateKilled = true;
+    this.exitCtx.reason = 'terminate';
     this.managedProcess?.kill('SIGTERM');
   }
 
@@ -1007,6 +764,6 @@ export class SessionProcess {
    * we must set the flag before the I/O event loop tick that fires onExit.
    */
   markTerminating(): void {
-    this.terminateKilled = true;
+    this.exitCtx.reason = 'terminate';
   }
 }
