@@ -425,20 +425,13 @@ export class SessionProcess {
       this.teamManager.onToolEvent(event);
     }
 
-    // Persist sessionRef and model once the agent announces its session ID.
-    if (event.type === 'session:init') {
-      const updates: Record<string, string> = {};
-      if (event.sessionRef) {
-        this.sessionRef = event.sessionRef;
-        updates.sessionRef = event.sessionRef;
-      }
-      if (event.model) {
-        updates.model = event.model;
-      }
-      if (Object.keys(updates).length > 0) {
-        await db.update(sessions).set(updates).where(eq(sessions.id, this.session.id));
-      }
+    // Persist sessionRef locally (needed for re-enqueue on exit).
+    if (event.type === 'session:init' && event.sessionRef) {
+      this.sessionRef = event.sessionRef;
     }
+
+    // Persist DB side-effects (sessionRef, model, web tool usage counters).
+    await this.dataPipeline.persistEventSideEffects(event);
 
     // Cache context window size for real-time agent:usage emission on next message_start.
     if (event.type === 'agent:result' && event.modelUsage) {
@@ -448,21 +441,6 @@ export class SessionProcess {
           break;
         }
       }
-    }
-
-    // Persist server-side tool usage counters (web_search/web_fetch) from Claude result.
-    if (event.type === 'agent:result' && event.serverToolUse) {
-      const { webSearchRequests, webFetchRequests } = event.serverToolUse;
-      void db
-        .update(sessions)
-        .set({
-          ...(webSearchRequests != null && { webSearchRequests }),
-          ...(webFetchRequests != null && { webFetchRequests }),
-        })
-        .where(eq(sessions.id, this.session.id))
-        .catch((err: unknown) => {
-          log.error({ err, sessionId: this.session.id }, 'web tool usage update failed');
-        });
     }
 
     // After the agent finishes a result, transition to awaiting_input.
