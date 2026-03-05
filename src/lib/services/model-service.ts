@@ -177,9 +177,10 @@ async function readClaudeModels(): Promise<ModelOption[]> {
       const description = match[3];
       const is1M = fullLine.includes('with 1M context window');
 
-      // Build ID matching Claude CLI values: "opus", "sonnet", "haiku", "opus[1m]", etc.
+      // Build ID matching Claude CLI values: "claude-opus-4-6", "claude-sonnet-4-6", etc.
       const versionParts = version.split('.');
-      const shortId = family.toLowerCase() + '-' + versionParts.join('-') + (is1M ? '-1m' : '');
+      const shortId =
+        'claude-' + family.toLowerCase() + '-' + versionParts.join('-') + (is1M ? '-1m' : '');
 
       if (seen.has(shortId)) continue;
       seen.add(shortId);
