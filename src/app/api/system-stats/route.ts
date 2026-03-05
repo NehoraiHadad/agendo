@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 
-const MONITOR_URL = 'http://localhost:9876';
+const MONITOR_URL = process.env.MONITOR_URL ?? 'http://localhost:9876';
 
 export const GET = withErrorBoundary(async () => {
-  const [statsRes, procsRes] = await Promise.all([
-    fetch(`${MONITOR_URL}/stats`, { cache: 'no-store' }),
-    fetch(`${MONITOR_URL}/processes`, { cache: 'no-store' }),
-  ]);
+  let statsRes: Response;
+  let procsRes: Response;
+
+  try {
+    [statsRes, procsRes] = await Promise.all([
+      fetch(`${MONITOR_URL}/stats`, { cache: 'no-store' }),
+      fetch(`${MONITOR_URL}/processes`, { cache: 'no-store' }),
+    ]);
+  } catch {
+    return NextResponse.json(
+      { error: { code: 'MONITOR_UNAVAILABLE', message: 'Server monitor API unavailable' } },
+      { status: 503 },
+    );
+  }
 
   if (!statsRes.ok) {
     return NextResponse.json(

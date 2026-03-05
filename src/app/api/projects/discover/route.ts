@@ -1,4 +1,5 @@
 import { readdir, stat, access } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
@@ -13,17 +14,45 @@ interface DiscoveredProject {
   type: ProjectType;
 }
 
-const PROJECT_INDICATORS = ['.git', 'package.json', 'pyproject.toml', 'go.mod', 'Cargo.toml'] as const;
+const PROJECT_INDICATORS = [
+  '.git',
+  'package.json',
+  'pyproject.toml',
+  'go.mod',
+  'Cargo.toml',
+] as const;
 
 /** Directory names that are never themselves projects, even if they contain indicator files. */
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', '.nuxt', '.svelte-kit',
-  'dist', 'build', 'out', 'output', 'coverage',
-  '.cache', '.parcel-cache', '.turbo', '.vercel',
-  'venv', '.venv', 'env', '.env',
-  '__pycache__', '.tox', '.pytest_cache', '.mypy_cache',
-  'target', 'vendor', '.gradle', '.mvn',
-  'tmp', 'temp', '.tmp',
+  'node_modules',
+  '.git',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  'dist',
+  'build',
+  'out',
+  'output',
+  'coverage',
+  '.cache',
+  '.parcel-cache',
+  '.turbo',
+  '.vercel',
+  'venv',
+  '.venv',
+  'env',
+  '.env',
+  '__pycache__',
+  '.tox',
+  '.pytest_cache',
+  '.mypy_cache',
+  'target',
+  'vendor',
+  '.gradle',
+  '.mvn',
+  'tmp',
+  'temp',
+  '.tmp',
 ]);
 
 async function detectProjectType(dirPath: string): Promise<ProjectType | null> {
@@ -76,7 +105,7 @@ async function scanDirectory(dirPath: string): Promise<string[]> {
 }
 
 export const GET = withErrorBoundary(async (_req: NextRequest) => {
-  const extraRoots = ['/home/ubuntu', '/home/ubuntu/projects'];
+  const extraRoots = [os.homedir(), path.join(os.homedir(), 'projects')];
   const searchRoots = [...new Set([...allowedWorkingDirs, ...extraRoots])];
 
   const existingProjects = await listProjects();

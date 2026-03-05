@@ -1,0 +1,28 @@
+# PostgreSQL for Agendo
+# The application itself runs natively with PM2 — see README.md
+#
+# Usage:
+#   docker compose up -d        # start
+#   docker compose down          # stop (data preserved in volume)
+#   docker compose down -v       # stop and DELETE all data
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agendo
+      POSTGRES_PASSWORD: agendo
+      POSTGRES_DB: agendo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agendo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

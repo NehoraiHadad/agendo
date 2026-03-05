@@ -48,7 +48,7 @@ const C = {
   bgMagenta: '\x1b[45m',
 };
 
-const SESSIONS_BASE = '/data/agendo/logs/sessions';
+const SESSIONS_BASE = process.env.LOG_DIR ? `${process.env.LOG_DIR}/sessions` : './logs/sessions';
 
 function styled(color: string, text: string) {
   return `${color}${text}${C.reset}`;
