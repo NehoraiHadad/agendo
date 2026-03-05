@@ -253,7 +253,10 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
             if (!trimmed.startsWith('{')) continue;
             try {
               const msg = JSON.parse(trimmed) as Record<string, unknown>;
-              if (msg.type === 'control_response' && msg.request_id === requestId) {
+              // request_id may be top-level or nested inside response (REPL bridge format)
+              const responseBody = msg.response as Record<string, unknown> | undefined;
+              const msgRequestId = msg.request_id ?? responseBody?.request_id;
+              if (msg.type === 'control_response' && msgRequestId === requestId) {
                 finish(msg);
                 return;
               }
