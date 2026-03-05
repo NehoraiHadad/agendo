@@ -8,6 +8,9 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { db } from '@/lib/db';
+import { sessions } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload } from '@/lib/realtime/events';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ClaudeEventMapperCallbacks } from '@/lib/worker/adapters/claude-event-mapper';
@@ -220,6 +223,41 @@ export class SessionDataPipeline {
         // surface raw JSON to the user — it would appear as a broken UI element.
         log.error({ err, sessionId: this.deps.sessionId }, 'Failed to emit event');
       }
+    }
+  }
+
+  /**
+   * Persist fire-and-forget DB side-effects triggered by emitted events.
+   * Currently handles:
+   *   - session:init → persist sessionRef + model
+   *   - agent:result with serverToolUse → persist webSearchRequests/webFetchRequests
+   */
+  async persistEventSideEffects(event: AgendoEvent): Promise<void> {
+    if (event.type === 'session:init') {
+      const updates: Record<string, string> = {};
+      if (event.sessionRef) {
+        updates.sessionRef = event.sessionRef;
+      }
+      if (event.model) {
+        updates.model = event.model;
+      }
+      if (Object.keys(updates).length > 0) {
+        await db.update(sessions).set(updates).where(eq(sessions.id, this.deps.sessionId));
+      }
+    }
+
+    if (event.type === 'agent:result' && event.serverToolUse) {
+      const { webSearchRequests, webFetchRequests } = event.serverToolUse;
+      void db
+        .update(sessions)
+        .set({
+          ...(webSearchRequests != null && { webSearchRequests }),
+          ...(webFetchRequests != null && { webFetchRequests }),
+        })
+        .where(eq(sessions.id, this.deps.sessionId))
+        .catch((err: unknown) => {
+          log.error({ err, sessionId: this.deps.sessionId }, 'web tool usage update failed');
+        });
     }
   }
 
