@@ -17,7 +17,6 @@ import type {
   SessionStatus,
 } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
-import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
 import { capturePlanFilePath } from '@/lib/worker/session-plan-utils';
@@ -28,6 +27,7 @@ import {
   handleSetModel,
   handleMessage,
   handleToolApproval,
+  handleReEnqueue,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
@@ -805,7 +805,18 @@ export class SessionProcess {
     const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
 
     await this.determineExitStatus(exitCode, wasInterruptedMidTurn);
-    this.handleReEnqueue(wasInterruptedMidTurn);
+    handleReEnqueue(
+      {
+        sessionId: this.session.id,
+        sessionRef: this.sessionRef,
+        dbSessionRef: this.session.sessionRef ?? null,
+        modeChangeRestart: this.modeChangeRestart,
+        clearContextRestart: this.clearContextRestart,
+        clearContextRestartNewSessionId: this.clearContextRestartNewSessionId,
+        cancelKilled: this.cancelKilled,
+      },
+      wasInterruptedMidTurn,
+    );
 
     if (this.logWriter) {
       await this.logWriter.close();
@@ -915,67 +926,6 @@ export class SessionProcess {
         .update(sessions)
         .set({ endedAt: new Date() })
         .where(eq(sessions.id, this.session.id));
-    }
-  }
-
-  /**
-   * Re-enqueue the session if a mode change, clear-context restart, or
-   * mid-turn interruption requires an automatic cold resume.
-   */
-  private handleReEnqueue(wasInterruptedMidTurn: boolean): void {
-    // Mode-change restart: re-enqueue immediately so the session cold-resumes
-    // with the updated permissionMode (already written to DB by the PATCH endpoint).
-    // The session status is now 'idle', so the next session-runner job can claim it.
-    if (this.modeChangeRestart && this.sessionRef) {
-      enqueueSession({ sessionId: this.session.id, resumeRef: this.sessionRef }).catch(
-        (err: unknown) => {
-          log.error(
-            { err, sessionId: this.session.id },
-            'Failed to re-enqueue session after mode change',
-          );
-        },
-      );
-    }
-
-    // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
-    // session that was created by the API route (Direction B — new session record).
-    if (this.clearContextRestart) {
-      const targetSessionId = this.clearContextRestartNewSessionId ?? this.session.id;
-      enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
-        log.error(
-          { err, sessionId: targetSessionId },
-          'Failed to enqueue new session after clear-context restart',
-        );
-      });
-    }
-
-    // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
-    // Only fires when the session was genuinely mid-work (active, not awaiting_input),
-    // has a resumable sessionRef, and no other re-enqueue path is already running.
-    // resumePrompt is explicitly set so the agent gets a sensible continuation
-    // message instead of the original initialPrompt (first message of the session).
-    const resumeRef = this.sessionRef ?? this.session.sessionRef ?? null;
-    if (
-      wasInterruptedMidTurn &&
-      resumeRef &&
-      !this.cancelKilled &&
-      !this.clearContextRestart &&
-      !this.modeChangeRestart
-    ) {
-      enqueueSession({
-        sessionId: this.session.id,
-        resumeRef,
-        resumePrompt: 'The worker restarted. Please continue where you left off.',
-      }).catch((err: unknown) => {
-        log.error(
-          { err, sessionId: this.session.id },
-          'Failed to re-enqueue session after mid-turn interruption',
-        );
-      });
-      log.info(
-        { sessionId: this.session.id },
-        'Session auto-resumed after mid-turn worker restart',
-      );
     }
   }
 
