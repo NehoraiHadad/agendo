@@ -7,6 +7,7 @@
  */
 
 import { join } from 'node:path';
+import os from 'node:os';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
@@ -23,7 +24,7 @@ import type { Session } from '@/lib/types';
  * before the user clicks "clear context".
  */
 export async function capturePlanFilePath(sessionId: string): Promise<void> {
-  const homePlansDir = join(process.env.HOME ?? '/home/ubuntu', '.claude', 'plans');
+  const homePlansDir = join(process.env.HOME ?? os.homedir(), '.claude', 'plans');
   try {
     const files = readdirSync(homePlansDir)
       .filter((f) => f.endsWith('.md'))

@@ -40,13 +40,6 @@ interface DiscoveredProject {
 
 type PathStatus = 'idle' | 'checking' | 'exists' | 'creatable' | 'denied';
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 interface ProjectCreateDialogProps {
   onCreated: (project: Project) => void;
 }
@@ -65,7 +58,6 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [pathStatus, setPathStatus] = useState<PathStatus>('idle');
   const [pathDeniedReason, setPathDeniedReason] = useState('');
-  const [pathTouched, setPathTouched] = useState(false);
   const checkAbortRef = useRef<AbortController | null>(null);
 
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:project:new');
@@ -85,19 +77,10 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
     setShowSuggestions(false);
     setPathStatus('idle');
     setPathDeniedReason('');
-    setPathTouched(false);
   }
 
-  // Auto-suggest rootPath from project name
-  useEffect(() => {
-    if (pathTouched || !name.trim()) return;
-    const slug = slugify(name);
-    if (slug) {
-      setRootPath(`/home/ubuntu/projects/${slug}`);
-    } else {
-      setRootPath('');
-    }
-  }, [name, pathTouched]);
+  // Auto-suggest rootPath from project name — removed hardcoded path;
+  // use the Discover button to pick a project directory instead.
 
   // Debounced path check
   useEffect(() => {
@@ -151,7 +134,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
 
   function handleSelectSuggestion(suggestion: DiscoveredProject) {
     setRootPath(suggestion.path);
-    setPathTouched(true);
+
     if (!name.trim()) setName(suggestion.name);
     setShowSuggestions(false);
   }
@@ -249,9 +232,8 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
                   value={rootPath}
                   onChange={(e) => {
                     setRootPath(e.target.value);
-                    setPathTouched(true);
                   }}
-                  placeholder="/home/ubuntu/projects/myapp"
+                  placeholder="Absolute path to project root (use Discover to find)"
                   required
                   className="flex-1 font-mono text-sm"
                 />

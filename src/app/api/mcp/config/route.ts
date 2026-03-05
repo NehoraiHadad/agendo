@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { BadRequestError } from '@/lib/errors';
 import { NextRequest, NextResponse } from 'next/server';
@@ -31,9 +32,7 @@ function buildConfigs(serverPath: string) {
 }
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
-  const serverPath =
-    process.env.MCP_SERVER_PATH ??
-    '/home/ubuntu/projects/agendo/dist/mcp-server.js';
+  const serverPath = process.env.MCP_SERVER_PATH ?? path.resolve('dist/mcp-server.js');
   const tool = req.nextUrl.searchParams.get('tool') ?? 'all';
 
   const configs = buildConfigs(serverPath);
