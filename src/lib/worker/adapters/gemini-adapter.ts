@@ -539,6 +539,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
           protocolVersion: PROTOCOL_VERSION,
           clientInfo: { name: 'agendo', version: '1.0.0' },
           clientCapabilities: {
+            terminal: true,
             fs: { readTextFile: true, writeTextFile: true },
           },
         }),
@@ -659,7 +660,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     try {
       const conn = this.connection;
       const timeoutMs = GeminiAdapter.PROMPT_TIMEOUT_MS;
-      await Promise.race([
+      const promptResponse = await Promise.race([
         conn.prompt({ sessionId: this.sessionId, prompt: promptContent }),
         new Promise<never>((_, reject) =>
           setTimeout(
@@ -669,7 +670,10 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
         ),
       ]);
       // Emit synthetic result event so session-process emits agent:result
-      this.emitNdjson({ type: 'gemini:turn-complete', result: {} });
+      this.emitNdjson({
+        type: 'gemini:turn-complete',
+        result: (promptResponse as Record<string, unknown>) ?? {},
+      });
     } catch (err) {
       const message = extractMessage(err);
       // Don't emit error for process exit — onExit handles that
