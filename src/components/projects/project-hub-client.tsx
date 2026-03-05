@@ -49,16 +49,16 @@ type TabId = 'conversations' | 'sessions' | 'tasks' | 'snapshots';
 
 interface ProjectHubClientProps {
   project: Project;
-  conversations: SessionWithAgent[];
-  executionSessions: SessionWithAgent[];
+  freeChats: SessionWithAgent[];
+  taskSessions: SessionWithAgent[];
   openTasks: Task[];
   agents: Agent[];
 }
 
 export function ProjectHubClient({
   project,
-  conversations,
-  executionSessions,
+  freeChats,
+  taskSessions,
   openTasks,
   agents,
 }: ProjectHubClientProps) {
@@ -91,10 +91,10 @@ export function ProjectHubClient({
     {
       id: 'conversations',
       label: 'Conversations',
-      count: conversations.length,
+      count: freeChats.length,
       icon: MessageCircle,
     },
-    { id: 'sessions', label: 'Sessions', count: executionSessions.length, icon: Play },
+    { id: 'sessions', label: 'Sessions', count: taskSessions.length, icon: Play },
     { id: 'tasks', label: 'Tasks', count: openTasks.length, icon: ListTodo },
     { id: 'snapshots', label: 'Snapshots', count: 0, icon: Camera },
   ];
@@ -179,11 +179,11 @@ export function ProjectHubClient({
       {/* Tab content */}
       {activeTab === 'conversations' && (
         <ConversationsTab
-          conversations={conversations}
+          conversations={freeChats}
           onNewConversation={() => openLaunch(undefined, 'conversation')}
         />
       )}
-      {activeTab === 'sessions' && <SessionsTab sessions={executionSessions} />}
+      {activeTab === 'sessions' && <SessionsTab sessions={taskSessions} />}
       {activeTab === 'tasks' && <TasksTab tasks={openTasks} projectId={project.id} />}
       {activeTab === 'snapshots' && <SnapshotsTab projectId={project.id} />}
 

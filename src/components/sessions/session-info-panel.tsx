@@ -156,12 +156,14 @@ export function SessionInfoPanel({
               {session.status}
             </Badge>
           </div>
-          <div>
-            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Kind</p>
-            <Badge variant="outline" className="mt-1 text-[10px]">
-              {session.kind === 'conversation' ? 'Conversation' : 'Execution'}
-            </Badge>
-          </div>
+          {session.kind === 'execution' && (
+            <div>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Kind</p>
+              <Badge variant="outline" className="mt-1 text-[10px]">
+                Execution
+              </Badge>
+            </div>
+          )}
           {projectName && (
             <div>
               <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">

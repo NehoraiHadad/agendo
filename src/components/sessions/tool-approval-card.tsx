@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, Check, X, Loader2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
@@ -104,6 +105,7 @@ export function ToolApprovalCard({
   onResolved,
   agentSlug,
 }: ToolApprovalCardProps) {
+  const router = useRouter();
   const [pending, setPending] = useState<Decision | null>(null);
   const [decided, setDecided] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,12 +157,23 @@ export function ToolApprovalCard({
         }),
       });
 
+      const responseBody = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        data?: { newSessionId?: string };
+      };
+
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Server error ${res.status}`);
+        throw new Error(responseBody.error ?? `Server error ${res.status}`);
       }
 
       setDecided(true);
+
+      // clearContextRestart creates a new child session — navigate there.
+      if (responseBody.data?.newSessionId) {
+        router.push(`/sessions/${responseBody.data.newSessionId}`);
+        return;
+      }
+
       // Interactive tools (ExitPlanMode, AskUserQuestion) show their own
       // "resolved" compact view. Non-interactive tools are removed from the DOM.
       if (!INTERACTIVE_TOOL_NAMES.has(toolName)) {

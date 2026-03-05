@@ -179,8 +179,18 @@ export async function runSession(
   if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
     let preamble: string;
-    if (session.kind === 'conversation') {
-      // Planning conversation preamble — no task context.
+    if (session.taskId) {
+      // Execution preamble — agent is working on a specific task.
+      preamble =
+        `[Agendo Context: task_id=${session.taskId}, project=${projectName}]\n` +
+        `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
+        `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
+        `  - A clear title: "Add MCP tool: <tool_name>"\n` +
+        `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
+        `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
+        `---\n`;
+    } else {
+      // Planning/conversation preamble — no assigned task, free-form session.
       // Kept intentionally brief; the full agent-execution guidance lives in the
       // initialPrompt constructed by plan-service.ts startPlanConversation().
       preamble =
@@ -190,16 +200,6 @@ export async function runSession(
         `- list_tasks / get_task — inspect existing tasks and their status\n` +
         `- list_projects — list all projects (needed to resolve projectId for create_task)\n` +
         `- start_agent_session — spawn an agent on a task when ready to execute\n` +
-        `---\n`;
-    } else {
-      // Execution preamble — task context
-      preamble =
-        `[Agendo Context: task_id=${session.taskId ?? 'none'}, project=${projectName}]\n` +
-        `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
-        `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
-        `  - A clear title: "Add MCP tool: <tool_name>"\n` +
-        `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
-        `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
         `---\n`;
     }
     if (binaryName === 'codex') {

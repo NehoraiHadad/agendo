@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { BadRequestError } from '@/lib/errors';
-import { getSession } from '@/lib/services/session-service';
+import { getSession, restartFreshFromSession } from '@/lib/services/session-service';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -18,10 +18,11 @@ import type { AgendoControl } from '@/lib/realtime/events';
  *
  * Special cases on idle/ended sessions (no active worker process):
  *   - allow: update permissionMode + initialPrompt, resume with existing sessionRef
- *   - clearContextRestart: clear sessionRef so re-enqueue spawns fresh
+ *   - clearContextRestart: create a fresh child session (Direction B)
  *
- * Both paths use the plan file content as the initialPrompt so Claude is
- * explicitly told to implement the plan on the next run.
+ * For clearContextRestart on active sessions: create the child session here so
+ * the API can return newSessionId immediately, then pass newSessionIdForWorker
+ * via PG NOTIFY so the worker enqueues it from onExit.
  */
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
@@ -42,13 +43,54 @@ export const POST = withErrorBoundary(
     }
 
     // -----------------------------------------------------------------------
+    // clearContextRestart (ExitPlanMode "Restart fresh"):
+    //   Create a new child session (Direction B) so the old plan session stays
+    //   intact and the new implementation session has a clean empty log.
+    //   Handled here for ALL session states (idle AND active) so the API can
+    //   return newSessionId immediately regardless.
+    // -----------------------------------------------------------------------
+    if (body.type === 'tool-approval' && body.clearContextRestart) {
+      const session = await getSession(id);
+
+      // Read plan file content.
+      let planContent: string | null = null;
+      if (session.planFilePath) {
+        try {
+          planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
+        } catch {
+          planContent = null; // file may have been deleted
+        }
+      }
+
+      const newMode = body.postApprovalMode ?? 'acceptEdits';
+      const newSession = await restartFreshFromSession(id, planContent, newMode);
+
+      if (session.status === 'idle' || session.status === 'ended') {
+        // No active worker — enqueue the new session directly.
+        await enqueueSession({ sessionId: newSession.id });
+      } else {
+        // Active session: relay to worker with the new session ID so it can
+        // enqueue it from onExit after the process terminates cleanly.
+        await publish(channelName('agendo_control', id), {
+          ...body,
+          newSessionIdForWorker: newSession.id,
+        });
+      }
+
+      return NextResponse.json(
+        { data: { restarting: true, newSessionId: newSession.id } },
+        { status: 202 },
+      );
+    }
+
+    // -----------------------------------------------------------------------
     // tool-approval on idle/ended sessions: handle directly in the API route
     // since there is no worker process listening on the PG NOTIFY channel.
     // -----------------------------------------------------------------------
     if (body.type === 'tool-approval') {
       const session = await getSession(id);
       if (session.status === 'idle' || session.status === 'ended') {
-        // Read plan file content — shared by both allow and clearContextRestart.
+        // Read plan file content.
         let planContent: string | null = null;
         if (session.planFilePath) {
           try {
@@ -60,20 +102,6 @@ export const POST = withErrorBoundary(
         const initialPrompt = planContent
           ? `Implement the following plan:\n\n${planContent}`
           : 'Continue implementing the plan from the previous conversation.';
-
-        if (body.clearContextRestart) {
-          // ── Option: clear context + restart fresh ──────────────────────
-          // Clear sessionRef so the worker spawns a new Claude process (no --resume).
-          const newMode = body.postApprovalMode ?? 'acceptEdits';
-          await db
-            .update(sessions)
-            .set({ sessionRef: null, initialPrompt, permissionMode: newMode })
-            .where(eq(sessions.id, id));
-
-          await enqueueSession({ sessionId: id });
-
-          return NextResponse.json({ data: { restarting: true } }, { status: 202 });
-        }
 
         if (body.decision === 'allow') {
           // ── Option: allow in-place (keep context, resume with --resume) ─

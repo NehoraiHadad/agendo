@@ -202,11 +202,11 @@ export class ApprovalHandler {
     if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {
       await this.capturePlanFilePath();
 
-      // In plan conversation sessions (plan chat on the plan page), auto-deny
-      // ExitPlanMode so the agent stays in plan mode. The plan file was captured
-      // above — save its content to the DB so the editor auto-refreshes.
-      // No approval card is shown; the agent can keep refining if the user asks.
-      if (this.session.kind === 'conversation') {
+      // In plan-page sessions (plan mode + no task), auto-deny ExitPlanMode so
+      // the agent stays in plan mode. The plan file was captured above — save its
+      // content to the DB so the editor auto-refreshes. No approval card is shown.
+      // Task sessions in plan mode show the approval card so the user can decide.
+      if (this.session.permissionMode === 'plan' && !this.session.taskId) {
         savePlanFromSession(this.session).catch((err: unknown) => {
           log.warn({ err }, 'Failed to auto-save plan');
         });
