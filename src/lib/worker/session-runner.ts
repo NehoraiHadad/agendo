@@ -13,6 +13,7 @@ import { getCapabilityById } from '@/lib/services/capability-service';
 import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
+import { getBinaryName } from '@/lib/worker/agent-utils';
 import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
 import { listTaskEvents } from '@/lib/services/task-event-service';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
@@ -128,7 +129,7 @@ export async function runSession(
   }
 
   // Determine the binary basename so we can gate claude-only features below.
-  const binaryName = agent.binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  const binaryName = getBinaryName(agent);
 
   // Phase A: Generate a session-scoped MCP config file when the agent has MCP
   // enabled and a server path is configured. The file embeds the session

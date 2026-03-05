@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -10,6 +10,7 @@ import type { AgendoControl } from '@/lib/realtime/events';
 export const POST = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
 
     const [session] = await db
       .select({ id: sessions.id })

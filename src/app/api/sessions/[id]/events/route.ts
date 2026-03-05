@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { subscribe, channelName, publish } from '@/lib/realtime/pg-notify';
 import { readEventsFromLog } from '@/lib/realtime/events';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 
 function makeSessionStateEvent(session: {
   id: string;
@@ -24,6 +24,11 @@ function makeSessionStateEvent(session: {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  try {
+    assertUUID(id, 'Session');
+  } catch {
+    return new Response('Not found', { status: 404 });
+  }
   // On browser-auto-reconnect the Last-Event-ID header is set; on client-triggered
   // reconnect (new EventSource instance) it isn't, so fall back to the query param.
   const lastEventId =
@@ -105,6 +110,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
 
     // Verify session exists
     const [session] = await db
