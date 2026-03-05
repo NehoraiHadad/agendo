@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 
@@ -20,12 +20,14 @@ import { FileLogWriter } from '@/lib/worker/log-writer';
 import { enqueueSession } from '@/lib/worker/queue';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { SessionTeamManager } from '@/lib/worker/session-team-manager';
-import { capturePlanFilePath, savePlanFromSession } from '@/lib/worker/session-plan-utils';
+import { capturePlanFilePath } from '@/lib/worker/session-plan-utils';
 import {
   handleCancel,
   handleInterrupt,
   handleSetPermissionMode,
   handleSetModel,
+  handleMessage,
+  handleToolApproval,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
@@ -34,7 +36,6 @@ import type {
   SpawnOpts,
   ManagedProcess,
   ImageContent,
-  PermissionDecision,
   AcpMcpServer,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
@@ -672,111 +673,11 @@ export class SessionProcess {
     } else if (control.type === 'interrupt') {
       await handleInterrupt(ctrl);
     } else if (control.type === 'message') {
-      let image: ImageContent | undefined;
-      if (control.imageRef) {
-        try {
-          const data = readFileSync(control.imageRef.path).toString('base64');
-          image = { mimeType: control.imageRef.mimeType, data };
-          // Clean up the temp file (best-effort)
-          try {
-            unlinkSync(control.imageRef.path);
-          } catch {
-            /* ignore */
-          }
-        } catch (err) {
-          log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
-        }
-      }
-      await this.pushMessage(control.text, image);
+      await handleMessage(control, ctrl);
     } else if (control.type === 'redirect') {
       await this.pushMessage(control.newPrompt);
     } else if (control.type === 'tool-approval') {
-      const resolver = this.approvalHandler.takeResolver(control.approvalId);
-      if (resolver) {
-        // ---------------------------------------------------------------
-        // ExitPlanMode Option 1: clear context + restart fresh
-        // Identical to the CLI TUI behavior: deny the tool, read plan
-        // content, kill process, restart with plan as initialPrompt.
-        // ---------------------------------------------------------------
-        if (control.clearContextRestart) {
-          resolver('deny');
-
-          // The API route already created the new child session and passed its
-          // ID here via newSessionIdForWorker. Store it so onExit can enqueue it.
-          const newMode = control.postApprovalMode ?? 'acceptEdits';
-          this.clearContextRestartNewSessionId = control.newSessionIdForWorker ?? null;
-
-          await this.emitEvent({
-            type: 'system:info',
-            message: `Plan approved — restarting fresh with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
-          });
-
-          // Kill process → onExit will enqueue the new child session.
-          this.clearContextRestart = true;
-          this.terminateKilled = true;
-          this.approvalHandler.drain('deny');
-          this.managedProcess?.kill('SIGTERM');
-          const t = setTimeout(() => {
-            this.managedProcess?.kill('SIGKILL');
-          }, SIGKILL_DELAY_MS);
-          this.sigkillTimers.push(t);
-          return;
-        }
-
-        // If the user edited the tool input before approving, or requested session-scoped
-        // command memory (Codex), pass through as a structured PermissionDecision.
-        const decision: PermissionDecision =
-          control.decision === 'allow' && (control.updatedInput || control.rememberForSession)
-            ? {
-                behavior: 'allow',
-                ...(control.updatedInput ? { updatedInput: control.updatedInput } : {}),
-                ...(control.rememberForSession ? { rememberForSession: true } : {}),
-              }
-            : control.decision;
-        resolver(decision);
-
-        if (control.decision === 'allow-session') {
-          await this.approvalHandler.persistAllowedTool(control.toolName);
-        }
-
-        // ExitPlanMode side-effects: apply AFTER resolving the approval so the
-        // control_response reaches Claude first (otherwise set_permission_mode
-        // control_request times out while Claude waits for the tool response).
-        if (control.decision === 'allow') {
-          // Auto-save plan to plans table when ExitPlanMode is approved
-          const isExitPlanMode =
-            control.toolName === 'ExitPlanMode' || control.toolName === 'exit_plan_mode';
-          if (isExitPlanMode) {
-            savePlanFromSession(this.session).catch((err: unknown) => {
-              log.warn({ err }, 'Failed to auto-save plan');
-            });
-          }
-
-          if (control.postApprovalMode) {
-            // Small delay to let the allow response reach Claude before sending
-            // the set_permission_mode control_request on the same stdin pipe.
-            setTimeout(() => {
-              handleSetPermissionMode(
-                control.postApprovalMode as 'default' | 'acceptEdits' | 'bypassPermissions',
-                this.makeCtrl(),
-              ).catch((err: unknown) => {
-                log.warn({ err }, 'post-approval mode change failed');
-              });
-            }, 500);
-          }
-          if (control.postApprovalCompact) {
-            // Compact after a delay to let both the allow response and mode change settle.
-            setTimeout(
-              () => {
-                this.pushMessage('/compact').catch((err: unknown) => {
-                  log.warn({ err }, 'post-approval compact failed');
-                });
-              },
-              control.postApprovalMode ? 2000 : 500,
-            );
-          }
-        }
-      }
+      await handleToolApproval(control, ctrl);
     } else if (control.type === 'tool-result') {
       if (!['active', 'awaiting_input'].includes(this.status)) {
         log.warn(
@@ -865,6 +766,14 @@ export class SessionProcess {
       setInterruptInProgress: (v) => {
         this.interruptInProgress = v;
       },
+      setClearContextRestart: (v) => {
+        this.clearContextRestart = v;
+      },
+      setClearContextRestartNewSessionId: (id) => {
+        this.clearContextRestartNewSessionId = id;
+      },
+      pushMessage: (text, image) => this.pushMessage(text, image),
+      makeCtrl: () => this.makeCtrl(),
     };
   }
 
