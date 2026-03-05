@@ -32,6 +32,23 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
   const { session, agentName, agentSlug, agentBinaryPath, capLabel, taskTitle, projectName } =
     rows[0];
 
+  // Fetch parent session agent name for lineage display
+  let parentAgentName = '';
+  const parentTurns: number | null = null;
+
+  if (session.parentSessionId) {
+    const parentRows = await db
+      .select({ agentName: agents.name })
+      .from(sessions)
+      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .where(eq(sessions.id, session.parentSessionId))
+      .limit(1);
+
+    if (parentRows.length > 0) {
+      parentAgentName = parentRows[0].agentName;
+    }
+  }
+
   return (
     <SessionDetailWrapper
       session={session}
@@ -41,6 +58,8 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       capLabel={capLabel}
       taskTitle={taskTitle ?? ''}
       projectName={projectName ?? ''}
+      parentAgentName={parentAgentName}
+      parentTurns={parentTurns}
     />
   );
 }

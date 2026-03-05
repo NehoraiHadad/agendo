@@ -299,7 +299,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
       }));
       await this.transport.call('config/batchWrite', {
-        edits: [{ type: 'set', key: 'mcp_servers', value: mcpValue }],
+        edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
       });
       log.info({ count: this.mcpServers.length }, 'MCP config injected');
     }

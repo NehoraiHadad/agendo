@@ -33,6 +33,7 @@ export interface CreateSessionInput {
   allowedTools?: string[];
   model?: string;
   effort?: 'low' | 'medium' | 'high';
+  parentSessionId?: string;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -63,6 +64,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       allowedTools: input.allowedTools,
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
+      ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
     })
     .returning();
   return session;
