@@ -9,6 +9,11 @@ vi.mock('node:fs', () => ({
   mkdirSync: vi.fn(),
 }));
 
+const { mockLogInfo } = vi.hoisted(() => ({ mockLogInfo: vi.fn() }));
+vi.mock('@/lib/logger', () => ({
+  createLogger: vi.fn(() => ({ info: mockLogInfo, warn: vi.fn(), error: vi.fn() })),
+}));
+
 import { statfs } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { checkDiskSpace } from '../disk-check';
@@ -19,7 +24,6 @@ const mockMkdirSync = vi.mocked(mkdirSync);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 describe('checkDiskSpace', () => {
@@ -82,6 +86,9 @@ describe('checkDiskSpace', () => {
 
     await checkDiskSpace('/data/logs');
 
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('10.00 GB'));
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ freeGB: '10.00' }),
+      expect.any(String),
+    );
   });
 });

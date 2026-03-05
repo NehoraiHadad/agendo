@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 
-const mockStdinWrite = vi.fn((_data: string) => true);
-let mockReadlineEmitter: EventEmitter;
+// ---------------------------------------------------------------------------
+// Mock node:child_process — controlled process for isAlive / pid / kill tests
+// ---------------------------------------------------------------------------
+
 let mockChildProcess: EventEmitter & {
   stdin: Writable & { writable: boolean };
   stdout: Readable;
@@ -16,8 +18,7 @@ vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => {
     const proc = new EventEmitter() as typeof mockChildProcess;
     proc.stdin = new Writable({
-      write(chunk: Buffer, _enc: string, cb: () => void) {
-        mockStdinWrite(chunk.toString());
+      write(_chunk: Buffer, _enc: string, cb: () => void) {
         cb();
       },
     }) as Writable & { writable: boolean };
@@ -32,10 +33,63 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
-vi.mock('node:readline', () => ({
-  createInterface: vi.fn(() => {
-    mockReadlineEmitter = new EventEmitter();
-    return mockReadlineEmitter;
+// ---------------------------------------------------------------------------
+// Mock @agentclientprotocol/sdk — control ACP requests/responses in tests
+// ---------------------------------------------------------------------------
+
+type AcpClientHandler = {
+  sessionUpdate: (params: Record<string, unknown>) => Promise<void>;
+  requestPermission: (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+};
+
+type MockConnection = {
+  initialize: ReturnType<typeof vi.fn>;
+  newSession: ReturnType<typeof vi.fn>;
+  prompt: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
+  loadSession: ReturnType<typeof vi.fn>;
+  setSessionMode: ReturnType<typeof vi.fn>;
+  unstable_resumeSession: ReturnType<typeof vi.fn>;
+};
+
+let capturedClientHandler: AcpClientHandler | null = null;
+
+let mockConnection: MockConnection = {
+  initialize: vi.fn(),
+  newSession: vi.fn(),
+  prompt: vi.fn(),
+  cancel: vi.fn(),
+  loadSession: vi.fn(),
+  setSessionMode: vi.fn(),
+  unstable_resumeSession: vi.fn(),
+};
+
+/**
+ * Pre-configurable initialize response — set BEFORE calling spawn()/resume()
+ * because initialize() is called synchronously within the spawn call.
+ * Default: resolves with no special capabilities.
+ */
+let initializeImpl: () => Promise<{ agentCapabilities: Record<string, unknown> }> = () =>
+  Promise.resolve({ agentCapabilities: {} });
+
+vi.mock('@agentclientprotocol/sdk', () => ({
+  PROTOCOL_VERSION: '1.0.0',
+  ndJsonStream: vi.fn(() => ({})),
+  ClientSideConnection: vi.fn(function (
+    this: unknown,
+    handlerFactory: (agent: null) => AcpClientHandler,
+  ) {
+    capturedClientHandler = handlerFactory(null);
+    mockConnection = {
+      initialize: vi.fn(() => initializeImpl()),
+      newSession: vi.fn().mockResolvedValue({ sessionId: 'default-session' }),
+      prompt: vi.fn().mockResolvedValue({}),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      loadSession: vi.fn().mockResolvedValue(null),
+      setSessionMode: vi.fn().mockResolvedValue(undefined),
+      unstable_resumeSession: vi.fn().mockResolvedValue(undefined),
+    };
+    return mockConnection;
   }),
 }));
 
@@ -52,51 +106,24 @@ const opts: SpawnOpts = {
 };
 
 /**
- * Set up an auto-responder that watches for ACP requests and sends
- * canned responses. This handles the async timing issue where
- * session/new request is only registered after initialize resolves.
+ * Configure the mock connection to auto-resolve all ACP methods.
+ * Must be called AFTER adapter.spawn() so mockConnection is populated.
  */
 function setupAutoResponder(
   sessionId = 'test-session-123',
   promptResult: Record<string, unknown> = {},
 ): void {
-  mockStdinWrite.mockImplementation((data: string) => {
-    try {
-      const msg = JSON.parse(data) as { id?: number; method?: string };
-      if (msg.method === 'initialize' && msg.id !== undefined) {
-        queueMicrotask(() => {
-          mockReadlineEmitter.emit(
-            'line',
-            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
-          );
-        });
-      } else if (msg.method === 'session/new' && msg.id !== undefined) {
-        queueMicrotask(() => {
-          mockReadlineEmitter.emit(
-            'line',
-            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId } }),
-          );
-        });
-      } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-        queueMicrotask(() => {
-          mockReadlineEmitter.emit(
-            'line',
-            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: promptResult }),
-          );
-        });
-      }
-    } catch {
-      // Not JSON, ignore
-    }
-    return true;
-  });
+  mockConnection.initialize.mockResolvedValue({ agentCapabilities: {} });
+  mockConnection.newSession.mockResolvedValue({ sessionId });
+  mockConnection.prompt.mockResolvedValue(promptResult);
+  mockConnection.cancel.mockResolvedValue(undefined);
 }
 
 describe('GeminiAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset to default (no auto-respond) — tests that need it call setupAutoResponder()
-    mockStdinWrite.mockImplementation(() => true);
+    capturedClientHandler = null;
+    initializeImpl = () => Promise.resolve({ agentCapabilities: {} });
   });
 
   afterEach(() => {
@@ -120,17 +147,16 @@ describe('GeminiAdapter', () => {
     expect(proc.pid).toBe(99999);
   });
 
-  it('sends initialize request with clientInfo and terminal capability', () => {
+  it('sends initialize request with clientInfo and terminal capability', async () => {
     const adapter = new GeminiAdapter();
     adapter.spawn('test prompt', opts);
 
-    expect(mockStdinWrite).toHaveBeenCalled();
-    const firstWrite = JSON.parse(mockStdinWrite.mock.calls[0][0]) as Record<string, unknown>;
-    expect(firstWrite.method).toBe('initialize');
-    expect(firstWrite.jsonrpc).toBe('2.0');
-    const params = firstWrite.params as Record<string, unknown>;
-    expect(params.clientInfo).toEqual({ name: 'agendo', version: '1.0.0' });
-    const caps = params.clientCapabilities as Record<string, unknown>;
+    // initialize is called asynchronously in initAndRun
+    await vi.waitFor(() => expect(mockConnection.initialize).toHaveBeenCalled());
+
+    const [initParams] = mockConnection.initialize.mock.calls[0] as [Record<string, unknown>];
+    expect(initParams.clientInfo).toEqual({ name: 'agendo', version: '1.0.0' });
+    const caps = initParams.clientCapabilities as Record<string, unknown>;
     expect(caps.terminal).toBe(true);
     expect(caps.fs).toEqual({ readTextFile: true, writeTextFile: true });
   });
@@ -151,51 +177,41 @@ describe('GeminiAdapter', () => {
   // NDJSON emission: text and thinking
   // ---------------------------------------------------------------------------
 
-  it('emits gemini:text NDJSON for agent_message_chunk notifications', () => {
+  it('emits gemini:text-delta NDJSON for agent_message_chunk notifications', async () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    const notification = JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: {
-        update: {
-          sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: 'Hello from Gemini!' },
-        },
+    await capturedClientHandler!.sessionUpdate({
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Hello from Gemini!' },
       },
     });
-    mockReadlineEmitter.emit('line', notification);
 
     expect(received).toHaveLength(1);
     const parsed = JSON.parse(received[0]) as Record<string, unknown>;
-    expect(parsed.type).toBe('gemini:text');
+    expect(parsed.type).toBe('gemini:text-delta');
     expect(parsed.text).toBe('Hello from Gemini!');
   });
 
-  it('emits gemini:thinking NDJSON for agent_thought_chunk notifications', () => {
+  it('emits gemini:thinking-delta NDJSON for agent_thought_chunk notifications', async () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    const notification = JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: {
-        update: {
-          sessionUpdate: 'agent_thought_chunk',
-          content: { type: 'text', text: 'Thinking about it...' },
-        },
+    await capturedClientHandler!.sessionUpdate({
+      update: {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'Thinking about it...' },
       },
     });
-    mockReadlineEmitter.emit('line', notification);
 
     expect(received).toHaveLength(1);
     const parsed = JSON.parse(received[0]) as Record<string, unknown>;
-    expect(parsed.type).toBe('gemini:thinking');
+    expect(parsed.type).toBe('gemini:thinking-delta');
     expect(parsed.text).toBe('Thinking about it...');
   });
 
@@ -205,11 +221,10 @@ describe('GeminiAdapter', () => {
 
   it('emits gemini:turn-complete NDJSON after sendPrompt resolves', async () => {
     const promptResult = { sessionId: 'test-session-123', done: true };
-    setupAutoResponder('test-session-123', promptResult);
-
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
+    setupAutoResponder('test-session-123', promptResult);
     proc.onData((chunk) => received.push(chunk));
 
     await vi.waitFor(() => {
@@ -220,6 +235,7 @@ describe('GeminiAdapter', () => {
     const turnComplete = received.find((r) => r.includes('gemini:turn-complete'));
     const parsed = JSON.parse(turnComplete!) as Record<string, unknown>;
     expect(parsed.type).toBe('gemini:turn-complete');
+    // The adapter passes through the ACP prompt() response as the result
     expect(parsed.result).toEqual(promptResult);
   });
 
@@ -227,22 +243,16 @@ describe('GeminiAdapter', () => {
   // Tool approval: emits gemini:tool-start and gemini:tool-end
   // ---------------------------------------------------------------------------
 
-  it('emits gemini:tool-start and gemini:tool-end for permission requests (auto-approve)', () => {
+  it('emits gemini:tool-start and gemini:tool-end for permission requests (auto-approve)', async () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    const serverRequest = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'srv-req-1',
-      method: 'session/request_permission',
-      params: {
-        toolCall: { title: 'Bash', rawInput: { command: 'ls -la' } },
-        options: [{ kind: 'allow_once', optionId: 'opt-1', name: 'Allow once' }],
-      },
+    const permissionResult = await capturedClientHandler!.requestPermission({
+      toolCall: { title: 'Bash', rawInput: { command: 'ls -la' } },
+      options: [{ kind: 'allow_once', optionId: 'opt-1', name: 'Allow once' }],
     });
-    mockReadlineEmitter.emit('line', serverRequest);
 
     const toolStart = received.find((r) => r.includes('gemini:tool-start'));
     const toolEnd = received.find((r) => r.includes('gemini:tool-end'));
@@ -253,12 +263,7 @@ describe('GeminiAdapter', () => {
     expect(parsedStart.toolName).toBe('Bash');
     expect(parsedStart.toolInput).toEqual({ command: 'ls -la' });
 
-    const writes = mockStdinWrite.mock.calls.map(
-      (c) => JSON.parse(c[0]) as Record<string, unknown>,
-    );
-    const response = writes.find((w) => w.id === 'srv-req-1' && w.result !== undefined);
-    expect(response).toBeDefined();
-    const outcome = (response!.result as Record<string, unknown>).outcome as Record<
+    const outcome = (permissionResult as Record<string, unknown>).outcome as Record<
       string,
       unknown
     >;
@@ -289,41 +294,22 @@ describe('GeminiAdapter', () => {
   // ---------------------------------------------------------------------------
 
   it('passes image in sendMessage through to sendPrompt', async () => {
-    setupAutoResponder();
-
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
+    setupAutoResponder();
     proc.onData((chunk) => received.push(chunk));
 
-    // Wait for init+first prompt to finish
+    // Wait for initial turn to complete
     await vi.waitFor(() => {
       expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
     });
 
-    // Replace auto-responder to capture the next prompt request instead of auto-responding
+    // Capture what the next prompt() call receives
     let capturedPromptParams: Record<string, unknown> | null = null;
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as {
-          id?: number;
-          method?: string;
-          params?: Record<string, unknown>;
-        };
-        if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          capturedPromptParams = msg.params ?? null;
-          // Respond to unblock sendMessage
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }),
-            );
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
+    mockConnection.prompt.mockImplementation((params: Record<string, unknown>) => {
+      capturedPromptParams = params;
+      return Promise.resolve({});
     });
 
     const image: ImageContent = { data: 'base64data', mimeType: 'image/png' };
@@ -342,28 +328,17 @@ describe('GeminiAdapter', () => {
 
   it('sends session/cancel notification on interrupt', async () => {
     vi.useFakeTimers();
-    setupAutoResponder();
     const adapter = new GeminiAdapter();
     adapter.spawn('test prompt', opts);
+    setupAutoResponder();
 
-    // Wait for init to complete so sessionId is set
+    // Flush microtasks to complete init chain (initialize → newSession → prompt)
     await vi.advanceTimersByTimeAsync(10);
 
     const interruptPromise = adapter.interrupt();
 
-    // Check that session/cancel was sent (notification — no id)
-    const cancelWrite = mockStdinWrite.mock.calls.find((c) => {
-      try {
-        const msg = JSON.parse(c[0]) as Record<string, unknown>;
-        return msg.method === 'session/cancel';
-      } catch {
-        return false;
-      }
-    });
-    expect(cancelWrite).toBeDefined();
-    const cancelMsg = JSON.parse(cancelWrite![0]) as Record<string, unknown>;
-    expect(cancelMsg.id).toBeUndefined(); // notification, not request
-    expect((cancelMsg.params as Record<string, unknown>).sessionId).toBe('test-session-123');
+    // cancel() is called synchronously before the first await in interrupt()
+    expect(mockConnection.cancel).toHaveBeenCalledWith({ sessionId: 'test-session-123' });
 
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(2000);
@@ -373,80 +348,47 @@ describe('GeminiAdapter', () => {
   });
 
   it('uses session/load when resuming with loadSession capability', async () => {
-    // Auto-respond: initialize returns loadSession: true, session/load succeeds
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({
-                jsonrpc: '2.0',
-                id: msg.id,
-                result: { agentCapabilities: { loadSession: true } },
-              }),
-            );
-          });
-        } else if (msg.method === 'session/load' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: null }),
-            );
-          });
-        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { done: true } }),
-            );
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
+    // initialize() is called synchronously inside resume() — must configure before the call
+    initializeImpl = () => Promise.resolve({ agentCapabilities: { loadSession: true } });
 
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.resume('existing-sess-id', 'continue working', opts);
     proc.onData((chunk) => received.push(chunk));
 
+    // loadSession and prompt are called after awaits — safe to configure here
+    mockConnection.loadSession.mockResolvedValue(null);
+    mockConnection.prompt.mockResolvedValue({ done: true });
+
     await vi.waitFor(() => {
       expect(received.find((r) => r.includes('gemini:turn-complete'))).toBeDefined();
     });
 
-    // Verify session/load was called (not session/new)
-    const writes = mockStdinWrite.mock.calls.map((c) => {
-      try {
-        return JSON.parse(c[0]) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    });
-    expect(writes.find((w) => w?.method === 'session/load')).toBeDefined();
-    expect(writes.find((w) => w?.method === 'session/new')).toBeUndefined();
-
-    // Verify session/load params
-    const loadMsg = writes.find((w) => w?.method === 'session/load')!;
-    const loadParams = loadMsg.params as Record<string, unknown>;
-    expect(loadParams.sessionId).toBe('existing-sess-id');
-    expect(loadParams.cwd).toBe('/tmp');
+    // Verify session/load was used (not session/new)
+    expect(mockConnection.loadSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'existing-sess-id',
+        cwd: '/tmp',
+      }),
+    );
+    expect(mockConnection.newSession).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------
-  // Non-JSON line handling
+  // Non-JSON line handling — unknown sessionUpdate types are silently ignored
   // ---------------------------------------------------------------------------
 
-  it('ignores non-JSON stdout lines', () => {
+  it('ignores non-JSON lines from the agent (unknown sessionUpdate type)', async () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
-    expect(() => mockReadlineEmitter.emit('line', 'Loading... (debug)')).not.toThrow();
+    await expect(
+      capturedClientHandler!.sessionUpdate({
+        update: { sessionUpdate: 'unknown_debug_line' },
+      }),
+    ).resolves.not.toThrow();
     expect(received).toHaveLength(0);
   });
 
@@ -480,46 +422,15 @@ describe('GeminiAdapter', () => {
   // ---------------------------------------------------------------------------
 
   it('emits gemini:turn-error when sendPrompt ACP request fails', async () => {
-    // Auto-respond to init, but send error for prompt
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
-            );
-          });
-        } else if (msg.method === 'session/new' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } }),
-            );
-          });
-        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({
-                jsonrpc: '2.0',
-                id: msg.id,
-                error: { code: -32000, message: 'Context length exceeded' },
-              }),
-            );
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
-
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
+
+    // initialize + newSession succeed, prompt rejects
+    mockConnection.initialize.mockResolvedValue({ agentCapabilities: {} });
+    mockConnection.newSession.mockResolvedValue({ sessionId: 'sess-1' });
+    mockConnection.prompt.mockRejectedValue({ code: -32000, message: 'Context length exceeded' });
 
     await vi.waitFor(() => {
       const turnError = received.find((r) => r.includes('gemini:turn-error'));
@@ -537,27 +448,8 @@ describe('GeminiAdapter', () => {
   });
 
   it('emits gemini:turn-error with "Init failed:" prefix for init errors', async () => {
-    // Respond to initialize with an error
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({
-                jsonrpc: '2.0',
-                id: msg.id,
-                error: { code: -32603, message: 'Internal error' },
-              }),
-            );
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
+    // initialize() is called synchronously inside spawn() — must configure before the call
+    initializeImpl = () => Promise.reject({ code: -32603, message: 'Internal error' });
 
     const adapter = new GeminiAdapter();
     const received: string[] = [];
@@ -582,12 +474,11 @@ describe('GeminiAdapter', () => {
   // ---------------------------------------------------------------------------
 
   it('calls thinkingCallback(true) before prompt and thinkingCallback(false) after', async () => {
-    setupAutoResponder();
-
     const adapter = new GeminiAdapter();
     const thinkingStates: boolean[] = [];
     adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
     adapter.spawn('test prompt', opts);
+    setupAutoResponder();
 
     await vi.waitFor(() => {
       expect(thinkingStates).toContain(true);
@@ -600,11 +491,10 @@ describe('GeminiAdapter', () => {
   // ---------------------------------------------------------------------------
 
   it('supports multi-turn conversation via sendMessage', async () => {
-    setupAutoResponder();
-
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('first prompt', opts);
+    setupAutoResponder();
     proc.onData((chunk) => received.push(chunk));
 
     // Wait for initial turn to complete
@@ -613,7 +503,7 @@ describe('GeminiAdapter', () => {
     });
 
     // Send a second message
-    received.length = 0; // clear
+    received.length = 0;
     await adapter.sendMessage('second message');
 
     // Should have emitted another turn-complete
@@ -625,55 +515,21 @@ describe('GeminiAdapter', () => {
   // ---------------------------------------------------------------------------
 
   it('surfaces 429 as gemini:turn-error without retrying', async () => {
-    let promptAttempt = 0;
-
-    mockStdinWrite.mockImplementation((data: string) => {
-      try {
-        const msg = JSON.parse(data) as { id?: number; method?: string };
-        if (msg.method === 'initialize' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { agentCapabilities: {} } }),
-            );
-          });
-        } else if (msg.method === 'session/new' && msg.id !== undefined) {
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-429' } }),
-            );
-          });
-        } else if (msg.method === 'session/prompt' && msg.id !== undefined) {
-          promptAttempt++;
-          queueMicrotask(() => {
-            mockReadlineEmitter.emit(
-              'line',
-              JSON.stringify({
-                jsonrpc: '2.0',
-                id: msg.id,
-                error: { code: 429, message: 'Rate limit exceeded' },
-              }),
-            );
-          });
-        }
-      } catch {
-        // Not JSON
-      }
-      return true;
-    });
-
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
+
+    mockConnection.initialize.mockResolvedValue({ agentCapabilities: {} });
+    mockConnection.newSession.mockResolvedValue({ sessionId: 'sess-429' });
+    mockConnection.prompt.mockRejectedValue({ code: 429, message: '429 Rate limit exceeded' });
 
     await vi.waitFor(() => {
       expect(received.find((r) => r.includes('gemini:turn-error'))).toBeDefined();
     });
 
     // Should NOT have retried — Gemini ACP duplicates messages on retry
-    expect(promptAttempt).toBe(1);
+    expect(mockConnection.prompt).toHaveBeenCalledTimes(1);
     const error = JSON.parse(received.find((r) => r.includes('gemini:turn-error'))!) as Record<
       string,
       unknown
