@@ -130,8 +130,6 @@ export class SessionProcess {
     cacheReadInputTokens: number;
     cacheCreationInputTokens: number;
   } | null = null;
-  /** UUID of the last assistant JSONL message — used as --resume-session-at for branching. */
-  private lastAssistantUuid: string | undefined;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -313,6 +311,13 @@ export class SessionProcess {
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
 
+    // Wire pre-process context for Claude-specific NDJSON detection
+    // (interactive tool failure check + assistant UUID capture).
+    this.adapter.setPreProcessContext?.(
+      (content, toolIds) => this.approvalHandler.checkForHumanResponseBlocks(content, toolIds),
+      this.activeToolUseIds,
+    );
+
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
     this.adapter.onSessionRef?.((ref) => {
@@ -425,28 +430,9 @@ export class SessionProcess {
       }
 
       try {
-        // Generic interactive tool detection: when Claude's own NDJSON output
-        // contains a type:'user' block with is_error:true tool_results, it means
-        // the CLI tried to handle an interactive tool (AskUserQuestion, ExitPlanMode,
-        // or any future tool) natively but failed in pipe mode. We detect this
-        // from the raw parsed object BEFORE emitting events, so the suppression
-        // check below can immediately catch the resulting agent:tool-end partial.
-        //
-        // This is fully generic — no hardcoded tool name list needed for the
-        // NDJSON path. The is_error flag in Claude's own output is the signal.
-        if (parsed.type === 'user') {
-          const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-          this.approvalHandler.checkForHumanResponseBlocks(
-            msg?.content ?? [],
-            this.activeToolUseIds,
-          );
-        }
-
-        // Capture the UUID from Claude's assistant messages so branching knows
-        // which message to pass to --resume-session-at when the user forks.
-        if (parsed.type === 'assistant' && typeof parsed.uuid === 'string') {
-          this.lastAssistantUuid = parsed.uuid;
-        }
+        // Delegate adapter-specific pre-processing (Claude: interactive tool failure
+        // detection + assistant UUID capture). No-op for Codex/Gemini.
+        this.adapter.preProcessLine?.(parsed);
 
         let partials: AgendoEventPayload[];
         try {
@@ -523,7 +509,7 @@ export class SessionProcess {
           const enrichedPartial = enrichResultPayload(
             partial,
             this.lastPerCallContextStats,
-            this.lastAssistantUuid,
+            this.adapter.lastAssistantUuid,
           );
           const event = await this.emitEvent(enrichedPartial);
           await this.onEmittedEvent(event);
