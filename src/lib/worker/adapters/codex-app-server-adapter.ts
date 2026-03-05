@@ -6,8 +6,12 @@ import type {
   AcpMcpServer,
   ManagedProcess,
   SpawnOpts,
-  PermissionDecision,
 } from '@/lib/worker/adapters/types';
+import {
+  handleCodexCommandApproval,
+  handleCodexFileChangeApproval,
+  handleCodexUserInputRequest,
+} from '@/lib/worker/adapters/codex-approval-handlers';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 import { NdjsonRpcTransport } from '@/lib/worker/adapters/ndjson-rpc-transport';
@@ -534,19 +538,19 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     params: Record<string, unknown>,
   ): Promise<void> {
     if (method === 'item/commandExecution/requestApproval') {
-      const result = await this.handleCommandApproval(params);
+      const result = await handleCodexCommandApproval(params, this.approvalHandler);
       this.transport.respond(id, result);
       return;
     }
 
     if (method === 'item/fileChange/requestApproval') {
-      const decision = await this.handleFileChangeApproval(params);
+      const decision = await handleCodexFileChangeApproval(params, this.approvalHandler);
       this.transport.respond(id, { decision });
       return;
     }
 
     if (method === 'tool/requestUserInput') {
-      const answers = await this.handleUserInputRequest(params);
+      const answers = await handleCodexUserInputRequest(params, this.approvalHandler);
       this.transport.respond(id, { answers });
       return;
     }
@@ -554,151 +558,6 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     // Unknown server request — auto-decline
     log.warn({ method }, 'Unknown server request method');
     this.transport.respond(id, { decision: 'decline' });
-  }
-
-  private async handleCommandApproval(
-    params: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    if (!this.approvalHandler) return { decision: 'accept' };
-
-    const command =
-      (params.command as string | null) ??
-      (params.commandActions as Array<{ action?: string }> | null)?.[0]?.action ??
-      'unknown';
-    const approvalId =
-      (params.approvalId as string | null) ?? (params.itemId as string) ?? String(Date.now());
-    const proposedAmendment = params.proposedExecpolicyAmendment as string[] | null;
-
-    let decision: PermissionDecision;
-    try {
-      decision = await this.approvalHandler({
-        approvalId,
-        toolName: 'Bash',
-        toolInput: {
-          command,
-          cwd: params.cwd as string,
-          reason: params.reason as string | null,
-          proposedExecpolicyAmendment: proposedAmendment,
-        },
-      });
-    } catch {
-      return { decision: 'decline' };
-    }
-
-    // acceptWithExecpolicyAmendment: remember the rule for this command pattern
-    if (
-      typeof decision === 'object' &&
-      'behavior' in decision &&
-      decision.behavior === 'allow' &&
-      'rememberForSession' in decision &&
-      decision.rememberForSession
-    ) {
-      const amendment = proposedAmendment ?? [command];
-      return {
-        decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } },
-      };
-    }
-
-    return { decision: mapDecisionToCodex(decision) };
-  }
-
-  private async handleFileChangeApproval(params: Record<string, unknown>): Promise<string> {
-    if (!this.approvalHandler) return 'accept';
-
-    const approvalId = (params.itemId as string) ?? String(Date.now());
-
-    let decision: PermissionDecision;
-    try {
-      decision = await this.approvalHandler({
-        approvalId,
-        toolName: 'FileChange',
-        toolInput: {
-          reason: params.reason as string | null,
-          grantRoot: params.grantRoot as string | null,
-        },
-      });
-    } catch {
-      return 'decline';
-    }
-
-    return mapDecisionToCodex(decision);
-  }
-
-  /**
-   * Handle `tool/requestUserInput` — the Codex equivalent of AskUserQuestion.
-   *
-   * Strategy: reuse the existing agent:tool-approval / AskUserQuestion path so
-   * the frontend renders the interactive question card via interactive-tools.tsx,
-   * and the answer arrives via the `answer-question` control message.
-   *
-   * Returns the Codex-format response: `{ "<questionId>": { answers: [text] } }`.
-   */
-  private async handleUserInputRequest(
-    params: Record<string, unknown>,
-  ): Promise<Record<string, { answers: string[] }>> {
-    type CodexQuestion = {
-      id: string;
-      header: string;
-      question: string;
-      options: Array<{ id: string; label: string; description?: string }> | null;
-    };
-
-    const rawQuestions = (params.questions as CodexQuestion[] | null) ?? [];
-    const requestId = (params.itemId as string | null) ?? `codex-ask-${Date.now()}`;
-
-    if (!this.approvalHandler || rawQuestions.length === 0) {
-      // No approval handler or no questions — return empty (Codex will continue)
-      return {};
-    }
-
-    // Map Codex question format → AskUserQuestion frontend format.
-    // Store the original question IDs indexed by position so we can map answers back.
-    const questionIds = rawQuestions.map((q) => q.id);
-    const mappedQuestions = rawQuestions.map((q) => ({
-      question: q.question,
-      header: q.header,
-      options: (q.options ?? []).map((o) => ({
-        label: o.label,
-        description: o.description ?? '',
-      })),
-      multiSelect: false,
-    }));
-
-    let decision: PermissionDecision;
-    try {
-      decision = await this.approvalHandler({
-        approvalId: requestId,
-        toolName: 'AskUserQuestion',
-        toolInput: { questions: mappedQuestions },
-      });
-    } catch {
-      return {};
-    }
-
-    // Extract answers from the resolved decision.
-    // session-process.ts resolves with { behavior:'allow', updatedInput:{ answers: Record<string,string> } }
-    // where answers is keyed by question index ("0", "1", ...) with selected label values.
-    if (
-      typeof decision !== 'object' ||
-      !('behavior' in decision) ||
-      decision.behavior !== 'allow'
-    ) {
-      return {};
-    }
-
-    const rawAnswers = (decision.updatedInput as Record<string, unknown> | undefined)?.answers as
-      | Record<string, string>
-      | undefined;
-
-    if (!rawAnswers) return {};
-
-    // Build Codex response: { "<questionId>": { answers: ["<text>"] } }
-    const answers: Record<string, { answers: string[] }> = {};
-    for (const [idx, text] of Object.entries(rawAnswers)) {
-      const questionId = questionIds[Number(idx)] ?? idx;
-      answers[questionId] = { answers: [text] };
-    }
-    return answers;
   }
 
   // -------------------------------------------------------------------------
@@ -889,18 +748,4 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       onExit: (cb) => this.exitCallbacks.push(cb),
     };
   }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: map PermissionDecision → Codex approval decision string
-// ---------------------------------------------------------------------------
-
-function mapDecisionToCodex(decision: PermissionDecision): string {
-  if (decision === 'allow' || (typeof decision === 'object' && decision.behavior === 'allow')) {
-    return 'accept';
-  }
-  if (decision === 'allow-session') {
-    return 'acceptForSession';
-  }
-  return 'decline';
 }
