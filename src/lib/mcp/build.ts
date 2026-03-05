@@ -9,7 +9,7 @@ async function main() {
     bundle: true,
     platform: 'node',
     target: 'node20',
-    format: 'esm',
+    format: 'cjs',
     outfile: 'dist/mcp-server.js',
     banner: { js: '#!/usr/bin/env node\n' },
     sourcemap: true,
