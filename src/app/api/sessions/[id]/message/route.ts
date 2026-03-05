@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
 import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { enqueueSession } from '@/lib/worker/queue';
@@ -13,6 +13,7 @@ import type { AgendoControl } from '@/lib/realtime/events';
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
     const { message, image } = (await req.json()) as {
       message: string;
       image?: { mimeType: string; data: string };

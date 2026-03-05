@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { plans, sessions } from '@/lib/db/schema';
@@ -7,6 +6,8 @@ import { createSession } from '@/lib/services/session-service';
 import { getAgentById } from '@/lib/services/agent-service';
 import { createTask } from '@/lib/services/task-service';
 import { enqueueSession } from '@/lib/worker/queue';
+import { getBinaryName } from '@/lib/worker/agent-utils';
+import { getGitHead } from '@/lib/utils/git';
 import type { Plan, PlanStatus, PlanMetadata } from '@/lib/types';
 
 export interface CreatePlanInput {
@@ -256,7 +257,7 @@ export async function startPlanConversation(
 ): Promise<{ sessionId: string }> {
   const [plan, agent] = await Promise.all([getPlan(planId), getAgentById(opts.agentId)]);
 
-  const binaryName = agent.binaryPath.split('/').pop()?.toLowerCase() ?? '';
+  const binaryName = getBinaryName(agent);
 
   // PROMPT CHANGELOG
   // v1 (original): Thin prompt — described PLAN_EDIT syntax and one-liner MCP hint.
@@ -373,15 +374,6 @@ ${PLAN_CONTEXT}`;
  * the current codebase. Records the git HEAD hash and validation timestamp.
  * Uses execFileSync with a hardcoded argument array — no shell injection risk.
  */
-/** Returns the current git HEAD hash, or undefined if git is unavailable. */
-function getGitHead(): string | undefined {
-  try {
-    // Hardcoded args array — no shell interpolation, no injection risk.
-    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * Save or update a plan from an MCP tool call.
