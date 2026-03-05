@@ -34,6 +34,30 @@ export interface ClaudeEventMapperCallbacks {
   }): void;
 }
 
+/**
+ * Build the event sequence for a compaction boundary.
+ * For auto-compact, a compact-start indicator is prepended because the session-process
+ * layer has no advance signal — compact_boundary only fires when compaction is done.
+ * For manual compact, the start indicator is already emitted by session-process.ts
+ * when /compact is pushed, so we only emit the completion info here.
+ */
+function buildCompactEvents(trigger: 'auto' | 'manual', preTokens?: number): AgendoEventPayload[] {
+  const events: AgendoEventPayload[] = [];
+  if (trigger === 'auto') {
+    events.push({ type: 'system:compact-start', trigger: 'auto' });
+  }
+  const message =
+    preTokens != null
+      ? `Conversation compacted (${trigger}, ${preTokens.toLocaleString()} tokens)`
+      : 'Conversation history compacted';
+  events.push({
+    type: 'system:info',
+    message,
+    ...(preTokens != null ? { compactMeta: { trigger, preTokens } } : {}),
+  });
+  return events;
+}
+
 export function mapClaudeJsonToEvents(
   parsed: Record<string, unknown>,
   callbacks: ClaudeEventMapperCallbacks,
@@ -215,18 +239,12 @@ export function mapClaudeJsonToEvents(
       | undefined;
     const trigger = compactMeta?.trigger === 'manual' ? ('manual' as const) : ('auto' as const);
     const preTokens = typeof compactMeta?.pre_tokens === 'number' ? compactMeta.pre_tokens : 0;
-    return [
-      {
-        type: 'system:info',
-        message: `Conversation compacted (${trigger}, ${preTokens.toLocaleString()} tokens)`,
-        compactMeta: { trigger, preTokens },
-      },
-    ];
+    return buildCompactEvents(trigger, preTokens);
   }
 
   // Claude emits a 'compact' message when it compacts the conversation history (legacy).
   if (type === 'compact') {
-    return [{ type: 'system:info', message: 'Conversation history compacted' }];
+    return buildCompactEvents('auto');
   }
 
   // rate_limit_event — account rate limit status from Claude Code

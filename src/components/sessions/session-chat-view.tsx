@@ -492,6 +492,17 @@ const ToolGroup = memo(function ToolGroup({
 // Bubble components
 // ---------------------------------------------------------------------------
 
+function CompactLoadingPill({ trigger }: { trigger: 'auto' | 'manual' }) {
+  return (
+    <div className="flex justify-center my-2">
+      <span className="text-[11px] text-muted-foreground/60 bg-white/[0.03] border border-white/[0.06] px-3 py-0.5 rounded-full flex items-center gap-1.5 tracking-wide">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+        {trigger === 'manual' ? 'Compacting context…' : 'Auto-compacting context…'}
+      </span>
+    </div>
+  );
+}
+
 function InfoPill({ text }: { text: string }) {
   // Guard: raw JSON leaking into system:info (e.g. from a transient emit error)
   // must not flood the chat. Truncate JSON blobs to a safe preview length.
@@ -1224,6 +1235,8 @@ export function SessionChatView({
         );
       case 'info':
         return <InfoPill key={k} text={item.text} />;
+      case 'compact-loading':
+        return <CompactLoadingPill key={k} trigger={item.trigger} />;
       case 'error':
         return <ErrorPill key={k} text={item.text} />;
       case 'tool-approval': {

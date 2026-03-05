@@ -832,7 +832,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private async triggerCompaction(): Promise<void> {
     if (this.compacting || !this.threadId) return;
     this.compacting = true;
-    this.emitSynthetic({ type: 'as:info', message: 'Context window at 80% — compacting…' });
+    this.emitSynthetic({ type: 'as:compact-start' });
     await this.rpcCall('thread/compact/start', { threadId: this.threadId }, 30000);
   }
 
