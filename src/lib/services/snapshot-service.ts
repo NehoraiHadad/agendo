@@ -2,8 +2,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { contextSnapshots } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { createSession } from '@/lib/services/session-service';
-import { enqueueSession } from '@/lib/worker/queue';
+import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import type { ContextSnapshot, SnapshotFindings } from '@/lib/types';
 
 export interface CreateSnapshotInput {
@@ -130,7 +129,7 @@ export async function resumeFromSnapshot(
 
   const initialPrompt = promptParts.join('\n');
 
-  const session = await createSession({
+  const session = await createAndEnqueueSession({
     projectId: snapshot.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
@@ -144,8 +143,6 @@ export async function resumeFromSnapshot(
       | 'dontAsk'
       | undefined,
   });
-
-  await enqueueSession({ sessionId: session.id });
 
   return { sessionId: session.id };
 }
