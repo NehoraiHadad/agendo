@@ -861,6 +861,27 @@ export class SessionProcess {
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
 
+    this.cleanupResources();
+
+    // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
+    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
+
+    await this.determineExitStatus(exitCode, wasInterruptedMidTurn);
+    this.handleReEnqueue(wasInterruptedMidTurn);
+
+    if (this.logWriter) {
+      await this.logWriter.close();
+      this.logWriter = null;
+    }
+
+    this.exitFuture.resolve(exitCode);
+  }
+
+  /**
+   * Release all resources held by the session: stop timers, drain approvals,
+   * stop team monitoring, clean up temp files, and unsubscribe from PG NOTIFY.
+   */
+  private cleanupResources(): void {
     this.activityTracker.stopAllTimers();
     // Clear any pending SIGKILL escalation timers — the process has already exited.
     for (const t of this.sigkillTimers) {
@@ -884,10 +905,16 @@ export class SessionProcess {
     // Null it out immediately to prevent any subsequent re-entry from releasing twice.
     this.unsubscribeControl?.();
     this.unsubscribeControl = null;
+  }
 
-    // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
-    const wasInterruptedMidTurn = this.terminateKilled && this.status === 'active';
-
+  /**
+   * Map exit code and session flags to the final session status, emit
+   * interruption notes, and persist endedAt when appropriate.
+   */
+  private async determineExitStatus(
+    exitCode: number | null,
+    wasInterruptedMidTurn: boolean,
+  ): Promise<void> {
     // When a session is interrupted mid-turn by a worker restart (terminateKilled && active),
     // record an interruption note in the task event log. On the next cold resume, the
     // [Previous Work Summary] preamble will include this note, so the agent knows it was
@@ -951,7 +978,13 @@ export class SessionProcess {
         .set({ endedAt: new Date() })
         .where(eq(sessions.id, this.session.id));
     }
+  }
 
+  /**
+   * Re-enqueue the session if a mode change, clear-context restart, or
+   * mid-turn interruption requires an automatic cold resume.
+   */
+  private handleReEnqueue(wasInterruptedMidTurn: boolean): void {
     // Mode-change restart: re-enqueue immediately so the session cold-resumes
     // with the updated permissionMode (already written to DB by the PATCH endpoint).
     // The session status is now 'idle', so the next session-runner job can claim it.
@@ -1006,13 +1039,6 @@ export class SessionProcess {
         'Session auto-resumed after mid-turn worker restart',
       );
     }
-
-    if (this.logWriter) {
-      await this.logWriter.close();
-      this.logWriter = null;
-    }
-
-    this.exitFuture.resolve(exitCode);
   }
 
   // ---------------------------------------------------------------------------
