@@ -56,6 +56,7 @@ import {
   cleanupResources,
   determineExitStatus,
 } from '@/lib/worker/session-exit-logic';
+import { SessionDataPipeline } from '@/lib/worker/session-data-pipeline';
 
 /**
  * Derive a log file path for a session.
@@ -66,27 +67,6 @@ function resolveSessionLogPath(sessionId: string): string {
   const yyyy = now.getFullYear().toString();
   const mm = (now.getMonth() + 1).toString().padStart(2, '0');
   return join(config.LOG_DIR, 'sessions', yyyy, mm, `${sessionId}.log`);
-}
-
-/**
- * Enrich an agent:result payload with per-call context stats and the
- * assistant message UUID (used for conversation branching). Pure function.
- */
-function enrichResultPayload(
-  partial: AgendoEventPayload,
-  perCallContextStats: {
-    inputTokens: number;
-    cacheReadInputTokens: number;
-    cacheCreationInputTokens: number;
-  } | null,
-  lastAssistantUuid: string | undefined,
-): AgendoEventPayload {
-  if (partial.type !== 'agent:result') return partial;
-  return {
-    ...partial,
-    ...(perCallContextStats ? { perCallContextStats } : {}),
-    ...(lastAssistantUuid ? { messageUuid: lastAssistantUuid } : {}),
-  };
 }
 
 /**
@@ -116,19 +96,8 @@ export class SessionProcess {
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
-  private dataBuffer = '';
-  /**
-   * Per-call context stats from the most recent `message_start` stream event.
-   * Injected into the next `agent:result` payload so context-stats.ts can show
-   * accurate context usage instead of the aggregated (and often overflowed) modelUsage.
-   */
-  /** Context window size (tokens) from the most recent agent:result — used to emit real-time agent:usage. */
-  private lastContextWindow: number | null = null;
-  private lastPerCallContextStats: {
-    inputTokens: number;
-    cacheReadInputTokens: number;
-    cacheCreationInputTokens: number;
-  } | null = null;
+  /** Handles NDJSON line buffering, parsing, event mapping, suppression, and enrichment. */
+  private dataPipeline!: SessionDataPipeline;
   private exitFuture = new Future<number | null>();
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
@@ -253,6 +222,47 @@ export class SessionProcess {
     const logPath = resolveSessionLogPath(this.session.id);
     this.logWriter = new FileLogWriter(logPath);
     this.logWriter.open();
+
+    this.dataPipeline = new SessionDataPipeline({
+      sessionId: this.session.id,
+      logWriter: this.logWriter,
+      adapter: this.adapter,
+      approvalHandler: this.approvalHandler,
+      activityTracker: this.activityTracker,
+      activeToolUseIds: this.activeToolUseIds,
+      emitEvent: (payload) => this.emitEvent(payload),
+      onEmittedEvent: (event) => this.onEmittedEvent(event),
+      mapClaudeJson: (parsed, callbacks) =>
+        mapClaudeJsonToEvents(parsed, {
+          ...callbacks,
+          onMessageStart: (stats) => {
+            callbacks.onMessageStart?.(stats);
+            // Emit real-time context bar update so the workspace header
+            // updates mid-turn, not just after agent:result fires.
+            if (this.dataPipeline.lastContextWindow) {
+              const used =
+                stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
+              void this.emitEvent({
+                type: 'agent:usage',
+                used,
+                size: this.dataPipeline.lastContextWindow,
+              });
+            }
+          },
+          onResultStats: (costUsd, turns) => {
+            void db
+              .update(sessions)
+              .set({
+                ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
+                ...(turns !== null && { totalTurns: turns }),
+              })
+              .where(eq(sessions.id, this.session.id))
+              .catch((err: unknown) => {
+                log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
+              });
+          },
+        }),
+    });
 
     // Persist the log file path so the frontend can fetch it later.
     await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
@@ -383,128 +393,7 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   private async onData(chunk: string): Promise<void> {
-    // Write raw chunk to the session log file under the 'stdout' stream prefix.
-    this.logWriter?.write(chunk, 'stdout');
-
-    // Buffer partial lines: NDJSON lines from large tool results can span multiple
-    // data chunks. Splitting only on '\n' without buffering would emit the tail of
-    // a split line as agent:text, showing raw JSON fragments in the UI.
-    const combined = this.dataBuffer + chunk;
-    const lines = combined.split('\n');
-    this.dataBuffer = lines.pop() ?? ''; // last element is incomplete (no trailing \n yet)
-
-    // Parse each NDJSON line and map to a structured AgendoEvent.
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!trimmed.startsWith('{')) {
-        await this.emitEvent({ type: 'agent:text', text: trimmed });
-        continue;
-      }
-
-      // Separate try-catch for JSON parsing vs event emission so that a
-      // transient emit failure (DB error, etc.) never causes raw JSON to leak
-      // into the chat as a system:info message.
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        // Line is not JSON — treat as plain text info (shell output, etc.)
-        await this.emitEvent({ type: 'system:info', message: trimmed });
-        continue;
-      }
-
-      try {
-        // Delegate adapter-specific pre-processing (Claude: interactive tool failure
-        // detection + assistant UUID capture). No-op for Codex/Gemini.
-        this.adapter.preProcessLine?.(parsed);
-
-        let partials: AgendoEventPayload[];
-        try {
-          partials = this.adapter.mapJsonToEvents
-            ? this.adapter.mapJsonToEvents(parsed)
-            : mapClaudeJsonToEvents(parsed, {
-                clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
-                appendDelta: (text) => this.activityTracker.appendDelta(text),
-                appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
-                onMessageStart: (stats) => {
-                  this.lastPerCallContextStats = stats;
-                  // Emit real-time context bar update so the workspace header
-                  // well updates mid-turn, not just after agent:result fires.
-                  if (this.lastContextWindow) {
-                    const used =
-                      stats.inputTokens +
-                      stats.cacheReadInputTokens +
-                      stats.cacheCreationInputTokens;
-                    void this.emitEvent({
-                      type: 'agent:usage',
-                      used,
-                      size: this.lastContextWindow,
-                    });
-                  }
-                },
-                onResultStats: (costUsd, turns) => {
-                  void db
-                    .update(sessions)
-                    .set({
-                      ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-                      ...(turns !== null && { totalTurns: turns }),
-                    })
-                    .where(eq(sessions.id, this.session.id))
-                    .catch((err: unknown) => {
-                      log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
-                    });
-                },
-              });
-        } catch (mapErr) {
-          log.warn(
-            { err: mapErr, sessionId: this.session.id, line: trimmed.slice(0, 200) },
-            'mapJsonToEvents error',
-          );
-          continue;
-        }
-
-        for (const partial of partials) {
-          // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
-          // These appear only as control_request approval cards — not as ToolCard widgets.
-          if (
-            partial.type === 'agent:tool-start' &&
-            ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
-          ) {
-            this.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
-            this.approvalHandler.suppressToolStart(partial.toolUseId);
-            continue;
-          }
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isSuppressedToolEnd(partial.toolUseId, this.activeToolUseIds)
-          ) {
-            continue;
-          }
-
-          // Suppress the error tool-end for any interactive tool: the UI card
-          // stays live and pushToolResult routes the human's answer when it arrives.
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.approvalHandler.isPendingHumanResponse(partial.toolUseId)
-          ) {
-            continue; // suppress — keep in activeToolUseIds until human responds
-          }
-
-          const enrichedPartial = enrichResultPayload(
-            partial,
-            this.lastPerCallContextStats,
-            this.adapter.lastAssistantUuid,
-          );
-          const event = await this.emitEvent(enrichedPartial);
-          await this.onEmittedEvent(event);
-        }
-      } catch (err) {
-        // Event emission failed (transient DB/publish error). Log but don't
-        // surface raw JSON to the user — it would appear as a broken UI element.
-        log.error({ err, sessionId: this.session.id }, 'Failed to emit event');
-      }
-    }
+    await this.dataPipeline.processChunk(chunk);
   }
 
   // ---------------------------------------------------------------------------
@@ -555,7 +444,7 @@ export class SessionProcess {
     if (event.type === 'agent:result' && event.modelUsage) {
       for (const usage of Object.values(event.modelUsage)) {
         if (usage.contextWindow) {
-          this.lastContextWindow = usage.contextWindow;
+          this.dataPipeline.lastContextWindow = usage.contextWindow;
           break;
         }
       }
@@ -711,9 +600,11 @@ export class SessionProcess {
     // Gemini's ACP adapter may not emit a trailing newline after the last text chunk,
     // leaving partial text stuck in the buffer. Without this flush, the user would
     // never see the final text fragment.
-    if (status === 'awaiting_input' && this.dataBuffer.trim()) {
-      await this.emitEvent({ type: 'agent:text', text: this.dataBuffer.trim() });
-      this.dataBuffer = '';
+    if (status === 'awaiting_input') {
+      const remaining = this.dataPipeline.flushBuffer();
+      if (remaining.trim()) {
+        await this.emitEvent({ type: 'agent:text', text: remaining.trim() });
+      }
     }
 
     await db
