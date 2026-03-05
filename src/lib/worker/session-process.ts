@@ -6,7 +6,7 @@ import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-process');
 import { sessions } from '@/lib/db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
 import { serializeEvent } from '@/lib/realtime/events';
@@ -33,6 +33,7 @@ import {
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { buildChildEnv } from '@/lib/worker/session-env';
 import { buildSpawnOpts } from '@/lib/worker/spawn-opts-builder';
+import { claimSession } from '@/lib/worker/session-claim';
 import type {
   AgentAdapter,
   ManagedProcess,
@@ -233,8 +234,17 @@ export class SessionProcess {
     resumeSessionAt?: string,
     developerInstructions?: string,
   ): Promise<void> {
-    const claimed = await this.claimSession();
-    if (!claimed) return;
+    const claimed = await claimSession(this.session.id, this.workerId);
+    if (!claimed) {
+      this.slotReleaseFuture.resolve();
+      this.exitFuture.resolve(null);
+      return;
+    }
+
+    // Continue seq from wherever the previous session run left off so that
+    // event IDs remain monotonically increasing across resumes and the SSE
+    // client never sees duplicate IDs.
+    this.eventSeq = claimed.eventSeq;
 
     const logPath = resolveSessionLogPath(this.session.id);
     this.logWriter = new FileLogWriter(logPath);
@@ -355,44 +365,6 @@ export class SessionProcess {
     // Attach team monitor immediately if a team exists on disk (cold-resume),
     // or wait for TeamCreate tool event (event-driven path).
     this.teamManager.start();
-  }
-
-  /**
-   * Atomically claim the session row to prevent double-execution on pg-boss retry.
-   * Returns true if the claim succeeded, false if the session was already claimed.
-   */
-  private async claimSession(): Promise<boolean> {
-    // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
-    // reconciler always resets orphaned 'active' sessions back to 'idle' before
-    // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
-    // 'active' here caused a double-claim race: the retried old job and the
-    // reconciler's new job both claimed the same session concurrently.
-    const [claimed] = await db
-      .update(sessions)
-      .set({
-        status: 'active',
-        workerId: this.workerId,
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-      })
-      .where(and(eq(sessions.id, this.session.id), inArray(sessions.status, ['idle', 'ended'])))
-      .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
-
-    if (!claimed) {
-      log.info({ sessionId: this.session.id }, 'Session already claimed — skipping');
-      // Resolve futures so callers don't hang indefinitely.
-      this.slotReleaseFuture.resolve();
-      this.exitFuture.resolve(null);
-      return false;
-    }
-
-    log.info({ sessionId: this.session.id, workerId: this.workerId }, 'Session claimed');
-
-    // Continue seq from wherever the previous session run left off so that
-    // event IDs remain monotonically increasing across resumes and the SSE
-    // client never sees duplicate IDs.
-    this.eventSeq = claimed.eventSeq;
-    return true;
   }
 
   // ---------------------------------------------------------------------------
