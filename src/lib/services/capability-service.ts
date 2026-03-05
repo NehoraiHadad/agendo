@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { db } from '@/lib/db';
 import { agentCapabilities, agents } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { ValidationError, TimeoutError } from '@/lib/errors';
+import { ValidationError, TimeoutError, BadRequestError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { AgentCapability } from '@/lib/types';
 
@@ -129,5 +129,18 @@ export async function testCapability(id: string): Promise<{ success: boolean; ou
     throw new ValidationError(`Binary test failed: ${agent.binaryPath}`, {
       error: err instanceof Error ? err.message : 'Unknown error',
     });
+  }
+}
+
+export async function assertPromptModeCapability(capabilityId: string): Promise<void> {
+  const [cap] = await db
+    .select({ interactionMode: agentCapabilities.interactionMode })
+    .from(agentCapabilities)
+    .where(eq(agentCapabilities.id, capabilityId))
+    .limit(1);
+
+  if (!cap) throw new BadRequestError('Capability not found');
+  if (cap.interactionMode !== 'prompt') {
+    throw new BadRequestError('Only prompt-mode capabilities can be used for sessions.');
   }
 }

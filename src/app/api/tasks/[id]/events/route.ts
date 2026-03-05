@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { listTaskEvents, createTaskEvent } from '@/lib/services/task-event-service';
 
 export const GET = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Task');
     const events = await listTaskEvents(id);
     return NextResponse.json({ data: events });
   },
@@ -24,6 +25,7 @@ const ALLOWED_EVENT_TYPES = ['agent_note', 'status_change', 'comment'] as const;
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Task');
     const body = await req.json() as { eventType?: unknown; payload?: unknown };
 
     if (

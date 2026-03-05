@@ -6,18 +6,31 @@
  * session-process.ts focused on lifecycle orchestration.
  */
 
+import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-control');
-import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
+import type {
+  AgendoEvent,
+  AgendoEventPayload,
+  AgendoControl,
+  SessionStatus,
+} from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
-import type { AgentAdapter, ManagedProcess } from '@/lib/worker/adapters/types';
+import type {
+  AgentAdapter,
+  ImageContent,
+  ManagedProcess,
+  PermissionDecision,
+} from '@/lib/worker/adapters/types';
 import type { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
+import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
+import { enqueueSession } from '@/lib/worker/queue';
 
 /** Human-readable labels for permission modes. */
 export const MODE_LABELS: Record<string, string> = {
@@ -42,6 +55,11 @@ export interface SessionControlCtx {
   setTerminateKilled(v: boolean): void;
   setModeChangeRestart(v: boolean): void;
   setInterruptInProgress(v: boolean): void;
+  setClearContextRestart(v: boolean): void;
+  setClearContextRestartNewSessionId(id: string | null): void;
+  pushMessage(text: string, image?: ImageContent): Promise<void>;
+  /** Build a fresh SessionControlCtx — needed when scheduling a delayed handleSetPermissionMode. */
+  makeCtrl(): SessionControlCtx;
 }
 
 /**
@@ -188,5 +206,203 @@ export async function handleSetModel(model: string, ctx: SessionControlCtx): Pro
       type: 'system:error',
       message: `Failed to switch model: ${err instanceof Error ? err.message : String(err)}`,
     });
+  }
+}
+
+/**
+ * Handle a message control: read optional image attachment and push the
+ * message to the running agent.
+ */
+export async function handleMessage(
+  control: Extract<AgendoControl, { type: 'message' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  let image: ImageContent | undefined;
+  if (control.imageRef) {
+    try {
+      const data = readFileSync(control.imageRef.path).toString('base64');
+      image = { mimeType: control.imageRef.mimeType, data };
+      // Clean up the temp file (best-effort)
+      try {
+        unlinkSync(control.imageRef.path);
+      } catch {
+        /* ignore */
+      }
+    } catch (err) {
+      log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
+    }
+  }
+  await ctx.pushMessage(control.text, image);
+}
+
+/**
+ * Handle a tool-approval control: resolve the pending approval promise,
+ * apply ExitPlanMode side-effects (clear-context restart, post-approval
+ * mode change, post-approval compact), and persist session-scoped
+ * tool allowlists.
+ */
+export async function handleToolApproval(
+  control: Extract<AgendoControl, { type: 'tool-approval' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  const resolver = ctx.approvalHandler.takeResolver(control.approvalId);
+  if (!resolver) return;
+
+  // -------------------------------------------------------------------
+  // ExitPlanMode Option 1: clear context + restart fresh
+  // Identical to the CLI TUI behavior: deny the tool, read plan
+  // content, kill process, restart with plan as initialPrompt.
+  // -------------------------------------------------------------------
+  if (control.clearContextRestart) {
+    resolver('deny');
+
+    // The API route already created the new child session and passed its
+    // ID here via newSessionIdForWorker. Store it so onExit can enqueue it.
+    const newMode = control.postApprovalMode ?? 'acceptEdits';
+    ctx.setClearContextRestartNewSessionId(control.newSessionIdForWorker ?? null);
+
+    await ctx.emitEvent({
+      type: 'system:info',
+      message: `Plan approved — restarting fresh with ${newMode === 'acceptEdits' ? 'auto-accept edits' : 'manual approval'} mode.`,
+    });
+
+    // Kill process → onExit will enqueue the new child session.
+    ctx.setClearContextRestart(true);
+    ctx.setTerminateKilled(true);
+    ctx.approvalHandler.drain('deny');
+    ctx.managedProcess?.kill('SIGTERM');
+    const t = setTimeout(() => {
+      ctx.managedProcess?.kill('SIGKILL');
+    }, SIGKILL_DELAY_MS);
+    ctx.sigkillTimers.push(t);
+    return;
+  }
+
+  // If the user edited the tool input before approving, or requested session-scoped
+  // command memory (Codex), pass through as a structured PermissionDecision.
+  const decision: PermissionDecision =
+    control.decision === 'allow' && (control.updatedInput || control.rememberForSession)
+      ? {
+          behavior: 'allow',
+          ...(control.updatedInput ? { updatedInput: control.updatedInput } : {}),
+          ...(control.rememberForSession ? { rememberForSession: true } : {}),
+        }
+      : control.decision;
+  resolver(decision);
+
+  if (control.decision === 'allow-session') {
+    await ctx.approvalHandler.persistAllowedTool(control.toolName);
+  }
+
+  // ExitPlanMode side-effects: apply AFTER resolving the approval so the
+  // control_response reaches Claude first (otherwise set_permission_mode
+  // control_request times out while Claude waits for the tool response).
+  if (control.decision === 'allow') {
+    // Auto-save plan to plans table when ExitPlanMode is approved
+    const isExitPlanMode =
+      control.toolName === 'ExitPlanMode' || control.toolName === 'exit_plan_mode';
+    if (isExitPlanMode) {
+      savePlanFromSession(ctx.session).catch((err: unknown) => {
+        log.warn({ err }, 'Failed to auto-save plan');
+      });
+    }
+
+    if (control.postApprovalMode) {
+      // Small delay to let the allow response reach Claude before sending
+      // the set_permission_mode control_request on the same stdin pipe.
+      setTimeout(() => {
+        handleSetPermissionMode(
+          control.postApprovalMode as 'default' | 'acceptEdits' | 'bypassPermissions',
+          ctx.makeCtrl(),
+        ).catch((err: unknown) => {
+          log.warn({ err }, 'post-approval mode change failed');
+        });
+      }, 500);
+    }
+    if (control.postApprovalCompact) {
+      // Compact after a delay to let both the allow response and mode change settle.
+      setTimeout(
+        () => {
+          ctx.pushMessage('/compact').catch((err: unknown) => {
+            log.warn({ err }, 'post-approval compact failed');
+          });
+        },
+        control.postApprovalMode ? 2000 : 500,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Post-exit re-enqueue logic
+// ---------------------------------------------------------------------------
+
+export interface ReEnqueueContext {
+  sessionId: string;
+  /** Current session ref (runtime, may differ from DB). */
+  sessionRef: string | null;
+  /** Persisted session ref from DB (fallback). */
+  dbSessionRef: string | null;
+  modeChangeRestart: boolean;
+  clearContextRestart: boolean;
+  clearContextRestartNewSessionId: string | null;
+  cancelKilled: boolean;
+}
+
+/**
+ * Determine whether and how to re-enqueue a session after exit.
+ * Fire-and-forget: logs errors but does not throw.
+ */
+export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: boolean): void {
+  // Mode-change restart: re-enqueue immediately so the session cold-resumes
+  // with the updated permissionMode (already written to DB by the PATCH endpoint).
+  // The session status is now 'idle', so the next session-runner job can claim it.
+  if (ctx.modeChangeRestart && ctx.sessionRef) {
+    enqueueSession({ sessionId: ctx.sessionId, resumeRef: ctx.sessionRef }).catch(
+      (err: unknown) => {
+        log.error(
+          { err, sessionId: ctx.sessionId },
+          'Failed to re-enqueue session after mode change',
+        );
+      },
+    );
+  }
+
+  // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
+  // session that was created by the API route (Direction B — new session record).
+  if (ctx.clearContextRestart) {
+    const targetSessionId = ctx.clearContextRestartNewSessionId ?? ctx.sessionId;
+    enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
+      log.error(
+        { err, sessionId: targetSessionId },
+        'Failed to enqueue new session after clear-context restart',
+      );
+    });
+  }
+
+  // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
+  // Only fires when the session was genuinely mid-work (active, not awaiting_input),
+  // has a resumable sessionRef, and no other re-enqueue path is already running.
+  // resumePrompt is explicitly set so the agent gets a sensible continuation
+  // message instead of the original initialPrompt (first message of the session).
+  const resumeRef = ctx.sessionRef ?? ctx.dbSessionRef ?? null;
+  if (
+    wasInterruptedMidTurn &&
+    resumeRef &&
+    !ctx.cancelKilled &&
+    !ctx.clearContextRestart &&
+    !ctx.modeChangeRestart
+  ) {
+    enqueueSession({
+      sessionId: ctx.sessionId,
+      resumeRef,
+      resumePrompt: 'The worker restarted. Please continue where you left off.',
+    }).catch((err: unknown) => {
+      log.error(
+        { err, sessionId: ctx.sessionId },
+        'Failed to re-enqueue session after mid-turn interruption',
+      );
+    });
+    log.info({ sessionId: ctx.sessionId }, 'Session auto-resumed after mid-turn worker restart');
   }
 }

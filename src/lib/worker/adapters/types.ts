@@ -120,4 +120,31 @@ export interface AgentAdapter {
   mapJsonToEvents?(
     parsed: Record<string, unknown>,
   ): import('@/lib/realtime/events').AgendoEventPayload[];
+  /** Pre-process a parsed NDJSON line before event mapping. Adapter-specific
+   *  detection (e.g. Claude's interactive tool failure check, UUID capture)
+   *  that shouldn't run for other adapters. */
+  preProcessLine?(parsed: Record<string, unknown>): void;
+  /** Wire context needed for preProcessLine (interactive tool failure detection).
+   *  Only implemented by adapters that need it (Claude). */
+  setPreProcessContext?(
+    checker: (content: Array<Record<string, unknown>>, activeToolUseIds: Set<string>) => void,
+    activeToolUseIds: Set<string>,
+  ): void;
+  /** The last captured assistant message UUID, used for conversation branching.
+   *  Set by preProcessLine on adapters that support it (Claude only). */
+  lastAssistantUuid?: string;
+}
+
+/** Options struct for SessionProcess.start(), replacing 10 positional parameters. */
+export interface SessionStartOptions {
+  prompt: string;
+  resumeRef?: string;
+  spawnCwd?: string;
+  envOverrides?: Record<string, string>;
+  mcpConfigPath?: string;
+  mcpServers?: AcpMcpServer[];
+  initialImage?: ImageContent;
+  displayText?: string;
+  resumeSessionAt?: string;
+  developerInstructions?: string;
 }

@@ -1,33 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
-import { db } from '@/lib/db';
-import { sessions } from '@/lib/db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
-import { ConflictError } from '@/lib/errors';
-import type { AgendoControl } from '@/lib/realtime/events';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { cancelSession } from '@/lib/services/session-service';
 
 export const POST = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
 
-    const result = await db
-      .update(sessions)
-      .set({ status: 'ended', endedAt: new Date() })
-      .where(
-        and(
-          eq(sessions.id, id),
-          inArray(sessions.status, ['active', 'awaiting_input']),
-        ),
-      )
-      .returning({ id: sessions.id });
-
-    if (result.length === 0) {
-      throw new ConflictError('Session not active or already ended');
-    }
-
-    const control: AgendoControl = { type: 'cancel' };
-    await publish(channelName('agendo_control', id), control);
+    await cancelSession(id);
 
     return NextResponse.json({ data: { cancelled: true } }, { status: 202 });
   },

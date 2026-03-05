@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { updateCapability, deleteCapability } from '@/lib/services/capability-service';
 
 const updateCapabilitySchema = z
@@ -17,6 +17,7 @@ const updateCapabilitySchema = z
 export const PATCH = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { capId } = await params;
+    assertUUID(capId, 'Capability');
     const body = await req.json();
     const validated = updateCapabilitySchema.parse(body);
     const capability = await updateCapability(capId, validated);
@@ -27,6 +28,7 @@ export const PATCH = withErrorBoundary(
 export const DELETE = withErrorBoundary(
   async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { capId } = await params;
+    assertUUID(capId, 'Capability');
     await deleteCapability(capId);
     return NextResponse.json({ success: true });
   },

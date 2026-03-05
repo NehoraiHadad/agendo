@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { reorderTask } from '@/lib/services/task-service';
 
 const reorderSchema = z.object({
@@ -12,6 +12,7 @@ const reorderSchema = z.object({
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Task');
     const body = reorderSchema.parse(await req.json());
 
     const task = await reorderTask(id, {

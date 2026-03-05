@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { BadRequestError } from '@/lib/errors';
 import { getSession, restartFreshFromSession } from '@/lib/services/session-service';
@@ -27,6 +27,7 @@ import type { AgendoControl } from '@/lib/realtime/events';
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
+    assertUUID(id, 'Session');
     const body = (await req.json()) as AgendoControl;
 
     // Only allow types that require simple PG NOTIFY relay (not the ones with
