@@ -18,12 +18,7 @@ import { NdjsonRpcTransport } from '@/lib/worker/adapters/ndjson-rpc-transport';
 import {
   mapAppServerEventToPayloads,
   isAppServerSyntheticEvent,
-  type AppServerItem,
-  type AppServerCommandExecutionItem,
-  type AppServerFileChangeItem,
-  type AppServerMcpToolCallItem,
-  type AppServerAgentMessageItem,
-  type AppServerReasoningItem,
+  normalizeThreadItem,
 } from '@/lib/worker/adapters/codex-app-server-event-mapper';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 
@@ -436,14 +431,20 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
       case 'item/started': {
         const item = params.item as Record<string, unknown>;
-        const normalized = this.normalizeThreadItem(item);
+        const normalized = normalizeThreadItem(item, () => {
+          this.compacting = false;
+          this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
+        });
         if (normalized) this.emitSynthetic({ type: 'as:item.started', item: normalized });
         break;
       }
 
       case 'item/completed': {
         const item = params.item as Record<string, unknown>;
-        const normalized = this.normalizeThreadItem(item);
+        const normalized = normalizeThreadItem(item, () => {
+          this.compacting = false;
+          this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
+        });
         if (normalized) this.emitSynthetic({ type: 'as:item.completed', item: normalized });
         break;
       }
@@ -654,84 +655,6 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private emitSynthetic(event: Record<string, unknown>): void {
     const line = JSON.stringify(event) + '\n';
     for (const cb of this.dataCallbacks) cb(line);
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: ThreadItem normalization (camelCase app-server → adapter format)
-  // -------------------------------------------------------------------------
-
-  private normalizeThreadItem(item: Record<string, unknown>): AppServerItem | null {
-    const type = item.type as string;
-
-    switch (type) {
-      case 'agentMessage':
-        return {
-          type: 'agentMessage',
-          id: item.id as string,
-          text: (item.text as string) ?? '',
-        } as AppServerAgentMessageItem;
-
-      case 'reasoning':
-        return {
-          type: 'reasoning',
-          id: item.id as string,
-          summary: (item.summary as string[]) ?? [],
-          content: (item.content as string[]) ?? [],
-        } as AppServerReasoningItem;
-
-      case 'commandExecution':
-        return {
-          type: 'commandExecution',
-          id: item.id as string,
-          command: (item.command as string) ?? '',
-          cwd: (item.cwd as string) ?? '',
-          exitCode: (item.exitCode as number | null) ?? null,
-          aggregatedOutput: (item.aggregatedOutput as string | null) ?? null,
-          status: (item.status as string) ?? '',
-        } as AppServerCommandExecutionItem;
-
-      case 'fileChange': {
-        const rawChanges = (item.changes as Array<Record<string, unknown>>) ?? [];
-        return {
-          type: 'fileChange',
-          id: item.id as string,
-          changes: rawChanges.map((c) => ({
-            path: (c.path as string) ?? (c.oldPath as string) ?? '',
-            kind: (c.kind as string) ?? '',
-            newPath: c.newPath as string | null,
-          })),
-          status: (item.status as string) ?? '',
-        } as AppServerFileChangeItem;
-      }
-
-      case 'mcpToolCall':
-        return {
-          type: 'mcpToolCall',
-          id: item.id as string,
-          server: (item.server as string) ?? '',
-          tool: (item.tool as string) ?? '',
-          arguments: (item.arguments as Record<string, unknown>) ?? {},
-          result: (item.result as { output?: string | null } | null) ?? null,
-          error: (item.error as { message: string } | null) ?? null,
-          status: (item.status as string) ?? '',
-        } as AppServerMcpToolCallItem;
-
-      case 'plan':
-        return {
-          type: 'plan',
-          id: item.id as string,
-          text: (item.text as string) ?? '',
-        };
-
-      case 'contextCompaction':
-        // Reset compaction state when the compaction item completes.
-        this.compacting = false;
-        this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
-        return { type: 'contextCompaction', id: item.id as string };
-
-      default:
-        return null;
-    }
   }
 
   // -------------------------------------------------------------------------
