@@ -38,7 +38,7 @@ import type {
   AgentAdapter,
   ManagedProcess,
   ImageContent,
-  AcpMcpServer,
+  SessionStartOptions,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
@@ -226,33 +226,20 @@ export class SessionProcess {
   /**
    * Claim the session row atomically, set up log writer, subscribe to the
    * control channel, and spawn (or resume) the agent process.
-   *
-   * @param prompt - The initial prompt to pass to the agent
-   * @param resumeRef - If provided, the adapter resumes an existing session
-   * @param spawnCwd - Working directory for the spawned process
-   * @param envOverrides - Additional env vars to merge into the child environment
-   * @param mcpConfigPath - Optional path to a pre-generated MCP JSON config file.
-   *   When provided, `--mcp-config <path>` is appended to the agent spawn args.
-   * @param mcpServers - Optional MCP server list for ACP session/new (Gemini).
-   * @param initialImage - Optional image attachment for cold resume.
-   * @param displayText - Optional override for the user:message event text. When
-   *   provided (e.g. on cold resume), only this text is shown in the chat view
-   *   instead of the full prompt (which may contain system context preambles).
-   * @param developerInstructions - Optional system-level instructions for Codex
-   *   sessions, passed as `developerInstructions` in thread/start (not a user turn).
    */
-  async start(
-    prompt: string,
-    resumeRef?: string,
-    spawnCwd?: string,
-    envOverrides?: Record<string, string>,
-    mcpConfigPath?: string,
-    mcpServers?: AcpMcpServer[],
-    initialImage?: ImageContent,
-    displayText?: string,
-    resumeSessionAt?: string,
-    developerInstructions?: string,
-  ): Promise<void> {
+  async start(opts: SessionStartOptions): Promise<void> {
+    const {
+      prompt,
+      resumeRef,
+      spawnCwd: spawnCwdOpt,
+      envOverrides,
+      mcpConfigPath,
+      mcpServers,
+      initialImage,
+      displayText,
+      resumeSessionAt,
+      developerInstructions,
+    } = opts;
     const claimed = await claimSession(this.session.id, this.workerId);
     if (!claimed) {
       this.slotReleaseFuture.resolve();
@@ -299,7 +286,7 @@ export class SessionProcess {
       writeFileSync(this.policyFilePath, policyToml, 'utf-8');
     }
 
-    this.spawnCwd = spawnCwd ?? '/tmp';
+    this.spawnCwd = spawnCwdOpt ?? '/tmp';
     const spawnOpts = buildSpawnOpts(this.session, this.spawnCwd, childEnv, {
       policyFilePath: this.policyFilePath ?? undefined,
       mcpConfigPath,

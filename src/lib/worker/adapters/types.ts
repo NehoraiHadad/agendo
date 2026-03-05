@@ -134,3 +134,17 @@ export interface AgentAdapter {
    *  Set by preProcessLine on adapters that support it (Claude only). */
   lastAssistantUuid?: string;
 }
+
+/** Options struct for SessionProcess.start(), replacing 10 positional parameters. */
+export interface SessionStartOptions {
+  prompt: string;
+  resumeRef?: string;
+  spawnCwd?: string;
+  envOverrides?: Record<string, string>;
+  mcpConfigPath?: string;
+  mcpServers?: AcpMcpServer[];
+  initialImage?: ImageContent;
+  displayText?: string;
+  resumeSessionAt?: string;
+  developerInstructions?: string;
+}

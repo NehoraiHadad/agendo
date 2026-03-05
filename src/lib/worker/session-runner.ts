@@ -287,18 +287,18 @@ export async function runSession(
   // before the first awaiting_input (i.e. while still in active state).
   allSessionProcs.set(sessionId, sessionProc);
 
-  await sessionProc.start(
+  await sessionProc.start({
     prompt,
-    resumeRef ?? session.sessionRef ?? undefined,
-    resolvedCwd,
+    resumeRef: resumeRef ?? session.sessionRef ?? undefined,
+    spawnCwd: resolvedCwd,
     envOverrides,
     mcpConfigPath,
     mcpServers,
     initialImage,
-    userResumeText,
+    displayText: userResumeText,
     resumeSessionAt,
-    codexDeveloperInstructions,
-  );
+    developerInstructions: codexDeveloperInstructions,
+  });
 
   // Wait until the session releases its pg-boss slot (first awaiting_input or
   // process exit). This frees the slot for the next queued session while the
