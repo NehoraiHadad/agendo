@@ -59,6 +59,9 @@ export interface UseSessionStreamReturn extends SessionStreamState {
   reset: () => void;
 }
 
+/** Polling interval for status reconciliation fallback (30s). */
+const STATUS_POLL_INTERVAL_MS = 30_000;
+
 export function useSessionStream(sessionId: string | null): UseSessionStreamReturn {
   const [state, dispatch] = useReducer(reducer, initialState);
   const retryDelayRef = useRef(1000);
@@ -113,6 +116,9 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
 
           if (parsed.type === 'session:state') {
             dispatch({ type: 'SET_STATUS', status: parsed.status });
+            if (parsed.status === 'ended') {
+              isDoneRef.current = true;
+            }
           } else {
             dispatch({ type: 'APPEND_EVENT', event: parsed });
           }
@@ -136,11 +142,32 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
 
     connect();
 
+    // Polling fallback: periodically fetch the real session status from the API
+    // in case an SSE event was missed (e.g. stale-reaper, zombie-reconciler,
+    // or cancel API changed status without emitting via PG NOTIFY in older code).
+    const pollTimer = setInterval(async () => {
+      if (isDoneRef.current) return;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { status: SessionStatus };
+        if (data.status) {
+          dispatch({ type: 'SET_STATUS', status: data.status });
+          if (data.status === 'ended') {
+            isDoneRef.current = true;
+          }
+        }
+      } catch {
+        // Polling is best-effort — SSE is the primary channel
+      }
+    }, STATUS_POLL_INTERVAL_MS);
+
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      clearInterval(pollTimer);
     };
   }, [sessionId]);
 

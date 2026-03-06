@@ -14,7 +14,7 @@ import { db } from '@/lib/db';
 import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { ConflictError, NotFoundError } from '@/lib/errors';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { publish, channelName, broadcastSessionStatus } from '@/lib/realtime/pg-notify';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
 import type { AgendoControl } from '@/lib/realtime/events';
@@ -137,6 +137,10 @@ export async function cancelSession(id: string): Promise<void> {
   if (result.length === 0) {
     throw new ConflictError('Session not active or already ended');
   }
+
+  // Broadcast the status change so SSE subscribers update the UI immediately,
+  // even if the worker takes time to process the cancel control message.
+  await broadcastSessionStatus(id, 'ended');
 
   const control: AgendoControl = { type: 'cancel' };
   await publish(channelName('agendo_control', id), control);

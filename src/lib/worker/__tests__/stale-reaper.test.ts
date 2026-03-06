@@ -20,6 +20,13 @@ vi.mock('@/lib/config', () => ({
   },
 }));
 
+// Mock pg-notify to prevent real PG NOTIFY calls
+vi.mock('@/lib/realtime/pg-notify', () => ({
+  broadcastSessionStatus: vi.fn().mockResolvedValue(undefined),
+  channelName: vi.fn((_prefix: string, id: string) => `test_${id}`),
+  publish: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Must import after mocks
 const { StaleReaper } = await import('../stale-reaper');
 
