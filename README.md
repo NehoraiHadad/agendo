@@ -1,225 +1,211 @@
-<!-- README HERO BANNER -->
 <p align="center">
-  <img src="public/hero-banner.png" alt="Agendo - AI Agent Manager & Builder" width="100%">
+  <img src="public/hero-banner.png" alt="Agendo" width="100%">
 </p>
 
-# Agendo
-
-> **Manage, orchestrate, and collaborate with AI coding agents (Claude, Codex, Gemini) from a single dashboard.**
+<h1 align="center">Agendo</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js" alt="Next.js">
-  <img src="https://img.shields.io/badge/React-19-blue?style=for-the-badge&logo=react" alt="React 19">
-  <img src="https://img.shields.io/badge/TypeScript-Strict-blue?style=for-the-badge&logo=typescript" alt="TypeScript">
-  <img src="https://img.shields.io/badge/PostgreSQL-Drizzle-336791?style=for-the-badge&logo=postgresql" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/MCP-Integrated-green?style=for-the-badge" alt="MCP">
+  <strong>Self-hosted dashboard for managing AI coding agents</strong><br>
+  Orchestrate Claude, Codex, and Gemini from a single interface.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js" alt="Next.js 16">
+  <img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/PostgreSQL-17-336791?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/MCP-Integrated-22c55e?style=flat-square" alt="MCP">
+</p>
+
+<p align="center">
+  <img src="public/docs/screenshots/agendo_dashboard_clean.png" alt="Agendo Dashboard" width="720">
 </p>
 
 ---
 
-## Quick Start (Self-Hosted)
+## Features
+
+- **Agent discovery** — auto-detects Claude, Codex, and Gemini CLIs from your PATH
+- **Kanban board** — organize work, assign to agents, track progress in real time
+- **Live sessions** — bidirectional chat with agents, real-time log streaming
+- **MCP integration** — agents create tasks, report status, and spawn sub-agents autonomously
+- **Multi-agent orchestration** — coordinate multiple agents across projects
+- **Built-in terminal** — xterm.js + node-pty, directly in the browser
+- **PWA** — installable on mobile, push notifications when agents need input
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
-- **Node.js 22+** and **pnpm 10+**
-- **Docker** (for PostgreSQL) or a running PostgreSQL 15+ instance
-- At least one AI CLI installed and authenticated: `claude`, `codex`, or `gemini`
+| Requirement | Version | Notes                                        |
+| ----------- | ------- | -------------------------------------------- |
+| Node.js     | 22+     |                                              |
+| pnpm        | 10+     | `npm install -g pnpm`                        |
+| Docker      | any     | For PostgreSQL (or bring your own PG 15+)    |
+| AI CLI      | any     | At least one: `claude`, `codex`, or `gemini` |
 
-### Setup
+### Install
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/NehoraiHadad/agendo.git
 cd agendo
 pnpm install
-
-# 2. Start PostgreSQL
-docker compose up -d
-
-# 3. Configure environment
-cp .env.example .env.local
-# Edit .env.local — set JWT_SECRET (generate with: openssl rand -hex 32)
-
-# 4. Build everything
-pnpm build && pnpm worker:build && pnpm build:mcp
-
-# 5. Set up the database
-pnpm db:migrate
-pnpm db:seed          # seeds config + auto-discovers agents in PATH
-
-# 6. Start
-pnpm start &                          # Next.js app (port 4100)
-node dist/worker/index.js &           # Worker
-pnpm tsx src/terminal/server.ts &     # Terminal server (port 4101, optional)
-
-# 7. Open
-open http://localhost:4100
+./scripts/setup.sh
 ```
 
-### Development mode
+The setup script handles everything: environment config, JWT secret generation, PostgreSQL, builds, database schema, and agent discovery.
 
-For active development with hot-reload:
-
-```bash
-# Terminal 1 — Next.js app
-pnpm dev
-
-# Terminal 2 — Worker (hot-reload)
-pnpm worker:dev
-
-# Terminal 3 — Terminal server (optional)
-pnpm tsx src/terminal/server.ts
-```
-
-### Using PM2 (recommended for always-on servers)
-
-If you're running Agendo on a server that should stay up 24/7, [PM2](https://pm2.io) handles process management, auto-restart on crash, and memory limits:
+### Start
 
 ```bash
+# Foreground
+pnpm start & node dist/worker/index.js &
+
+# Or with PM2 (recommended for always-on)
 npm install -g pm2
 cp ecosystem.config.example.js ecosystem.config.js
-pm2 start ecosystem.config.js
-pm2 save
+pm2 start ecosystem.config.js && pm2 save
 ```
 
-### Remote access with Tailscale
+Open **http://localhost:4100**
 
-For accessing Agendo from your phone or other devices, install [Tailscale](https://tailscale.com) on both machines. Agendo is then available at `http://<machine-name>:4100` over your private network. No reverse proxy or SSL config needed.
+### Development Mode
+
+```bash
+pnpm install
+./scripts/setup.sh --dev
+```
+
+```bash
+pnpm dev          # Terminal 1
+pnpm worker:dev   # Terminal 2
+```
 
 ---
 
-## What is Agendo?
+## Agent CLI Setup
 
-Agendo is a self-hosted dashboard for managing AI coding agents. It provides:
+Agendo discovers agents from your PATH automatically during setup. Install the ones you want:
 
-- **Agent discovery** — auto-detects Claude, Codex, and Gemini CLIs from your PATH
-- **Kanban task management** — organize work, assign to agents, track progress
-- **Live sessions** — bidirectional chat with agents, real-time log streaming
-- **MCP integration** — agents can create tasks, check status, and spawn sub-agents autonomously
-- **Multi-agent orchestration** — coordinate multiple agents across projects
-- **Built-in terminal** — xterm.js terminal with node-pty, directly in the browser
-- **PWA support** — installable on mobile, push notifications when agents need input
+```bash
+# Claude (Anthropic)
+npm install -g @anthropic-ai/claude-code
+claude auth login
+
+# Codex (OpenAI)
+npm install -g @openai/codex
+export OPENAI_API_KEY=sk-...
+
+# Gemini (Google)
+npm install -g @google/gemini-cli
+gemini auth login
+```
+
+Run `pnpm db:seed` after installing new CLIs to register them.
+
+---
 
 ## Architecture
 
-Agendo runs as three cooperating processes:
-
 ```
-Next.js App (port 4100)
-  API routes, Kanban UI, SSE endpoints, MCP server host
+Next.js App (:4100)          Web UI, API, SSE, MCP host
        |
-       | pg-boss queues + PG NOTIFY
+       |  pg-boss + PG NOTIFY
        v
-Worker (agendo-worker)
-  Dequeues jobs, spawns AI CLI subprocesses, streams events
+Worker                       Spawns AI CLI processes, streams events
        |
-       | stdio transport
+       |  stdio
        v
-MCP Server (dist/mcp-server.js)
-  Injected into agent sessions, exposes task management tools
+MCP Server                   Injected into agent sessions
 ```
 
-### Services
+| Service  | Default Port | Description                                   |
+| -------- | ------------ | --------------------------------------------- |
+| App      | 4100         | Web UI, API routes, SSE endpoints             |
+| Worker   | ---          | Job queue processor, agent subprocess manager |
+| Terminal | 4101         | xterm.js + node-pty over socket.io (optional) |
 
-| Service         | Port   | What it does                                    |
-| --------------- | ------ | ----------------------------------------------- |
-| Next.js App     | `4100` | Web UI, API routes, SSE endpoints, MCP host     |
-| Worker          | —      | Job queue processor, spawns AI CLI subprocesses |
-| Terminal Server | `4101` | xterm.js + node-pty over socket.io (optional)   |
+---
 
-> **Note on restarting**: The Next.js app hosts the MCP server. Restarting it drops live agent connections. If using PM2, use `./scripts/safe-restart-agendo.sh` which waits for active sessions to finish first. The worker is always safe to restart.
+## Environment
 
-## Tech Stack
+Copy `.env.example` to `.env.local` (the setup script does this automatically).
 
-- **Framework**: Next.js 16 (App Router, React 19, TypeScript strict)
-- **Database**: PostgreSQL + Drizzle ORM
-- **Queue**: pg-boss v10
-- **UI**: shadcn/ui + Tailwind CSS v4
-- **State**: Zustand (client), Server Components (server)
-- **Real-time**: SSE (board updates, log streaming), PG NOTIFY (worker-frontend bridge)
-- **Terminal**: xterm.js v6 + node-pty + socket.io
-- **MCP**: `@modelcontextprotocol/sdk` (stdio transport)
+| Variable       | Required | Description                                   |
+| -------------- | -------- | --------------------------------------------- |
+| `DATABASE_URL` | Yes      | PostgreSQL connection string                  |
+| `JWT_SECRET`   | Yes      | Min 16 chars (auto-generated by setup script) |
+| `PORT`         | No       | App port (default: 4100)                      |
+| `LOG_DIR`      | No       | Session log directory (default: `./logs`)     |
 
-## Environment Variables
+See `.env.example` for the full list with defaults.
 
-Copy `.env.example` to `.env.local`. Required:
-
-| Variable       | Description                         |
-| -------------- | ----------------------------------- |
-| `DATABASE_URL` | PostgreSQL connection string        |
-| `JWT_SECRET`   | Min 16 chars for API authentication |
-
-All other variables have sensible defaults. See `.env.example` for the full list.
+---
 
 ## Scripts
 
 ```bash
-# Development
-pnpm dev                # Next.js dev server (port 4100)
-pnpm worker:dev         # Worker with hot-reload
+# Setup
+./scripts/setup.sh           # Full setup (build + DB + seed)
+./scripts/setup.sh --dev     # Dev setup (DB + seed, skip build)
 
 # Build
-pnpm build              # Next.js production build
-pnpm worker:build       # Worker (esbuild)
-pnpm build:mcp          # MCP server bundle
+pnpm build:all               # App + worker + MCP server
 
 # Database
-pnpm db:migrate         # Apply migrations
-pnpm db:seed            # Seed config + discover agents
-pnpm db:studio          # Open Drizzle Studio
+pnpm db:setup                # Create schema (drizzle-kit push)
+pnpm db:seed                 # Seed config + discover agents
+pnpm db:studio               # Drizzle Studio web UI
 
 # Quality
-pnpm lint               # ESLint (zero warnings)
-pnpm typecheck          # TypeScript strict check
-pnpm test               # Vitest
+pnpm lint                    # ESLint (zero warnings)
+pnpm typecheck               # TypeScript strict
+pnpm test                    # Vitest
 ```
 
-## Agent CLI Setup
+---
 
-Agendo auto-discovers agents from your PATH during `pnpm db:seed`. Install and authenticate the ones you want to use:
+## Remote Access
 
-### Claude (Anthropic)
+Install [Tailscale](https://tailscale.com) on your server and client devices. Agendo becomes available at `http://<machine-name>:4100` over your private network. No reverse proxy or SSL configuration needed.
 
-```bash
-npm install -g @anthropic-ai/claude-code
-claude auth login
-```
+---
 
-### Codex (OpenAI)
+## Tech Stack
 
-```bash
-npm install -g @openai/codex
-# Set OPENAI_API_KEY in your environment
-```
+| Layer     | Technology                                   |
+| --------- | -------------------------------------------- |
+| Framework | Next.js 16, React 19, TypeScript strict      |
+| Database  | PostgreSQL + Drizzle ORM                     |
+| Queue     | pg-boss v10                                  |
+| UI        | shadcn/ui + Tailwind CSS v4                  |
+| State     | Zustand (client), Server Components (server) |
+| Real-time | SSE + PG NOTIFY                              |
+| Terminal  | xterm.js v6 + node-pty + socket.io           |
+| MCP       | @modelcontextprotocol/sdk (stdio)            |
 
-### Gemini (Google)
-
-```bash
-npm install -g @anthropic-ai/claude-code   # placeholder — check Google's docs
-gemini auth login
-```
-
-After installing new CLIs, run `pnpm db:seed` again to register them.
+---
 
 ## Project Structure
 
 ```
 src/
-  app/              # Next.js App Router (pages, API routes, SSE endpoints)
-  components/       # React components (sessions, kanban, terminal, etc.)
-  hooks/            # Custom React hooks
+  app/                 Next.js App Router (pages, API routes, SSE)
+  components/          React components (sessions, kanban, terminal)
+  hooks/               Custom React hooks
   lib/
-    db/             # Drizzle schema, migrations, seed
-    discovery/      # Agent auto-discovery from PATH
-    mcp/            # MCP server + config templates
-    services/       # Business logic (tasks, sessions, agents, projects)
-    worker/         # Worker entry, adapters per agent CLI
-      adapters/     # Claude, Codex, Gemini protocol adapters
-  terminal/         # Terminal server (socket.io + node-pty)
-scripts/            # Utility scripts (safe restart, log reader, etc.)
-planning/           # Architecture docs, data model, phase plans
-drizzle/            # SQL migration files
+    db/                Drizzle schema + seed
+    discovery/         Agent auto-discovery
+    mcp/               MCP server + config templates
+    services/          Business logic
+    worker/
+      adapters/        Claude, Codex, Gemini protocol adapters
+  terminal/            Terminal server (socket.io + node-pty)
+scripts/               Setup, safe restart, utilities
 ```
+
+---
 
 ## License
 

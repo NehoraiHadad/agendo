@@ -11,7 +11,12 @@ interface WebTerminalProps {
   className?: string;
 }
 
-export function WebTerminal({ executionId, sessionId, fontSize = 14, className }: WebTerminalProps) {
+export function WebTerminal({
+  executionId,
+  sessionId,
+  fontSize = 14,
+  className,
+}: WebTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(true);
@@ -96,10 +101,11 @@ export function WebTerminal({ executionId, sessionId, fontSize = 14, className }
         if (disposed) return;
 
         // Connect socket.io
+        const wsPort = process.env.NEXT_PUBLIC_TERMINAL_WS_PORT || '4101';
         const terminalServerUrl =
           typeof window !== 'undefined'
-            ? `${window.location.protocol}//${window.location.hostname}:4101`
-            : 'http://localhost:4101';
+            ? `${window.location.protocol}//${window.location.hostname}:${wsPort}`
+            : `http://localhost:${wsPort}`;
 
         socket = io(terminalServerUrl, {
           query: { token: tokenResult.data.token },

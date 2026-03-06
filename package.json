@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 4100",
+    "dev": "next dev --port ${PORT:-4100}",
     "build": "next build",
-    "start": "next start --port 4100",
+    "build:all": "pnpm build && pnpm worker:build && pnpm build:mcp",
+    "start": "next start --port ${PORT:-4100}",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit",
+    "db:setup": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -19,6 +21,7 @@
     "build:mcp": "tsx src/lib/mcp/build.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "vapid:generate": "npx web-push generate-vapid-keys",
     "prepare": "husky"
   },
   "dependencies": {
