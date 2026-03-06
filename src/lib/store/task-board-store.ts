@@ -41,6 +41,9 @@ interface TaskBoardState {
 
   /** Project IDs to show (empty = show all) */
   selectedProjectIds: string[];
+
+  /** Parent task IDs whose subtasks are collapsed in the column view */
+  collapsedParents: Set<string>;
 }
 
 interface TaskBoardActions {
@@ -91,6 +94,9 @@ interface TaskBoardActions {
 
   /** Set which project IDs are selected for filtering (empty = all) */
   setProjectFilter: (projectIds: string[]) => void;
+
+  /** Toggle collapsed state for a parent task's subtasks */
+  toggleCollapsed: (parentTaskId: string) => void;
 }
 
 type TaskBoardStore = TaskBoardState & TaskBoardActions;
@@ -134,6 +140,7 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
   pendingOptimistic: new Set(),
   projectsById: {},
   selectedProjectIds: [],
+  collapsedParents: new Set<string>(),
 
   hydrate: (tasksByStatus, cursors) => {
     const tasksById: Record<string, TaskBoardItem> = {};
@@ -348,5 +355,17 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
 
   setProjectFilter: (projectIds) => {
     set({ selectedProjectIds: projectIds });
+  },
+
+  toggleCollapsed: (parentTaskId) => {
+    set((state) => {
+      const next = new Set(state.collapsedParents);
+      if (next.has(parentTaskId)) {
+        next.delete(parentTaskId);
+      } else {
+        next.add(parentTaskId);
+      }
+      return { collapsedParents: next };
+    });
   },
 }));

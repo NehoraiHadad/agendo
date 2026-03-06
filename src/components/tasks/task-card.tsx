@@ -8,6 +8,10 @@ import { cn } from '@/lib/utils';
 
 interface TaskCardProps {
   taskId: string;
+  /** Rendered as a child inside a subtask group */
+  isGroupChild?: boolean;
+  /** This card's subtasks are visually grouped below it */
+  hasGroupedChildren?: boolean;
 }
 
 /* ─── Priority config ──────────────────────────────────────── */
@@ -60,7 +64,11 @@ const PRIORITY_CONFIG: Record<number, PriorityConfig> = {
 
 /* ─── Component ────────────────────────────────────────────── */
 
-export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
+export const TaskCard = memo(function TaskCard({
+  taskId,
+  isGroupChild,
+  hasGroupedChildren,
+}: TaskCardProps) {
   const task = useTaskBoardStore((s) => s.tasksById[taskId]);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
   const project = useTaskBoardStore((s) =>
@@ -131,8 +139,8 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
           className="flex-1 text-left focus-visible:outline-none min-w-0"
           onClick={() => selectTask(taskId)}
         >
-          {/* Parent task breadcrumb */}
-          {parentTask && (
+          {/* Parent task breadcrumb (hidden when visually nested in group) */}
+          {parentTask && !isGroupChild && (
             <span
               role="button"
               tabIndex={0}
@@ -166,8 +174,8 @@ export const TaskCard = memo(function TaskCard({ taskId }: TaskCardProps) {
             </p>
           )}
 
-          {/* Subtask progress */}
-          {task.subtaskTotal > 0 && (
+          {/* Subtask progress (hidden when children are grouped inline below) */}
+          {task.subtaskTotal > 0 && !hasGroupedChildren && (
             <div className="mt-2 flex items-center gap-2">
               <div className="flex-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
                 <div

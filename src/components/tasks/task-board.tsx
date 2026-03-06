@@ -23,6 +23,27 @@ import { toast } from 'sonner';
 import type { TaskStatus, Project } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
 
+/** Client-side valid transitions (mirrors src/lib/state-machines.ts) */
+const VALID_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
+  todo: new Set(['in_progress', 'cancelled', 'blocked']),
+  in_progress: new Set(['done', 'blocked', 'cancelled', 'todo']),
+  blocked: new Set(['todo', 'in_progress', 'cancelled']),
+  done: new Set(['todo']),
+  cancelled: new Set(['todo']),
+};
+
+const TRANSITION_HINTS: Partial<Record<string, string>> = {
+  'todo→done': 'Move to In Progress first, then to Done',
+  'todo→in_progress→done': 'Tasks need to go through In Progress before Done',
+  'blocked→done': 'Unblock the task first — move to In Progress, then Done',
+  'cancelled→done': 'Reopen the task to Todo first',
+  'cancelled→in_progress': 'Reopen to Todo first, then move to In Progress',
+  'cancelled→blocked': 'Reopen to Todo first',
+  'done→in_progress': 'Reopen to Todo first if you need to rework it',
+  'done→blocked': 'Reopen to Todo first',
+  'done→cancelled': 'Reopen to Todo first',
+};
+
 interface TaskBoardProps {
   initialData: Record<TaskStatus, TaskBoardItem[]>;
   initialCursors: Record<TaskStatus, string | null>;
@@ -63,6 +84,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const hydrated = useRef(false);
 
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [dragSourceStatus, setDragSourceStatus] = useState<TaskStatus | null>(null);
   const originalStatusRef = useRef<TaskStatus | null>(null);
 
   // Initialize SSE connection
@@ -98,6 +120,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
     // Capture original status before any optimistic updates
     const task = useTaskBoardStore.getState().tasksById[taskId];
     originalStatusRef.current = task?.status ?? null;
+    setDragSourceStatus(task?.status ?? null);
   }, []);
 
   const handleDragOver = useCallback(
@@ -112,6 +135,9 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
 
       const overStatus = resolveColumnStatus(String(over.id), tbid);
       if (!overStatus || overStatus === activeTask.status) return;
+
+      // Block visual feedback for invalid transitions
+      if (!VALID_TRANSITIONS[activeTask.status].has(overStatus)) return;
 
       // Moving between columns during drag (visual feedback)
       const overColumn = cols[overStatus];
@@ -132,6 +158,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       setActiveId(null);
+      setDragSourceStatus(null);
       const { active, over } = event;
 
       if (!over) return;
@@ -149,6 +176,21 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
 
       const overStatus = resolveColumnStatus(String(over.id), tbid);
       if (!overStatus) return;
+
+      // Validate transition and show helpful hint for invalid moves
+      if (
+        originalStatus &&
+        overStatus !== originalStatus &&
+        !VALID_TRANSITIONS[originalStatus].has(overStatus)
+      ) {
+        const hintKey = `${originalStatus}→${overStatus}`;
+        const hint =
+          TRANSITION_HINTS[hintKey] ??
+          `Can't move directly from ${COLUMN_LABELS[originalStatus]} to ${COLUMN_LABELS[overStatus]}`;
+        toast.error(hint, { duration: 3500 });
+        settleOptimistic(taskId);
+        return;
+      }
 
       const column = cols[overStatus];
       const overIndex =
@@ -274,6 +316,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
               status={status}
               label={COLUMN_LABELS[status]}
               filteredTaskIds={filteredColumnTaskIds[status]}
+              dragSourceStatus={dragSourceStatus}
             />
           ))}
         </div>
