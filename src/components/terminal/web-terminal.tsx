@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 
@@ -11,6 +11,10 @@ interface WebTerminalProps {
   className?: string;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_BASE_DELAY = 1000;
+const RECONNECT_MAX_DELAY = 5000;
+
 export function WebTerminal({
   executionId,
   sessionId,
@@ -20,45 +24,157 @@ export function WebTerminal({
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(true);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  // Stable ref for reconnect state across closure boundaries
+  const stateRef = useRef({
+    disposed: false,
+    ws: null as WebSocket | null,
+    terminal: null as import('@xterm/xterm').Terminal | null,
+    fitAddon: null as import('@xterm/addon-fit').FitAddon | null,
+    resizeObserver: null as ResizeObserver | null,
+    reconnectAttempt: 0,
+    reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+  });
+
+  const connect = useCallback(
+    async (
+      terminal: import('@xterm/xterm').Terminal,
+      fitAddon: import('@xterm/addon-fit').FitAddon,
+    ) => {
+      const state = stateRef.current;
+      if (state.disposed) return;
+
+      try {
+        // Get fresh token for each connection attempt
+        const tokenBody = sessionId ? { sessionId } : { executionId };
+        const tokenResult = await apiFetch<ApiResponse<{ token: string }>>('/api/terminal/token', {
+          method: 'POST',
+          body: JSON.stringify(tokenBody),
+        });
+
+        if (state.disposed) return;
+
+        const wsPort = process.env.NEXT_PUBLIC_TERMINAL_WS_PORT || '4101';
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${protocol}//${window.location.hostname}:${wsPort}?token=${encodeURIComponent(tokenResult.data.token)}`;
+
+        const ws = new WebSocket(url);
+        ws.binaryType = 'arraybuffer';
+        state.ws = ws;
+
+        ws.onopen = () => {
+          if (state.disposed) return;
+          state.reconnectAttempt = 0;
+          setIsConnecting(false);
+          setReconnecting(false);
+          setError(null);
+
+          // Send current terminal size
+          fitAddon.fit();
+          ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        };
+
+        ws.onmessage = (ev: MessageEvent) => {
+          if (state.disposed) return;
+
+          if (ev.data instanceof ArrayBuffer) {
+            // Binary frame = terminal output
+            terminal.write(new Uint8Array(ev.data));
+          } else if (typeof ev.data === 'string') {
+            // Text frame = JSON control message
+            try {
+              const msg = JSON.parse(ev.data) as { type: string; message?: string };
+              if (msg.type === 'error') {
+                setError(msg.message ?? 'Unknown error');
+              }
+            } catch {
+              // Not JSON — ignore
+            }
+          }
+        };
+
+        ws.onclose = (ev: CloseEvent) => {
+          if (state.disposed) return;
+          state.ws = null;
+
+          // Auth failures — don't retry
+          if (ev.code === 4001 || ev.code === 4003) {
+            setError(`Authentication failed`);
+            setReconnecting(false);
+            return;
+          }
+
+          // Attempt reconnection
+          if (state.reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
+            state.reconnectAttempt++;
+            const delay = Math.min(
+              RECONNECT_BASE_DELAY * Math.pow(1.5, state.reconnectAttempt - 1),
+              RECONNECT_MAX_DELAY,
+            );
+            setReconnecting(true);
+            terminal.write('\r\n\x1b[33m[Reconnecting...]\x1b[0m\r\n');
+            state.reconnectTimer = setTimeout(() => {
+              if (!state.disposed) connect(terminal, fitAddon);
+            }, delay);
+          } else {
+            setReconnecting(false);
+            setError('Connection lost — reload to retry');
+          }
+        };
+
+        ws.onerror = () => {
+          // onclose will fire after this — reconnection handled there
+        };
+      } catch (err) {
+        if (!state.disposed) {
+          if (state.reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
+            state.reconnectAttempt++;
+            const delay = Math.min(
+              RECONNECT_BASE_DELAY * Math.pow(1.5, state.reconnectAttempt - 1),
+              RECONNECT_MAX_DELAY,
+            );
+            setReconnecting(true);
+            state.reconnectTimer = setTimeout(() => {
+              if (!state.disposed) connect(terminal, fitAddon);
+            }, delay);
+          } else {
+            setError(err instanceof Error ? err.message : 'Failed to connect');
+            setReconnecting(false);
+            setIsConnecting(false);
+          }
+        }
+      }
+    },
+    [executionId, sessionId],
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    let terminal: import('@xterm/xterm').Terminal | null = null;
-    let socket: import('socket.io-client').Socket | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let fitAddon: import('@xterm/addon-fit').FitAddon | null = null;
-    let disposed = false;
+    const state = stateRef.current;
+    state.disposed = false;
 
     async function init() {
       try {
-        // Dynamic imports for SSR safety
-        const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }, { io }] =
-          await Promise.all([
-            import('@xterm/xterm'),
-            import('@xterm/addon-fit'),
-            import('@xterm/addon-web-links'),
-            import('@xterm/addon-search'),
-            import('socket.io-client'),
-          ]);
+        const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+          import('@xterm/addon-web-links'),
+          import('@xterm/addon-search'),
+        ]);
 
-        if (disposed) return;
+        if (state.disposed) return;
 
         // Inject xterm CSS
         if (!document.getElementById('xterm-css')) {
-          const link = document.createElement('link');
-          link.id = 'xterm-css';
-          link.rel = 'stylesheet';
-          link.href = '/_next/static/css/xterm.css';
-          // Use a CDN fallback for the xterm CSS
           const style = document.createElement('style');
           style.id = 'xterm-css';
           style.textContent = `@import url('https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.min.css');`;
           document.head.appendChild(style);
         }
 
-        // Create terminal
-        terminal = new Terminal({
+        const terminal = new Terminal({
           fontSize,
           fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
           theme: {
@@ -71,84 +187,54 @@ export function WebTerminal({
           allowProposedApi: true,
         });
 
-        fitAddon = new FitAddon();
+        const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
         terminal.loadAddon(new WebLinksAddon());
         terminal.loadAddon(new SearchAddon());
+        state.terminal = terminal;
+        state.fitAddon = fitAddon;
 
         // Try WebGL addon for performance
         try {
           const { WebglAddon } = await import('@xterm/addon-webgl');
-          if (!disposed) {
+          if (!state.disposed) {
             terminal.loadAddon(new WebglAddon());
           }
         } catch {
           // Canvas renderer fallback (default)
         }
 
-        if (disposed || !containerRef.current) return;
+        if (state.disposed || !containerRef.current) return;
 
         terminal.open(containerRef.current);
         fitAddon.fit();
 
-        // Get terminal token
-        const tokenBody = sessionId ? { sessionId } : { executionId };
-        const tokenResult = await apiFetch<ApiResponse<{ token: string }>>('/api/terminal/token', {
-          method: 'POST',
-          body: JSON.stringify(tokenBody),
-        });
-
-        if (disposed) return;
-
-        // Connect socket.io
-        const wsPort = process.env.NEXT_PUBLIC_TERMINAL_WS_PORT || '4101';
-        const terminalServerUrl =
-          typeof window !== 'undefined'
-            ? `${window.location.protocol}//${window.location.hostname}:${wsPort}`
-            : `http://localhost:${wsPort}`;
-
-        socket = io(terminalServerUrl, {
-          query: { token: tokenResult.data.token },
-          transports: ['websocket'],
-        });
-
-        socket.on('connect', () => {
-          if (!disposed) setIsConnecting(false);
-        });
-
-        socket.on('terminal:output', (data: string) => {
-          terminal?.write(data);
-        });
-
-        socket.on('connect_error', (err) => {
-          if (!disposed) setError(`Connection error: ${err.message}`);
-        });
-
-        socket.on('disconnect', (reason) => {
-          if (!disposed && reason !== 'io client disconnect') {
-            setError(`Disconnected: ${reason}`);
+        // Send terminal input as binary frames
+        terminal.onData((data) => {
+          if (state.ws?.readyState === WebSocket.OPEN) {
+            state.ws.send(new TextEncoder().encode(data));
           }
         });
 
-        // Send terminal input to server
-        terminal.onData((data) => {
-          socket?.emit('terminal:input', data);
-        });
-
         // Handle resize
-        resizeObserver = new ResizeObserver(() => {
+        const resizeObserver = new ResizeObserver(() => {
           if (fitAddon && terminal) {
             fitAddon.fit();
-            socket?.emit('terminal:resize', {
-              cols: terminal.cols,
-              rows: terminal.rows,
-            });
+            if (state.ws?.readyState === WebSocket.OPEN) {
+              state.ws.send(
+                JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }),
+              );
+            }
           }
         });
 
         resizeObserver.observe(containerRef.current);
+        state.resizeObserver = resizeObserver;
+
+        // Connect
+        await connect(terminal, fitAddon);
       } catch (err) {
-        if (!disposed) {
+        if (!state.disposed) {
           setError(err instanceof Error ? err.message : 'Failed to initialize terminal');
           setIsConnecting(false);
         }
@@ -158,18 +244,29 @@ export function WebTerminal({
     init();
 
     return () => {
-      disposed = true;
-      resizeObserver?.disconnect();
-      socket?.disconnect();
-      terminal?.dispose();
+      state.disposed = true;
+      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+      state.resizeObserver?.disconnect();
+      state.ws?.close();
+      state.terminal?.dispose();
+      state.ws = null;
+      state.terminal = null;
+      state.fitAddon = null;
+      state.resizeObserver = null;
+      state.reconnectAttempt = 0;
     };
-  }, [executionId, sessionId, fontSize]);
+  }, [executionId, sessionId, fontSize, connect]);
 
   return (
     <div className={cn('relative overflow-hidden rounded-lg border bg-[#1a1b26]', className)}>
       {isConnecting && !error && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#1a1b26]">
           <span className="text-sm text-zinc-400">Connecting to terminal...</span>
+        </div>
+      )}
+      {reconnecting && !error && (
+        <div className="absolute right-3 top-3 z-10 rounded bg-yellow-900/80 px-2 py-1">
+          <span className="text-xs text-yellow-300">Reconnecting...</span>
         </div>
       )}
       {error && (
