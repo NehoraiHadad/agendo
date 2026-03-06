@@ -116,6 +116,7 @@ vi.mock('@/lib/db/schema', () => ({
     workerId: 'workerId',
     lastSeenAt: 'lastSeenAt',
   },
+  projects: {},
 }));
 
 vi.mock('drizzle-orm', () => ({
@@ -132,18 +133,27 @@ describe('dashboard-service', () => {
     selectCallIndex = 0;
   });
 
-  /** Standard 4-query getDashboardStats mock setup */
+  /** select → from (resolves) — simple chain for count queries */
+  function simpleFromChain(result: unknown) {
+    return {
+      from: vi.fn().mockResolvedValue(result),
+    };
+  }
+
+  /** Standard 5-query getDashboardStats mock setup */
   function setupStatsQueries(overrides?: {
     taskCounts?: unknown;
     recentEvents?: unknown;
     agentRows?: unknown;
     workerRow?: unknown;
+    projectCount?: unknown;
   }) {
     resetSelectMock([
       () => groupByChain(overrides?.taskCounts ?? mockTaskCounts),
       () => orderByLimitChain(overrides?.recentEvents ?? mockRecentEvents),
       () => whereOrderByChain(overrides?.agentRows ?? mockAgentRows),
       () => orderByLimitChain(overrides?.workerRow ?? [recentWorkerHeartbeat]),
+      () => simpleFromChain(overrides?.projectCount ?? [{ count: 2 }]),
     ]);
   }
 
@@ -156,6 +166,7 @@ describe('dashboard-service', () => {
       expect(stats).toMatchObject({
         taskCountsByStatus: { todo: 5, in_progress: 3, done: 10 },
         totalTasks: 18,
+        projectCount: 2,
         recentEvents: mockRecentEvents,
         agentHealth: mockAgentRows,
       });

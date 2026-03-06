@@ -5,9 +5,10 @@ import Link from 'next/link';
 
 interface WelcomeCardProps {
   agentCount: number;
+  projectCount: number;
 }
 
-export function WelcomeCard({ agentCount }: WelcomeCardProps) {
+export function WelcomeCard({ agentCount, projectCount }: WelcomeCardProps) {
   return (
     <Card className="border-dashed">
       <CardContent className="flex flex-col items-center gap-6 py-12 text-center">
@@ -26,14 +27,32 @@ export function WelcomeCard({ agentCount }: WelcomeCardProps) {
             description={
               agentCount > 0
                 ? `${agentCount} agent${agentCount !== 1 ? 's' : ''} discovered`
-                : 'Install claude, codex, or gemini and run pnpm db:seed'
+                : undefined
             }
-          />
+          >
+            {agentCount === 0 && (
+              <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                <p>
+                  These are AI coding assistants that Agendo orchestrates. Install at least one:
+                </p>
+                <ul className="list-disc list-inside space-y-0.5 ml-1">
+                  <li>Claude: npm i -g @anthropic-ai/claude-code</li>
+                  <li>Codex: npm i -g @openai/codex</li>
+                  <li>Gemini: npm i -g @google/gemini-cli</li>
+                </ul>
+                <p>Then run: pnpm db:seed</p>
+              </div>
+            )}
+          </Step>
           <Step
             number={2}
             title="Create a project"
-            done={false}
-            description="Link a code repository to organize tasks"
+            done={projectCount > 0}
+            description={
+              projectCount > 0
+                ? `${projectCount} project${projectCount !== 1 ? 's' : ''} created`
+                : 'Link a code repository to organize tasks'
+            }
             href="/projects"
           />
           <Step
@@ -43,6 +62,21 @@ export function WelcomeCard({ agentCount }: WelcomeCardProps) {
             description="Open the Kanban board and add a task"
             href="/board"
           />
+        </div>
+
+        <div className="flex gap-3">
+          <Link
+            href="/projects?new=1"
+            className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            + New Project
+          </Link>
+          <Link
+            href="/board"
+            className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent"
+          >
+            + New Task
+          </Link>
         </div>
       </CardContent>
     </Card>
@@ -55,12 +89,14 @@ function Step({
   done,
   description,
   href,
+  children,
 }: {
   number: number;
   title: string;
   done: boolean;
-  description: string;
+  description?: string;
   href?: string;
+  children?: React.ReactNode;
 }) {
   const content = (
     <div className="flex items-start gap-3 rounded-lg border p-4 text-left">
@@ -75,7 +111,8 @@ function Step({
       </div>
       <div className="space-y-0.5">
         <p className="font-medium leading-none">{title}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
+        {description && <p className="text-sm text-muted-foreground">{description}</p>}
+        {children}
       </div>
     </div>
   );

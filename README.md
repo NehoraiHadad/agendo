@@ -22,6 +22,18 @@
 
 ---
 
+## 30-Second Start
+
+```bash
+git clone https://github.com/NehoraiHadad/agendo.git && cd agendo
+./scripts/setup.sh --dev
+pnpm dev:all  # starts app + worker + terminal
+```
+
+Open http://localhost:4100
+
+---
+
 ## Features
 
 - **Agent discovery** — auto-detects Claude, Codex, and Gemini CLIs from your PATH
@@ -50,19 +62,16 @@
 ```bash
 git clone https://github.com/NehoraiHadad/agendo.git
 cd agendo
-pnpm install
 ./scripts/setup.sh
 ```
 
-The setup script handles everything: environment config, JWT secret generation, PostgreSQL, builds, database schema, and agent discovery.
+The setup script handles everything: dependencies, environment config, JWT secret generation, PostgreSQL, builds, database schema, and agent discovery.
 
 ### Start
 
-```bash
-# Foreground
-pnpm start & node dist/worker/index.js &
+PM2 keeps services running in the background (recommended):
 
-# Or with PM2 (recommended for always-on)
+```bash
 npm install -g pm2
 cp ecosystem.config.example.js ecosystem.config.js
 pm2 start ecosystem.config.js && pm2 save
@@ -70,16 +79,30 @@ pm2 start ecosystem.config.js && pm2 save
 
 Open **http://localhost:4100**
 
+<details>
+<summary>Manual foreground start (without PM2)</summary>
+
+```bash
+pnpm start & node dist/worker/index.js &
+```
+
+Note: logs from both processes will interleave. Use PM2 for cleaner output.
+
+</details>
+
 ### Development Mode
 
 ```bash
-pnpm install
 ./scripts/setup.sh --dev
+pnpm dev:all                    # app + worker + terminal in one terminal
 ```
 
+Or run services separately:
+
 ```bash
-pnpm dev          # Terminal 1
-pnpm worker:dev   # Terminal 2
+pnpm dev          # Next.js (port 4100)
+pnpm worker:dev   # Worker with hot-reload
+pnpm terminal:dev # Terminal server (port 4101, optional)
 ```
 
 ---
@@ -170,6 +193,17 @@ pnpm test                    # Vitest
 
 Install [Tailscale](https://tailscale.com) on your server and client devices. Agendo becomes available at `http://<machine-name>:4100` over your private network. No reverse proxy or SSL configuration needed.
 
+### Windows
+
+Agendo requires a Unix-like environment. On Windows, use WSL 2:
+
+1. Install WSL 2: `wsl --install` (PowerShell admin)
+2. Open your WSL terminal (Ubuntu recommended)
+3. Install Node.js 22+ and pnpm inside WSL
+4. Follow the Quick Start above (inside WSL)
+
+Docker Desktop must have WSL 2 integration enabled for PostgreSQL.
+
 ---
 
 ## Tech Stack
@@ -204,6 +238,18 @@ src/
   terminal/            Terminal server (socket.io + node-pty)
 scripts/               Setup, safe restart, utilities
 ```
+
+---
+
+## Contributing
+
+1. Fork the repo, clone, and run `./scripts/setup.sh --dev`
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Make changes — lint and type-check pass: `pnpm lint && pnpm typecheck`
+4. Run tests: `pnpm test`
+5. Open a PR against `main`
+
+See CLAUDE.md for architecture details, coding conventions, and the TDD workflow.
 
 ---
 

@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const mockStats = {
   taskCountsByStatus: { todo: 5, in_progress: 3, done: 10 },
   totalTasks: 18,
+  projectCount: 2,
   recentEvents: [],
   agentHealth: [],
   workerStatus: null,

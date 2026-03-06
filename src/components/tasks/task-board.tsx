@@ -18,8 +18,10 @@ import { TaskColumn } from './task-column';
 import { TaskDetailSheet } from './task-detail-sheet';
 import { TaskCreateDialog } from './task-create-dialog';
 import { TaskDragOverlay } from './task-drag-overlay';
+import { EmptyState } from '@/components/ui/empty-state';
 import { useBoardSse } from '@/hooks/use-board-sse';
 import { toast } from 'sonner';
+import { ClipboardList } from 'lucide-react';
 import type { TaskStatus, Project } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
 
@@ -242,6 +244,11 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const projects = Object.values(projectsById);
   const hasProjects = projects.length > 0;
 
+  const hasTasks = useMemo(
+    () => BOARD_COLUMNS.some((status) => columns[status].length > 0),
+    [columns],
+  );
+
   // Pre-compute filtered task IDs per column to avoid inline filter on every render
   const filteredColumnTaskIds = useMemo<Record<string, string[] | undefined>>(
     () =>
@@ -302,29 +309,40 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         </div>
       )}
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="flex flex-row flex-1 min-h-0 gap-3 p-3 overflow-x-auto sm:gap-4 sm:p-4">
-          {BOARD_COLUMNS.map((status) => (
-            <TaskColumn
-              key={status}
-              status={status}
-              label={COLUMN_LABELS[status]}
-              filteredTaskIds={filteredColumnTaskIds[status]}
-              dragSourceStatus={dragSourceStatus}
-            />
-          ))}
+      {!hasTasks ? (
+        <div className="flex flex-1 items-center justify-center">
+          <EmptyState
+            icon={ClipboardList}
+            title="No tasks yet"
+            description="Create your first task to get started with Agendo"
+            action={<TaskCreateDialog />}
+          />
         </div>
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="flex flex-row flex-1 min-h-0 gap-3 p-3 overflow-x-auto sm:gap-4 sm:p-4">
+            {BOARD_COLUMNS.map((status) => (
+              <TaskColumn
+                key={status}
+                status={status}
+                label={COLUMN_LABELS[status]}
+                filteredTaskIds={filteredColumnTaskIds[status]}
+                dragSourceStatus={dragSourceStatus}
+              />
+            ))}
+          </div>
 
-        <DragOverlay dropAnimation={null}>
-          {activeId ? <TaskDragOverlay taskId={activeId} /> : null}
-        </DragOverlay>
-      </DndContext>
+          <DragOverlay dropAnimation={null}>
+            {activeId ? <TaskDragOverlay taskId={activeId} /> : null}
+          </DragOverlay>
+        </DndContext>
+      )}
 
       {selectedTaskId && <TaskDetailSheet key={selectedTaskId} taskId={selectedTaskId} />}
     </div>

@@ -1,0 +1,49 @@
+# Stage 1: Verify setup.sh fails gracefully without Node.js
+FROM ubuntu:24.04 AS prereq-test
+
+RUN apt-get update && apt-get install -y bash curl && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/setup.sh /tmp/setup.sh
+RUN chmod +x /tmp/setup.sh
+
+# setup.sh should fail gracefully when Node.js is missing
+RUN echo "=== Prereq test: expecting graceful failure without Node.js ===" && \
+    if /tmp/setup.sh --dev 2>&1; then \
+      echo "FAIL: setup.sh should have exited with error when Node.js is missing" && exit 1; \
+    else \
+      echo "PASS: setup.sh correctly detected missing Node.js"; \
+    fi
+
+# Stage 2: Full setup test with Node.js available
+FROM node:22-slim AS full-test
+
+RUN apt-get update && \
+    apt-get install -y build-essential python3 curl jq && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+COPY . .
+
+ARG SETUP_MODE="--dev"
+ENV DATABASE_URL="postgresql://agendo:agendo@localhost:5432/agendo"
+
+RUN chmod +x scripts/setup.sh
+
+# Run setup (skip DB steps — no PostgreSQL in this container)
+ENV SKIP_DB=1
+RUN echo "=== Full test: running setup.sh ${SETUP_MODE} ===" && \
+    scripts/setup.sh ${SETUP_MODE}
+
+# Verify key outputs (setup may warn about missing DB, that's OK)
+RUN echo "--- Verifying .env.local exists ---" && \
+    test -f .env.local && echo "PASS: .env.local exists"
+RUN echo "--- Verifying JWT_SECRET was generated ---" && \
+    grep -q 'JWT_SECRET=' .env.local && echo "PASS: JWT_SECRET present in .env.local"
+RUN echo "--- Verifying node_modules installed ---" && \
+    test -d node_modules && echo "PASS: node_modules directory exists"
+RUN echo "=== All verification checks passed ==="
+
+CMD ["echo", "Setup test completed successfully."]
