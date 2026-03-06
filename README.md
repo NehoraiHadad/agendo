@@ -23,7 +23,6 @@
 
 - **Node.js 22+** and **pnpm 10+**
 - **Docker** (for PostgreSQL) or a running PostgreSQL 15+ instance
-- **PM2** (`npm install -g pm2`) — for production; optional for dev
 - At least one AI CLI installed and authenticated: `claude`, `codex`, or `gemini`
 
 ### Setup
@@ -48,16 +47,18 @@ pnpm build && pnpm worker:build && pnpm build:mcp
 pnpm db:migrate
 pnpm db:seed          # seeds config + auto-discovers agents in PATH
 
-# 6. Start with PM2
-cp ecosystem.config.example.js ecosystem.config.js
-pm2 start ecosystem.config.js
-pm2 save
+# 6. Start
+pnpm start &                          # Next.js app (port 4100)
+node dist/worker/index.js &           # Worker
+pnpm tsx src/terminal/server.ts &     # Terminal server (port 4101, optional)
 
 # 7. Open
 open http://localhost:4100
 ```
 
-### Development mode (without PM2)
+### Development mode
+
+For active development with hot-reload:
 
 ```bash
 # Terminal 1 — Next.js app
@@ -68,6 +69,17 @@ pnpm worker:dev
 
 # Terminal 3 — Terminal server (optional)
 pnpm tsx src/terminal/server.ts
+```
+
+### Using PM2 (recommended for always-on servers)
+
+If you're running Agendo on a server that should stay up 24/7, [PM2](https://pm2.io) handles process management, auto-restart on crash, and memory limits:
+
+```bash
+npm install -g pm2
+cp ecosystem.config.example.js ecosystem.config.js
+pm2 start ecosystem.config.js
+pm2 save
 ```
 
 ### Remote access with Tailscale
@@ -107,26 +119,15 @@ MCP Server (dist/mcp-server.js)
   Injected into agent sessions, exposes task management tools
 ```
 
-### PM2 Services
+### Services
 
-| Service         | Port   | PM2 Name          | Description                        |
-| --------------- | ------ | ----------------- | ---------------------------------- |
-| Next.js App     | `4100` | `agendo`          | Web UI, API, SSE, MCP server host  |
-| Worker          | —      | `agendo-worker`   | Job queue processor, agent spawner |
-| Terminal Server | `4101` | `agendo-terminal` | xterm.js + node-pty over socket.io |
+| Service         | Port   | What it does                                    |
+| --------------- | ------ | ----------------------------------------------- |
+| Next.js App     | `4100` | Web UI, API routes, SSE endpoints, MCP host     |
+| Worker          | —      | Job queue processor, spawns AI CLI subprocesses |
+| Terminal Server | `4101` | xterm.js + node-pty over socket.io (optional)   |
 
-### Restarting safely
-
-```bash
-# Worker — always safe to restart
-pm2 restart agendo-worker
-
-# Next.js — use the safe script (waits for active sessions to finish)
-./scripts/safe-restart-agendo.sh
-
-# Force restart (only when no sessions are active)
-./scripts/safe-restart-agendo.sh --force
-```
+> **Note on restarting**: The Next.js app hosts the MCP server. Restarting it drops live agent connections. If using PM2, use `./scripts/safe-restart-agendo.sh` which waits for active sessions to finish first. The worker is always safe to restart.
 
 ## Tech Stack
 
