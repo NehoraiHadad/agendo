@@ -56,8 +56,8 @@ pnpm worker:dev                 # tsx watch for local dev
 - **Process manager**: PM2
 - **UI**: shadcn/ui + Tailwind CSS
 - **State**: Zustand (client), Server Components (server)
-- **Real-time**: SSE (board updates, log streaming), PG NOTIFY (worker↔frontend bridge), socket.io (terminal)
-- **Terminal**: xterm.js v6 (`@xterm/*` scoped packages) + node-pty
+- **Real-time**: SSE (board updates, log streaming), PG NOTIFY (worker↔frontend bridge), WebSocket (terminal)
+- **Terminal**: xterm.js v6 (`@xterm/*` scoped packages) + node-pty + `ws` WebSocket
 - **MCP**: `@modelcontextprotocol/sdk` (stdio transport)
 
 ## PM2 Services
@@ -98,7 +98,7 @@ From `src/lib/config.ts` (validated with Zod on startup):
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `JWT_SECRET` — min 16 chars, used for API auth
-- `LOG_DIR` — defaults to `/data/agendo/logs`
+- `LOG_DIR` — defaults to `./logs` (production uses `/data/agendo/logs` via ecosystem.config.js)
 - `ALLOWED_WORKING_DIRS` — colon-separated allowed dirs (default `/home/ubuntu/projects:/tmp`)
 - `MCP_SERVER_PATH` — path to bundled MCP server (`dist/mcp-server.js`)
 
@@ -130,14 +130,9 @@ The system runs as three cooperating processes:
 └─────────────────────────────────────────┘
 ```
 
-## Sessions vs Executions
+## Sessions
 
-These are distinct concepts handled by different queues and runners:
-
-- **Sessions** (`run-session` queue, `session-runner.ts`): Long-lived AI conversations. The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via PG NOTIFY (`agendo_control_*`); worker streams `AgendoEvent`s back via PG NOTIFY (`agendo_events_*`). Use POST `/api/sessions`.
-- **Executions** (`execute-capability` queue, `execution-runner.ts`): Fire-and-forget CLI commands using `template`-mode capabilities with `command_tokens`. Use POST `/api/executions`.
-
-POST `/api/executions` returns 400 for `prompt`-mode capabilities — those require sessions.
+Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via PG NOTIFY (`agendo_control_*`); worker streams `AgendoEvent`s back via PG NOTIFY (`agendo_events_*`). Use POST `/api/sessions`.
 
 ## Real-Time Flow
 
@@ -166,9 +161,8 @@ PG NOTIFY payloads >7500 bytes are replaced with a `{type:'ref'}` stub (`src/lib
 Each AI CLI gets an adapter in `src/lib/worker/adapters/`:
 
 - `claude-adapter.ts` — Claude Code CLI (persistent session, no `-p` flag)
-- `codex-adapter.ts` — OpenAI Codex CLI
+- `codex-app-server-adapter.ts` — OpenAI Codex CLI (JSON-RPC via `codex app-server`)
 - `gemini-adapter.ts` — Gemini CLI (uses ACP protocol for tool approvals)
-- `template-adapter.ts` — Generic CLI with `command_tokens` substitution
 
 Adapters expose a standard interface: they parse stdout into `AgendoEventPayload`s and handle permission prompts. `adapter-factory.ts` selects the right adapter based on `agent.binaryName`.
 
@@ -180,13 +174,10 @@ Adapters expose a standard interface: they parse stdout into `AgendoEventPayload
 4. **`params` is async** in Next.js 16 — always `const { id } = await params;`
 5. **Named exports only** (except Next.js pages/layouts/routes)
 6. **03-data-model.md field names are final** — do not rename columns or types
-7. **C-09 is a FALSE POSITIVE** — `execution.mode` column EXISTS at data-model line 214
-8. **No `execution_logs` table** — log fields are on the `executions` table
-9. **No `pending` execution status** — valid: `queued`, `running`, `cancelling`, `succeeded`, `failed`, `cancelled`, `timed_out`
-10. **`AgentCapability`** is the type name (not `Capability`), `cap.label` (not `cap.name`), `cap.dangerLevel` (not `cap.level`)
-11. **Worker build uses esbuild** (not `tsc` — OOMs). Use `pnpm worker:build`.
-12. **MCP server**: no `@/` path aliases — bundled separately with esbuild (`pnpm build:mcp`)
-13. **Strip `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`** env vars before spawning agent subprocesses
+7. **`AgentCapability`** is the type name (not `Capability`), `cap.label` (not `cap.name`), `cap.dangerLevel` (not `cap.level`)
+8. **Worker build uses esbuild** (not `tsc` — OOMs). Use `pnpm worker:build`.
+9. **MCP server**: no `@/` path aliases — bundled separately with esbuild (`pnpm build:mcp`)
+10. **Strip `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`** env vars before spawning agent subprocesses
 
 ## Service Patterns
 
