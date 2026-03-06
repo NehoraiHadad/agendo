@@ -86,9 +86,9 @@ interface CardStackProps {
 
 /**
  * Wraps a parent TaskCard with a visual "card stack" when collapsed.
- * Ghost layers peek out behind the real card. An invisible overlay
- * intercepts clicks so the card detail sheet does NOT open — only expand.
- * When expanded, the card works normally and a collapse bar appears below.
+ * Card-edge strips peek out below the real card — like a pile of cards on a desk.
+ * An invisible overlay intercepts clicks so the detail sheet does NOT open.
+ * When expanded, the card works normally and a collapse bar appears below children.
  */
 const CardStack = memo(function CardStack({
   childCount,
@@ -122,67 +122,65 @@ const CardStack = memo(function CardStack({
   const layers = Math.min(childCount, 3);
 
   return (
-    <div className="relative group/stack">
-      {/* Ghost layers — staggered behind the card */}
-      {layers >= 3 && (
+    <button
+      onClick={onToggle}
+      className="relative block w-full text-left group/stack cursor-pointer"
+      aria-label={`Expand ${childCount} subtask${childCount !== 1 ? 's' : ''}`}
+    >
+      {/* The real card — sits on top of the pile */}
+      <div className="relative z-10 pointer-events-none">{children}</div>
+
+      {/* Card-edge strips peeking below — each one slightly inset + offset down.
+          These are visible solid strips, not subtle ghost borders. */}
+      <div className="relative z-0 -mt-1.5">
+        {/* First card edge (closest to parent) */}
         <div
           className={cn(
-            'absolute left-1.5 right-1.5 top-2 bottom-[-6px] rounded-lg',
-            'border border-white/[0.03] bg-white/[0.015]',
-            'transition-all duration-300 ease-out',
-            'group-hover/stack:left-2 group-hover/stack:right-2 group-hover/stack:top-2.5',
+            'mx-2 h-[6px] rounded-b-md',
+            'border-x border-b border-white/[0.08]',
+            'bg-[oklch(0.10_0_0)]',
+            'transition-all duration-200',
+            'group-hover/stack:bg-[oklch(0.11_0.005_280)] group-hover/stack:border-white/[0.12]',
           )}
         />
-      )}
-      {layers >= 2 && (
-        <div
-          className={cn(
-            'absolute left-1 right-1 top-1.5 bottom-[-3px] rounded-lg',
-            'border border-white/[0.04] bg-white/[0.02]',
-            'transition-all duration-250 ease-out',
-            'group-hover/stack:left-1.5 group-hover/stack:right-1.5 group-hover/stack:top-2',
-          )}
-        />
-      )}
-      <div
-        className={cn(
-          'absolute left-0.5 right-0.5 top-[3px] bottom-0 rounded-lg',
-          'border border-white/[0.05] bg-white/[0.025]',
-          'transition-all duration-200 ease-out',
-          'group-hover/stack:left-1 group-hover/stack:right-1 group-hover/stack:top-1.5',
+        {/* Second card edge */}
+        {layers >= 2 && (
+          <div
+            className={cn(
+              'mx-4 h-[5px] -mt-px rounded-b-md',
+              'border-x border-b border-white/[0.06]',
+              'bg-[oklch(0.09_0_0)]',
+              'transition-all duration-200 delay-[50ms]',
+              'group-hover/stack:bg-[oklch(0.10_0.003_280)] group-hover/stack:border-white/[0.09]',
+            )}
+          />
         )}
-      />
-
-      {/* Real card */}
-      <div className="relative z-10">{children}</div>
-
-      {/* Click overlay — intercepts clicks so the card doesn't open its detail sheet.
-          The drag handle still works because it uses pointer events directly via dnd-kit. */}
-      <button
-        onClick={onToggle}
-        className="absolute inset-0 z-20 cursor-pointer"
-        aria-label={`Expand ${childCount} subtask${childCount !== 1 ? 's' : ''}`}
-      />
-
-      {/* Count badge — bottom-right, above the overlay */}
-      <div
-        className={cn(
-          'absolute z-30 -bottom-2 right-2 pointer-events-none',
-          'flex items-center gap-1 rounded-full',
-          'border border-white/[0.08] bg-[oklch(0.11_0.005_280)] px-2 py-0.5',
-          'text-[10px] font-semibold tabular-nums text-muted-foreground/50',
-          'shadow-[0_2px_8px_oklch(0_0_0/0.3)]',
-          'transition-all duration-200',
-          'group-hover/stack:border-primary/25 group-hover/stack:text-primary/70',
-          'group-hover/stack:shadow-[0_2px_12px_oklch(0.5_0.2_280/0.15)]',
+        {/* Third card edge */}
+        {layers >= 3 && (
+          <div
+            className={cn(
+              'mx-6 h-[4px] -mt-px rounded-b-md',
+              'border-x border-b border-white/[0.04]',
+              'bg-[oklch(0.08_0_0)]',
+              'transition-all duration-200 delay-100',
+              'group-hover/stack:bg-[oklch(0.09_0.002_280)] group-hover/stack:border-white/[0.07]',
+            )}
+          />
         )}
-      >
-        +{childCount} subtask{childCount !== 1 ? 's' : ''}
       </div>
 
-      {/* Bottom spacing for stacked layers */}
-      <div className={cn(layers >= 3 ? 'h-3' : layers >= 2 ? 'h-2' : 'h-1.5')} />
-    </div>
+      {/* Count badge — centered below the stack */}
+      <div
+        className={cn(
+          'flex items-center justify-center mt-1',
+          'text-[10px] font-medium tabular-nums text-muted-foreground/35',
+          'transition-colors duration-200',
+          'group-hover/stack:text-muted-foreground/60',
+        )}
+      >
+        {childCount} subtask{childCount !== 1 ? 's' : ''} — click to expand
+      </div>
+    </button>
   );
 });
 
