@@ -118,7 +118,7 @@ claude auth login
 
 # Codex (OpenAI)
 npm install -g @openai/codex
-export OPENAI_API_KEY=sk-...
+codex login
 
 # Gemini (Google)
 npm install -g @google/gemini-cli
@@ -147,7 +147,7 @@ MCP Server                   Injected into agent sessions
 | -------- | ------------ | --------------------------------------------- |
 | App      | 4100         | Web UI, API routes, SSE endpoints             |
 | Worker   | ---          | Job queue processor, agent subprocess manager |
-| Terminal | 4101         | xterm.js + node-pty over socket.io (optional) |
+| Terminal | 4101         | xterm.js + node-pty over WebSocket (optional) |
 
 ---
 
@@ -216,7 +216,7 @@ Docker Desktop must have WSL 2 integration enabled for PostgreSQL.
 | UI        | shadcn/ui + Tailwind CSS v4                  |
 | State     | Zustand (client), Server Components (server) |
 | Real-time | SSE + PG NOTIFY                              |
-| Terminal  | xterm.js v6 + node-pty + socket.io           |
+| Terminal  | xterm.js v6 + node-pty + ws                  |
 | MCP       | @modelcontextprotocol/sdk (stdio)            |
 
 ---
@@ -235,7 +235,7 @@ src/
     services/          Business logic
     worker/
       adapters/        Claude, Codex, Gemini protocol adapters
-  terminal/            Terminal server (socket.io + node-pty)
+  terminal/            Terminal server (WebSocket + node-pty)
 scripts/               Setup, safe restart, utilities
 ```
 

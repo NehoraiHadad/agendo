@@ -101,7 +101,7 @@ module.exports = {
     // Terminal Server (port 4101)
     //
     // Provides xterm.js + node-pty backed terminal sessions over
-    // socket.io. Safe to restart at any time (drops open terminals).
+    // WebSocket. Safe to restart at any time (drops open terminals).
     // ---------------------------------------------------------------
     {
       name: 'agendo-terminal',
