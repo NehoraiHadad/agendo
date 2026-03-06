@@ -55,9 +55,15 @@ export function WebTerminal({
 
         if (state.disposed) return;
 
-        const wsPort = process.env.NEXT_PUBLIC_TERMINAL_WS_PORT || '4101';
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${protocol}//${window.location.hostname}:${wsPort}?token=${encodeURIComponent(tokenResult.data.token)}`;
+        // When accessed via HTTPS (reverse proxy like Tailscale), route through /ws on same origin.
+        // When accessed directly via HTTP, connect to the terminal server port directly.
+        const isProxied = window.location.protocol === 'https:';
+        const wsPort = process.env.NEXT_PUBLIC_TERMINAL_WS_PORT || '4101';
+        const host = isProxied
+          ? `${window.location.host}/ws`
+          : `${window.location.hostname}:${wsPort}`;
+        const url = `${protocol}//${host}?token=${encodeURIComponent(tokenResult.data.token)}`;
 
         const ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
