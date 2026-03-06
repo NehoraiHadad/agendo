@@ -25,6 +25,22 @@ info()  { echo -e "${GREEN}[+]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[x]${NC} $1"; exit 1; }
 
+pg_ready() {
+  # Try native pg_isready first
+  if command -v pg_isready &>/dev/null; then
+    pg_isready -q 2>/dev/null && return 0
+  fi
+  # Try via Docker
+  if [[ "${HAVE_DOCKER:-false}" == "true" ]] && [[ -f docker-compose.yml ]]; then
+    docker compose exec -T postgres pg_isready -q 2>/dev/null && return 0
+  fi
+  # Try via Node.js pg client
+  if [[ -d node_modules ]]; then
+    node -e "const pg=require('pg');const c=new pg.Client('${DATABASE_URL:-postgresql://agendo:agendo@localhost:5432/agendo}');c.connect().then(()=>{c.end();process.exit(0)}).catch(()=>process.exit(1))" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
 check_command() {
   local cmd="$1"
   local min_version="${2:-}"
@@ -36,7 +52,7 @@ check_command() {
 
   if [[ -n "$min_version" ]]; then
     local version
-    version=$("$cmd" --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
+    version=$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
     local major
     major=$(echo "$version" | cut -d. -f1)
     local required_major
@@ -67,6 +83,25 @@ if ! command -v docker &>/dev/null; then
   warn "Install Docker: https://docs.docker.com/get-docker/"
 fi
 
+# Check available RAM
+if command -v free &>/dev/null; then
+  MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
+  if [[ $MEM_MB -lt 3500 ]]; then
+    warn "Low memory detected (${MEM_MB}MB). Builds may fail."
+    warn "Consider adding swap space before continuing."
+  fi
+fi
+
+# Check for C compiler (needed by node-pty native addon)
+if ! command -v cc &>/dev/null && ! command -v gcc &>/dev/null; then
+  warn "No C compiler found. node-pty requires build tools."
+  if [[ "$(uname)" == "Darwin" ]]; then
+    warn "Run: xcode-select --install"
+  else
+    warn "Run: sudo apt-get install build-essential python3"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Environment file
 # ---------------------------------------------------------------------------
@@ -76,11 +111,18 @@ if [[ ! -f .env.local ]]; then
   cp .env.example .env.local
 
   # Auto-generate JWT_SECRET
-  JWT=$(openssl rand -hex 32)
+  JWT=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   if [[ "$(uname)" == "Darwin" ]]; then
     sed -i '' "s/^JWT_SECRET=$/JWT_SECRET=$JWT/" .env.local
   else
     sed -i "s/^JWT_SECRET=$/JWT_SECRET=$JWT/" .env.local
+  fi
+
+  # Expand $HOME to actual path in generated .env.local
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "s|\\\$HOME|$HOME|g" .env.local
+  else
+    sed -i "s|\\\$HOME|$HOME|g" .env.local
   fi
 
   info "Generated JWT_SECRET automatically."
@@ -110,9 +152,11 @@ fi
 # 5. Start PostgreSQL (Docker)
 # ---------------------------------------------------------------------------
 
-if [[ "$HAVE_DOCKER" == "true" ]] && [[ -f docker-compose.yml ]]; then
+if [[ "${SKIP_DB:-}" == "1" ]]; then
+  warn "SKIP_DB=1 — skipping PostgreSQL check."
+elif [[ "$HAVE_DOCKER" == "true" ]] && [[ -f docker-compose.yml ]]; then
   # Check if PostgreSQL is already reachable
-  if pg_isready -q 2>/dev/null; then
+  if pg_ready; then
     info "PostgreSQL is already running."
   else
     info "Starting PostgreSQL via Docker Compose..."
@@ -120,7 +164,7 @@ if [[ "$HAVE_DOCKER" == "true" ]] && [[ -f docker-compose.yml ]]; then
 
     echo -n "  Waiting for PostgreSQL"
     for i in $(seq 1 30); do
-      if pg_isready -q 2>/dev/null; then
+      if pg_ready; then
         echo ""
         info "PostgreSQL is ready."
         break
@@ -134,7 +178,7 @@ if [[ "$HAVE_DOCKER" == "true" ]] && [[ -f docker-compose.yml ]]; then
     done
   fi
 else
-  if ! pg_isready -q 2>/dev/null; then
+  if ! pg_ready; then
     warn "PostgreSQL does not appear to be running."
     warn "Start it manually and ensure DATABASE_URL in .env.local is correct."
   else
@@ -163,11 +207,15 @@ fi
 # 7. Database setup
 # ---------------------------------------------------------------------------
 
-info "Setting up database schema (drizzle-kit push)..."
-pnpm db:setup
+if [[ "${SKIP_DB:-}" == "1" ]]; then
+  warn "SKIP_DB=1 — skipping database setup and seed."
+else
+  info "Setting up database schema (drizzle-kit push)..."
+  pnpm db:setup
 
-info "Seeding database (agent discovery)..."
-pnpm db:seed
+  info "Seeding database (agent discovery)..."
+  pnpm db:seed
+fi
 
 # ---------------------------------------------------------------------------
 # 8. Done
@@ -180,6 +228,11 @@ echo ""
 if [[ "$DEV_MODE" == "true" ]]; then
   echo "Start in development mode:"
   echo ""
+  echo "  # Single command (recommended) — runs app, worker, and terminal server"
+  echo "  pnpm dev:all"
+  echo ""
+  echo "  # Or run each service separately:"
+  echo ""
   echo "  # Terminal 1 — Next.js app"
   echo "  pnpm dev"
   echo ""
@@ -187,7 +240,7 @@ if [[ "$DEV_MODE" == "true" ]]; then
   echo "  pnpm worker:dev"
   echo ""
   echo "  # Terminal 3 — Terminal server (optional)"
-  echo "  pnpm tsx src/terminal/server.ts"
+  echo "  pnpm terminal:dev"
   echo ""
 else
   echo "Start the app:"
@@ -203,5 +256,6 @@ else
   echo ""
 fi
 
-echo "Open: http://localhost:${PORT:-4100}"
+echo "Verify: ./scripts/smoke-test.sh"
+echo "Open:   http://localhost:${PORT:-4100}"
 echo ""

@@ -1,6 +1,6 @@
 import { eq, desc, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { tasks, taskEvents, agents, workerHeartbeats } from '@/lib/db/schema';
+import { tasks, taskEvents, agents, workerHeartbeats, projects } from '@/lib/db/schema';
 
 // --- Types ---
 
@@ -24,6 +24,7 @@ export interface AgentHealthEntry {
 export interface DashboardStats {
   taskCountsByStatus: Record<string, number>;
   totalTasks: number;
+  projectCount: number;
   recentEvents: RecentEvent[];
   agentHealth: AgentHealthEntry[];
   workerStatus: { isOnline: boolean; lastSeenAt: Date } | null;
@@ -32,7 +33,7 @@ export interface DashboardStats {
 // --- Implementation ---
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  const [taskCounts, recentEvents, agentRows, workerRow] = await Promise.all([
+  const [taskCounts, recentEvents, agentRows, workerRow, projectCountRow] = await Promise.all([
     // Task counts by status
     db.select({ status: tasks.status, count: count() }).from(tasks).groupBy(tasks.status),
 
@@ -65,6 +66,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
     // Worker status (latest heartbeat)
     db.select().from(workerHeartbeats).orderBy(desc(workerHeartbeats.lastSeenAt)).limit(1),
+
+    // Project count
+    db.select({ count: count() }).from(projects),
   ]);
 
   // Transform task counts to record
@@ -89,6 +93,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return {
     taskCountsByStatus,
     totalTasks,
+    projectCount: projectCountRow[0]?.count ?? 0,
     recentEvents,
     agentHealth: agentRows,
     workerStatus,
