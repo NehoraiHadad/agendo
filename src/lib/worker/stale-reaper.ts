@@ -3,6 +3,7 @@ import { sessions } from '@/lib/db/schema';
 import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
+import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
 
 const log = createLogger('stale-reaper');
 
@@ -81,9 +82,13 @@ export class StaleReaper {
       for (let i = 0; i < staleSessions.length; i++) {
         const row = staleSessions[i];
         const wasReaped = reaped[i].length > 0;
-        if (wasReaped && row.pid != null) {
-          log.info({ pid: row.pid, sessionId: row.id }, 'Killing orphaned PID for session');
-          killPid(row.pid);
+        if (wasReaped) {
+          if (row.pid != null) {
+            log.info({ pid: row.pid, sessionId: row.id }, 'Killing orphaned PID for session');
+            killPid(row.pid);
+          }
+          // Broadcast the status change so SSE subscribers update the UI
+          await broadcastSessionStatus(row.id, 'idle');
         }
       }
 

@@ -58,6 +58,8 @@ export async function enqueueSession(data: RunSessionJobData): Promise<string | 
  * slots, call boss.work() N times — each call creates an independent polling
  * loop. batchSize:1 ensures each loop handles exactly one session at a time,
  * so a long-running session never blocks other sessions from starting.
+ *
+ * N is controlled by the WORKER_MAX_CONCURRENT_JOBS env var (default: 3).
  */
 export async function registerSessionWorker(
   handler: (job: Job<RunSessionJobData>) => Promise<void>,
@@ -72,10 +74,10 @@ export async function registerSessionWorker(
       await handler(job);
     }
   };
-  // Register 3 independent polling loops to allow up to 3 concurrent sessions.
-  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
-  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
-  await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
+  const slots = config.WORKER_MAX_CONCURRENT_JOBS;
+  for (let i = 0; i < slots; i++) {
+    await boss.work<RunSessionJobData>(SESSION_QUEUE_NAME, workerOptions, jobHandler);
+  }
 }
 
 /**

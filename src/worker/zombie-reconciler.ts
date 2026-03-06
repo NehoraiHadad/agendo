@@ -3,6 +3,7 @@ import { sessions } from '../lib/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { enqueueSession } from '../lib/worker/queue';
 import { createLogger } from '@/lib/logger';
+import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
 
 const log = createLogger('zombie-reconciler');
 
@@ -54,6 +55,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         .where(and(eq(sessions.id, session.id), eq(sessions.status, 'awaiting_input')));
 
       log.info({ sessionId: session.id }, 'Session was awaiting_input, marked idle (not killed)');
+      await broadcastSessionStatus(session.id, 'idle');
       continue;
     }
 
@@ -86,6 +88,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
       { sessionId: session.id, wasStatus: session.status },
       'Session marked idle after worker restart',
     );
+    await broadcastSessionStatus(session.id, 'idle');
 
     // Auto-recovery: re-enqueue only if the session was active (mid-work) and
     // hasn't already been recovered too many times. The recoveryCount tracks

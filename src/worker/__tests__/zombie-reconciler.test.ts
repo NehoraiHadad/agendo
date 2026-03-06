@@ -33,6 +33,11 @@ vi.mock('../../lib/worker/queue', () => ({
   enqueueSession: vi.fn().mockResolvedValue(null),
 }));
 
+// Mock pg-notify to prevent real PG NOTIFY calls
+vi.mock('../../lib/realtime/pg-notify', () => ({
+  broadcastSessionStatus: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock drizzle-orm operators
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn((_col, val) => ({ type: 'eq', val })),
