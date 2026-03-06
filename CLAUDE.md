@@ -22,6 +22,7 @@ pm2 restart agendo-worker       # restart worker (ALWAYS safe — does not host 
 pm2 restart agendo              # ⚠ DANGER during active sessions — kills MCP connection
 
 # Build
+pnpm build:all                  # build everything (app + worker + MCP)
 pnpm build                      # Next.js production build
 pnpm worker:build               # build worker with esbuild (NOT tsc — OOMs)
 pnpm build:mcp                  # build MCP server bundle
@@ -37,8 +38,9 @@ pnpm test:watch                 # watch mode
 pnpm vitest run src/lib/services/__tests__/task-service.test.ts  # single test file
 
 # Database
-pnpm db:generate                # generate migration from schema changes
-pnpm db:migrate                 # apply migrations
+pnpm db:setup                   # create schema from scratch (drizzle-kit push)
+pnpm db:generate                # generate migration from schema changes (for upgrades)
+pnpm db:migrate                 # apply migrations (for upgrades)
 pnpm db:studio                  # open Drizzle Studio (web UI)
 pnpm db:seed                    # seed database
 

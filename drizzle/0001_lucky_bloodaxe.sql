@@ -1,1 +1,0 @@
-ALTER TABLE "executions" ADD COLUMN "spawn_depth" integer DEFAULT 0 NOT NULL;
