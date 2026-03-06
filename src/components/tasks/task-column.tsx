@@ -122,9 +122,17 @@ const CardStack = memo(function CardStack({
   const layers = Math.min(childCount, 3);
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onToggle}
-      className="relative block w-full text-left group/stack cursor-pointer"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      className="relative w-full text-left group/stack cursor-pointer"
       aria-label={`Expand ${childCount} subtask${childCount !== 1 ? 's' : ''}`}
     >
       {/* The real card — sits on top of the pile */}
@@ -180,7 +188,7 @@ const CardStack = memo(function CardStack({
       >
         {childCount} subtask{childCount !== 1 ? 's' : ''} — click to expand
       </div>
-    </button>
+    </div>
   );
 });
 
