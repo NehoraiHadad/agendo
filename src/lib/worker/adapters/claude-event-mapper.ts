@@ -103,8 +103,9 @@ export function mapClaudeJsonToEvents(
     for (const block of message?.content ?? []) {
       if (block.type === 'text' && typeof block.text === 'string') {
         events.push({ type: 'agent:text', text: block.text });
-      } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
-        events.push({ type: 'agent:thinking', text: block.thinking });
+      } else if (block.type === 'thinking') {
+        // Skip — thinking blocks are already emitted by the standalone 'thinking'
+        // event. Emitting them again here causes duplicate ThinkingBubbles in the UI.
       } else if (block.type === 'tool_use') {
         events.push(
           buildToolStartEvent(

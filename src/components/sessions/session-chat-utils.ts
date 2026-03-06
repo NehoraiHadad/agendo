@@ -200,7 +200,15 @@ export function buildDisplayItems(
       }
 
       case 'agent:thinking': {
-        items.push({ kind: 'thinking', id: ev.id, text: ev.text });
+        // If the last item is a thinking bubble (from thinking-delta streaming),
+        // replace its text with the complete thinking text instead of creating
+        // a duplicate bubble.
+        const lastThComplete = items[items.length - 1];
+        if (lastThComplete && lastThComplete.kind === 'thinking') {
+          lastThComplete.text = ev.text;
+        } else {
+          items.push({ kind: 'thinking', id: ev.id, text: ev.text });
+        }
         break;
       }
 
