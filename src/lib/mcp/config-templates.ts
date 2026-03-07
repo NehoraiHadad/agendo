@@ -12,27 +12,92 @@ export interface SessionIdentity {
 }
 
 /**
+ * A resolved MCP server ready to be injected into an agent session.
+ * Produced by mcp-server-service.resolveSessionMcpServers().
+ */
+export interface ResolvedMcpServer {
+  name: string;
+  transportType: 'stdio' | 'http';
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Convert a ResolvedMcpServer to Claude's MCP config format.
+ * Returns null for incompatible transport types (http not yet supported by all callers).
+ */
+function toClaudeFormat(server: ResolvedMcpServer): Record<string, unknown> | null {
+  if (server.transportType === 'stdio') {
+    if (!server.command) return null;
+    return {
+      command: server.command,
+      args: server.args ?? [],
+      ...(server.env ? { env: server.env } : {}),
+    };
+  }
+  if (server.transportType === 'http') {
+    if (!server.url) return null;
+    return {
+      type: 'http',
+      url: server.url,
+      ...(server.headers ? { headers: server.headers } : {}),
+    };
+  }
+  return null;
+}
+
+/**
+ * Convert a ResolvedMcpServer to ACP format (for Gemini/Codex).
+ * Only stdio servers are supported — returns null for http servers.
+ */
+export function toAcpFormat(server: ResolvedMcpServer): AcpMcpServer | null {
+  if (server.transportType !== 'stdio') return null;
+  if (!server.command) return null;
+  return {
+    name: server.name,
+    command: server.command,
+    args: server.args ?? [],
+    env: Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value })),
+  };
+}
+
+/**
  * Generate an MCP config object that includes session identity env vars so the
  * MCP server can associate incoming tool calls with the correct session, task,
  * agent, and project without needing a separate auth mechanism.
  */
-export function generateSessionMcpConfig(serverPath: string, identity: SessionIdentity): object {
+export function generateSessionMcpConfig(
+  serverPath: string,
+  identity: SessionIdentity,
+  additionalServers: ResolvedMcpServer[] = [],
+): object {
   const agendoUrl = process.env.AGENDO_URL ?? 'http://localhost:4100';
-  return {
-    mcpServers: {
-      agendo: {
-        command: 'node',
-        args: [serverPath],
-        env: {
-          AGENDO_URL: agendoUrl,
-          AGENDO_SESSION_ID: identity.sessionId,
-          AGENDO_TASK_ID: identity.taskId ?? '',
-          AGENDO_AGENT_ID: identity.agentId,
-          AGENDO_PROJECT_ID: identity.projectId ?? '',
-        },
+
+  const mcpServers: Record<string, unknown> = {
+    agendo: {
+      command: 'node',
+      args: [serverPath],
+      env: {
+        AGENDO_URL: agendoUrl,
+        AGENDO_SESSION_ID: identity.sessionId,
+        AGENDO_TASK_ID: identity.taskId ?? '',
+        AGENDO_AGENT_ID: identity.agentId,
+        AGENDO_PROJECT_ID: identity.projectId ?? '',
       },
     },
   };
+
+  for (const server of additionalServers) {
+    const formatted = toClaudeFormat(server);
+    if (formatted) {
+      mcpServers[server.name] = formatted;
+    }
+  }
+
+  return { mcpServers };
 }
 
 export function generateClaudeMcpConfig(serverPath: string): object {
@@ -64,13 +129,16 @@ AGENDO_URL = "${url}"
  * Generate the ACP mcpServers array for a Gemini session/new request.
  * Embeds session identity so the MCP server can associate tool calls with
  * the correct session without a separate auth mechanism.
+ *
+ * Note: HTTP servers are skipped — Gemini ACP only supports stdio transport.
  */
 export function generateGeminiAcpMcpServers(
   serverPath: string,
   identity: SessionIdentity,
+  additionalServers: ResolvedMcpServer[] = [],
 ): AcpMcpServer[] {
   // Gemini ACP envVariableSchema: array of {name, value} — NOT a dict.
-  return [
+  const servers: AcpMcpServer[] = [
     {
       name: 'agendo',
       command: 'node',
@@ -84,6 +152,15 @@ export function generateGeminiAcpMcpServers(
       ],
     },
   ];
+
+  for (const server of additionalServers) {
+    const formatted = toAcpFormat(server);
+    if (formatted) {
+      servers.push(formatted);
+    }
+  }
+
+  return servers;
 }
 
 export function generateGeminiMcpConfig(serverPath: string): object {

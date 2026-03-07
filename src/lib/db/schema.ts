@@ -428,3 +428,49 @@ export const agentWorkspaces = pgTable(
   },
   (table) => [index('idx_workspaces_project').on(table.projectId, table.isActive)],
 );
+
+// ============================================================================
+// MCP Server Registry
+// ============================================================================
+
+export const mcpTransportTypeEnum = pgEnum('mcp_transport_type', ['stdio', 'http']);
+
+// --- MCP Servers ------------------------------------------------------------
+// Global registry of MCP server definitions available to agents.
+
+export const mcpServers = pgTable('mcp_servers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull().unique(),
+  description: text('description'),
+  transportType: mcpTransportTypeEnum('transport_type').notNull().default('stdio'),
+  // stdio fields
+  command: text('command'),
+  args: jsonb('args').$type<string[]>().default([]),
+  env: jsonb('env').$type<Record<string, string>>().default({}),
+  // http fields
+  url: text('url'),
+  headers: jsonb('headers').$type<Record<string, string>>().default({}),
+  // config
+  enabled: boolean('enabled').notNull().default(true),
+  isDefault: boolean('is_default').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// --- Project MCP Servers ----------------------------------------------------
+// Per-project MCP server enablement and env overrides.
+
+export const projectMcpServers = pgTable(
+  'project_mcp_servers',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    mcpServerId: uuid('mcp_server_id')
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull().default(true),
+    envOverrides: jsonb('env_overrides').$type<Record<string, string>>().default({}),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.mcpServerId] })],
+);

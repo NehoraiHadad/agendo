@@ -15,12 +15,14 @@ import {
   Bot,
   Camera,
   ListTodo,
+  Server,
   type LucideIcon,
 } from 'lucide-react';
 import { QuickLaunchDialog } from '@/components/sessions/quick-launch-dialog';
 import { SnapshotsTab } from '@/components/snapshots/snapshots-tab';
+import { ProjectMcpConfig } from '@/components/mcp/project-mcp-config';
 import { Button } from '@/components/ui/button';
-import type { Project, Task, Agent } from '@/lib/types';
+import type { Project, Task, Agent, McpServer, ProjectMcpServer } from '@/lib/types';
 import type { SessionWithAgent } from '@/lib/services/session-service';
 import type { SessionStatus } from '@/lib/realtime/events';
 
@@ -45,7 +47,11 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   done: 'Done',
 };
 
-type TabId = 'conversations' | 'sessions' | 'tasks' | 'snapshots';
+type TabId = 'conversations' | 'sessions' | 'tasks' | 'snapshots' | 'mcp';
+
+interface ProjectMcpOverride extends ProjectMcpServer {
+  mcpServer: McpServer;
+}
 
 interface ProjectHubClientProps {
   project: Project;
@@ -53,6 +59,8 @@ interface ProjectHubClientProps {
   taskSessions: SessionWithAgent[];
   openTasks: Task[];
   agents: Agent[];
+  allMcpServers: McpServer[];
+  mcpOverrides: ProjectMcpOverride[];
 }
 
 export function ProjectHubClient({
@@ -61,6 +69,8 @@ export function ProjectHubClient({
   taskSessions,
   openTasks,
   agents,
+  allMcpServers,
+  mcpOverrides,
 }: ProjectHubClientProps) {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [defaultAgentId, setDefaultAgentId] = useState<string | undefined>();
@@ -97,6 +107,7 @@ export function ProjectHubClient({
     { id: 'sessions', label: 'Sessions', count: taskSessions.length, icon: Play },
     { id: 'tasks', label: 'Tasks', count: openTasks.length, icon: ListTodo },
     { id: 'snapshots', label: 'Snapshots', count: 0, icon: Camera },
+    { id: 'mcp', label: 'MCP Servers', count: allMcpServers.length, icon: Server },
   ];
 
   return (
@@ -186,6 +197,13 @@ export function ProjectHubClient({
       {activeTab === 'sessions' && <SessionsTab sessions={taskSessions} />}
       {activeTab === 'tasks' && <TasksTab tasks={openTasks} projectId={project.id} />}
       {activeTab === 'snapshots' && <SnapshotsTab projectId={project.id} />}
+      {activeTab === 'mcp' && (
+        <ProjectMcpConfig
+          projectId={project.id}
+          allServers={allMcpServers}
+          overrides={mcpOverrides}
+        />
+      )}
 
       <QuickLaunchDialog
         projectId={project.id}

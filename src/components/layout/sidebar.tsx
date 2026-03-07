@@ -16,6 +16,7 @@ import {
   PanelTop,
   Settings,
   Search,
+  Server,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
@@ -72,6 +73,7 @@ const navItems = [
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
   { href: '/config', label: 'Config', icon: Settings, badgeKey: null },
+  { href: '/config/mcp-servers', label: 'MCP Servers', icon: Server, badgeKey: null },
 ];
 
 const SIDEBAR_KEY = 'sidebar-collapsed';
