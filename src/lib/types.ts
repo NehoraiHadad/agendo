@@ -21,6 +21,9 @@ export type ContextSnapshot = InferSelectModel<typeof schema.contextSnapshots>;
 export type NewContextSnapshot = InferInsertModel<typeof schema.contextSnapshots>;
 export type AgentWorkspace = InferSelectModel<typeof schema.agentWorkspaces>;
 export type NewAgentWorkspace = InferInsertModel<typeof schema.agentWorkspaces>;
+export type McpServer = InferSelectModel<typeof schema.mcpServers>;
+export type NewMcpServer = InferInsertModel<typeof schema.mcpServers>;
+export type ProjectMcpServer = InferSelectModel<typeof schema.projectMcpServers>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];

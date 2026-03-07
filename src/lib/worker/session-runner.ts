@@ -15,6 +15,8 @@ import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
+import { resolveSessionMcpServers } from '@/lib/services/mcp-server-service';
+import { getDefaultModel, type Provider } from '@/lib/services/model-service';
 import { listTaskEvents } from '@/lib/services/task-event-service';
 import {
   generateExecutionPreamble,
@@ -22,6 +24,14 @@ import {
   generateResumeContext,
 } from '@/lib/worker/session-preambles';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
+
+/** Map CLI binary name to model-service provider. */
+function binaryNameToProvider(name: string): Provider | null {
+  if (name === 'claude') return 'anthropic';
+  if (name === 'codex') return 'openai';
+  if (name === 'gemini') return 'google';
+  return null;
+}
 
 /**
  * Live session processes that have released their pg-boss slot (reached
@@ -136,6 +146,16 @@ export async function runSession(
   // Determine the binary basename so we can gate claude-only features below.
   const binaryName = getBinaryName(agent);
 
+  // Load additional user-configured MCP servers for this project.
+  // These are merged alongside the built-in agendo MCP server.
+  const additionalMcps = resolvedProjectId ? await resolveSessionMcpServers(resolvedProjectId) : [];
+  if (additionalMcps.length > 0) {
+    log.info(
+      { sessionId, count: additionalMcps.length, names: additionalMcps.map((s) => s.name) },
+      'Additional MCP servers resolved',
+    );
+  }
+
   // Phase A: Generate a session-scoped MCP config file when the agent has MCP
   // enabled and a server path is configured. The file embeds the session
   // identity so the MCP server can associate tool calls with this session/task.
@@ -148,7 +168,7 @@ export async function runSession(
       agentId: session.agentId,
       projectId: resolvedProjectId,
     };
-    const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity);
+    const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity, additionalMcps);
     mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
     log.info({ sessionId }, 'Claude MCP config written');
@@ -169,7 +189,7 @@ export async function runSession(
       agentId: session.agentId,
       projectId: resolvedProjectId,
     };
-    mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity);
+    mcpServers = generateGeminiAcpMcpServers(config.MCP_SERVER_PATH, identity, additionalMcps);
     log.info({ sessionId, binaryName }, 'MCP injected for session');
   }
 
@@ -242,6 +262,30 @@ export async function runSession(
         log.info({ sessionId }, 'Loaded pending resume image');
       } catch (err) {
         log.warn({ err, sessionId }, 'Failed to read pending resume image');
+      }
+    }
+  }
+
+  // Resolve default model from the CLI's local data when not set on the session.
+  // This avoids hardcoding model names — the model-service reads from each CLI's
+  // installed files (e.g. Gemini's models.js, Codex's models_cache.json).
+  if (!session.model) {
+    const provider = binaryNameToProvider(binaryName);
+    if (provider) {
+      try {
+        const defaultModel = await getDefaultModel(provider);
+        if (defaultModel) {
+          session.model = defaultModel;
+          log.info(
+            { sessionId, binaryName, model: defaultModel },
+            'Resolved default model from CLI',
+          );
+        }
+      } catch (err) {
+        log.warn(
+          { err, sessionId },
+          'Failed to resolve default model, CLI will use its own default',
+        );
       }
     }
   }

@@ -9,6 +9,7 @@ import { getProject } from '@/lib/services/project-service';
 import { listTasksByStatus } from '@/lib/services/task-service';
 import { listFreeChatsByProject, listTaskSessionsByProject } from '@/lib/services/session-service';
 import { listAgents } from '@/lib/services/agent-service';
+import { listMcpServers, getProjectMcpServers } from '@/lib/services/mcp-server-service';
 import { NotFoundError } from '@/lib/errors';
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -22,12 +23,15 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     throw err;
   }
 
-  const [{ tasks: openTasks }, freeChats, taskSessions, allAgents] = await Promise.all([
-    listTasksByStatus({ projectId: id, limit: 10 }),
-    listFreeChatsByProject(id, 20),
-    listTaskSessionsByProject(id, 20),
-    listAgents(),
-  ]);
+  const [{ tasks: openTasks }, freeChats, taskSessions, allAgents, allMcpServers, mcpOverrides] =
+    await Promise.all([
+      listTasksByStatus({ projectId: id, limit: 10 }),
+      listFreeChatsByProject(id, 20),
+      listTaskSessionsByProject(id, 20),
+      listAgents(),
+      listMcpServers(),
+      getProjectMcpServers(id),
+    ]);
 
   const activeAgents = allAgents.filter((a) => a.isActive);
 
@@ -58,6 +62,8 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         taskSessions={taskSessions}
         openTasks={openTasks}
         agents={activeAgents}
+        allMcpServers={allMcpServers}
+        mcpOverrides={mcpOverrides}
       />
     </div>
   );
