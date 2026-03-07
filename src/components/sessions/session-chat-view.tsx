@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Pencil,
   Cpu,
+  Users,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,6 +30,7 @@ import { SessionMessageInput } from '@/components/sessions/session-message-input
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { TeamMessageCard } from '@/components/sessions/team-message-card';
+import { getTeamColor } from '@/lib/utils/team-colors';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
@@ -982,6 +984,10 @@ interface SessionChatViewProps {
   compact?: boolean;
   /** When true (compact mode only), panel grows with content instead of fixed height */
   autoGrow?: boolean;
+  /** When true, team messages are shown as compact inline notifications (full cards shown in TeamPanel) */
+  teamPanelOpen?: boolean;
+  /** Callback to open the team panel (triggered when user clicks a compact team notification) */
+  onOpenTeamPanel?: () => void;
 }
 
 export function SessionChatView({
@@ -994,6 +1000,8 @@ export function SessionChatView({
   agentSlug,
   compact = false,
   autoGrow = false,
+  teamPanelOpen = false,
+  onOpenTeamPanel,
 }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1255,8 +1263,39 @@ export function SessionChatView({
           />
         );
       }
-      case 'team-message':
+      case 'team-message': {
+        if (teamPanelOpen) {
+          // Compact inline notification — full cards are in the TeamPanel
+          const colors = getTeamColor(item.color);
+          const label =
+            item.isStructured && item.structuredPayload
+              ? ((
+                  {
+                    idle_notification: 'went idle',
+                    task_assignment: 'assigned a task',
+                    shutdown_request: 'requested shutdown',
+                    shutdown_approved: 'approved shutdown',
+                    permission_request: 'needs permission',
+                    plan_approval_request: 'submitted a plan',
+                  } as Record<string, string>
+                )[item.structuredPayload.type as string] ?? 'sent a message')
+              : 'sent a message';
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={onOpenTeamPanel}
+              className="flex items-center gap-1.5 px-3 py-1 mx-auto rounded-full bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] transition-colors text-xs text-muted-foreground/50 hover:text-muted-foreground/70"
+            >
+              <span className={`text-[10px] ${colors.dot}`}>●</span>
+              <span className="font-mono">{item.fromAgent}</span>
+              <span>{label}</span>
+              <Users className="size-3 ml-0.5 text-muted-foreground/30" />
+            </button>
+          );
+        }
         return <TeamMessageCard key={k} item={item} />;
+      }
     }
   }
 
