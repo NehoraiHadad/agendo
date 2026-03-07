@@ -322,6 +322,8 @@ export const sessions = pgTable(
     // Set at fork creation time to parent.sessionRef. Cleared (implicitly superseded)
     // once the fork's own sessionRef is written by system:init.
     forkSourceRef: text('fork_source_ref'),
+    // Optional list of MCP server IDs to use for this session (overrides project defaults).
+    mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

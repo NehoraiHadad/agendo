@@ -15,7 +15,7 @@ import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
-import { resolveSessionMcpServers } from '@/lib/services/mcp-server-service';
+import { resolveSessionMcpServers, resolveByMcpServerIds } from '@/lib/services/mcp-server-service';
 import { getDefaultModel, type Provider } from '@/lib/services/model-service';
 import { listTaskEvents } from '@/lib/services/task-event-service';
 import {
@@ -146,9 +146,13 @@ export async function runSession(
   // Determine the binary basename so we can gate claude-only features below.
   const binaryName = getBinaryName(agent);
 
-  // Load additional user-configured MCP servers for this project.
-  // These are merged alongside the built-in agendo MCP server.
-  const additionalMcps = resolvedProjectId ? await resolveSessionMcpServers(resolvedProjectId) : [];
+  // Load additional user-configured MCP servers for this session.
+  // Priority: session-level mcpServerIds (explicit selection) > project-level defaults.
+  const additionalMcps = session.mcpServerIds?.length
+    ? await resolveByMcpServerIds(session.mcpServerIds)
+    : resolvedProjectId
+      ? await resolveSessionMcpServers(resolvedProjectId)
+      : [];
   if (additionalMcps.length > 0) {
     log.info(
       { sessionId, count: additionalMcps.length, names: additionalMcps.map((s) => s.name) },
