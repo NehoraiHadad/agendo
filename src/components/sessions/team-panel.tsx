@@ -210,12 +210,51 @@ function AgentThread({
         <MemberStatusPill status={member.status} />
       </div>
 
-      {/* Model */}
-      <div className="px-3 py-1 shrink-0">
+      {/* Agent info strip: model + activity + tool badges */}
+      <div className="px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
         <span className="text-[10px] text-muted-foreground/25 font-mono">
           {member.model.replace('claude-', '')}
         </span>
+        {member.currentActivity && member.currentActivity !== 'idle' && (
+          <span className="text-[10px] text-blue-400/50 font-mono">{member.currentActivity}</span>
+        )}
+        {member.recentTools.length > 0 && (
+          <div className="flex items-center gap-0.5 ml-auto">
+            {member.recentTools.map((tool) => (
+              <span
+                key={tool}
+                className="text-[9px] font-mono px-1 py-px rounded bg-white/[0.04] border border-white/[0.06] text-muted-foreground/30"
+              >
+                {tool}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Tool activity timeline (if any permission requests were observed) */}
+      {member.toolEvents.length > 0 && (
+        <div className="px-3 pb-1.5 shrink-0 border-b border-white/[0.04]">
+          <div className="text-[9px] text-muted-foreground/25 uppercase tracking-widest mb-1">
+            Tool Activity
+          </div>
+          <div className="flex flex-col gap-0.5 max-h-20 overflow-y-auto">
+            {member.toolEvents.slice(-5).map((te, idx) => (
+              <div key={idx} className="flex items-center gap-1.5 text-[10px]">
+                <span className="font-mono text-amber-400/50 shrink-0">{te.toolName}</span>
+                {te.filePath && (
+                  <span className="text-muted-foreground/25 truncate font-mono">
+                    {te.filePath.split('/').pop()}
+                  </span>
+                )}
+                <span className="ml-auto text-muted-foreground/20 shrink-0">
+                  {formatRelativeTime(te.timestamp)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Thread body */}
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
@@ -298,26 +337,46 @@ function MemberRow({
     <button
       type="button"
       onClick={onClick}
-      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.03] active:bg-white/[0.05] transition-colors rounded-lg text-left"
+      className="w-full flex flex-col gap-1 px-3 py-2.5 hover:bg-white/[0.03] active:bg-white/[0.05] transition-colors rounded-lg text-left"
     >
-      <span className={`text-sm ${colors.dot} select-none shrink-0 leading-none`}>●</span>
-      <span className="font-mono text-xs text-foreground/80 truncate flex-1 min-w-0">
-        {member.name}
-      </span>
-      {member.planModeRequired && (
-        <span className="text-[9px] text-violet-400/70 bg-violet-500/10 rounded px-1 py-0.5 border border-violet-500/15 shrink-0">
-          plan
+      {/* Top row: name + status */}
+      <div className="flex items-center gap-2 w-full">
+        <span className={`text-sm ${colors.dot} select-none shrink-0 leading-none`}>●</span>
+        <span className="font-mono text-xs text-foreground/80 truncate flex-1 min-w-0">
+          {member.name}
         </span>
-      )}
-      <span className="text-[10px] text-muted-foreground/35 bg-white/[0.03] rounded px-1.5 py-0.5 border border-white/[0.05] shrink-0 truncate max-w-[72px]">
-        {member.agentType.replace('general-purpose', 'general').slice(0, 12)}
-      </span>
-      <MemberStatusPill status={member.status} />
-      {messageCount > 0 && (
-        <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0">
-          {messageCount}
-        </span>
-      )}
+        {member.planModeRequired && (
+          <span className="text-[9px] text-violet-400/70 bg-violet-500/10 rounded px-1 py-0.5 border border-violet-500/15 shrink-0">
+            plan
+          </span>
+        )}
+        <MemberStatusPill status={member.status} />
+        {messageCount > 0 && (
+          <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0">
+            {messageCount}
+          </span>
+        )}
+      </div>
+      {/* Bottom row: activity + tool badges */}
+      <div className="flex items-center gap-1.5 pl-5 min-w-0">
+        {member.currentActivity && (
+          <span className="text-[10px] text-muted-foreground/35 truncate">
+            {member.currentActivity}
+          </span>
+        )}
+        {member.recentTools.length > 0 && (
+          <div className="flex items-center gap-0.5 ml-auto shrink-0">
+            {member.recentTools.slice(0, 3).map((tool) => (
+              <span
+                key={tool}
+                className="text-[9px] font-mono px-1 py-px rounded bg-white/[0.04] border border-white/[0.06] text-muted-foreground/30"
+              >
+                {tool.length > 8 ? tool.slice(0, 8) : tool}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </button>
   );
 }

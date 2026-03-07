@@ -145,6 +145,8 @@ export function buildDisplayItems(
 
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
+  // Dedup team messages — backfill on cold-resume re-emits all inbox messages
+  const seenTeamMessages = new Set<string>();
   let sessionInitCount = 0;
   let sessionCostUsd = 0;
   // Track the last assistant UUID from agent:result so the next user:message
@@ -355,6 +357,12 @@ export function buildDisplayItems(
       }
 
       case 'team:message': {
+        // Dedup: cold-resume backfill re-emits all inbox messages that are
+        // already in the log from the previous worker incarnation.
+        const dedupKey = `${ev.fromAgent}::${ev.sourceTimestamp}`;
+        if (seenTeamMessages.has(dedupKey)) break;
+        seenTeamMessages.add(dedupKey);
+
         // Pushing team-message naturally breaks any open assistant bubble —
         // the next agent:text sees the last item is not 'assistant' and starts fresh.
         items.push({

@@ -1,6 +1,14 @@
 import { useMemo } from 'react';
 import type { AgendoEvent } from '@/lib/realtime/events';
 
+/** A tool call observed from a teammate (via permission_request or other structured messages). */
+export interface AgentToolEvent {
+  toolName: string;
+  description?: string;
+  filePath?: string;
+  timestamp: string;
+}
+
 export interface TeamMember {
   name: string;
   agentId: string;
@@ -13,6 +21,14 @@ export interface TeamMember {
   status: 'active' | 'idle' | 'unknown';
   /** ISO timestamp of last idle_notification from this agent */
   lastIdleAt?: string;
+  /** Tool calls observed from this agent (from permission_request messages) */
+  toolEvents: AgentToolEvent[];
+  /** Unique tool names recently used */
+  recentTools: string[];
+  /** Human-readable current activity (e.g. "editing file.tsx", "idle") */
+  currentActivity?: string;
+  /** Total non-idle messages sent by this agent */
+  messageCount: number;
 }
 
 export interface TeamTask {
@@ -89,12 +105,14 @@ export function useTeamState(events: AgendoEvent[]): TeamState {
       }
     }
 
-    // Derive member status from message history
+    // Derive member status, tool activity, and current activity from message history
     const members: TeamMember[] = configMembers.map((cm) => {
       const agentMessages = messagesByAgent[cm.name] ?? [];
 
       let lastIdleAt: string | undefined;
       let lastActiveTs: number | undefined;
+      const toolEvents: AgentToolEvent[] = [];
+      let messageCount = 0;
 
       for (const msg of agentMessages) {
         if (msg.type !== 'team:message') continue;
@@ -104,9 +122,30 @@ export function useTeamState(events: AgendoEvent[]): TeamState {
             lastIdleAt = msg.sourceTimestamp;
           }
         } else {
-          // Any non-structured message (or non-idle structured message) = activity
+          messageCount++;
           if (lastActiveTs === undefined || msg.ts > lastActiveTs) {
             lastActiveTs = msg.ts;
+          }
+        }
+
+        // Extract tool activity from permission_request messages
+        if (msg.isStructured && msg.structuredPayload?.type === 'permission_request') {
+          const payload = msg.structuredPayload;
+          const toolName = payload.tool_name as string | undefined;
+          if (toolName) {
+            const input = payload.input as Record<string, unknown> | undefined;
+            // Try to extract file path from common tool inputs
+            const filePath =
+              (input?.file_path as string) ??
+              (input?.path as string) ??
+              (input?.filePath as string) ??
+              undefined;
+            toolEvents.push({
+              toolName,
+              description: payload.description as string | undefined,
+              filePath,
+              timestamp: msg.sourceTimestamp,
+            });
           }
         }
       }
@@ -123,6 +162,21 @@ export function useTeamState(events: AgendoEvent[]): TeamState {
         }
       }
 
+      // Derive recent tools (unique, last 5)
+      const recentTools = [...new Set(toolEvents.slice(-5).map((te) => te.toolName))];
+
+      // Derive current activity description
+      let currentActivity: string | undefined;
+      if (status === 'idle') {
+        currentActivity = 'idle';
+      } else if (toolEvents.length > 0) {
+        const lastTool = toolEvents[toolEvents.length - 1];
+        const shortPath = lastTool.filePath?.split('/').pop();
+        currentActivity = shortPath ? `${lastTool.toolName} ${shortPath}` : lastTool.toolName;
+      } else if (status === 'active') {
+        currentActivity = 'working';
+      }
+
       return {
         name: cm.name,
         agentId: cm.agentId,
@@ -133,6 +187,10 @@ export function useTeamState(events: AgendoEvent[]): TeamState {
         joinedAt: cm.joinedAt,
         status,
         lastIdleAt,
+        toolEvents,
+        recentTools,
+        currentActivity,
+        messageCount,
       };
     });
 
