@@ -43,7 +43,42 @@ function setCache(provider: Provider, models: ModelOption[]) {
 // Helper: safe spawn wrapper (no shell, no injection risk)
 // ---------------------------------------------------------------------------
 
-/** Spawn a process and collect stdout. Safe against injection (no shell). */
+/** Spawn a process, write to stdin, collect stdout. Uses spawn (no shell). */
+function safeSpawnWithStdin(
+  cmd: string,
+  args: string[],
+  stdin: string,
+  opts: { timeout?: number },
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cp = require('node:child_process') as typeof import('node:child_process');
+    const timeout = opts.timeout ?? 15000;
+
+    const proc = cp.spawn(cmd, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error('safeSpawnWithStdin timeout'));
+    }, timeout);
+
+    proc.on('close', () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf-8'));
+    });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    proc.stdin.write(stdin);
+    proc.stdin.end();
+  });
+}
+
+/** Spawn a process and collect stdout. Uses execFile (no shell). */
 function safeExecFile(
   cmd: string,
   args: string[],
@@ -61,7 +96,7 @@ function safeExecFile(
 
 /**
  * Spawn two processes piped together: cmd1 | cmd2.
- * Both use execFile semantics (no shell). Returns cmd2's stdout.
+ * Both use spawn (no shell). Returns cmd2's stdout.
  */
 function safePipe(
   cmd1: string,
@@ -104,10 +139,78 @@ function safePipe(
 }
 
 // ---------------------------------------------------------------------------
-// Codex: read ~/.codex/models_cache.json
+// Codex: use `model/list` JSON-RPC via app-server protocol
 // ---------------------------------------------------------------------------
 
+/**
+ * Query Codex models via the `model/list` JSON-RPC method on `codex app-server`.
+ * This is the official protocol used by VS Code, macOS app, and JetBrains plugins.
+ * Falls back to reading ~/.codex/models_cache.json if app-server fails.
+ */
 async function readCodexModels(): Promise<ModelOption[]> {
+  try {
+    return await readCodexModelsViaAppServer();
+  } catch {
+    return readCodexModelsFromCache();
+  }
+}
+
+interface CodexAppServerModel {
+  id?: string;
+  model?: string;
+  displayName?: string;
+  description?: string;
+  hidden?: boolean;
+  isDefault?: boolean;
+}
+
+async function readCodexModelsViaAppServer(): Promise<ModelOption[]> {
+  const initMsg = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      clientInfo: { name: 'agendo', version: '1.0.0' },
+      protocolVersion: '2025-01-01',
+    },
+  });
+  const modelListMsg = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'model/list',
+    params: {},
+  });
+
+  const stdin = initMsg + '\n' + modelListMsg + '\n';
+  const stdout = await safeSpawnWithStdin('codex', ['app-server'], stdin, { timeout: 10000 });
+
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as {
+        id?: number;
+        result?: { data?: CodexAppServerModel[] };
+      };
+      if (parsed.id === 2 && parsed.result?.data) {
+        return parsed.result.data.flatMap((m) => {
+          if (m.hidden || !m.id) return [];
+          return [
+            {
+              id: m.id,
+              label: m.displayName ?? m.id,
+              description: m.description ?? m.id,
+            },
+          ];
+        });
+      }
+    } catch {
+      // Not valid JSON line
+    }
+  }
+  throw new Error('No model/list response from codex app-server');
+}
+
+async function readCodexModelsFromCache(): Promise<ModelOption[]> {
   try {
     const cachePath = join(homedir(), '.codex', 'models_cache.json');
     const raw = await readFile(cachePath, 'utf-8');
@@ -141,20 +244,21 @@ async function readCodexModels(): Promise<ModelOption[]> {
 
 /**
  * Parse Claude CLI binary for model picker entries.
- * The binary contains `descriptionForModel` strings like:
+ *
+ * No official `claude model list` command exists (feature request:
+ * github.com/anthropics/claude-code/issues/12612). The binary embeds
+ * `descriptionForModel` strings like:
  *   "Opus 4.6 - most capable for complex work"
  *   "Sonnet 4.6 - best for everyday tasks..."
- *   "Haiku 4.5 - fastest for quick answers..."
  *
- * We pipe `strings` into `grep` to avoid buffering the full 35MB output.
+ * We pipe `strings` into `grep` to avoid buffering the full ~35MB output.
+ * This is fragile but currently the only option without an API key.
  */
 async function readClaudeModels(): Promise<ModelOption[]> {
   try {
     const binaryPath = await resolveClaudeBinary();
     if (!binaryPath) return [];
 
-    // The binary is ~35MB of strings — pipe through grep to avoid buffering it all.
-    // Matches both "Opus 4.6 - ..." and "Opus 4.6 with 1M context window - ..."
     const stdout = await safePipe(
       'strings',
       [binaryPath],
@@ -163,8 +267,6 @@ async function readClaudeModels(): Promise<ModelOption[]> {
       { timeout: 15000 },
     );
 
-    // Pattern 1: "Family Version - description"
-    // Pattern 2: "Family Version with 1M context window - description"
     const pickerRegex = /^(Opus|Sonnet|Haiku) ([\d.]+)(?: with 1M context window)? - (.+)$/gm;
     const models: ModelOption[] = [];
     const seen = new Set<string>();
@@ -177,7 +279,6 @@ async function readClaudeModels(): Promise<ModelOption[]> {
       const description = match[3];
       const is1M = fullLine.includes('with 1M context window');
 
-      // Build ID matching Claude CLI values: "claude-opus-4-6", "claude-sonnet-4-6", etc.
       const versionParts = version.split('.');
       const shortId =
         'claude-' + family.toLowerCase() + '-' + versionParts.join('-') + (is1M ? '-1m' : '');
@@ -212,7 +313,6 @@ async function resolveClaudeBinary(): Promise<string | null> {
       continue;
     }
   }
-  // Fallback: use `which`
   try {
     const stdout = await safeExecFile('which', ['claude'], { timeout: 5000 });
     const path = stdout.trim();
@@ -224,11 +324,17 @@ async function resolveClaudeBinary(): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini: read model definitions from the installed npm package
+// Gemini: require() the models.js module from @google/gemini-cli-core
 // ---------------------------------------------------------------------------
 
 /**
- * Read model list from the Gemini CLI's installed `models.js` source file.
+ * Read model list from Gemini CLI's installed `models.js` module.
+ *
+ * No official `gemini --list-models` command exists. The models.js file
+ * from @google/gemini-cli-core exports named constants (DEFAULT_GEMINI_MODEL,
+ * VALID_GEMINI_MODELS set, etc.). We require() the module directly instead
+ * of regex parsing -- more robust against formatting changes.
+ *
  * Also checks ~/.gemini/settings.json for previewFeatures to include
  * preview models when enabled.
  */
@@ -237,67 +343,73 @@ async function readGeminiModels(): Promise<ModelOption[]> {
     const modelsJsPath = await findGeminiModelsJs();
     if (!modelsJsPath) return [];
 
-    const source = await readFile(modelsJsPath, 'utf-8');
-
-    // Extract model constants: export const SOME_NAME = 'gemini-xxx';
-    const modelRegex =
-      /export\s+const\s+(\w+)\s*=\s*'((?:gemini-[\w.-]+|auto|pro|flash|flash-lite))'/g;
-    const constants: Record<string, string> = {};
-    let m: RegExpExecArray | null;
-    while ((m = modelRegex.exec(source)) !== null) {
-      constants[m[1]] = m[2];
-    }
+    // require() is more robust than regex parsing -- survives minification,
+    // whitespace changes, and constant reordering.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require(modelsJsPath) as Record<string, unknown>;
 
     const previewEnabled = await isGeminiPreviewEnabled();
     const models: ModelOption[] = [];
 
     // Primary model (pro)
     const proModel = previewEnabled
-      ? constants['PREVIEW_GEMINI_MODEL']
-      : constants['DEFAULT_GEMINI_MODEL'];
+      ? (m['PREVIEW_GEMINI_MODEL'] as string | undefined)
+      : (m['DEFAULT_GEMINI_MODEL'] as string | undefined);
     if (proModel) {
       models.push({
         id: proModel,
         label: formatGeminiLabel(proModel),
-        description: previewEnabled ? 'Pro · preview' : 'Pro · default',
+        description: previewEnabled ? 'Pro - preview' : 'Pro - default',
       });
     }
 
     // Flash model
-    const flashModel = constants['DEFAULT_GEMINI_FLASH_MODEL'];
+    const flashModel = m['DEFAULT_GEMINI_FLASH_MODEL'] as string | undefined;
     if (flashModel) {
       models.push({
         id: flashModel,
         label: formatGeminiLabel(flashModel),
-        description: 'Flash · fast',
+        description: 'Flash - fast',
       });
     }
 
     // Flash Lite model
-    const flashLiteModel = constants['DEFAULT_GEMINI_FLASH_LITE_MODEL'];
+    const flashLiteModel = m['DEFAULT_GEMINI_FLASH_LITE_MODEL'] as string | undefined;
     if (flashLiteModel) {
       models.push({
         id: flashLiteModel,
         label: formatGeminiLabel(flashLiteModel),
-        description: 'Flash Lite · cheapest',
+        description: 'Flash Lite - cheapest',
       });
     }
 
     // If preview is enabled and there's a stable pro version too, add it
-    if (
-      previewEnabled &&
-      constants['DEFAULT_GEMINI_MODEL'] &&
-      proModel !== constants['DEFAULT_GEMINI_MODEL']
-    ) {
+    const stablePro = m['DEFAULT_GEMINI_MODEL'] as string | undefined;
+    if (previewEnabled && stablePro && proModel !== stablePro) {
       models.push({
-        id: constants['DEFAULT_GEMINI_MODEL'],
-        label: formatGeminiLabel(constants['DEFAULT_GEMINI_MODEL']),
-        description: 'Pro · stable',
+        id: stablePro,
+        label: formatGeminiLabel(stablePro),
+        description: 'Pro - stable',
       });
     }
 
-    // Auto alias
-    models.push({ id: 'auto', label: 'Auto', description: 'Automatic model selection' });
+    // Auto aliases
+    const previewAuto = m['PREVIEW_GEMINI_MODEL_AUTO'] as string | undefined;
+    const defaultAuto = m['DEFAULT_GEMINI_MODEL_AUTO'] as string | undefined;
+    if (previewEnabled && previewAuto) {
+      models.push({
+        id: previewAuto,
+        label: 'Auto (Preview)',
+        description: 'Automatic model selection (preview)',
+      });
+    }
+    if (defaultAuto) {
+      models.push({ id: defaultAuto, label: 'Auto', description: 'Automatic model selection' });
+    }
+    const autoAlias = m['GEMINI_MODEL_ALIAS_AUTO'] as string | undefined;
+    if (autoAlias && autoAlias !== defaultAuto && autoAlias !== previewAuto) {
+      models.push({ id: autoAlias, label: 'Auto', description: 'Automatic model selection' });
+    }
 
     return models;
   } catch {
@@ -306,7 +418,6 @@ async function readGeminiModels(): Promise<ModelOption[]> {
 }
 
 function formatGeminiLabel(modelId: string): string {
-  // "gemini-2.5-pro" → "Gemini 2.5 Pro"
   return modelId
     .split('-')
     .map((part) => (part === 'gemini' ? 'Gemini' : part.charAt(0).toUpperCase() + part.slice(1)))
@@ -323,8 +434,6 @@ async function findGeminiModelsJs(): Promise<string | null> {
   for (const candidate of candidates) {
     try {
       const realBin = await realpath(candidate);
-      // realBin is e.g. /usr/lib/node_modules/@google/gemini-cli/dist/index.js
-      // package root is two levels up from dist/index.js
       const pkgRoot = dirname(dirname(realBin));
       const modelsPath = join(
         pkgRoot,
@@ -360,6 +469,23 @@ async function isGeminiPreviewEnabled(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Get the stable default model for a provider by reading from the CLI tool's
+ * local data (e.g. Gemini's models.js, Codex's app-server protocol).
+ * Returns null if model discovery fails -- callers should let the CLI choose.
+ */
+export async function getDefaultModel(provider: Provider): Promise<string | null> {
+  const models = await getModelsForProvider(provider);
+  if (models.length === 0) return null;
+  if (provider === 'google') {
+    const stable = models.find(
+      (m) => m.description.includes('stable') || m.description === 'Pro - default',
+    );
+    if (stable) return stable.id;
+  }
+  return models[0].id;
+}
 
 /** Get models for a given provider by reading from the CLI tool's local data. */
 export async function getModelsForProvider(provider: Provider): Promise<ModelOption[]> {

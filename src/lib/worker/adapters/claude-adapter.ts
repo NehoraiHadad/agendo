@@ -395,6 +395,8 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
       // (required by Agent SDK convention for programmatic tool approval handling)
       '--permission-prompt-tool',
       'stdio',
+      // Model override — use the model specified on the session (e.g. from DB or API)
+      ...(opts.model ? ['--model', opts.model] : []),
       // Budget limit — Claude stops when exceeded
       ...(opts.maxBudgetUsd != null ? ['--max-budget-usd', String(opts.maxBudgetUsd)] : []),
       // Fallback model for overload resilience
