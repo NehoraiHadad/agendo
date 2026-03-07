@@ -177,6 +177,30 @@ export async function resolveSessionMcpServers(
   }));
 }
 
+/**
+ * Resolve MCP servers by explicit IDs (for per-session MCP selection).
+ * Only returns servers that exist and are globally enabled.
+ */
+export async function resolveByMcpServerIds(ids: string[]): Promise<ResolvedMcpServer[]> {
+  if (ids.length === 0) return [];
+
+  const allEnabled = await listMcpServers({ enabled: true });
+  const enabledSet = new Map(allEnabled.map((s) => [s.id, s]));
+
+  return ids
+    .map((id) => enabledSet.get(id))
+    .filter((s): s is McpServer => s !== undefined)
+    .map((server) => ({
+      name: server.name,
+      transportType: server.transportType,
+      command: server.command,
+      args: server.args ?? [],
+      env: server.env ?? {},
+      url: server.url,
+      headers: server.headers ?? {},
+    }));
+}
+
 // --- Multi-Source Import ---
 
 interface DiscoveredServer {

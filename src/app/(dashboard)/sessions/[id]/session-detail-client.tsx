@@ -1022,6 +1022,8 @@ export function SessionDetailClient({
                 currentStatus={currentStatus}
                 initialPrompt={session.initialPrompt}
                 agentBinaryPath={agentBinaryPath}
+                teamPanelOpen={showTeamPanel || showTeamSheet}
+                onOpenTeamPanel={handleTeamToggle}
               />
             </TabsContent>
 
@@ -1103,6 +1105,10 @@ export function SessionDetailClient({
               teamState={teamState}
               events={stream.events}
               sessionStatus={currentStatus}
+              onSelectAgent={(_name) => {
+                setShowDiagram(false);
+                setShowTeamPanel(true);
+              }}
             />
           </div>
         </DialogContent>

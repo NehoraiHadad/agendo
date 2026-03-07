@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
-import { Loader2, MessageSquare } from 'lucide-react';
+import { ChevronDown, Loader2, MessageSquare, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -26,7 +28,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
-import type { Agent, AgentCapability, Task } from '@/lib/types';
+import type { Agent, AgentCapability, McpServer, Task } from '@/lib/types';
 
 interface ModelOption {
   id: string;
@@ -67,6 +69,9 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [selectedMcpIds, setSelectedMcpIds] = useState<Set<string>>(new Set());
+  const [mcpExpanded, setMcpExpanded] = useState(false);
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
 
@@ -141,6 +146,20 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     setSelectedAgentId(agentIdProp ?? '');
     setPromptCapId('');
     setError(null);
+    setSelectedMcpIds(new Set());
+    setMcpExpanded(false);
+
+    // Fetch enabled MCP servers
+    fetch('/api/mcp-servers?enabled=true', { signal })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: McpServer[]) => {
+        if (!signal.aborted) {
+          setMcpServers(data);
+          // Pre-select defaults
+          setSelectedMcpIds(new Set(data.filter((s) => s.isDefault).map((s) => s.id)));
+        }
+      })
+      .catch(() => {});
 
     // If there's a saved draft, restore it and skip the task prefill
     const saved = getDraft();
@@ -225,6 +244,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           capabilityId: promptCapId,
           initialPrompt: promptText || undefined,
           model: selectedModel || undefined,
+          mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
         }),
       });
       clearDraft();
@@ -302,6 +322,76 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                   <p className="text-xs text-muted-foreground/50">
                     No models found — using agent default.
                   </p>
+                )}
+              </div>
+            )}
+
+            {mcpServers.length > 0 && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setMcpExpanded((v) => !v)}
+                  className="flex w-full items-center gap-1.5 text-sm font-medium text-foreground/90 hover:text-foreground transition-colors"
+                >
+                  <ChevronDown
+                    className={`size-3.5 text-muted-foreground transition-transform ${mcpExpanded ? '' : '-rotate-90'}`}
+                  />
+                  <Server className="size-3.5 text-muted-foreground" />
+                  MCP Servers
+                  {selectedMcpIds.size > 0 && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0">
+                      {selectedMcpIds.size}
+                    </Badge>
+                  )}
+                </button>
+                {mcpExpanded && (
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-2 space-y-1">
+                    <div className="flex items-center justify-between pb-1 mb-1 border-b border-border/30">
+                      <span className="text-[11px] text-muted-foreground">
+                        {selectedMcpIds.size}/{mcpServers.length} selected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedMcpIds((prev) =>
+                            prev.size === mcpServers.length
+                              ? new Set()
+                              : new Set(mcpServers.map((s) => s.id)),
+                          )
+                        }
+                        className="text-[11px] text-primary/70 hover:text-primary transition-colors"
+                      >
+                        {selectedMcpIds.size === mcpServers.length ? 'None' : 'All'}
+                      </button>
+                    </div>
+                    <div className="max-h-[140px] overflow-y-auto space-y-0.5 scrollbar-thin">
+                      {mcpServers.map((server) => (
+                        <label
+                          key={server.id}
+                          className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-muted/40 cursor-pointer transition-colors"
+                        >
+                          <Checkbox
+                            checked={selectedMcpIds.has(server.id)}
+                            onCheckedChange={(checked) =>
+                              setSelectedMcpIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(server.id);
+                                else next.delete(server.id);
+                                return next;
+                              })
+                            }
+                          />
+                          <span className="text-sm truncate flex-1">{server.name}</span>
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 font-mono shrink-0"
+                          >
+                            {server.transportType}
+                          </Badge>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
