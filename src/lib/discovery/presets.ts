@@ -51,10 +51,40 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
       {
         key: 'prompt',
         label: 'Run Prompt',
-        description: 'Send a prompt to Claude Code with stream-json bidirectional output',
+        description: 'Send a free-form prompt to Claude Code',
         interactionMode: 'prompt',
         promptTemplate:
-          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 1800,
+      },
+      {
+        key: 'code-review',
+        label: 'Code Review',
+        description: 'Review code changes for bugs, security issues, and improvements',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Review the code for this task:\n\n{{task_title}}\n\n{{task_description}}\n\nFocus on: bugs, security vulnerabilities, performance issues, and code quality. Provide specific, actionable feedback.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 0,
+        timeoutSec: 900,
+      },
+      {
+        key: 'implement-feature',
+        label: 'Implement Feature',
+        description: 'Implement a feature following project conventions and best practices',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Implement the following feature:\n\n{{task_title}}\n\n{{task_description}}\n\nFollow existing project conventions. Write clean, tested code. Commit your changes when done.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 3600,
+      },
+      {
+        key: 'fix-bug',
+        label: 'Fix Bug',
+        description: 'Diagnose and fix a bug with root cause analysis',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Fix this bug:\n\n{{task_title}}\n\n{{task_description}}\n\nSteps:\n1. Reproduce and understand the root cause\n2. Implement the minimal fix\n3. Verify the fix works\n4. Check for related issues\n\n{{input_context.promptAdditions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },
@@ -87,10 +117,40 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
       {
         key: 'prompt',
         label: 'Run Prompt',
-        description: 'Send a prompt to Codex CLI via app-server JSON-RPC protocol',
+        description: 'Send a free-form prompt to Codex CLI',
         interactionMode: 'prompt',
         promptTemplate:
-          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 1800,
+      },
+      {
+        key: 'code-review',
+        label: 'Code Review',
+        description: 'Review code changes for bugs, security issues, and improvements',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Review the code for this task:\n\n{{task_title}}\n\n{{task_description}}\n\nFocus on: bugs, security vulnerabilities, performance issues, and code quality. Provide specific, actionable feedback.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 0,
+        timeoutSec: 900,
+      },
+      {
+        key: 'implement-feature',
+        label: 'Implement Feature',
+        description: 'Implement a feature following project conventions and best practices',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Implement the following feature:\n\n{{task_title}}\n\n{{task_description}}\n\nFollow existing project conventions. Write clean, tested code. Commit your changes when done.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 3600,
+      },
+      {
+        key: 'fix-bug',
+        label: 'Fix Bug',
+        description: 'Diagnose and fix a bug with root cause analysis',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Fix this bug:\n\n{{task_title}}\n\n{{task_description}}\n\nSteps:\n1. Reproduce and understand the root cause\n2. Implement the minimal fix\n3. Verify the fix works\n4. Check for related issues\n\n{{input_context.promptAdditions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },
@@ -124,10 +184,40 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
       {
         key: 'prompt',
         label: 'Run Prompt',
-        description: 'Send a prompt to Gemini CLI in interactive mode via tmux',
+        description: 'Send a free-form prompt to Gemini CLI',
         interactionMode: 'prompt',
         promptTemplate:
-          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.prompt_additions}}',
+          '{{task_title}}\n\n{{task_description}}\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 1800,
+      },
+      {
+        key: 'code-review',
+        label: 'Code Review',
+        description: 'Review code changes for bugs, security issues, and improvements',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Review the code for this task:\n\n{{task_title}}\n\n{{task_description}}\n\nFocus on: bugs, security vulnerabilities, performance issues, and code quality. Provide specific, actionable feedback.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 0,
+        timeoutSec: 900,
+      },
+      {
+        key: 'implement-feature',
+        label: 'Implement Feature',
+        description: 'Implement a feature following project conventions and best practices',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Implement the following feature:\n\n{{task_title}}\n\n{{task_description}}\n\nFollow existing project conventions. Write clean, tested code. Commit your changes when done.\n\n{{input_context.promptAdditions}}',
+        dangerLevel: 1,
+        timeoutSec: 3600,
+      },
+      {
+        key: 'fix-bug',
+        label: 'Fix Bug',
+        description: 'Diagnose and fix a bug with root cause analysis',
+        interactionMode: 'prompt',
+        promptTemplate:
+          'Fix this bug:\n\n{{task_title}}\n\n{{task_description}}\n\nSteps:\n1. Reproduce and understand the root cause\n2. Implement the minimal fix\n3. Verify the fix works\n4. Check for related issues\n\n{{input_context.promptAdditions}}',
         dangerLevel: 1,
         timeoutSec: 1800,
       },
