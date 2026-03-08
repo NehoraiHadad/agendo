@@ -65,6 +65,8 @@ export interface SpawnOpts {
   sessionId?: string;
   /** Text to append to Claude's system prompt (e.g., MCP context preamble). */
   appendSystemPrompt?: string;
+  /** When true, pass --worktree to create an isolated git worktree (Claude only). */
+  useWorktree?: boolean;
   /** When true, adds --fork-session to --resume so Claude creates a new session ID
    *  initialized from the resumed session's conversation history (Claude only). */
   forkSession?: boolean;

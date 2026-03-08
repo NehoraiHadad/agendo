@@ -35,6 +35,7 @@ export interface CreateSessionInput {
   effort?: 'low' | 'medium' | 'high';
   parentSessionId?: string;
   mcpServerIds?: string[];
+  useWorktree?: boolean;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -67,6 +68,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
       ...(input.mcpServerIds ? { mcpServerIds: input.mcpServerIds } : {}),
+      ...(input.useWorktree != null ? { useWorktree: input.useWorktree } : {}),
     })
     .returning();
   return session;

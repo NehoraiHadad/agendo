@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Loader2, MessageSquare, Server } from 'lucide-react';
+import { ChevronDown, GitBranch, Loader2, MessageSquare, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -72,6 +72,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [selectedMcpIds, setSelectedMcpIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
+  const [useWorktree, setUseWorktree] = useState(false);
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
 
@@ -92,6 +93,10 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     },
     [agentIdProp],
   );
+
+  // Track the selected agent's binaryPath for feature-gating (worktree support)
+  const [selectedBinaryPath, setSelectedBinaryPath] = useState('');
+  const isClaudeAgent = deriveProvider(selectedBinaryPath) === 'claude';
 
   const fetchCapabilities = useCallback(
     async (signal: AbortSignal) => {
@@ -213,12 +218,14 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     // For pre-selected agents (agentIdProp), agents[] may be empty — fetch the agent directly.
     const agent = agents.find((a) => a.id === activeAgentId);
     if (agent) {
+      setSelectedBinaryPath(agent.binaryPath);
       void fetchModels(controller.signal, agent.binaryPath);
     } else {
       // Fetch agent info to get binaryPath
       apiFetch<ApiResponse<Agent>>(`/api/agents/${activeAgentId}`, { signal: controller.signal })
         .then((res) => {
           if (!controller.signal.aborted) {
+            setSelectedBinaryPath(res.data.binaryPath);
             void fetchModels(controller.signal, res.data.binaryPath);
           }
         })
@@ -245,6 +252,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           initialPrompt: promptText || undefined,
           model: selectedModel || undefined,
           mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
+          useWorktree: useWorktree || undefined,
         }),
       });
       clearDraft();
@@ -394,6 +402,20 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                   </div>
                 )}
               </div>
+            )}
+
+            {isClaudeAgent && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
+                  checked={useWorktree}
+                  onCheckedChange={(checked) => setUseWorktree(checked === true)}
+                />
+                <GitBranch className="size-3.5 text-muted-foreground" />
+                <span className="text-sm">Isolated worktree</span>
+                <span className="text-xs text-muted-foreground">
+                  — agent works in a separate git branch
+                </span>
+              </label>
             )}
 
             <div className="space-y-2">

@@ -22,6 +22,7 @@ const createSessionSchema = z.object({
   model: z.string().optional(),
   effort: z.enum(['low', 'medium', 'high']).optional(),
   mcpServerIds: z.array(z.string().uuid()).optional(),
+  useWorktree: z.boolean().optional(),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -63,6 +64,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     model: body.model,
     effort: body.effort,
     mcpServerIds: body.mcpServerIds,
+    useWorktree: body.useWorktree,
   });
 
   if (body.initialPrompt) {

@@ -8,7 +8,14 @@ import type { SpawnOpts, ImageContent, AcpMcpServer } from '@/lib/worker/adapter
 export function buildSpawnOpts(
   session: Pick<
     Session,
-    'id' | 'idleTimeoutSec' | 'permissionMode' | 'allowedTools' | 'model' | 'effort' | 'kind'
+    | 'id'
+    | 'idleTimeoutSec'
+    | 'permissionMode'
+    | 'allowedTools'
+    | 'model'
+    | 'effort'
+    | 'kind'
+    | 'useWorktree'
   >,
   spawnCwd: string,
   env: Record<string, string>,
@@ -45,5 +52,7 @@ export function buildSpawnOpts(
     ...(session.kind === 'execution' ? { noSessionPersistence: true } : {}),
     // Codex: system-level context injected via developerInstructions (not a user turn)
     ...(opts.developerInstructions ? { developerInstructions: opts.developerInstructions } : {}),
+    // Git worktree isolation (Claude only — other CLIs don't support this)
+    ...(session.useWorktree ? { useWorktree: true } : {}),
   };
 }

@@ -14,6 +14,8 @@ const quickLaunchSchema = z.object({
   initialPrompt: z.string().optional(),
   view: z.enum(['chat', 'terminal']).optional().default('chat'),
   kind: z.enum(['conversation', 'execution']).optional().default('conversation'),
+  mcpServerIds: z.array(z.string().uuid()).optional(),
+  useWorktree: z.boolean().optional(),
 });
 
 export const POST = withErrorBoundary(
@@ -52,6 +54,8 @@ export const POST = withErrorBoundary(
         capabilityId: cap.id,
         initialPrompt: body.initialPrompt,
         permissionMode: 'bypassPermissions',
+        mcpServerIds: body.mcpServerIds,
+        useWorktree: body.useWorktree,
       });
 
       if (body.initialPrompt) {
@@ -69,6 +73,8 @@ export const POST = withErrorBoundary(
       capabilityId: cap.id,
       initialPrompt: body.initialPrompt,
       permissionMode: 'bypassPermissions',
+      mcpServerIds: body.mcpServerIds,
+      useWorktree: body.useWorktree,
     });
 
     if (body.initialPrompt) {

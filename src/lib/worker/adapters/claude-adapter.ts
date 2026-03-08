@@ -405,6 +405,8 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
       ...(opts.effort ? ['--effort', opts.effort] : []),
       // Skip writing session JSONL to ~/.claude/projects/ (one-off sessions only)
       ...(opts.noSessionPersistence ? ['--no-session-persistence'] : []),
+      // Git worktree isolation — creates an isolated git worktree for this session
+      ...(opts.useWorktree ? ['--worktree'] : []),
       // Strict MCP config — only use our servers, ignore global
       ...(opts.strictMcpConfig ? ['--strict-mcp-config'] : []),
       // NOTE: --session-id is intentionally omitted. For new sessions Claude
