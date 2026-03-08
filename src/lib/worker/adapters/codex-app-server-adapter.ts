@@ -187,8 +187,17 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   }
 
   async setModel(model: string): Promise<boolean> {
-    this.model = model;
-    return true;
+    try {
+      await this.transport.call('setDefaultModel', {
+        model,
+        reasoningEffort: null,
+      });
+      this.model = model;
+      return true;
+    } catch (err) {
+      log.error({ err, model }, 'setDefaultModel RPC failed');
+      return false;
+    }
   }
 
   /**
@@ -524,6 +533,30 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
           (errParams.error as { message?: string })?.message ??
           'Unknown error';
         this.emitSynthetic({ type: 'as:error', message });
+        break;
+      }
+
+      case 'sessionConfigured': {
+        const configModel = params.model as string | undefined;
+        if (configModel) {
+          log.info({ model: configModel }, 'Codex confirmed model change');
+          this.model = configModel;
+          this.emitSynthetic({ type: 'as:info', message: `Model set to ${configModel}` });
+        }
+        break;
+      }
+
+      case 'model/rerouted': {
+        const from = params.requestedModel as string | undefined;
+        const to = params.actualModel as string | undefined;
+        if (from && to) {
+          log.info({ from, to }, 'Codex rerouted model');
+          this.model = to;
+          this.emitSynthetic({
+            type: 'as:info',
+            message: `Model rerouted: ${from} → ${to}`,
+          });
+        }
         break;
       }
 
