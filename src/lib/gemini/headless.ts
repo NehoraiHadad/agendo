@@ -15,12 +15,9 @@
  *   }
  */
 
-import { spawn } from 'node:child_process';
-import {
-  parseStreamJsonLine,
-  type StreamJsonEvent,
-  type StreamJsonStats,
-} from './stream-json-parser';
+import { spawnCli } from '@/lib/utils/cli-runner';
+import { ndjsonStream } from '@/lib/utils/ndjson-stream';
+import type { StreamJsonEvent, StreamJsonStats } from './stream-json-parser';
 
 export interface GeminiHeadlessOpts {
   /** The prompt to send. */
@@ -71,93 +68,33 @@ export async function* spawnGeminiHeadless(
   ];
   if (model) args.push('-m', model);
 
-  // Strip vars that block the CLI when running inside a Claude Code session
-  const childEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
-      childEnv[key] = value;
-    }
-  }
-
-  const cp = spawn('gemini', args, {
-    cwd: cwd ?? process.cwd(),
-    env: childEnv as NodeJS.ProcessEnv,
-    stdio: ['ignore', 'pipe', 'pipe'], // stdin closed prevents hangs
-    shell: false,
+  const { process: cp, cleanup } = spawnCli({
+    command: 'gemini',
+    args,
+    cwd,
+    timeoutMs,
+    signal,
   });
 
-  const timeoutId = setTimeout(() => {
-    try {
-      cp.kill('SIGKILL');
-    } catch {
-      /* already dead */
-    }
-  }, timeoutMs);
-
-  const onAbort = () => {
-    try {
-      cp.kill('SIGTERM');
-    } catch {
-      /* already dead */
-    }
-  };
-  signal?.addEventListener('abort', onAbort);
-
-  // Simple async queue: shared between event emitters and the generator consumer
-  const queue: Array<StreamJsonEvent | Error | null> = [];
-  let resolveNext: (() => void) | null = null;
-
-  function push(item: StreamJsonEvent | Error | null) {
-    queue.push(item);
-    resolveNext?.();
-    resolveNext = null;
-  }
-
-  let lineBuffer = '';
-
-  // stdout is always Readable because stdio[1] = 'pipe'
   if (!cp.stdout) throw new Error('gemini process has no stdout (unexpected)');
-  cp.stdout.on('data', (chunk: Buffer) => {
-    const combined = lineBuffer + chunk.toString('utf-8');
-    const parts = combined.split('\n');
-    lineBuffer = parts.pop() ?? '';
-    for (const line of parts) {
-      const event = parseStreamJsonLine(line);
-      if (event) push(event);
-    }
-  });
 
-  cp.on('error', (err) => push(err));
-
+  // Wire up the process 'close' event to track exit code
+  let exitCode: number | null = null;
   cp.on('close', (code) => {
-    // Flush any partial data remaining in the buffer
-    if (lineBuffer.trim()) {
-      const event = parseStreamJsonLine(lineBuffer);
-      if (event) push(event);
-      lineBuffer = '';
-    }
-    if (code !== 0 && code !== null) {
-      push(new Error(`gemini process exited with code ${code}`));
-    } else {
-      push(null); // done sentinel
-    }
+    exitCode = code;
   });
 
   try {
-    while (true) {
-      if (queue.length === 0) {
-        await new Promise<void>((resolve) => {
-          resolveNext = resolve;
-        });
-      }
-      const item = queue.shift() as StreamJsonEvent | Error | null;
-      if (item === null) break;
-      if (item instanceof Error) throw item;
-      yield item;
-    }
+    yield* ndjsonStream<StreamJsonEvent>({
+      stream: cp.stdout,
+      onClose: () => {
+        if (exitCode !== 0 && exitCode !== null) {
+          throw new Error(`gemini process exited with code ${exitCode}`);
+        }
+      },
+    });
   } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', onAbort);
+    cleanup();
     try {
       cp.kill('SIGTERM');
     } catch {
