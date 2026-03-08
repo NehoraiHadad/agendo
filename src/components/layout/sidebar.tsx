@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   ListTodo,
-  Bot,
   MessageSquare,
   ChevronLeft,
   ChevronRight,
@@ -16,7 +15,6 @@ import {
   PanelTop,
   Settings,
   Search,
-  Server,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
@@ -63,7 +61,6 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, badgeKey: null },
   { href: '/projects', label: 'Projects', icon: FolderOpen, badgeKey: null },
   { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
-  { href: '/agents', label: 'AI Agents', icon: Bot, badgeKey: null },
   {
     href: '/sessions',
     label: 'Sessions',
@@ -72,8 +69,7 @@ const navItems = [
   },
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
-  { href: '/config', label: 'Config', icon: Settings, badgeKey: null },
-  { href: '/config/mcp-servers', label: 'MCP Servers', icon: Server, badgeKey: null },
+  { href: '/settings', label: 'Settings', icon: Settings, badgeKey: null },
 ];
 
 const SIDEBAR_KEY = 'sidebar-collapsed';
