@@ -547,8 +547,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       }
 
       case 'model/rerouted': {
-        const from = params.requestedModel as string | undefined;
-        const to = params.actualModel as string | undefined;
+        const from = params.fromModel as string | undefined;
+        const to = params.toModel as string | undefined;
         if (from && to) {
           log.info({ from, to }, 'Codex rerouted model');
           this.model = to;
