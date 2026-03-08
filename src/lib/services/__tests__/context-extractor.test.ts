@@ -516,6 +516,34 @@ describe('context-extractor', () => {
     expect(result.meta.llmSummarized).toBe(false);
   });
 
+  // -------------------------------------------------------------------------
+  // Regression: full mode with >5 turns must include ALL turns verbatim
+  // (Previously, turns beyond recentTurnCount=5 were silently dropped)
+  // -------------------------------------------------------------------------
+  it('full mode with >5 turns includes ALL turns verbatim', async () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 8; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `User message ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `Agent reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', { mode: 'full' });
+
+    expect(result.meta.totalTurns).toBe(8);
+    expect(result.meta.summarizedTurns).toBe(0);
+    expect(result.meta.includedVerbatimTurns).toBe(8);
+    // ALL 8 turns must appear verbatim in the prompt
+    for (let i = 1; i <= 8; i++) {
+      expect(result.prompt).toContain(`User message ${i}`);
+      expect(result.prompt).toContain(`Agent reply ${i}`);
+    }
+    // Should NOT have any summarized section
+    expect(result.prompt).not.toContain('summarized');
+    expect(result.prompt).not.toContain('Earlier turns');
+  });
+
   it('full mode does not call LLM summarization', async () => {
     mockState.geminiResult = 'Should not appear';
 

@@ -407,8 +407,8 @@ function buildPrompt(
   }
   headerLines.push('');
 
-  // Determine split
-  const verbatimCount = Math.min(recentTurnCount, totalTurns);
+  // Determine split — in 'full' mode, all turns are rendered verbatim
+  const verbatimCount = mode === 'full' ? totalTurns : Math.min(recentTurnCount, totalTurns);
   const summarizeCount = totalTurns - verbatimCount;
   const summarizedTurns = turns.slice(0, summarizeCount);
   const verbatimTurns = turns.slice(summarizeCount);
@@ -618,8 +618,11 @@ export async function extractSessionContext(
     return buildEmptyContext(sessionMeta);
   }
 
-  // Determine verbatim / summarized split
-  const verbatimCount = Math.min(resolvedOptions.recentTurnCount, turns.length);
+  // Determine verbatim / summarized split — in 'full' mode, all turns are verbatim
+  const verbatimCount =
+    resolvedOptions.mode === 'full'
+      ? turns.length
+      : Math.min(resolvedOptions.recentTurnCount, turns.length);
   const summarizeCount = turns.length - verbatimCount;
 
   // In hybrid mode with turns to summarize, call the LLM for an intelligent summary
