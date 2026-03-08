@@ -2,6 +2,11 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ['pg'],
+  typescript: {
+    // Type checking runs separately via `pnpm typecheck`.
+    // Skipping it here avoids OOM on the 4GB build server.
+    ignoreBuildErrors: true,
+  },
   experimental: {
     // @dnd-kit packages are not in Next.js's built-in optimizePackageImports list.
     // Adding them here enables tree-shaking of barrel imports so only the
