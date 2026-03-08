@@ -17,6 +17,7 @@ export type NewSession = InferInsertModel<typeof schema.sessions>;
 export type NewProject = InferInsertModel<typeof schema.projects>;
 export type Plan = InferSelectModel<typeof schema.plans>;
 export type NewPlan = InferInsertModel<typeof schema.plans>;
+export type PlanVersion = InferSelectModel<typeof schema.planVersions>;
 export type ContextSnapshot = InferSelectModel<typeof schema.contextSnapshots>;
 export type NewContextSnapshot = InferInsertModel<typeof schema.contextSnapshots>;
 export type AgentWorkspace = InferSelectModel<typeof schema.agentWorkspaces>;
@@ -88,6 +89,13 @@ export interface PlanMetadata {
   tags?: string[];
   notes?: string;
   executingTaskId?: string;
+}
+
+/** plan_versions.metadata */
+export interface PlanVersionMetadata {
+  source?: 'exitPlanMode' | 'manual_edit' | 'conversation' | 'mcp';
+  sessionId?: string;
+  agentId?: string;
 }
 
 /** context_snapshots.key_findings */

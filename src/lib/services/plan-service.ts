@@ -1,6 +1,6 @@
 import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { plans, sessions } from '@/lib/db/schema';
+import { plans, planVersions, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getAgentById } from '@/lib/services/agent-service';
@@ -8,7 +8,7 @@ import { createTask } from '@/lib/services/task-service';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 import { buildPlanContext, generatePlanConversationPreamble } from '@/lib/worker/session-preambles';
 import { getGitHead } from '@/lib/utils/git';
-import type { Plan, PlanStatus, PlanMetadata } from '@/lib/types';
+import type { Plan, PlanVersion, PlanStatus, PlanMetadata, PlanVersionMetadata } from '@/lib/types';
 
 export interface CreatePlanInput {
   projectId: string;
@@ -334,8 +334,11 @@ export async function savePlanFromMcp(
       );
     })();
 
-  // 1. Explicit planId — update directly.
+  const versionMeta: PlanVersionMetadata = { source: 'mcp', sessionId: sessionId ?? undefined };
+
+  // 1. Explicit planId — update directly + create version.
   if (planId) {
+    await savePlanContent(planId, content, versionMeta);
     const updated = await updatePlan(planId, { content, title: resolvedTitle, status: 'ready' });
     return { planId: updated.id, title: updated.title, action: 'updated' };
   }
@@ -357,6 +360,7 @@ export async function savePlanFromMcp(
         .limit(1);
 
       if (linked) {
+        await savePlanContent(linked.id, content, versionMeta);
         const updated = await updatePlan(linked.id, {
           content,
           title: resolvedTitle,
@@ -373,8 +377,8 @@ export async function savePlanFromMcp(
           content,
           sourceSessionId: sessionId,
         });
-        // Set status to 'ready' (createPlan defaults to 'draft').
         await updatePlan(created.id, { status: 'ready' });
+        await savePlanContent(created.id, content, versionMeta);
         return { planId: created.id, title: created.title, action: 'created' };
       }
     }
@@ -383,6 +387,96 @@ export async function savePlanFromMcp(
   throw new Error(
     'Cannot save plan: no planId provided, no session found, or session has no projectId.',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Plan Version History
+// ---------------------------------------------------------------------------
+
+function extractTitle(content: string): string {
+  const firstLine = content.split('\n').find((line) => line.trim().length > 0) ?? 'Untitled Plan';
+  return (
+    firstLine
+      .replace(/^#+\s*/, '')
+      .trim()
+      .slice(0, 200) || 'Untitled Plan'
+  );
+}
+
+/**
+ * Save plan content as a new version. Deduplicates if latest version has
+ * identical content. Also updates plans.content for backward compat.
+ */
+export async function savePlanContent(
+  planId: string,
+  content: string,
+  metadata: PlanVersionMetadata = {},
+): Promise<PlanVersion | null> {
+  const [latest] = await db
+    .select({ version: planVersions.version, content: planVersions.content })
+    .from(planVersions)
+    .where(eq(planVersions.planId, planId))
+    .orderBy(desc(planVersions.version))
+    .limit(1);
+
+  if (latest && latest.content === content) {
+    return null;
+  }
+
+  const nextVersion = (latest?.version ?? 0) + 1;
+  const title = extractTitle(content);
+
+  const [version] = await db
+    .insert(planVersions)
+    .values({ planId, version: nextVersion, content, title, metadata })
+    .returning();
+
+  await db.update(plans).set({ content, title, updatedAt: new Date() }).where(eq(plans.id, planId));
+
+  return version;
+}
+
+/**
+ * List all versions for a plan (metadata only, no content).
+ */
+export async function listPlanVersions(
+  planId: string,
+): Promise<Pick<PlanVersion, 'id' | 'version' | 'title' | 'createdAt' | 'metadata'>[]> {
+  return db
+    .select({
+      id: planVersions.id,
+      version: planVersions.version,
+      title: planVersions.title,
+      createdAt: planVersions.createdAt,
+      metadata: planVersions.metadata,
+    })
+    .from(planVersions)
+    .where(eq(planVersions.planId, planId))
+    .orderBy(desc(planVersions.version));
+}
+
+/**
+ * Get a specific version by plan ID and version number.
+ */
+export async function getPlanVersion(planId: string, version: number): Promise<PlanVersion> {
+  const [row] = await db
+    .select()
+    .from(planVersions)
+    .where(and(eq(planVersions.planId, planId), eq(planVersions.version, version)))
+    .limit(1);
+  return requireFound(row, 'PlanVersion', `${planId}/v${version}`);
+}
+
+/**
+ * Get two versions for client-side diff comparison.
+ */
+export async function comparePlanVersions(
+  planId: string,
+  v1: number,
+  v2: number,
+): Promise<{ v1: PlanVersion; v2: PlanVersion }> {
+  const [ver1, ver2] = await Promise.all([getPlanVersion(planId, v1), getPlanVersion(planId, v2)]);
+  return { v1: ver1, v2: ver2 };
 }
 
 export async function validatePlan(

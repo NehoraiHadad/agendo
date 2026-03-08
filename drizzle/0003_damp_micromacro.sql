@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "use_worktree" boolean DEFAULT false NOT NULL;

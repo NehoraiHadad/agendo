@@ -15,6 +15,7 @@ import { createLogger } from '@/lib/logger';
 const log = createLogger('session-plan-utils');
 import { sessions, plans } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { savePlanContent } from '@/lib/services/plan-service';
 import type { Session } from '@/lib/types';
 
 /**
@@ -63,7 +64,7 @@ export async function readPlanFromFile(sessionId: string): Promise<string | null
  * Auto-save plan content to the plans table when ExitPlanMode is approved.
  *
  * If this session is a plan's conversationSessionId, UPDATE that plan's content
- * instead of creating a new one. Otherwise create a new plan record.
+ * and create a new version. Otherwise create a new plan record + version 1.
  */
 export async function savePlanFromSession(session: Session): Promise<void> {
   const content = await readPlanFromFile(session.id);
@@ -78,16 +79,9 @@ export async function savePlanFromSession(session: Session): Promise<void> {
     return;
   }
 
-  // Extract a title from the first heading or first line of the plan content
-  const firstLine = content.split('\n').find((line) => line.trim().length > 0) ?? 'Untitled Plan';
-  const title =
-    firstLine
-      .replace(/^#+\s*/, '')
-      .trim()
-      .slice(0, 200) || 'Untitled Plan';
+  const versionMeta = { source: 'exitPlanMode' as const, sessionId: session.id };
 
   // Check if this session is linked to an existing plan (via conversationSessionId).
-  // If so, update that plan instead of creating a duplicate.
   const [existingPlan] = await db
     .select({ id: plans.id })
     .from(plans)
@@ -97,14 +91,28 @@ export async function savePlanFromSession(session: Session): Promise<void> {
   if (existingPlan) {
     await db
       .update(plans)
-      .set({ content, title, status: 'ready', updatedAt: new Date() })
+      .set({ status: 'ready', updatedAt: new Date() })
       .where(eq(plans.id, existingPlan.id));
+    const version = await savePlanContent(existingPlan.id, content, versionMeta);
     log.info(
-      { planId: existingPlan.id, sessionId: session.id, chars: content.length },
+      {
+        planId: existingPlan.id,
+        sessionId: session.id,
+        version: version?.version ?? 'deduped',
+        chars: content.length,
+      },
       'Updated plan from session',
     );
     return;
   }
+
+  // Extract title for the new plan record
+  const firstLine = content.split('\n').find((line) => line.trim().length > 0) ?? 'Untitled Plan';
+  const title =
+    firstLine
+      .replace(/^#+\s*/, '')
+      .trim()
+      .slice(0, 200) || 'Untitled Plan';
 
   // No linked plan — create a new record.
   const [plan] = await db
@@ -119,8 +127,10 @@ export async function savePlanFromSession(session: Session): Promise<void> {
     })
     .returning({ id: plans.id });
 
+  await savePlanContent(plan.id, content, versionMeta);
+
   log.info(
     { planId: plan.id, sessionId: session.id, chars: content.length },
-    'Created plan from session',
+    'Created plan from session (v1)',
   );
 }

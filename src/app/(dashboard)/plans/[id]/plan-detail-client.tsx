@@ -20,6 +20,7 @@ import {
   ChevronDown,
   Archive,
   PenLine,
+  History,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from 'radix-ui';
 import ReactMarkdown from 'react-markdown';
@@ -35,6 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import { PlanActions } from '@/components/plans/plan-actions';
 import { PlanConversationPanel } from '@/components/plans/plan-conversation-panel';
+import { PlanVersionPanel } from '@/components/plans/plan-version-panel';
 import { AnnotatablePlanPreview } from '@/components/plans/annotatable-plan-preview';
 import { InlineAnnotationSidebar } from '@/components/plans/inline-annotation-sidebar';
 import type { PlanAnnotation, BlockSelection } from '@/lib/types/annotations';
@@ -327,6 +329,9 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     (initialPlan as Plan & { conversationSessionId?: string | null }).conversationSessionId ?? null,
   );
 
+  // Version history panel state
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   // Annotation mode
   const [isAnnotationMode, setIsAnnotationMode] = useState(false);
   const [annotations, setAnnotations] = useState<PlanAnnotation[]>([]);
@@ -501,6 +506,12 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
     setConversationSessionId(null);
   }, []);
 
+  const handleVersionRestore = useCallback((restoredContent: string) => {
+    setContent(restoredContent);
+    setIsDirty(true);
+    setSaveError(null);
+  }, []);
+
   const handleAnnotationAdd = useCallback((ann: PlanAnnotation) => {
     setAnnotations((prev) => [...prev, ann]);
   }, []);
@@ -548,6 +559,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
         className={cn(
           'flex flex-col h-full min-h-0 gap-4 flex-1 transition-all duration-300 min-w-0',
           conversationOpen && 'lg:max-w-[calc(100%-24rem)]',
+          historyOpen && !conversationOpen && 'lg:max-w-[calc(100%-20rem)]',
         )}
       >
         {/* Header card */}
@@ -655,6 +667,25 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                   </span>
                 </button>
 
+                {/* History toggle */}
+                <button
+                  onClick={() => {
+                    setHistoryOpen((v) => !v);
+                    if (!historyOpen) setConversationOpen(false);
+                  }}
+                  title={historyOpen ? 'Close version history' : 'Version history'}
+                  aria-pressed={historyOpen}
+                  className={cn(
+                    'flex items-center gap-1 h-7 px-2 rounded-md text-[11px] border transition-colors',
+                    historyOpen
+                      ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
+                      : 'border-white/[0.07] bg-white/[0.02] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.05]',
+                  )}
+                >
+                  <History className="size-3" />
+                  <span className="hidden sm:inline">History</span>
+                </button>
+
                 {/* View toggle — icon only, segmented */}
                 <div className="flex items-center h-7 rounded-md border border-white/[0.07] bg-white/[0.02] overflow-hidden divide-x divide-white/[0.05]">
                   <button
@@ -699,7 +730,10 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 <PlanActions
                   planId={plan.id}
                   planStatus={plan.status}
-                  onToggleConversation={() => setConversationOpen((v) => !v)}
+                  onToggleConversation={() => {
+                    setConversationOpen((v) => !v);
+                    setHistoryOpen(false);
+                  }}
                   conversationActive={conversationOpen}
                 />
               </div>
@@ -916,6 +950,32 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 onClose={() => setConversationOpen(false)}
                 onSessionCreated={handleSessionCreated}
                 onNewChat={handleNewChat}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Version history panel — desktop side panel */}
+      {historyOpen && (
+        <>
+          <div className="hidden lg:flex w-80 shrink-0 border-l border-blue-500/10 min-h-0 h-full">
+            <PlanVersionPanel
+              planId={plan.id}
+              currentContent={content}
+              onClose={() => setHistoryOpen(false)}
+              onRestore={handleVersionRestore}
+            />
+          </div>
+          {/* Mobile: bottom sheet overlay */}
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setHistoryOpen(false)} />
+            <div className="absolute bottom-0 left-0 right-0 h-[70vh] rounded-t-xl overflow-hidden bg-[oklch(0.085_0.005_240)] border-t border-white/[0.08]">
+              <PlanVersionPanel
+                planId={plan.id}
+                currentContent={content}
+                onClose={() => setHistoryOpen(false)}
+                onRestore={handleVersionRestore}
               />
             </div>
           </div>

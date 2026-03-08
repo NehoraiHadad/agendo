@@ -13,6 +13,7 @@ import {
   timestamp,
   primaryKey,
   unique,
+  uniqueIndex,
   index,
   check,
 } from 'drizzle-orm/pg-core';
@@ -23,6 +24,7 @@ import type {
   AgentSessionConfig,
   TaskInputContext,
   PlanMetadata,
+  PlanVersionMetadata,
   SnapshotFindings,
   WorkspaceLayout,
 } from '../types';
@@ -324,6 +326,8 @@ export const sessions = pgTable(
     forkSourceRef: text('fork_source_ref'),
     // Optional list of MCP server IDs to use for this session (overrides project defaults).
     mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
+    // When true, pass --worktree to CLIs that support native git worktree isolation (Claude only).
+    useWorktree: boolean('use_worktree').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -387,6 +391,28 @@ export const plans = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('idx_plans_project').on(table.projectId, table.status, table.createdAt)],
+);
+
+// --- Plan Versions ----------------------------------------------------------
+// Full content snapshots of each plan revision for history & diff.
+
+export const planVersions = pgTable(
+  'plan_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => plans.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    content: text('content').notNull(),
+    title: text('title').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    metadata: jsonb('metadata').notNull().$type<PlanVersionMetadata>().default({}),
+  },
+  (table) => [
+    uniqueIndex('idx_plan_versions_unique').on(table.planId, table.version),
+    index('idx_plan_versions_plan').on(table.planId, table.createdAt),
+  ],
 );
 
 // --- Context Snapshots ------------------------------------------------------
