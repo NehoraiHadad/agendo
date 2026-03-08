@@ -140,8 +140,14 @@ export function AgentSwitchDialog({
         }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Request failed (${res.status})`);
+        const body = await res.json().catch(() => null);
+        const msg =
+          typeof body?.error === 'string'
+            ? body.error
+            : typeof body?.error?.message === 'string'
+              ? body.error.message
+              : `Request failed (${res.status})`;
+        throw new Error(msg);
       }
       const body = (await res.json()) as ForkResponse;
       onSuccess(body.data.sessionId);
