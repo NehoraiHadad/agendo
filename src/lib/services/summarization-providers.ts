@@ -18,7 +18,7 @@
  * "haiku", "o4-mini"). Applies to whichever provider is selected.
  */
 
-import { spawn } from 'node:child_process';
+import { collectCliOutput } from '@/lib/utils/cli-runner';
 import { runGeminiPrompt } from '@/lib/gemini/headless';
 
 // ============================================================================
@@ -71,52 +71,7 @@ function getModel(provider: Exclude<SummarizationProviderName, 'auto'>): string 
 // ============================================================================
 
 function runCli(command: string, args: string[], timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    // Strip vars that block CLIs when running inside a Claude Code session
-    const childEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && key !== 'CLAUDECODE' && key !== 'CLAUDE_CODE_ENTRYPOINT') {
-        childEnv[key] = value;
-      }
-    }
-
-    const cp = spawn(command, args, {
-      cwd: '/tmp',
-      env: childEnv as NodeJS.ProcessEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-
-    const chunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    cp.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    cp.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-
-    const timer = setTimeout(() => {
-      try {
-        cp.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    cp.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    cp.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        const stderr = Buffer.concat(stderrChunks).toString('utf-8').slice(0, 500);
-        reject(new Error(`${command} exited with code ${code}: ${stderr}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks).toString('utf-8'));
-    });
-  });
+  return collectCliOutput({ command, args, cwd: '/tmp', timeoutMs });
 }
 
 // ============================================================================
