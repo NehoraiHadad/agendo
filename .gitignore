@@ -43,6 +43,7 @@ yarn-error.log*
 # claude code (generated per-session, not project config)
 .claude/hooks/
 .claude/settings.local.json
+.claude/worktrees/
 
 # typescript
 *.tsbuildinfo
