@@ -975,6 +975,8 @@ interface SessionChatViewProps {
   stream: UseSessionStreamReturn;
   /** Events from the parent session to display before the fork point. */
   parentStream?: UseSessionStreamReturn;
+  /** Assistant message UUID where the fork branches off — truncates parent display items. */
+  forkPointUuid?: string;
   currentStatus: SessionStatus | null | string;
   initialPrompt?: string | null;
   agentBinaryPath?: string;
@@ -994,6 +996,7 @@ export function SessionChatView({
   sessionId,
   stream,
   parentStream,
+  forkPointUuid,
   currentStatus,
   initialPrompt,
   agentBinaryPath,
@@ -1160,10 +1163,17 @@ export function SessionChatView({
     () => (parentStream ? buildToolResultMap(parentStream.events) : new Map()),
     [parentStream],
   );
-  const parentDisplayItems = useMemo(
-    () => (parentStream ? buildDisplayItems(parentStream.events, parentToolResultMap) : []),
-    [parentStream, parentToolResultMap],
-  );
+  const parentDisplayItems = useMemo(() => {
+    if (!parentStream) return [];
+    const allItems = buildDisplayItems(parentStream.events, parentToolResultMap);
+    if (!forkPointUuid) return allItems;
+    // Truncate after the user message whose branchUuid matches the fork point.
+    // That user message is the one that was edited to create the fork.
+    const cutIdx = allItems.findIndex(
+      (item) => item.kind === 'user' && item.branchUuid === forkPointUuid,
+    );
+    return cutIdx >= 0 ? allItems.slice(0, cutIdx) : allItems;
+  }, [parentStream, parentToolResultMap, forkPointUuid]);
 
   const toolResultMap = useMemo(() => buildToolResultMap(stream.events), [stream.events]);
   const displayItems = useMemo(

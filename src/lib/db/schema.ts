@@ -327,6 +327,9 @@ export const sessions = pgTable(
     // Set at fork creation time to parent.sessionRef. Cleared (implicitly superseded)
     // once the fork's own sessionRef is written by system:init.
     forkSourceRef: text('fork_source_ref'),
+    // The assistant message UUID where the fork branches off from the parent session.
+    // Used by the UI to truncate parent display items at the fork point.
+    forkPointUuid: text('fork_point_uuid'),
     // Optional list of MCP server IDs to use for this session (overrides project defaults).
     mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
     // When true, pass --worktree to CLIs that support native git worktree isolation (Claude only).

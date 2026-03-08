@@ -1019,6 +1019,7 @@ export function SessionDetailClient({
                 sessionId={session.id}
                 stream={stream}
                 parentStream={session.parentSessionId ? parentStream : undefined}
+                forkPointUuid={session.forkPointUuid ?? undefined}
                 currentStatus={currentStatus}
                 initialPrompt={session.initialPrompt}
                 agentBinaryPath={agentBinaryPath}
