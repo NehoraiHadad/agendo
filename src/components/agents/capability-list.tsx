@@ -91,6 +91,7 @@ export function CapabilityList({ agentId, initialCapabilities }: CapabilityListP
               capability={cap}
               onToggle={handleToggle}
               onDelete={handleDelete}
+              onCloned={handleCreated}
             />
           ))}
         </div>

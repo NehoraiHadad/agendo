@@ -1,17 +1,32 @@
 'use client';
 
 import { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Copy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { ShieldCheck, Shield, ShieldAlert, ShieldBan } from 'lucide-react';
+import { AddCapabilityDialog } from './add-capability-dialog';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { AgentCapability } from '@/lib/types';
+
+const SOURCE_LABELS: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
+  manual: { label: 'Manual', variant: 'outline' },
+  builtin: { label: 'Built-in', variant: 'default' },
+  preset: { label: 'Preset', variant: 'secondary' },
+  scan_help: { label: 'Scanned', variant: 'secondary' },
+  scan_completion: { label: 'Scanned', variant: 'secondary' },
+  scan_fig: { label: 'Scanned', variant: 'secondary' },
+  scan_mcp: { label: 'MCP', variant: 'secondary' },
+  scan_man: { label: 'Scanned', variant: 'secondary' },
+  llm_generated: { label: 'AI Generated', variant: 'secondary' },
+};
 
 interface CapabilityRowProps {
   capability: AgentCapability;
   onToggle?: (id: string, isEnabled: boolean) => void;
   onDelete?: (id: string) => void;
+  onCloned?: (cap: AgentCapability) => void;
 }
 
 const DANGER_ICONS = [
@@ -21,7 +36,7 @@ const DANGER_ICONS = [
   { Icon: ShieldBan, className: 'text-red-600' },
 ] as const;
 
-export function CapabilityRow({ capability, onToggle, onDelete }: CapabilityRowProps) {
+export function CapabilityRow({ capability, onToggle, onDelete, onCloned }: CapabilityRowProps) {
   const [isEnabled, setIsEnabled] = useState(capability.isEnabled);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -59,12 +74,22 @@ export function CapabilityRow({ capability, onToggle, onDelete }: CapabilityRowP
     }
   }
 
+  const sourceInfo = SOURCE_LABELS[capability.source] ?? {
+    label: capability.source,
+    variant: 'outline' as const,
+  };
+
   return (
     <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
       <div className="flex items-center gap-3 min-w-0">
         <DangerIcon className={`h-4 w-4 shrink-0 ${dangerClassName}`} />
         <div className="min-w-0">
-          <span className="text-sm font-medium">{capability.label}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{capability.label}</span>
+            <Badge variant={sourceInfo.variant} className="text-[10px] px-1.5 py-0 h-4">
+              {sourceInfo.label}
+            </Badge>
+          </div>
           {capability.description && (
             <p className="text-xs text-muted-foreground truncate max-w-md">
               {capability.description}
@@ -73,7 +98,30 @@ export function CapabilityRow({ capability, onToggle, onDelete }: CapabilityRowP
         </div>
       </div>
 
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
+        {onCloned && (
+          <AddCapabilityDialog
+            agentId={capability.agentId}
+            onCreated={onCloned}
+            dialogTitle="Clone Capability"
+            initialValues={{
+              label: `${capability.label} (copy)`,
+              description: capability.description ?? '',
+              promptTemplate: capability.promptTemplate ?? '',
+              dangerLevel: String(capability.dangerLevel),
+            }}
+            trigger={
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 text-muted-foreground hover:text-foreground"
+                aria-label="Clone capability"
+              >
+                <Copy className="size-3.5" />
+              </Button>
+            }
+          />
+        )}
         {(onToggle !== undefined || onDelete !== undefined) && (
           <Switch
             checked={isEnabled}
