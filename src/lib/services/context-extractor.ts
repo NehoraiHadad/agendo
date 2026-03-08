@@ -5,9 +5,11 @@
  * transfer prompt for cross-agent session forking.
  */
 
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { readEventsFromLog } from '@/lib/realtime/event-utils';
 import { getSessionWithDetails } from '@/lib/services/session-service';
+import { callSummarizationProvider } from '@/lib/services/summarization-providers';
 import type { AgendoEvent } from '@/lib/realtime/event-types';
 
 // ============================================================================
@@ -32,6 +34,8 @@ export interface ExtractedContext {
     previousAgent: string;
     taskTitle?: string;
     projectName?: string;
+    /** Whether older turns were summarized by an LLM (vs per-turn truncation fallback) */
+    llmSummarized?: boolean;
   };
 }
 
@@ -88,6 +92,73 @@ function freshAccumulator(): TurnAccumulator {
 
 function accumulatorIsNonEmpty(acc: TurnAccumulator): boolean {
   return acc.userText.trim().length > 0 || acc.assistantText.trim().length > 0;
+}
+
+// ============================================================================
+// LLM-powered summarization
+// ============================================================================
+
+/** In-memory cache keyed by content hash of the turns being summarized. */
+const summaryCache = new Map<string, string>();
+
+/** Clear the summary cache (for testing). */
+export function clearSummaryCache(): void {
+  summaryCache.clear();
+}
+
+/** Hash turn content to produce a stable, content-aware cache key. */
+function hashTurns(sessionId: string, plainText: string): string {
+  return createHash('sha256').update(`${sessionId}:${plainText}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * Formats turns into a plain text representation for the summarization prompt.
+ */
+export function turnsToPlainText(turns: Turn[]): string {
+  return turns
+    .map((t) => {
+      const toolList =
+        t.toolCalls.length > 0
+          ? `\n  Tools used: ${t.toolCalls.map(summarizeToolCall).join(', ')}`
+          : '';
+      return `Turn ${t.index}:\n  User: ${t.userText.trim()}\n  Assistant: ${t.assistantText.trim()}${toolList}`;
+    })
+    .join('\n\n');
+}
+
+/**
+ * Calls the configured LLM provider to produce an intelligent summary of
+ * older conversation turns. Provider is selected via SUMMARIZATION_PROVIDER
+ * env var (default: auto-detect).
+ *
+ * Returns the raw summary text, or null on failure (caller falls back to
+ * per-turn truncation).
+ */
+export async function summarizeConversation(
+  sessionId: string,
+  turns: Turn[],
+): Promise<string | null> {
+  if (turns.length === 0) return null;
+
+  const plainText = turnsToPlainText(turns);
+
+  // Content-aware cache: same turns → same summary
+  const cacheKey = hashTurns(sessionId, plainText);
+  const cached = summaryCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const result = await callSummarizationProvider(plainText);
+    if (result && result.text.length > 0) {
+      summaryCache.set(cacheKey, result.text);
+      return result.text;
+    }
+  } catch (err) {
+    // Log but don't throw — fall back to per-turn truncation
+    console.warn('[context-extractor] LLM summarization failed, falling back to truncation:', err);
+  }
+
+  return null;
 }
 
 // ============================================================================
@@ -305,12 +376,15 @@ interface SessionMeta {
 
 /**
  * Assembles the full transfer prompt from turns and session metadata.
+ * When `llmSummary` is provided, it replaces the per-turn truncation for
+ * older turns in hybrid mode. Falls back to per-turn summaries otherwise.
  * Applies maxChars truncation by dropping oldest turns first.
  */
 function buildPrompt(
   turns: Turn[],
   session: SessionMeta,
   options: Required<ContextExtractorOptions>,
+  llmSummary?: string | null,
 ): string {
   const { mode, recentTurnCount, maxChars } = options;
 
@@ -343,12 +417,21 @@ function buildPrompt(
   const bodyLines: string[] = [];
 
   if (mode === 'hybrid' && summarizedTurns.length > 0) {
-    bodyLines.push('### Earlier turns (summarized)');
-    bodyLines.push('');
-    for (const turn of summarizedTurns) {
-      bodyLines.push(summarizeTurn(turn));
+    if (llmSummary) {
+      // Use LLM-generated summary instead of per-turn truncation
+      bodyLines.push(`### Earlier conversation (${summarizeCount} turns summarized by AI)`);
+      bodyLines.push('');
+      bodyLines.push(llmSummary);
+      bodyLines.push('');
+    } else {
+      // Fallback: per-turn truncation
+      bodyLines.push('### Earlier turns (summarized)');
+      bodyLines.push('');
+      for (const turn of summarizedTurns) {
+        bodyLines.push(summarizeTurn(turn));
+      }
+      bodyLines.push('');
     }
-    bodyLines.push('');
   }
 
   if (verbatimTurns.length > 0) {
@@ -371,7 +454,7 @@ function buildPrompt(
   const header = headerLines.join('\n');
   const footer = footerLines.join('\n');
 
-  // Apply maxChars — drop oldest verbatim turns or summarized turns first
+  // Apply maxChars — drop oldest verbatim turns first (LLM summary stays intact)
   let body = bodyLines.join('\n');
   let prompt = `${header}${body}\n${footer}`;
 
@@ -379,38 +462,60 @@ function buildPrompt(
     return prompt;
   }
 
-  // Iteratively drop turns (oldest first) until within budget
-  let dropIndex = 0;
-  const allTurns = [...summarizedTurns, ...verbatimTurns];
-
-  while (prompt.length > maxChars && dropIndex < allTurns.length) {
-    dropIndex += 1;
-    const remaining = allTurns.slice(dropIndex);
-    const newSummarized = remaining.filter((t) => summarizedTurns.includes(t));
-    const newVerbatim = remaining.filter((t) => verbatimTurns.includes(t));
-
-    const newBody: string[] = [];
-    if (mode === 'hybrid' && newSummarized.length > 0) {
-      newBody.push('### Earlier turns (summarized)');
+  // If we have an LLM summary, only drop verbatim turns (preserve the summary)
+  if (llmSummary && verbatimTurns.length > 1) {
+    let dropVerbatim = 0;
+    while (prompt.length > maxChars && dropVerbatim < verbatimTurns.length - 1) {
+      dropVerbatim += 1;
+      const remainingVerbatim = verbatimTurns.slice(dropVerbatim);
+      const newBody: string[] = [];
+      newBody.push(`### Earlier conversation (${summarizeCount} turns summarized by AI)`);
       newBody.push('');
-      for (const turn of newSummarized) newBody.push(summarizeTurn(turn));
+      newBody.push(llmSummary);
       newBody.push('');
-    }
-    if (newVerbatim.length > 0) {
-      if (mode === 'hybrid' && newSummarized.length > 0) {
-        newBody.push('### Recent turns (verbatim)');
-      } else {
-        newBody.push('### Conversation');
-      }
+      newBody.push('### Recent turns (verbatim)');
       newBody.push('');
-      for (const turn of newVerbatim) {
+      for (const turn of remainingVerbatim) {
         newBody.push(renderTurnVerbatim(turn));
         newBody.push('');
       }
+      body = newBody.join('\n');
+      prompt = `${header}${body}\n${footer}`;
     }
+  } else {
+    // No LLM summary — original iterative drop logic
+    let dropIndex = 0;
+    const allTurns = [...summarizedTurns, ...verbatimTurns];
 
-    body = newBody.join('\n');
-    prompt = `${header}${body}\n${footer}`;
+    while (prompt.length > maxChars && dropIndex < allTurns.length) {
+      dropIndex += 1;
+      const remaining = allTurns.slice(dropIndex);
+      const newSummarized = remaining.filter((t) => summarizedTurns.includes(t));
+      const newVerbatim = remaining.filter((t) => verbatimTurns.includes(t));
+
+      const newBody: string[] = [];
+      if (mode === 'hybrid' && newSummarized.length > 0) {
+        newBody.push('### Earlier turns (summarized)');
+        newBody.push('');
+        for (const turn of newSummarized) newBody.push(summarizeTurn(turn));
+        newBody.push('');
+      }
+      if (newVerbatim.length > 0) {
+        if (mode === 'hybrid' && newSummarized.length > 0) {
+          newBody.push('### Recent turns (verbatim)');
+        } else {
+          newBody.push('### Conversation');
+        }
+        newBody.push('');
+        for (const turn of newVerbatim) {
+          newBody.push(renderTurnVerbatim(turn));
+          newBody.push('');
+        }
+      }
+
+      body = newBody.join('\n');
+      prompt = `${header}${body}\n${footer}`;
+    }
   }
 
   // Hard cap as last resort
@@ -517,8 +622,15 @@ export async function extractSessionContext(
   const verbatimCount = Math.min(resolvedOptions.recentTurnCount, turns.length);
   const summarizeCount = turns.length - verbatimCount;
 
+  // In hybrid mode with turns to summarize, call the LLM for an intelligent summary
+  let llmSummary: string | null = null;
+  if (resolvedOptions.mode === 'hybrid' && summarizeCount > 0) {
+    const turnsToSummarize = turns.slice(0, summarizeCount);
+    llmSummary = await summarizeConversation(sessionId, turnsToSummarize);
+  }
+
   // Build prompt (with maxChars applied internally)
-  const prompt = buildPrompt(turns, sessionMeta, resolvedOptions);
+  const prompt = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
 
   return {
     prompt,
@@ -530,6 +642,7 @@ export async function extractSessionContext(
       previousAgent: session.agentName ?? 'Unknown',
       taskTitle: session.taskTitle ?? undefined,
       projectName: session.projectName ?? undefined,
+      llmSummarized: llmSummary !== null,
     },
   };
 }

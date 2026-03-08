@@ -9,6 +9,8 @@ const { mockState } = vi.hoisted(() => ({
     sessionResult: null as unknown,
     readFileResult: null as string | null,
     readFileError: null as Error | null,
+    geminiResult: null as string | null,
+    geminiError: null as Error | null,
   },
 }));
 
@@ -77,9 +79,20 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock @/lib/services/summarization-providers
+// ---------------------------------------------------------------------------
+vi.mock('@/lib/services/summarization-providers', () => ({
+  callSummarizationProvider: vi.fn().mockImplementation(async () => {
+    if (mockState.geminiError) throw mockState.geminiError;
+    if (mockState.geminiResult === null) return null;
+    return { text: mockState.geminiResult, provider: 'gemini-cli' };
+  }),
+}));
+
+// ---------------------------------------------------------------------------
 // Import the module under test AFTER mocks
 // ---------------------------------------------------------------------------
-import { extractSessionContext } from '../context-extractor';
+import { extractSessionContext, clearSummaryCache } from '../context-extractor';
 
 // ---------------------------------------------------------------------------
 // Helpers to build AgendoEvent log lines
@@ -123,6 +136,9 @@ describe('context-extractor', () => {
     mockState.sessionResult = makeSession();
     mockState.readFileResult = null;
     mockState.readFileError = null;
+    mockState.geminiResult = null;
+    mockState.geminiError = null;
+    clearSummaryCache();
   });
 
   // -------------------------------------------------------------------------
@@ -448,5 +464,92 @@ describe('context-extractor', () => {
     const result = await extractSessionContext('sess-1', { mode: 'full' });
 
     expect(result.prompt).not.toMatch(/total cost/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // LLM summarization tests
+  // -------------------------------------------------------------------------
+
+  it('hybrid mode uses LLM summary when Gemini succeeds', async () => {
+    mockState.geminiResult =
+      'The agent worked on fixing auth bugs. Modified src/auth.ts. Tests now pass.';
+
+    const lines: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `User message ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `Agent reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001 * i, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'hybrid',
+      recentTurnCount: 3,
+    });
+
+    expect(result.prompt).toContain('summarized by AI');
+    expect(result.prompt).toContain('fixing auth bugs');
+    expect(result.meta.llmSummarized).toBe(true);
+    // Old per-turn summary format should NOT be present
+    expect(result.prompt).not.toContain('- Turn 1: User asked:');
+  });
+
+  it('hybrid mode falls back to per-turn truncation when Gemini fails', async () => {
+    mockState.geminiError = new Error('Gemini CLI not available');
+
+    const lines: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `User message ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `Agent reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001 * i, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'hybrid',
+      recentTurnCount: 3,
+    });
+
+    // Should fall back to old format
+    expect(result.prompt).toContain('Earlier turns (summarized)');
+    expect(result.prompt).toContain('- Turn 1: User asked:');
+    expect(result.meta.llmSummarized).toBe(false);
+  });
+
+  it('full mode does not call LLM summarization', async () => {
+    mockState.geminiResult = 'Should not appear';
+
+    const lines: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `User message ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `Agent reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', { mode: 'full' });
+
+    expect(result.prompt).not.toContain('summarized by AI');
+    expect(result.prompt).not.toContain('Should not appear');
+  });
+
+  it('hybrid mode skips LLM when all turns fit in verbatim window', async () => {
+    mockState.geminiResult = 'Should not appear';
+
+    const lines = [
+      mkEvent({ type: 'user:message', text: 'Hello' }),
+      mkEvent({ type: 'agent:text', text: 'Hi' }),
+      mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }),
+    ];
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'hybrid',
+      recentTurnCount: 5,
+    });
+
+    // Only 1 turn, fits in verbatim window — no summarization needed
+    expect(result.meta.summarizedTurns).toBe(0);
+    expect(result.prompt).not.toContain('summarized by AI');
   });
 });

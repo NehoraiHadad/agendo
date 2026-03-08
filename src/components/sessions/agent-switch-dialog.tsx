@@ -239,7 +239,7 @@ export function AgentSwitchDialog({
                         </span>
                       </span>
                       <span className="text-[11px] text-muted-foreground/45 leading-relaxed">
-                        Summary of older turns + last 5 turns verbatim
+                        AI-generated summary of older turns + last 5 verbatim
                       </span>
                     </div>
                   </label>
@@ -334,7 +334,11 @@ export function AgentSwitchDialog({
               {isSubmitting ? (
                 <>
                   <Loader2 className="size-3.5 animate-spin" />
-                  <span>Creating session with {resolvedAgentName}...</span>
+                  <span>
+                    {contextMode === 'hybrid'
+                      ? 'Summarizing & switching...'
+                      : `Creating session with ${resolvedAgentName}...`}
+                  </span>
                 </>
               ) : (
                 <span>Switch Agent</span>
