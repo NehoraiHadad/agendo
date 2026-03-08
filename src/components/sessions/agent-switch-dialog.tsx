@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ArrowRight, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { ArrowRight, Loader2, Sparkles, Scissors } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -31,16 +31,23 @@ interface AgentWithCapabilities {
   capabilities: Array<{ id: string; interactionMode: string }>;
 }
 
+interface ContextMeta {
+  totalTurns: number;
+  includedVerbatimTurns: number;
+  summarizedTurns: number;
+  estimatedTokens: number;
+  previousAgent: string;
+  taskTitle?: string;
+  projectName?: string;
+  llmSummarized?: boolean;
+}
+
 interface ForkResponse {
   data: {
     sessionId: string;
     agentId: string;
     agentName: string;
-    contextMeta: {
-      totalTurns: number;
-      includedVerbatimTurns: number;
-      estimatedTokens: number;
-    };
+    contextMeta: ContextMeta;
   };
 }
 
@@ -54,6 +61,43 @@ export interface AgentSwitchDialogProps {
   targetCapabilityId: string;
   sessionId: string;
   onSuccess: (newSessionId: string) => void;
+}
+
+/** Threshold in ms after which we show a "taking longer than usual" hint */
+const SLOW_THRESHOLD_MS = 8_000;
+
+function ContextMetaBadge({ meta }: { meta: ContextMeta }) {
+  if (meta.totalTurns === 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50">
+        No conversation history transferred
+      </span>
+    );
+  }
+
+  if (meta.llmSummarized) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400/70">
+        <Sparkles className="size-3" />
+        AI-summarized {meta.summarizedTurns} older turns + {meta.includedVerbatimTurns} verbatim
+      </span>
+    );
+  }
+
+  if (meta.summarizedTurns > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-amber-400/70">
+        <Scissors className="size-3" />
+        Truncated fallback ({meta.includedVerbatimTurns} of {meta.totalTurns} turns)
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50">
+      {meta.includedVerbatimTurns} turns transferred verbatim
+    </span>
+  );
 }
 
 export function AgentSwitchDialog({
@@ -73,27 +117,61 @@ export function AgentSwitchDialog({
   const [additionalInstructions, setAdditionalInstructions] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSlow, setIsSlow] = useState(false);
+  const [resultMeta, setResultMeta] = useState<ContextMeta | null>(null);
 
   // Picker state (only used when pickerMode)
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [pickedAgent, setPickedAgent] = useState<AgentOption | null>(null);
 
+  // AbortController for the fork request
+  const forkAbortRef = useRef<AbortController | null>(null);
+  // Submission generation counter to guard against stale completions
+  const submitGenRef = useRef(0);
+  // Timer for slow-request hint
+  const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Resolved target (either from props or picker)
   const resolvedAgentId = pickerMode ? (pickedAgent?.id ?? '') : targetAgentId;
   const resolvedAgentName = pickerMode ? (pickedAgent?.name ?? '') : targetAgentName;
 
-  // Reset all state when dialog closes
+  // Cancel in-flight fork request
+  const cancelFork = useCallback(() => {
+    if (forkAbortRef.current) {
+      forkAbortRef.current.abort();
+      forkAbortRef.current = null;
+    }
+    if (slowTimerRef.current) {
+      clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+  }, []);
+
+  // Reset all state when dialog closes + abort any in-flight request
   useEffect(() => {
     if (!open) {
+      cancelFork();
+      submitGenRef.current++;
       setContextMode('hybrid');
       setAdditionalInstructions('');
       setError(null);
       setIsSubmitting(false);
+      setIsSlow(false);
+      setResultMeta(null);
       setPickedAgent(null);
       setAgents([]);
     }
-  }, [open]);
+  }, [open, cancelFork]);
+
+  // Cleanup on unmount — increment gen to invalidate any in-flight submissions
+  useEffect(() => {
+    const ref = submitGenRef;
+    return () => {
+      cancelFork();
+      ref.current++;
+    };
+  }, [cancelFork]);
 
   // Fetch agents when in picker mode and dialog opens
   useEffect(() => {
@@ -123,13 +201,28 @@ export function AgentSwitchDialog({
 
   async function handleSubmit() {
     if (isSubmitting || !resolvedAgentId) return;
+
+    // Cancel any previous in-flight request
+    cancelFork();
+
+    const gen = ++submitGenRef.current;
+    const controller = new AbortController();
+    forkAbortRef.current = controller;
+
     setIsSubmitting(true);
     setError(null);
+    setIsSlow(false);
+    setResultMeta(null);
+
+    // Start slow-request timer
+    slowTimerRef.current = setTimeout(() => setIsSlow(true), SLOW_THRESHOLD_MS);
+
     const capId = pickerMode ? (pickedAgent?.capabilityId ?? '') : targetCapabilityId;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/fork-to-agent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           agentId: resolvedAgentId,
           capabilityId: capId,
@@ -139,6 +232,10 @@ export function AgentSwitchDialog({
             : {}),
         }),
       });
+
+      // Guard: if this submission is stale (dialog closed or new submit started), bail
+      if (gen !== submitGenRef.current) return;
+
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const msg =
@@ -150,11 +247,34 @@ export function AgentSwitchDialog({
         throw new Error(msg);
       }
       const body = (await res.json()) as ForkResponse;
-      onSuccess(body.data.sessionId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
-    } finally {
+
+      // Guard again after second await
+      if (gen !== submitGenRef.current) return;
+
+      // Show context meta briefly before navigating
+      setResultMeta(body.data.contextMeta);
       setIsSubmitting(false);
+      if (slowTimerRef.current) {
+        clearTimeout(slowTimerRef.current);
+        slowTimerRef.current = null;
+      }
+
+      // Short delay to let user see the context summary badge
+      setTimeout(() => {
+        if (gen !== submitGenRef.current) return;
+        onSuccess(body.data.sessionId);
+      }, 1200);
+    } catch (err) {
+      if (gen !== submitGenRef.current) return;
+      // Don't show error for user-initiated abort
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setIsSubmitting(false);
+    } finally {
+      if (slowTimerRef.current) {
+        clearTimeout(slowTimerRef.current);
+        slowTimerRef.current = null;
+      }
     }
   }
 
@@ -306,6 +426,13 @@ export function AgentSwitchDialog({
           )}
         </div>
 
+        {/* Context meta result */}
+        {resultMeta && (
+          <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3.5 py-2.5">
+            <ContextMetaBadge meta={resultMeta} />
+          </div>
+        )}
+
         {/* Error */}
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -334,16 +461,28 @@ export function AgentSwitchDialog({
           {(!pickerMode || pickedAgent) && (
             <Button
               onClick={() => void handleSubmit()}
-              disabled={isSubmitting || !resolvedAgentId}
+              disabled={isSubmitting || !resolvedAgentId || resultMeta !== null}
               className="gap-1.5"
             >
-              {isSubmitting ? (
+              {resultMeta ? (
                 <>
                   <Loader2 className="size-3.5 animate-spin" />
-                  <span>
-                    {contextMode === 'hybrid'
-                      ? 'Summarizing & switching...'
-                      : `Creating session with ${resolvedAgentName}...`}
+                  <span>Redirecting...</span>
+                </>
+              ) : isSubmitting ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span className="flex flex-col items-start">
+                    <span>
+                      {contextMode === 'hybrid'
+                        ? 'Summarizing & switching...'
+                        : `Creating session with ${resolvedAgentName}...`}
+                    </span>
+                    {isSlow && (
+                      <span className="text-[10px] text-muted-foreground/40 font-normal">
+                        AI summarization can take a moment
+                      </span>
+                    )}
                   </span>
                 </>
               ) : (
