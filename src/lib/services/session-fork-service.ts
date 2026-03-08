@@ -15,8 +15,6 @@ import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import { getSession, createSession } from '@/lib/services/session-service';
 import { extractSessionContext } from '@/lib/services/context-extractor';
-// enqueueSession no longer called — session stays idle until user sends first message
-// import { enqueueSession } from '@/lib/worker/queue';
 import { BadRequestError, ConflictError, NotFoundError } from '@/lib/errors';
 import type { Session } from '@/lib/types';
 import type { ExtractedContext } from '@/lib/services/context-extractor';
@@ -48,7 +46,7 @@ const VALID_FORK_STATES = new Set(['active', 'awaiting_input']);
  *
  * Extracts the conversation context from the parent's log file and creates a
  * new session for the target agent with the context as its initial prompt.
- * The new session is enqueued immediately.
+ * The new session is created idle — the user starts it manually.
  */
 export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkToAgentResult> {
   // 1. Load + validate parent session
@@ -174,9 +172,6 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     initialPrompt,
     parentSessionId: input.parentSessionId,
   });
-
-  // 8. Session is NOT enqueued immediately. User will start it.
-  // await enqueueSession({ sessionId: newSession.id });
 
   return {
     session: newSession,
