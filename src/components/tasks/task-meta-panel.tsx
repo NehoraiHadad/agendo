@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@/components/ui/select';
 import { assignAgentAction, updateTaskAction } from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
@@ -18,6 +22,7 @@ interface TaskMetaPanelProps {
     parentTask: { id: string; title: string } | null;
     dueAt: string | null;
     projectId?: string | null;
+    executionOrder?: number | null;
   };
 }
 
@@ -174,13 +179,51 @@ export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
         </div>
       </div>
 
+      {/* Execution order */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground/60">Execution order</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            value={task.executionOrder ?? ''}
+            placeholder="—"
+            onChange={async (e) => {
+              const val = e.target.value ? parseInt(e.target.value, 10) : null;
+              const result = await updateTaskAction(task.id, {
+                executionOrder: val && val > 0 ? val : null,
+              });
+              if (result.success) {
+                updateTask(result.data as Task);
+              }
+            }}
+            className="w-20 text-sm font-mono bg-transparent border border-input rounded px-2 py-1 text-foreground/80 focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          {task.executionOrder != null && (
+            <button
+              className="text-xs text-muted-foreground/60 hover:text-destructive"
+              onClick={async () => {
+                const result = await updateTaskAction(task.id, { executionOrder: null });
+                if (result.success) {
+                  updateTask(result.data as Task);
+                }
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Parent task — editable */}
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-muted-foreground/60">Parent task</span>
 
         {task.parentTask ? (
           <div className="flex items-center justify-between rounded border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5">
-            <span className="flex-1 truncate text-sm text-foreground/80">{task.parentTask.title}</span>
+            <span className="flex-1 truncate text-sm text-foreground/80">
+              {task.parentTask.title}
+            </span>
             <button
               className="ml-2 shrink-0 text-muted-foreground/40 hover:text-destructive transition-colors"
               aria-label="Remove parent"
@@ -194,7 +237,10 @@ export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
             {!parentSearchOpen ? (
               <button
                 className="text-left text-xs text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
-                onClick={() => { setParentSearchOpen(true); setParentQuery(''); }}
+                onClick={() => {
+                  setParentSearchOpen(true);
+                  setParentQuery('');
+                }}
               >
                 + Set parent task
               </button>
@@ -207,7 +253,9 @@ export function TaskMetaPanel({ task }: TaskMetaPanelProps) {
                   onChange={(e) => setParentQuery(e.target.value)}
                   placeholder="Search tasks…"
                   className="w-full rounded border border-input bg-transparent px-2 py-1 text-sm text-foreground/80 placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
-                  onKeyDown={(e) => { if (e.key === 'Escape') setParentSearchOpen(false); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setParentSearchOpen(false);
+                  }}
                 />
                 {parentResults.length > 0 && (
                   <div className="rounded border border-white/[0.08] bg-popover text-sm shadow-md">

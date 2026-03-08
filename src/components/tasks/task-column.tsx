@@ -229,6 +229,21 @@ export const TaskColumn = memo(function TaskColumn({
 
   const cfg = COLUMN_CONFIG[status];
 
+  // Find the "next up" task: the todo task with the lowest executionOrder
+  const nextUpTaskId = useMemo(() => {
+    if (status !== 'todo') return null;
+    let bestId: string | null = null;
+    let bestOrder = Number.MAX_SAFE_INTEGER;
+    for (const id of taskIds) {
+      const task = tasksById[id];
+      if (task?.executionOrder != null && task.executionOrder < bestOrder) {
+        bestOrder = task.executionOrder;
+        bestId = id;
+      }
+    }
+    return bestId;
+  }, [status, taskIds, tasksById]);
+
   // Build grouped items: group subtasks under their parent when both exist in this column
   const groupedItems = useMemo(() => {
     const columnIdSet = new Set(taskIds);
@@ -335,7 +350,11 @@ export const TaskColumn = memo(function TaskColumn({
                     isCollapsed={item.isCollapsed ?? true}
                     onToggle={() => toggleCollapsed(item.taskId)}
                   >
-                    <TaskCard taskId={item.taskId} hasGroupedChildren />
+                    <TaskCard
+                      taskId={item.taskId}
+                      hasGroupedChildren
+                      isNextUp={item.taskId === nextUpTaskId}
+                    />
                   </CardStack>
                 );
               }
@@ -346,12 +365,22 @@ export const TaskColumn = memo(function TaskColumn({
                     key={item.taskId}
                     className="ml-3 border-l-2 border-white/[0.06] pl-1.5 animate-in slide-in-from-top-1 fade-in duration-150"
                   >
-                    <TaskCard taskId={item.taskId} isGroupChild />
+                    <TaskCard
+                      taskId={item.taskId}
+                      isGroupChild
+                      isNextUp={item.taskId === nextUpTaskId}
+                    />
                   </div>
                 );
               }
 
-              return <TaskCard key={item.taskId} taskId={item.taskId} />;
+              return (
+                <TaskCard
+                  key={item.taskId}
+                  taskId={item.taskId}
+                  isNextUp={item.taskId === nextUpTaskId}
+                />
+              );
             })}
           </SortableContext>
 

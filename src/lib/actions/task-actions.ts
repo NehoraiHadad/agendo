@@ -27,6 +27,7 @@ const updateTaskSchema = z.object({
   dueAt: z.coerce.date().nullable().optional(),
   projectId: z.string().uuid().nullable().optional(),
   parentTaskId: z.string().uuid().nullable().optional(),
+  executionOrder: z.number().int().min(1).nullable().optional(),
 });
 
 const dependencySchema = z.object({

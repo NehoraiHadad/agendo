@@ -34,6 +34,7 @@ interface TaskWithDetails {
   status: string;
   priority: number;
   sortOrder: number;
+  executionOrder: number | null;
   parentTaskId: string | null;
   assigneeAgentId: string | null;
   projectId: string | null;

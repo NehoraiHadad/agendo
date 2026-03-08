@@ -12,6 +12,8 @@ interface TaskCardProps {
   isGroupChild?: boolean;
   /** This card's subtasks are visually grouped below it */
   hasGroupedChildren?: boolean;
+  /** This task is the next ready-to-execute task */
+  isNextUp?: boolean;
 }
 
 /* ─── Priority config ──────────────────────────────────────── */
@@ -68,6 +70,7 @@ export const TaskCard = memo(function TaskCard({
   taskId,
   isGroupChild,
   hasGroupedChildren,
+  isNextUp,
 }: TaskCardProps) {
   const task = useTaskBoardStore((s) => s.tasksById[taskId]);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
@@ -112,10 +115,24 @@ export const TaskCard = memo(function TaskCard({
         'hover:shadow-[0_4px_16px_oklch(0_0_0/0.35)]',
         /* focus */
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        /* "Next up" glow */
+        isNextUp && 'ring-1 ring-emerald-500/30 border-emerald-500/20',
         /* dragging */
         isDragging && 'opacity-20 scale-[0.98] shadow-none',
       )}
     >
+      {/* Execution order badge */}
+      {task.executionOrder != null && (
+        <span className="absolute top-1.5 right-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.08] border border-white/[0.1] text-[10px] font-semibold tabular-nums text-muted-foreground/60 px-1">
+          {task.executionOrder}
+        </span>
+      )}
+
+      {/* "Next up" label */}
+      {isNextUp && (
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500/60 to-emerald-500/10 rounded-t-lg" />
+      )}
+
       <div className="flex items-start gap-2 p-3">
         {/* Drag handle */}
         <button
