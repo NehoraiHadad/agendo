@@ -99,8 +99,8 @@ export function ProjectMcpConfig({ projectId, allServers, overrides }: ProjectMc
         <Server className="h-10 w-10 mx-auto text-muted-foreground/20 mb-3" />
         <p className="text-sm text-muted-foreground">
           No MCP servers registered.{' '}
-          <a href="/config/mcp-servers" className="text-primary hover:underline">
-            Add servers in Config
+          <a href="/settings?tab=mcp" className="text-primary hover:underline">
+            Add servers in Settings
           </a>{' '}
           to enable them here.
         </p>

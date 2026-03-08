@@ -16,8 +16,8 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
   const agent = await getAgentById(id).catch(() => notFound());
   const capabilities = await getCapabilitiesByAgent(id);
 
-  const backHref = agent.toolType === 'ai-agent' ? '/agents' : '/tools';
-  const backLabel = agent.toolType === 'ai-agent' ? 'Back to AI Agents' : 'Back to Tools';
+  const backHref = '/settings';
+  const backLabel = 'Back to Settings';
 
   return (
     <div className="space-y-6">
@@ -30,7 +30,9 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
 
       <Card className="border-white/[0.06]">
         <CardHeader>
-          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">Agent Details</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
+            Agent Details
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -40,7 +42,9 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
             </div>
             <div>
               <dt className="text-xs text-muted-foreground/60">Binary Path</dt>
-              <dd className="mt-1 font-mono text-xs text-muted-foreground/70">{agent.binaryPath}</dd>
+              <dd className="mt-1 font-mono text-xs text-muted-foreground/70">
+                {agent.binaryPath}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground/60">Type</dt>
@@ -78,7 +82,9 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
 
       <Card className="border-white/[0.06]">
         <CardHeader>
-          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">Capabilities ({capabilities.length})</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
+            Capabilities ({capabilities.length})
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <CapabilityList agentId={id} initialCapabilities={capabilities} />
@@ -87,7 +93,9 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
 
       <Card className="border-white/[0.06]">
         <CardHeader>
-          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">CLI Flags</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
+            CLI Flags
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <RefreshFlagsButton agentId={id} initialFlags={agent.parsedFlags ?? []} />

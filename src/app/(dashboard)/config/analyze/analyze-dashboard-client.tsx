@@ -646,7 +646,7 @@ function SettingsTab({ settings }: { settings: AnalysisResult['settings'] }) {
       <p className="text-[10px] text-muted-foreground/25 leading-relaxed">
         Edit these settings in{' '}
         <Link
-          href="/config"
+          href="/settings?tab=config"
           className="underline underline-offset-2 hover:text-muted-foreground/50 transition-colors"
         >
           ~/.claude/settings.json
@@ -768,7 +768,7 @@ export function AnalyzeDashboardClient({ projects }: Props) {
 
           {/* Back link */}
           <Link
-            href="/config"
+            href="/settings?tab=config"
             className="flex items-center gap-1.5 text-[11px] text-muted-foreground/35 hover:text-muted-foreground/65 transition-colors shrink-0"
           >
             <ArrowLeft className="h-3 w-3" />
