@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --port ${PORT:-4100}",
     "build": "next build",
-    "build:all": "pnpm build && pnpm worker:build && pnpm build:mcp",
+    "build:all": "pnpm typecheck && pnpm build && pnpm worker:build && pnpm build:mcp",
     "start": "next start --port ${PORT:-4100}",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
