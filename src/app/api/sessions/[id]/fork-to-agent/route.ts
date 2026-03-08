@@ -5,6 +5,7 @@ import { forkSessionToAgent } from '@/lib/services/session-fork-service';
 
 const forkToAgentSchema = z.object({
   agentId: z.string().uuid(),
+  capabilityId: z.string().uuid().optional(),
   contextMode: z.enum(['hybrid', 'full']).default('hybrid'),
   additionalInstructions: z.string().max(2000).optional(),
 });
@@ -19,6 +20,7 @@ export const POST = withErrorBoundary(
     const result = await forkSessionToAgent({
       parentSessionId: id,
       newAgentId: body.agentId,
+      capabilityId: body.capabilityId,
       contextMode: body.contextMode,
       additionalInstructions: body.additionalInstructions,
     });

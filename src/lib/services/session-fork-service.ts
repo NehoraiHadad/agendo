@@ -10,7 +10,7 @@
  * as the initial prompt of the new session.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import { getSession, createSession } from '@/lib/services/session-service';
@@ -24,6 +24,7 @@ import type { ExtractedContext } from '@/lib/services/context-extractor';
 export interface ForkToAgentInput {
   parentSessionId: string;
   newAgentId: string;
+  capabilityId?: string;
   contextMode: 'hybrid' | 'full';
   additionalInstructions?: string;
 }
@@ -84,17 +85,61 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
 
   void parentAgent; // Used implicitly via extractSessionContext which reads agentName from DB
 
-  // 4. Find an enabled capability for the new agent
-  const [capability] = await db
-    .select({ id: agentCapabilities.id })
-    .from(agentCapabilities)
-    .where(eq(agentCapabilities.agentId, input.newAgentId))
-    .limit(1);
+  // 4. Resolve capability — validate explicit capabilityId or fall back to first enabled prompt cap
+  let capabilityId: string;
 
-  if (!capability) {
-    throw new BadRequestError('Target agent has no enabled capability', {
-      agentId: input.newAgentId,
-    });
+  if (input.capabilityId) {
+    const [cap] = await db
+      .select({
+        id: agentCapabilities.id,
+        agentId: agentCapabilities.agentId,
+        isEnabled: agentCapabilities.isEnabled,
+        interactionMode: agentCapabilities.interactionMode,
+      })
+      .from(agentCapabilities)
+      .where(eq(agentCapabilities.id, input.capabilityId))
+      .limit(1);
+
+    if (!cap) {
+      throw new NotFoundError('Capability', input.capabilityId);
+    }
+    if (cap.agentId !== input.newAgentId) {
+      throw new BadRequestError('Capability does not belong to the target agent', {
+        capabilityId: input.capabilityId,
+        agentId: input.newAgentId,
+      });
+    }
+    if (!cap.isEnabled) {
+      throw new BadRequestError('Capability is not enabled', {
+        capabilityId: input.capabilityId,
+      });
+    }
+    if (cap.interactionMode !== 'prompt') {
+      throw new BadRequestError('Capability must have interaction mode "prompt" for sessions', {
+        capabilityId: input.capabilityId,
+        interactionMode: cap.interactionMode,
+      });
+    }
+    capabilityId = cap.id;
+  } else {
+    const [fallbackCap] = await db
+      .select({ id: agentCapabilities.id })
+      .from(agentCapabilities)
+      .where(
+        and(
+          eq(agentCapabilities.agentId, input.newAgentId),
+          eq(agentCapabilities.isEnabled, true),
+          eq(agentCapabilities.interactionMode, 'prompt'),
+        ),
+      )
+      .limit(1);
+
+    if (!fallbackCap) {
+      throw new BadRequestError('Target agent has no enabled prompt capability', {
+        agentId: input.newAgentId,
+      });
+    }
+    capabilityId = fallbackCap.id;
   }
 
   // 5. Extract conversation context from the parent session's log
@@ -117,7 +162,7 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     projectId: parent.projectId ?? undefined,
     kind: 'conversation',
     agentId: input.newAgentId,
-    capabilityId: capability.id,
+    capabilityId,
     permissionMode: parent.permissionMode as
       | 'default'
       | 'bypassPermissions'
