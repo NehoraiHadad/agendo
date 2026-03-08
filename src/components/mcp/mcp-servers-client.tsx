@@ -276,13 +276,16 @@ export function McpServersClient({ initialServers }: McpServersClientProps) {
               className="h-7 text-xs gap-1.5"
               onClick={handleImport}
               disabled={importing}
+              aria-label={importing ? 'Importing...' : 'Import from CLIs'}
             >
               <Download className="h-3.5 w-3.5" />
-              {importing ? 'Importing...' : 'Import from CLIs'}
+              <span className="hidden sm:inline">
+                {importing ? 'Importing...' : 'Import from CLIs'}
+              </span>
             </Button>
             <Button size="sm" className="h-7 text-xs gap-1.5" onClick={openAdd}>
               <Plus className="h-3.5 w-3.5" />
-              Add Server
+              <span className="hidden sm:inline">Add Server</span>
             </Button>
           </div>
         </div>
@@ -307,92 +310,161 @@ export function McpServersClient({ initialServers }: McpServersClientProps) {
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-white/[0.06] overflow-hidden overflow-x-auto">
-          <Table className="min-w-[640px]">
-            <TableHeader className="bg-white/[0.02]">
-              <TableRow>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
-                  Name
-                </TableHead>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 hidden sm:table-cell">
-                  Type
-                </TableHead>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 hidden md:table-cell">
-                  Description
-                </TableHead>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-24 text-center">
-                  Enabled
-                </TableHead>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-24 text-center">
-                  Default
-                </TableHead>
-                <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-20">
-                  Actions
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {servers.map((server) => (
-                <TableRow
-                  key={server.id}
-                  className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
-                >
-                  <TableCell className="font-medium text-foreground">{server.name}</TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <TransportBadge type={server.transportType} />
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-xs text-muted-foreground/60 max-w-60 truncate">
-                    {server.description ??
-                      (server.transportType === 'stdio'
-                        ? (server.command ?? '-')
-                        : (server.url ?? '-'))}
-                  </TableCell>
-                  <TableCell className="text-center">
+        <>
+          {/* Mobile card list (hidden on md+) */}
+          <div className="md:hidden space-y-2">
+            {servers.map((server) => (
+              <div
+                key={server.id}
+                className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3 space-y-2"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-medium text-sm text-foreground truncate">
+                        {server.name}
+                      </span>
+                      <TransportBadge type={server.transportType} />
+                    </div>
+                    {(server.description ??
+                      (server.transportType === 'stdio' ? server.command : server.url)) && (
+                      <p className="text-xs text-muted-foreground/50 truncate mt-0.5">
+                        {server.description ??
+                          (server.transportType === 'stdio' ? server.command : server.url)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => openEdit(server)}
+                      aria-label={`Edit ${server.name}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                      onClick={() => setDeleteTarget(server)}
+                      aria-label={`Delete ${server.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 pt-1 border-t border-white/[0.04]">
+                  <div className="flex items-center gap-2">
                     <Switch
                       checked={server.enabled}
                       onCheckedChange={(checked) => handleToggleEnabled(server, checked)}
                       aria-label={`Toggle ${server.name} enabled`}
                     />
-                  </TableCell>
-                  <TableCell className="text-center">
+                    <span className="text-xs text-muted-foreground/60">Enabled</span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <Switch
                       checked={server.isDefault}
                       onCheckedChange={(checked) => handleToggleDefault(server, checked)}
                       aria-label={`Toggle ${server.name} default`}
                     />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        onClick={() => openEdit(server)}
-                        aria-label={`Edit ${server.name}`}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        onClick={() => setDeleteTarget(server)}
-                        aria-label={`Delete ${server.name}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
+                    <span className="text-xs text-muted-foreground/60">Default</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table (hidden on mobile) */}
+          <div className="hidden md:block rounded-xl border border-white/[0.06] overflow-hidden overflow-x-auto">
+            <Table className="min-w-[640px]">
+              <TableHeader className="bg-white/[0.02]">
+                <TableRow>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                    Name
+                  </TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                    Type
+                  </TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9">
+                    Description
+                  </TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-24 text-center">
+                    Enabled
+                  </TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-24 text-center">
+                    Default
+                  </TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-medium h-9 w-20">
+                    Actions
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {servers.map((server) => (
+                  <TableRow
+                    key={server.id}
+                    className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
+                  >
+                    <TableCell className="font-medium text-foreground">{server.name}</TableCell>
+                    <TableCell>
+                      <TransportBadge type={server.transportType} />
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground/60 max-w-60 truncate">
+                      {server.description ??
+                        (server.transportType === 'stdio'
+                          ? (server.command ?? '-')
+                          : (server.url ?? '-'))}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Switch
+                        checked={server.enabled}
+                        onCheckedChange={(checked) => handleToggleEnabled(server, checked)}
+                        aria-label={`Toggle ${server.name} enabled`}
+                      />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Switch
+                        checked={server.isDefault}
+                        onCheckedChange={(checked) => handleToggleDefault(server, checked)}
+                        aria-label={`Toggle ${server.name} default`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => openEdit(server)}
+                          aria-label={`Edit ${server.name}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                          onClick={() => setDeleteTarget(server)}
+                          aria-label={`Delete ${server.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingServer ? 'Edit MCP Server' : 'Add MCP Server'}</DialogTitle>
           </DialogHeader>
@@ -518,7 +590,7 @@ export function McpServersClient({ initialServers }: McpServersClientProps) {
             )}
 
             {/* Toggles */}
-            <div className="flex items-center gap-6">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
               <div className="flex items-center gap-2">
                 <Switch
                   id="mcp-enabled"
@@ -542,7 +614,7 @@ export function McpServersClient({ initialServers }: McpServersClientProps) {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-col-reverse sm:flex-row gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={saving}>
               Cancel
             </Button>

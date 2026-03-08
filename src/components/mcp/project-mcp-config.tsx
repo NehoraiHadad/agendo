@@ -143,7 +143,7 @@ export function ProjectMcpConfig({ projectId, allServers, overrides }: ProjectMc
               </button>
 
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium truncate">{server.name}</span>
                   <TransportBadge type={server.transportType} />
                   {server.isDefault && !hasOverride && (

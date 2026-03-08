@@ -22,6 +22,11 @@ const envSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().optional(),
+  // Summarization provider for agent switching context transfer (all use CLI/OAuth)
+  SUMMARIZATION_PROVIDER: z.enum(['gemini', 'claude', 'codex', 'auto']).default('auto'),
+  // Override model for summarization (e.g. "gemini-2.5-flash", "haiku", "o4-mini")
+  // If not set, uses fast defaults: gemini→Flash, claude→Haiku, codex→o4-mini
+  SUMMARIZATION_MODEL: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

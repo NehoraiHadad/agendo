@@ -77,20 +77,20 @@ export function KeyValueEditor({
   return (
     <div className="space-y-1.5">
       {allPairs.map(({ key, value: val }, index) => (
-        <div key={index} className="flex items-center gap-1.5">
+        <div key={index} className="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
           <Input
             value={key.startsWith('__new_') ? '' : key}
             onChange={(e) => handleRawKeyChange(index, e.target.value)}
             placeholder={keyPlaceholder}
             disabled={disabled}
-            className="h-7 text-xs font-mono flex-1"
+            className="h-7 text-xs font-mono flex-1 min-w-[6rem]"
           />
           <Input
             value={val}
             onChange={(e) => handleRawValueChange(index, e.target.value)}
             placeholder={valuePlaceholder}
             disabled={disabled}
-            className="h-7 text-xs font-mono flex-1"
+            className="h-7 text-xs font-mono flex-1 min-w-[6rem]"
           />
           <Button
             type="button"
