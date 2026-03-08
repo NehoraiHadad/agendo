@@ -23,6 +23,7 @@ const mockTask = {
   priority: 3,
   sortOrder: 1500,
   assigneeAgentId: null,
+  executionOrder: null,
   inputContext: {},
   dueAt: null,
   createdAt: new Date(),

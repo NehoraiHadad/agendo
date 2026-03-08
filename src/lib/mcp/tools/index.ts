@@ -30,6 +30,8 @@ export {
   handleListTasks,
   handleGetMyTask,
   handleGetTask,
+  handleSetExecutionOrder,
+  handleListReadyTasks,
 } from './task-tools.js';
 export { handleCreateSubtask } from './subtask-tools.js';
 export { handleAddProgressNote } from './progress-tools.js';

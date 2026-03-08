@@ -103,6 +103,20 @@ export async function handleGetTask(args: { taskId: string }): Promise<unknown> 
   return apiCall(`/api/tasks/${args.taskId}`);
 }
 
+export async function handleSetExecutionOrder(args: { taskIds: string[] }): Promise<unknown> {
+  return apiCall('/api/tasks/execution-order', {
+    method: 'PUT',
+    body: { taskIds: args.taskIds },
+  });
+}
+
+export async function handleListReadyTasks(args: { projectId?: string }): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (args.projectId) params.set('projectId', args.projectId);
+  const qs = params.toString();
+  return apiCall(`/api/tasks/ready${qs ? `?${qs}` : ''}`);
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -177,5 +191,27 @@ export function registerTaskTools(server: McpServer): void {
     },
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     (args) => wrapToolCall(() => handleGetTask(args)),
+  );
+
+  server.tool(
+    'set_execution_order',
+    'Set the execution order for a list of tasks. Tasks are numbered 1..N based on array position.',
+    {
+      taskIds: z
+        .array(z.string())
+        .describe('Ordered array of task UUIDs — first element gets order 1'),
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    (args) => wrapToolCall(() => handleSetExecutionOrder(args)),
+  );
+
+  server.tool(
+    'list_ready_tasks',
+    'List tasks that are ready to execute: status=todo with all dependencies done. Ordered by execution order.',
+    {
+      projectId: z.string().optional().describe('Filter by project UUID'),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    (args) => wrapToolCall(() => handleListReadyTasks(args)),
   );
 }

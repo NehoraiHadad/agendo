@@ -16,6 +16,7 @@ function createMockTask(
     priority: 3,
     sortOrder: 1000,
     assigneeAgentId: null,
+    executionOrder: null,
     inputContext: {},
     dueAt: null,
     createdAt: new Date(),

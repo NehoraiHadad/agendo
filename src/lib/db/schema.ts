@@ -186,6 +186,9 @@ export const tasks = pgTable(
     priority: smallint('priority').notNull().default(3),
     // Sparse ordering (gaps of 1000) for drag-and-drop within Kanban columns.
     sortOrder: integer('sort_order').notNull().default(0),
+    // Execution sequence number within a project (nullable = unordered).
+    // Lower numbers execute first. Used for "Next up" indicator and dependency-aware scheduling.
+    executionOrder: integer('execution_order'),
     assigneeAgentId: uuid('assignee_agent_id').references(() => agents.id, {
       onDelete: 'set null',
     }),

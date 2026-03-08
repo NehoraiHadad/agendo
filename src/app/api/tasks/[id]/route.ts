@@ -21,6 +21,7 @@ const patchSchema = z.object({
   assigneeAgentId: z.string().uuid().nullable().optional(),
   dueAt: z.coerce.date().nullable().optional(),
   projectId: z.string().uuid().nullable().optional(),
+  executionOrder: z.number().int().min(1).nullable().optional(),
 });
 
 export const PATCH = withErrorBoundary(

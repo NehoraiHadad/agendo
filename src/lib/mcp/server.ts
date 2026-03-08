@@ -71,5 +71,7 @@ export {
   handleSaveSnapshot,
   handleUpdateSnapshot,
   handleSavePlan,
+  handleSetExecutionOrder,
+  handleListReadyTasks,
 } from './tools/index.js';
 export { apiCall, resolveAgentSlug, parsePriority } from './tools/shared.js';

@@ -37,6 +37,7 @@ export interface UpdateTaskInput {
   inputContext?: Record<string, unknown>;
   dueAt?: Date | null;
   parentTaskId?: string | null;
+  executionOrder?: number | null;
 }
 
 export interface TaskWithDetails extends Task {
@@ -159,6 +160,7 @@ export async function listTasksBoardItems(
     dueAt: row.due_at != null ? new Date(row.due_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
+    executionOrder: (row.execution_order as number | null) ?? null,
     subtaskTotal: row.subtask_total as number,
     subtaskDone: row.subtask_done as number,
   }));
@@ -393,6 +395,58 @@ export async function searchTasks(q: string, limit = 5): Promise<SearchTaskResul
     status: row.status,
     projectName: row.projectName ?? null,
   }));
+}
+
+// --- Execution Order / Sequencing ---
+
+export interface SetExecutionOrderInput {
+  /** Ordered list of task IDs — position in the array determines executionOrder (1-based). */
+  taskIds: string[];
+}
+
+/**
+ * Bulk-set execution order for a list of tasks.
+ * Tasks not in the list keep their current executionOrder.
+ */
+export async function setExecutionOrder(input: SetExecutionOrderInput): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < input.taskIds.length; i++) {
+      await tx
+        .update(tasks)
+        .set({ executionOrder: i + 1, updatedAt: new Date() })
+        .where(eq(tasks.id, input.taskIds[i]));
+    }
+  });
+}
+
+/**
+ * List "ready" tasks: tasks with status 'todo' whose dependencies are all done.
+ * Ordered by executionOrder (nulls last), then sortOrder.
+ */
+export async function listReadyTasks(projectId?: string): Promise<TaskBoardItem[]> {
+  const conditions = [eq(tasks.status, 'todo')];
+  if (projectId) {
+    conditions.push(eq(tasks.projectId, projectId));
+  }
+
+  // Subquery: tasks that have at least one incomplete dependency
+  const blockedFilter = sql`NOT EXISTS (
+    SELECT 1 FROM task_dependencies td
+    INNER JOIN tasks dep ON dep.id = td.depends_on_task_id
+    WHERE td.task_id = tasks.id
+      AND dep.status <> 'done'
+  )`;
+  conditions.push(blockedFilter);
+
+  const result = await listTasksBoardItems(conditions);
+
+  // Sort: executionOrder ASC (nulls last), then sortOrder ASC
+  return result.sort((a, b) => {
+    const aOrder = a.executionOrder ?? Number.MAX_SAFE_INTEGER;
+    const bOrder = b.executionOrder ?? Number.MAX_SAFE_INTEGER;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.sortOrder - b.sortOrder;
+  });
 }
 
 export async function reorderTask(id: string, input: ReorderTaskInput): Promise<Task> {
