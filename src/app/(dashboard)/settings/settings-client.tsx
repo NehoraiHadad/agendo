@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Settings, Bot, Server, FileCode } from 'lucide-react';
+import { Settings, Bot, Server, FileCode, Puzzle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AgentCards } from '@/components/settings/agent-cards';
 import { McpServerCards } from '@/components/settings/mcp-server-cards';
+import { PluginCards } from '@/components/settings/plugin-cards';
 import { ConfigEditorClient } from '../config/config-editor-client';
 import type { AgentWithCapabilities } from '@/lib/services/agent-service';
 import type { McpServer } from '@/lib/types';
@@ -19,6 +20,7 @@ interface SettingsClientProps {
 const tabs = [
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'mcp', label: 'MCP Servers', icon: Server },
+  { id: 'plugins', label: 'Plugins', icon: Puzzle },
   { id: 'config', label: 'Config Files', icon: FileCode },
 ] as const;
 
@@ -61,7 +63,7 @@ export function SettingsClient({ agents, mcpServers, projects }: SettingsClientP
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-foreground/90">Settings</h1>
             <p className="text-[11px] text-muted-foreground/35 mt-0.5">
-              Manage agents, MCP servers, and configuration files
+              Manage agents, MCP servers, plugins, and configuration
             </p>
           </div>
         </div>
@@ -91,6 +93,7 @@ export function SettingsClient({ agents, mcpServers, projects }: SettingsClientP
       <div className="flex-1 min-h-0">
         {activeTab === 'agents' && <AgentCards initialAgents={agents} />}
         {activeTab === 'mcp' && <McpServerCards initialServers={mcpServers} />}
+        {activeTab === 'plugins' && <PluginCards />}
         {activeTab === 'config' && <ConfigEditorClient projects={projects} />}
       </div>
     </div>
