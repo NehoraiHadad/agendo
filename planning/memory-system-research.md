@@ -843,12 +843,44 @@ Memory injection at **1% of context** is negligible overhead for significant val
 }
 ```
 
-## Appendix C: Key References
+## Appendix C: Notable Emerging Systems (2025-2026)
+
+### MemOS (July 2025, Shanghai Jiao Tong University)
+
+A full "memory operating system" with three-layer architecture (Interface / Operation / Infrastructure). Introduces **MemCube** as a unified memory abstraction with provenance and versioning. Claims 159% boost in temporal reasoning vs OpenAI, 38.9% LOCOMO improvement. (arxiv.org/abs/2507.03724)
+
+### A-MEM (NeurIPS 2025)
+
+Self-organizing agentic memory using Zettelkasten principles. The agent manages memory organization through dynamic indexing and linking — memories evolve rather than just accumulate. New memories trigger updates to existing memories' representations. Doubles performance on multi-hop reasoning tasks. (arxiv.org/abs/2502.12110)
+
+### Amazon Bedrock AgentCore Memory
+
+Managed service with built-in strategies (summarization, semantic memory, user preferences). Key insight: long-term memory generation runs **asynchronously** after raw conversation is stored in short-term memory — "sleep-time computation" pattern.
+
+### Google Always On Memory Agent (March 2026)
+
+Open-sourced by Google PM. Ingests information continuously and consolidates in background **without a vector database**. Built with Gemini 3.1 Flash-Lite. Demonstrates that simpler architectures can work for continuous memory.
+
+### Zep/Graphiti Deep Architecture
+
+Zep's core is **Graphiti**, a temporally-aware knowledge graph engine with three hierarchical subgraph tiers: **Episode** (raw episodic data), **Semantic entity** (extracted entities/relationships), **Community** (high-level domain summaries). Uses a **bi-temporal data model** tracking both event-occurrence and ingestion times. 94.8% accuracy on Deep Memory Retrieval (vs MemGPT's 93.4%). (arxiv.org/abs/2501.13956)
+
+### Memory-as-a-Service (MaaS)
+
+Emerging pattern: decouples memory from agents into independently callable, composable service modules with permission-aware governance. Enables multi-agent shared memory with asymmetric access controls. (arxiv.org/html/2506.22815v1)
+
+## Appendix D: Key References
 
 - Atkinson & Shiffrin (1968) — Multi-store model of memory
 - Baddeley (2000) — Working memory model
+- Park et al. (2023) — "Generative Agents" (Stanford), introduced recency/importance/relevance scoring
+- Packer et al. (2023) — arxiv.org/abs/2310.08560, "MemGPT: Towards LLMs as Operating Systems"
 - Mem0 (2025) — arxiv.org/abs/2504.19413, "Building Production-Ready AI Agents with Scalable Long-Term Memory"
-- Letta/MemGPT (2023) — arxiv.org/abs/2310.08560, "MemGPT: Towards LLMs as Operating Systems"
-- Zep — getzep.com, temporal knowledge graphs for AI
+- Zep/Graphiti (2025) — arxiv.org/abs/2501.13956, temporal knowledge graph architecture
+- A-MEM (2025) — arxiv.org/abs/2502.12110, self-organizing agentic memory
+- MemOS (2025) — arxiv.org/abs/2507.03724, memory operating system
+- HiAgent (ACL 2025) — aclanthology.org/2025.acl-long.1575, hierarchical working memory management
+- Memory in the Age of AI Agents (2025) — arxiv.org/abs/2512.13564, comprehensive survey
 - LangChain Memory — docs.langchain.com/docs/modules/memory
 - Claude Code auto-memory — docs.anthropic.com/en/docs/claude-code
+- Letta Code — letta.com/blog/letta-code, memory-first coding agent
