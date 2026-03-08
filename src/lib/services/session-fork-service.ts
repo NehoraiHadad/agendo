@@ -15,7 +15,8 @@ import { db } from '@/lib/db';
 import { agents, agentCapabilities } from '@/lib/db/schema';
 import { getSession, createSession } from '@/lib/services/session-service';
 import { extractSessionContext } from '@/lib/services/context-extractor';
-import { enqueueSession } from '@/lib/worker/queue';
+// enqueueSession no longer called — session stays idle until user sends first message
+// import { enqueueSession } from '@/lib/worker/queue';
 import { BadRequestError, ConflictError, NotFoundError } from '@/lib/errors';
 import type { Session } from '@/lib/types';
 import type { ExtractedContext } from '@/lib/services/context-extractor';
@@ -129,8 +130,8 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     parentSessionId: input.parentSessionId,
   });
 
-  // 8. Enqueue immediately — cross-agent forks start right away
-  await enqueueSession({ sessionId: newSession.id });
+  // 8. Session is NOT enqueued immediately. User will start it.
+  // await enqueueSession({ sessionId: newSession.id });
 
   return {
     session: newSession,

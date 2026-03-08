@@ -190,7 +190,7 @@ describe('forkSessionToAgent', () => {
   });
 
   describe('happy path — hybrid mode', () => {
-    it('creates session with correct fields, enqueues, and returns contextMeta', async () => {
+    it('creates session with correct fields, and returns contextMeta', async () => {
       queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
 
       const result = await forkSessionToAgent({
@@ -223,8 +223,8 @@ describe('forkSessionToAgent', () => {
         }),
       );
 
-      // Verify enqueueSession called
-      expect(mockEnqueueSession).toHaveBeenCalledWith({ sessionId: NEW_SESSION_ID });
+      // Verify enqueueSession NOT called
+      expect(mockEnqueueSession).not.toHaveBeenCalled();
 
       // Verify return shape
       expect(result.session).toBe(mockNewSession);
@@ -441,9 +441,9 @@ describe('forkSessionToAgent', () => {
         contextMode: 'hybrid',
       });
 
-      // Should still succeed and enqueue
+      // Should still succeed but NOT enqueue
       expect(mockCreateSession).toHaveBeenCalled();
-      expect(mockEnqueueSession).toHaveBeenCalledWith({ sessionId: NEW_SESSION_ID });
+      expect(mockEnqueueSession).not.toHaveBeenCalled();
       expect(result.contextMeta.totalTurns).toBe(0);
     });
   });
