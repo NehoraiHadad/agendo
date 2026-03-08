@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Download, Globe, Pencil, Plus, Server, Terminal, Trash2 } from 'lucide-react';
+import { Download, Globe, Info, Pencil, Plus, Server, Terminal, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -332,13 +332,13 @@ export function McpServerCards({ initialServers }: McpServerCardsProps) {
                   </div>
                 </div>
 
-                {/* Default badge */}
+                {/* Auto-include badge */}
                 {server.isDefault && (
                   <Badge
                     variant="outline"
                     className="text-[10px] border-emerald-500/20 text-emerald-400/70 bg-emerald-500/[0.06]"
                   >
-                    Default for all projects
+                    Auto-included in sessions
                   </Badge>
                 )}
 
@@ -357,10 +357,16 @@ export function McpServerCards({ initialServers }: McpServerCardsProps) {
                     <Switch
                       checked={server.isDefault}
                       onCheckedChange={(v) => toggleDefault(server, v)}
-                      aria-label={`Toggle ${server.name} default`}
+                      aria-label={`Toggle ${server.name} auto-include`}
                       className="scale-90"
                     />
-                    <span className="text-[11px] text-muted-foreground/45">Default</span>
+                    <span className="text-[11px] text-muted-foreground/45">Auto-include</span>
+                    <span
+                      className="text-muted-foreground/25 cursor-help"
+                      title="Automatically included in all sessions without per-session selection"
+                    >
+                      <Info className="h-3 w-3" />
+                    </span>
                   </div>
                 </div>
               </div>
@@ -507,7 +513,7 @@ export function McpServerCards({ initialServers }: McpServerCardsProps) {
                   onCheckedChange={(v) => updateForm('isDefault', v)}
                 />
                 <Label htmlFor="mcp-default" className="text-xs cursor-pointer">
-                  Default for all projects
+                  Auto-include in sessions
                 </Label>
               </div>
             </div>
