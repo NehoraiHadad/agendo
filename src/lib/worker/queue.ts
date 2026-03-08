@@ -47,6 +47,7 @@ export async function enqueueSession(data: RunSessionJobData): Promise<string | 
     expireInMinutes: 60 * 8, // Sessions can run for hours
     retryLimit: 1,
     retryDelay: 10,
+    singletonKey: data.sessionId, // Prevent duplicate jobs for the same session
   });
 }
 

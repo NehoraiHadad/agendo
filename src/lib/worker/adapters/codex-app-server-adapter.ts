@@ -292,12 +292,17 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     //     Must happen after initialized and before thread/start so Codex loads MCPs
     //     for the session. env is converted from ACP array format to a plain dict.
     if (this.mcpServers && this.mcpServers.length > 0) {
-      const mcpValue = this.mcpServers.map((srv) => ({
-        name: srv.name,
-        command: srv.command,
-        args: srv.args,
-        env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
-      }));
+      const mcpValue: Record<
+        string,
+        { command: string; args: string[]; env: Record<string, string> }
+      > = {};
+      for (const srv of this.mcpServers) {
+        mcpValue[srv.name] = {
+          command: srv.command,
+          args: srv.args,
+          env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
+        };
+      }
       await this.transport.call('config/batchWrite', {
         edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
       });

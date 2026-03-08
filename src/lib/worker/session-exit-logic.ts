@@ -173,7 +173,7 @@ export async function determineExitStatus(
         type: 'system:error',
         message:
           `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
-          `This may be caused by an unsupported slash command (/mcp, /permissions) or a Claude CLI crash.`,
+          `This may be caused by a configuration error, an unsupported command, or an agent CLI crash.`,
       });
       await deps.transitionTo('ended');
       // Kill the companion terminal tmux session — session is no longer resumable.
