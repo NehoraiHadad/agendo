@@ -51,3 +51,6 @@ next-env.d.ts
 
 # drizzle
 drizzle/meta/
+
+# repo-sync
+.repo-sync-manifest.json
