@@ -25,8 +25,6 @@ export type NewAgentWorkspace = InferInsertModel<typeof schema.agentWorkspaces>;
 export type McpServer = InferSelectModel<typeof schema.mcpServers>;
 export type NewMcpServer = InferInsertModel<typeof schema.mcpServers>;
 export type ProjectMcpServer = InferSelectModel<typeof schema.projectMcpServers>;
-export type Plugin = InferSelectModel<typeof schema.plugins>;
-export type PluginStoreEntry = InferSelectModel<typeof schema.pluginStore>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];

@@ -508,35 +508,3 @@ export const projectMcpServers = pgTable(
   },
   (t) => [primaryKey({ columns: [t.projectId, t.mcpServerId] })],
 );
-
-// ============================================================================
-// Plugins
-// ============================================================================
-
-export const plugins = pgTable('plugins', {
-  id: text('id').primaryKey(), // manifest.id (kebab-case, e.g. 'repo-sync')
-  name: text('name').notNull(),
-  description: text('description'),
-  version: text('version').notNull(),
-  enabled: boolean('enabled').notNull().default(true),
-  config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
-  errorCount: integer('error_count').notNull().default(0),
-  lastError: text('last_error'),
-  lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const pluginStore = pgTable(
-  'plugin_store',
-  {
-    pluginId: text('plugin_id')
-      .notNull()
-      .references(() => plugins.id, { onDelete: 'cascade' }),
-    key: text('key').notNull(),
-    value: jsonb('value').$type<unknown>().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.pluginId, t.key] })],
-);
