@@ -1,4 +1,7 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { BadRequestError } from '@/lib/errors';
@@ -8,17 +11,40 @@ import { enqueueSession } from '@/lib/worker/queue';
 import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { syncTarget, getTarget, DEFAULT_MANIFEST_PATH } from '@/lib/services/repo-sync';
 
-// ─── Skill installer (via repo-sync) ────────────────────────────────────────
+// ─── Skill installer ─────────────────────────────────────────────────────────
 
+const REPO_URL = 'https://github.com/alexgreensh/token-optimizer';
+
+/**
+ * Clones the token-optimizer repo from GitHub and installs the skill into
+ * ~/.claude/skills/token-optimizer/. Idempotent — no-op when already present.
+ */
 function ensureSkillInstalled(): void {
-  const target = getTarget('token-optimizer');
-  if (!target) throw new BadRequestError('token-optimizer sync target not configured');
-  const projectRoot = path.resolve(import.meta.dirname, '../../../../..');
-  const result = syncTarget(target, path.join(projectRoot, DEFAULT_MANIFEST_PATH));
-  if (result.error) {
-    throw new BadRequestError(`token-optimizer sync failed: ${result.error}`);
+  const dest = path.join(os.homedir(), '.claude', 'skills', 'token-optimizer');
+  if (fs.existsSync(dest)) return;
+
+  const cloneDir = path.join(os.tmpdir(), `token-optimizer-install-${Date.now()}`);
+  try {
+    const result = spawnSync('git', ['clone', '--depth=1', REPO_URL, cloneDir], {
+      timeout: 60_000,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+      throw new BadRequestError(
+        `git clone failed (exit ${result.status ?? 'signal'}): ${result.stderr ?? ''}`.trim(),
+      );
+    }
+    const src = path.join(cloneDir, 'skills', 'token-optimizer');
+    if (!fs.existsSync(src)) {
+      throw new BadRequestError(
+        `Unexpected repo layout: skills/token-optimizer not found after cloning ${REPO_URL}`,
+      );
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.cpSync(src, dest, { recursive: true });
+  } finally {
+    fs.rmSync(cloneDir, { recursive: true, force: true });
   }
 }
 
