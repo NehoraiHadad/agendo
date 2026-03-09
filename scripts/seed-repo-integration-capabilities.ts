@@ -21,6 +21,7 @@ Call get_my_task. Extract:
   - inputContext.args.source  (URL, package name, or text description)
   - inputContext.args.integrationName  (derived slug)
   - id (needed as parentTaskId for create_subtask)
+  - assigneeAgent.slug  (your own agent slug — you will launch the implementer with the same agent)
 
 ## Step 2: Research the source
 
@@ -97,7 +98,8 @@ git clone --depth=1 <repoUrl> /data/agendo/repos/<integrationName>
 
 [For capability:]
 \`\`\`bash
-AGENT_ID=$(curl -s http://localhost:4100/api/agents | jq -r '.data[]|select(.slug=="claude-code-1")|.id')
+# Register for ALL active AI agents (so any agent can use the capability)
+curl -s http://localhost:4100/api/agents | jq -r '.data[]|select(.isActive==true)|.id' | while read AGENT_ID; do
 curl -s -X POST "http://localhost:4100/api/agents/$AGENT_ID/capabilities" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -108,6 +110,7 @@ curl -s -X POST "http://localhost:4100/api/agents/$AGENT_ID/capabilities" \\
     "dangerLevel": 0,
     "timeoutSec": 300
   }'
+done
 \`\`\`
 
 [For mcp_server — HTTP/remote (source is a URL with no repo to clone, e.g. https://mcp.example.com):]
@@ -164,7 +167,7 @@ git commit -m "feat(integration): add <integrationName>"
 
 Call start_agent_session with:
   taskId: <subtask id from step 4>
-  agent: "claude-code-1"
+  agent: <assigneeAgent.slug from Step 1 — same agent as yourself>
   initialPrompt: <the full plan content — paste it exactly>
   permissionMode: "bypassPermissions"
 
