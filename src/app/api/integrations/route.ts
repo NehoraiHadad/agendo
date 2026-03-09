@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { sql } from 'drizzle-orm';
+import { sql, isNull } from 'drizzle-orm';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { NotFoundError } from '@/lib/errors';
 import { createTask, updateTask } from '@/lib/services/task-service';
@@ -8,7 +8,7 @@ import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getOrCreateSystemProject } from '@/lib/services/project-service';
 import { db } from '@/lib/db';
 import { agents, agentCapabilities, tasks } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, like } from 'drizzle-orm';
 
 const postSchema = z.object({
   // Free-form: URL, package name, or natural language description
@@ -58,6 +58,8 @@ export const GET = withErrorBoundary(async () => {
       and(
         eq(tasks.projectId, systemProject.id),
         sql`${tasks.inputContext}->'args'->>'integrationName' IS NOT NULL`,
+        isNull(tasks.parentTaskId),
+        like(tasks.title, 'Integrate:%'),
       ),
     )
     .orderBy(sql`${tasks.createdAt} DESC`);
