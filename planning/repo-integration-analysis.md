@@ -1,17 +1,19 @@
 # Repo Integration Analysis
 
 > Analysis of how to build an agent-driven repo integration system for Agendo.
-> Author: Claude | Date: 2026-03-09 | Status: **Revised — vision clarified**
+> Author: Claude | Date: 2026-03-09 | Status: **Revised v2 — multi-agent pipeline**
 
 ---
 
-## Vision (clarified)
+## Vision (final)
 
 The goal is not to "register" external repos — it's to **embed them as native features inside Agendo**.
 
-A user gives the system a repo URL (or docs, README, anything that explains the project). An agent analyzes it, proposes what needs to change in Agendo's codebase, the user approves, and the agent writes the actual integration code. The result is a first-class capability inside Agendo — same UI, same patterns, no separate server.
+A user gives the system a repo URL, docs, README, or anything that explains the project. A **multi-agent pipeline** handles the rest: one agent plans, optionally others validate, one implements. The result is a first-class capability inside Agendo — same UI, same patterns, no separate server.
 
-**The agent is essentially a Claude Code session embedded inside the application.** Like this conversation, but triggered from within Agendo with the right context, tools, and permissions. The user watches it work in real-time via the session viewer.
+**Each agent is a Claude Code session embedded in the application** — exactly like a conversation with Claude Code, but triggered from Agendo with the right context, tools, and permissions. The user watches each step in real-time via the session viewer and approves before the pipeline advances.
+
+**The pipeline structure is not hardcoded.** The planning agent reads the repo and decides what steps are needed. A simple skill repo might need only plan + implement. A complex MCP server might need plan + security review + build validation + implement. The planner creates the subtasks; Agendo orchestrates them.
 
 ---
 
@@ -71,42 +73,78 @@ This means most of the infrastructure already exists. What's missing is the **pr
 
 ---
 
-## 3. The 5-Step Integration Pipeline
+## 3. The Multi-Agent Pipeline
+
+The pipeline has a fixed entry and exit, but a variable middle. The planning agent decides the middle.
 
 ```
-1. ANALYZE
-   Agent reads the repo (clone + read README, package.json, source files)
-   Produces a structured "integration spec":
-   {
-     repoUrl, name, description,
-     type: 'capability' | 'mcp_server' | 'ui_feature',
-     filesToCreate: [...],
-     filesToModify: [...],
-     dbChanges: [...],
-     agendoPatterns: [...] // which existing patterns to follow
-   }
-
-2. APPROVE  ← checkpoint
-   Spec shown to user in Agendo UI
-   User can edit, reject, or approve
-   Nothing written to disk until approval
-
-3. GENERATE
-   Agent writes code based on the spec
-   Follows Agendo's patterns (CLAUDE.md + relevant example files injected as context)
-   Tags all generated code (see §4)
-
-4. VALIDATE  ← automated
-   pnpm typecheck → if fails, agent fixes
-   pnpm lint → if fails, agent fixes
-   pnpm test → if fails, agent fixes
-   Max 3 iterations, then surfaces to user
-
-5. REGISTER
-   DB records created (capability, mcp_server entry, integration log)
-   Commit created with standard message format
-   Integration marked 'active' in repo_integrations table
+ENTRY: user submits repo URL / docs / README
+  │
+  ▼
+┌─────────────────────────────────────────────────┐
+│  AGENT 1: PLANNER  (plan mode, bypassPermissions) │
+│                                                   │
+│  • Clones repo, reads structure + docs            │
+│  • Understands: what is this? what does it do?    │
+│  • Decides: what type of integration is needed?   │
+│  • Writes a structured plan (save_plan MCP tool)  │
+│  • Creates subtasks for each remaining step       │
+│    via create_subtask MCP tool                    │
+│  • Stops — does NOT write any code                │
+└─────────────────────────────────────────────────┘
+  │
+  ▼
+[CHECKPOINT: user sees the plan + subtask list, approves / edits]
+  │
+  ▼
+┌─────────────────────────────────────────────────┐
+│  AGENT 2..N: VALIDATION AGENTS  (optional)       │
+│  Created by the planner if needed, e.g.:         │
+│  • Security review agent                         │
+│  • Build validation agent (npm install + build)  │
+│  • Compatibility check agent                     │
+│  Each produces a structured verdict              │
+└─────────────────────────────────────────────────┘
+  │
+  ▼
+[CHECKPOINT: user sees validation results if any concerns]
+  │
+  ▼
+┌─────────────────────────────────────────────────┐
+│  AGENT N+1: IMPLEMENTER  (bypassPermissions)     │
+│                                                   │
+│  • Receives: plan + validation results as context │
+│  • Writes code following Agendo's patterns        │
+│  • Runs: pnpm typecheck → pnpm lint → pnpm test  │
+│  • Fixes failures (max 3 iterations)             │
+│  • Commits with standard format                  │
+│  • Calls register_integration MCP tools          │
+│  • Marks integration active                      │
+└─────────────────────────────────────────────────┘
+  │
+  ▼
+EXIT: new capability live in Agendo
 ```
+
+### Why separate planner and implementer?
+
+- **The planner doesn't know what the repo contains upfront.** Separating analysis from execution lets the plan be reviewed before anything is written to disk.
+- **The implementer gets a clean, structured brief.** It doesn't need to re-analyze the repo — it gets the plan as context and focuses on code quality.
+- **Validation steps are repo-specific.** A Claude skill needs no build step. An MCP server needs `npm install + build`. A full UI feature might need a design review. The planner decides; the pipeline adapts.
+- **Each step is auditable.** The user can see what each agent did, read its session log, and understand the chain of decisions.
+
+### How the planner creates the pipeline
+
+The planning agent uses existing Agendo MCP tools:
+
+```
+create_subtask("Validate: security review", assignee=claude)
+create_subtask("Validate: npm build", assignee=claude)
+create_subtask("Implement integration", assignee=claude)
+save_plan({ type, filesToCreate, filesToModify, dbChanges, ... })
+```
+
+The orchestration layer (Agendo) runs subtasks in order after each checkpoint passes. No custom orchestration code needed — this is just the existing task/subtask system.
 
 ---
 
@@ -279,24 +317,32 @@ The prompt template is the **most important artifact to get right**. It determin
 
 ## 8. Architecture Recommendation
 
-**Build the integration agent first, not the plugin system.** The plugin system has 5 critical gaps and doesn't help with the core vision. The integration agent needs:
+**The multi-agent pipeline maps directly onto Agendo's existing task/subtask system.** No new orchestration infrastructure is needed. The planner creates subtasks; Agendo runs them in order.
 
-- A DB table (`repo_integrations`)
-- A capability record (prompt template)
-- An approval UI component
-- A manifest format
+**Build the pipeline, not a framework.** The planner agent is just a capability with a well-crafted prompt. The implementer is another capability. The MCP tools they use are the interface to Agendo's primitives. There is no "integration engine" to build — just prompts, a DB table, and a handful of MCP tools.
 
-The plugin system is worth fixing in parallel as Agendo's internal extension mechanism, but it's not on the critical path.
+**The agent IS the intelligence.** Don't build pattern-matching heuristics. Let the planner read the repo and decide what the pipeline looks like. The plan format constrains its output to what Agendo can act on.
 
-**The repo-sync service stays separate.** It's a useful, focused library. Expose it via API endpoint; the agent calls it via MCP tool rather than running it directly.
+**The plugin system is not on the critical path.** Fix it in parallel as Agendo's internal extension mechanism.
 
-**The agent IS the intelligence.** Don't build pattern-matching heuristics ("if package.json has X then it's type Y"). Let the agent read the repo and decide. The spec format constrains its output to what Agendo can act on.
+### What's genuinely new to build
+
+| What                                | Why new                                                           |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `repo_integrations` table           | Tracks integration state, plan, manifest, links to tasks/sessions |
+| Plan format (TypeScript type + Zod) | Contract between planner and implementer                          |
+| Planner capability prompt           | The most important artifact — determines plan quality             |
+| Implementer capability prompt       | Receives plan + context, writes code, runs checks                 |
+| `register_integration` MCP tools    | Safe, atomic DB writes from within agent sessions                 |
+| Repo-sync API endpoint              | Lets agents trigger file sync without direct FS access            |
+| Approval UI checkpoint              | User sees plan + subtasks before implementation starts            |
+| UI entry point ("Connect a Repo")   | Form that creates the parent task and kicks off the planner       |
 
 ---
 
 ## 9. Proposed Next Steps (ordered)
 
-### Step 1 — `repo_integrations` table + service (half day)
+### Step 1 — `repo_integrations` table + service
 
 ```sql
 CREATE TABLE repo_integrations (
@@ -304,66 +350,87 @@ CREATE TABLE repo_integrations (
   repo_url TEXT NOT NULL,
   branch TEXT NOT NULL DEFAULT 'main',
   name TEXT NOT NULL,
-  integration_type TEXT NOT NULL, -- 'capability' | 'mcp_server' | 'ui_feature'
   status TEXT NOT NULL DEFAULT 'pending',
-    -- 'pending' | 'analyzing' | 'awaiting_approval' | 'generating' | 'active' | 'failed'
-  spec JSONB,                    -- the integration spec from Analyze step
+    -- 'pending' | 'planning' | 'awaiting_approval' | 'implementing' | 'active' | 'failed'
+  plan JSONB,                    -- structured plan from the planner agent
   manifest_path TEXT,            -- path to src/integrations/<name>/manifest.json
-  task_id UUID REFERENCES tasks(id),
-  agent_session_id UUID REFERENCES sessions(id),
+  parent_task_id UUID REFERENCES tasks(id),
+  planner_session_id UUID REFERENCES sessions(id),
+  implementer_session_id UUID REFERENCES sessions(id),
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-### Step 2 — Integration spec format (half day)
+### Step 2 — Plan format (TypeScript type + Zod schema)
 
-Define the JSON schema for the integration spec. This is the contract between Analyze and Generate steps. Write it as a TypeScript type + Zod schema so the agent's output can be validated.
+The structured contract the planner produces and the implementer consumes:
 
-### Step 3 — Integrator capability prompt (1 day)
+```typescript
+type IntegrationPlan = {
+  name: string;
+  description: string;
+  repoUrl: string;
+  integrationType: 'capability' | 'mcp_server' | 'ui_feature' | 'mixed';
+  filesToCreate: string[];
+  filesToModify: string[];
+  dbChanges: Array<{ table: string; action: 'insert' | 'update'; data: Record<string, unknown> }>;
+  extraSteps: string[]; // e.g. "npm install", "npm run build"
+  validationSubtasks: string[]; // titles of validation subtasks the planner wants
+  agendoPatternsToFollow: string[]; // e.g. "src/app/api/tasks/route.ts for API patterns"
+  commitMessage: string;
+  estimatedComplexity: 'low' | 'medium' | 'high';
+};
+```
 
-Write the prompt template that guides the agent through all 5 steps. This is the most important artifact. It should:
+### Step 3 — Planner capability prompt
 
-- Tell the agent exactly what to produce in the Analyze step
-- Show the spec format with examples
-- List Agendo's patterns (with file references)
-- Define the commit message format
-- Tell it to stop after Analyze and wait for approval
+The most important artifact. Tells the agent to:
 
-### Step 4 — Repo-sync API endpoint (2 hours)
+- Clone and read the repo (README, package.json, source structure)
+- Produce a valid `IntegrationPlan` JSON
+- Call `create_subtask` for each validation step it wants
+- Call `save_plan` with the plan
+- **Stop — write no code**
+
+### Step 4 — `register_integration` MCP tools
+
+New tools in the Agendo MCP server:
+
+- `create_integration_record(repoUrl, name)` — creates row in `repo_integrations`
+- `save_integration_plan(integrationId, plan)` — stores plan, sets status `awaiting_approval`
+- `register_capability(data)` — inserts into `agent_capabilities`
+- `register_mcp_server(data)` — inserts into `mcp_servers`
+- `finalize_integration(integrationId, manifestPath)` — sets status `active`
+
+### Step 5 — Implementer capability prompt
+
+Receives: plan JSON + validation results + Agendo pattern examples.
+Does: writes code, runs `pnpm typecheck && pnpm lint && pnpm test`, fixes failures (max 3 iterations), commits, calls `finalize_integration`.
+
+### Step 6 — Repo-sync API endpoint
 
 ```
 POST /api/repo-sync/trigger
 Body: { repoUrl, branch, src, dest }
 ```
 
-Allows the agent to trigger file sync via MCP tool rather than direct FS access.
+Lets the implementer trigger file sync (for skill repos) without direct FS access.
 
-### Step 5 — Approval UI (half day)
+### Step 7 — Approval UI
 
-A component in Agendo that shows the integration spec after the Analyze step and lets the user approve/reject. Could be a modal in the session viewer or a dedicated page linked from the task.
+Shows the plan + subtask list after the planner finishes. User can approve, reject, or edit before implementation starts. Could be a task detail panel or a dedicated integration review page.
 
-### Step 6 — `register_integration` MCP tools (half day)
+### Step 8 — UI entry point ("Connect a Repo")
 
-New tools in the Agendo MCP server:
+Form in Settings or Projects: repo URL + optional branch + optional docs URL. On submit: creates parent task, spawns planner session.
 
-- `create_integration_record(spec)` — inserts into `repo_integrations`
-- `register_capability(data)` — inserts into `agent_capabilities`
-- `register_mcp_server(data)` — inserts into `mcp_servers`
-- `finalize_integration(id, manifestPath)` — marks integration active
+### Step 9 — End-to-end test with token-optimizer
 
-These tools make the Generate → Register steps safe and atomic.
+Run the full pipeline manually with the token-optimizer repo. Fix whatever breaks. This is the first real validation of whether the prompt design is good enough.
 
-### Step 7 — End-to-end test with token-optimizer (1 day)
-
-Run a full integration session manually: paste the token-optimizer repo URL, watch the agent analyze, approve the spec, watch it generate, validate, register. Fix whatever breaks.
-
-### Step 8 — UI entry point (half day)
-
-"Connect a Repo" button in Settings or Projects. Form: repo URL + optional branch. On submit: creates task + triggers integrator session.
-
-### Step 9 — Fix plugin system (parallel track, 2–3 days)
+### Step 10 — Fix plugin system (parallel track)
 
 1. Apply migration 0005 (plugins + plugin_store tables)
 2. Call `loadPlugins()` in worker startup
@@ -375,8 +442,10 @@ Run a full integration session manually: paste the token-optimizer repo URL, wat
 
 ## Summary
 
-The vision is: give Agendo a repo URL, an agent reads it and writes the integration code, the result is a native feature inside Agendo. The agent is a Claude Code session — the same technology as this conversation — with Agendo's codebase as context and the right capability prompt.
+The vision: give Agendo a repo URL, a multi-agent pipeline handles it. A planner reads the repo and produces a structured integration plan + creates subtasks for the steps needed. The user approves. An implementer executes the plan, writes code following Agendo's patterns, validates with typecheck/lint/tests, and registers the result. The output is a native feature inside Agendo.
 
-The current codebase has the runtime infrastructure (session runner, streaming, bypassPermissions, MCP tools). What's missing is the pipeline structure: the DB table, the spec format, the prompt, the approval UI, and the MCP registration tools.
+**The pipeline structure is not hardcoded — the planner decides it.** Simple repos get plan + implement. Complex ones get plan + validation agents + implement. The task/subtask system is the orchestrator.
 
-The plugin system is well-designed but entirely non-functional and not on the critical path. Fix it in parallel as an internal extension mechanism.
+**Each agent is just a Claude Code session** with the right prompt, context, and MCP tools. No new runtime infrastructure needed. What needs to be built: a DB table, a plan format, two capability prompts, a handful of MCP tools, an approval UI, and an entry point form.
+
+The plugin system is well-designed but entirely non-functional and not on the critical path. Fix it in parallel.
