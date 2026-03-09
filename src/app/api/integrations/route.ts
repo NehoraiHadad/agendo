@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { sql } from 'drizzle-orm';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { NotFoundError } from '@/lib/errors';
-import { createTask } from '@/lib/services/task-service';
+import { createTask, updateTask } from '@/lib/services/task-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getOrCreateSystemProject } from '@/lib/services/project-service';
 import { db } from '@/lib/db';
@@ -117,6 +117,11 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     agentId,
     capabilityId,
     permissionMode: 'plan',
+  });
+
+  // Store sessionId so the UI can link to the planner session.
+  await updateTask(task.id, {
+    inputContext: { args: { source, integrationName, sessionId: session.id } },
   });
 
   return NextResponse.json({ data: { taskId: task.id, sessionId: session.id } }, { status: 201 });

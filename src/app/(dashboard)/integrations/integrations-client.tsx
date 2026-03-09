@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plug, Trash2, CheckCircle2, Clock, Loader2, ExternalLink } from 'lucide-react';
+import { Plug, Trash2, CheckCircle2, Clock, Loader2, ExternalLink, Terminal } from 'lucide-react';
+import Link from 'next/link';
 import { ConnectRepoDialog } from '@/components/integrations/connect-repo-dialog';
 import { Button } from '@/components/ui/button';
 import type { Task } from '@/lib/types';
@@ -69,11 +70,10 @@ export function IntegrationsClient({ integrations }: { integrations: Task[] }) {
       ) : (
         <div className="space-y-2">
           {integrations.map((task) => {
-            const integrationName =
-              (task.inputContext as { args?: { integrationName?: string } } | null)?.args
-                ?.integrationName ?? task.title;
-            const source = (task.inputContext as { args?: { source?: string } } | null)?.args
-              ?.source;
+            const args = (task.inputContext as { args?: Record<string, string> } | null)?.args;
+            const integrationName = args?.integrationName ?? task.title;
+            const source = args?.source;
+            const sessionId = args?.sessionId;
             const sourceUrl = source && source.startsWith('http') ? source : undefined;
             const statusCfg = STATUS_CONFIG[task.status] ?? STATUS_CONFIG['todo'];
             const StatusIcon = statusCfg.icon;
@@ -100,6 +100,15 @@ export function IntegrationsClient({ integrations }: { integrations: Task[] }) {
                       >
                         <ExternalLink className="size-3" />
                       </a>
+                    )}
+                    {sessionId && (
+                      <Link
+                        href={`/sessions/${sessionId}`}
+                        className="text-muted-foreground/30 hover:text-muted-foreground transition-colors"
+                        title="View agent session"
+                      >
+                        <Terminal className="size-3" />
+                      </Link>
                     )}
                   </div>
                   <div className={`flex items-center gap-1 mt-0.5 text-xs ${statusCfg.color}`}>

@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../src/lib/db';
 import { pool } from '../src/lib/db';
 import { agentCapabilities, agents } from '../src/lib/db/schema';
+import { getBinaryName } from '../src/lib/worker/agent-utils';
 
 const REPO_PLANNER_PROMPT = `You are the Agendo Integration Planner.
 Your job: understand what the user wants to integrate → produce a plan → launch the implementer.
@@ -46,7 +47,14 @@ Use your knowledge and the description as-is. No fetching needed.
 | library     | npm/pip package, SDK, CLI tool — adds new functionality to Agendo        |
 | unrecognized| cannot determine a clear integration path                                |
 
-### If unrecognized:
+### Special case — MCP servers
+If source looks like an MCP server repo (@modelcontextprotocol/sdk in package.json, or "mcp server" in README):
+Classify as: unrecognized
+Call add_progress_note("This looks like an MCP server. To add it, go to Settings → MCP Servers and register it there with the command and args.")
+Call update_task(status: "done")
+STOP. (MCP servers have a dedicated UI — do not attempt programmatic registration here.)
+
+### If unrecognized (for any other reason):
 Call add_progress_note("Cannot integrate: [clear reason]. Source appears to be [description].")
 Call update_task(status: "done")
 STOP.
@@ -153,28 +161,40 @@ After 3 failures: add_progress_note with exact error + create_subtask "Fix: <fil
 ### Never hardcode agent IDs
   curl -s http://localhost:4100/api/agents | jq '.data[]|{id,slug}'
 
-### Snapshot required (always before commit)
-Call save_snapshot at the end with this exact shape:
-{
-  "integrationName": "<repo-name>",
-  "commits": [],             ← fill after git commit (use: git log -1 --format="%H")
-  "filesCreated": [],        ← all files you created (relative paths from project root)
-  "dbRecords": []            ← each: { "type": "capability"|"mcp_server", "id": "<uuid>", "agentId": "<uuid if capability>" }
-}
+### Implementation record (always before marking done)
+After git commit, update the PARENT planning task's description with an implementation record.
+This is how the remover agent knows what to clean up.
 
-Parse each API response with jq to extract the created record ID before saving the snapshot.
+Steps:
+1. Get your task: get_my_task → note parentTaskId
+2. Get commit SHA: git log -1 --format="%H"
+3. Collect DB record IDs from the API responses you received earlier (parse with jq)
+4. Call update_task with the parent task ID:
+
+update_task({
+  taskId: <parentTaskId>,
+  description: <original description> + "\\n\\n## Implementation Record\\n\`\`\`json\\n" + JSON.stringify({
+    integrationName: "<name>",
+    commits: ["<SHA>"],
+    filesCreated: ["<relative/path/to/file>"],
+    dbRecords: [{ "type": "capability", "id": "<uuid>", "agentId": "<uuid>" }]
+  }, null, 2) + "\\n\`\`\`"
+})
+
+You can get the parent task's current description first with:
+  curl -s http://localhost:4100/api/tasks/<parentTaskId> | jq -r '.data.description'
 
 ## Execution steps
-1. get_my_task → confirm task id and context
+1. get_my_task → confirm task id, parentTaskId, and context
 2. Read the plan provided in this prompt
 3. Execute each step in "What the Implementer Must Do"
 4. Read reference file before writing each new file
 5. pnpm typecheck after each file → fix → max 3 tries
 6. pnpm typecheck && pnpm lint (final)
 7. git commit with format from plan
-8. save_snapshot (with actual commit SHA and record IDs from step 3)
+8. update_task on PARENT task with implementation record (see above)
 9. add_progress_note("Integration complete: <type> registered successfully. Commit: <SHA>")
-10. update_task(status: "done")`;
+10. update_task(status: "done") on own task`;
 
 const REPO_REMOVER_PROMPT = `You are the Agendo Repo Integration Remover.
 Your job: cleanly remove a previously installed repo integration.
@@ -187,10 +207,10 @@ Call get_my_task. Extract:
 
 ## Step 2: Get integration context
 Call get_task(originalTaskId) to read the original task.
-Look at the task snapshots for the shape:
-  { integrationName, commits[], filesCreated[], dbRecords[] }
+Look in task.description for a section starting with "## Implementation Record" followed by a JSON block.
+Parse the JSON to get: integrationName, commits[], filesCreated[], dbRecords[].
 
-If no snapshot exists: inspect git log for commits matching
+If no implementation record in description: inspect git log for commits matching
   "feat(integration): add <integrationName>"
 
 ## Step 3: Check for changes since integration
@@ -292,7 +312,7 @@ const CAPABILITIES: CapabilitySeed[] = [
 
 async function seedRepoIntegrationCapabilities(): Promise<void> {
   const allAgents = await db
-    .select({ id: agents.id, slug: agents.slug })
+    .select({ id: agents.id, slug: agents.slug, binaryPath: agents.binaryPath })
     .from(agents)
     .where(eq(agents.toolType, 'ai-agent'));
 
@@ -301,7 +321,17 @@ async function seedRepoIntegrationCapabilities(): Promise<void> {
     return;
   }
 
-  for (const agent of allAgents) {
+  // Integration capabilities are Claude-specific: they use WebFetch, start_agent_session,
+  // and prompt patterns tuned for Claude Code. Other agents get no-op seeding.
+  const claudeAgents = allAgents.filter((a) => getBinaryName(a) === 'claude');
+  if (claudeAgents.length === 0) {
+    console.warn(
+      'No Claude agents found (binaryName="claude"). Skipping integration capability seed.',
+    );
+    return;
+  }
+
+  for (const agent of claudeAgents) {
     console.log(`Seeding for agent: ${agent.slug}`);
     for (const cap of CAPABILITIES) {
       const result = await db
