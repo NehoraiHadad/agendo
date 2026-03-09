@@ -189,63 +189,48 @@ Tracks status, links to task, links to session log, links to manifest. Makes int
 
 ## 5. What the Agent Needs as Context
 
-### The infrastructure is fixed
+### The infrastructure is fixed — but the agent still reads and verifies
 
-Agendo is not a SaaS product that changes constantly. Once deployed at a user's site, the codebase structure is **stable**. This means the planner prompt doesn't need to discover where things go at runtime — the structure can be **baked into the prompt itself**.
+Agendo is not a SaaS product that changes constantly. Once deployed, the codebase structure is **stable**. But this doesn't mean the prompt replaces reading the code. The agent must **actually read and verify** before making decisions.
 
-This makes the planner:
+The balance:
 
-- **Faster** — no need to explore Agendo's directory tree before planning
-- **More reliable** — it works from known facts, not inference
-- **Consistent** — every integration follows the same structural map
+- **Prompt gives direction** — where to look, what to read first, what output shape is expected
+- **Agent reads and verifies** — reads actual files, confirms patterns before using them, doesn't assume
 
-### What the planner prompt must include (static, baked in)
+A static "trust this map" description in the prompt can be wrong or outdated. An agent that reads the actual file cannot be.
 
-**1. Agendo's directory map** — where each type of file goes:
+### What the planner prompt must include
 
-```
-src/app/(app)/          → Next.js pages (App Router)
-src/app/api/            → API routes
-src/components/         → React components
-src/lib/services/       → Service layer (DB queries)
-src/lib/mcp/tools/      → MCP server tools
-src/lib/db/schema.ts    → Single source of truth for DB schema
-planning/03-data-model.md → Authoritative data model
-```
+**1. Where to start** (orientation, not a substitute for reading):
 
-**2. Integration type → file map** — concrete examples per type:
+- "Read `CLAUDE.md` first — it contains the patterns and constraints"
+- "Read `planning/03-data-model.md` — it's the authoritative data model"
+- "Before deciding what to create, read one existing example of the same type"
 
-- `capability` → what files to create, what DB record to insert, which existing capability to follow as pattern
-- `mcp_server` → what DB record to insert, how build output is referenced
-- `ui_feature` → which page template to follow, where to add nav entry
+**2. The plan format** — the JSON schema the planner must output. This is the one truly static piece. The agent knows the shape its output must take before it starts.
 
-**3. Key constraints** (from CLAUDE.md, condensed):
+**3. Stopping rules** — explicit:
 
-- TypeScript strict, no `any`
-- Named exports only
-- `params` is async in Next.js 16
-- `withErrorBoundary` pattern for API routes
-- esbuild for worker (not tsc)
+- Do not write any code
+- Do not modify any files
+- Stop after `save_plan` is called
 
-**4. The repo content** — README, package.json, top-level structure. Cloned to temp dir or passed as text.
+**4. The repo input** — README, package.json, top-level structure passed as the task's initial context.
 
-**5. The plan format** — the JSON schema the planner must output.
+### What the implementer prompt must include
 
-### What NOT to put in the prompt
+**1. The approved plan JSON** — the brief.
 
-- Full file contents of Agendo (too large, not needed)
-- Dynamic codebase exploration instructions ("first run `ls src/`")
-- Implementation details — those go in the implementer prompt
+**2. Read-before-write rule** — before writing each file, read an existing file of the same type first:
 
-### The implementer prompt
+- New API route → read `src/app/api/tasks/route.ts` first
+- New service → read `src/lib/services/task-service.ts` first
+- New page → read an existing `(app)/` page first
 
-Receives:
+**3. Validate-as-you-go** — run `pnpm typecheck && pnpm lint` after each file, fix before moving to the next. Not all at the end.
 
-- The approved plan JSON
-- 2–3 concrete example files matching the integration type (fetched at runtime based on plan type)
-- The repo content
-
-Does not receive the full Agendo codebase. Fetches only what it needs.
+**4. Commit format** — how to tag the integration commit.
 
 ---
 
