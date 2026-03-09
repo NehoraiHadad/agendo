@@ -360,125 +360,75 @@ A static "trust this map" description in the prompt can be wrong or outdated. An
 
 ### What's genuinely new to build
 
-| What                                | Why new                                                           |
-| ----------------------------------- | ----------------------------------------------------------------- |
-| `repo_integrations` table           | Tracks integration state, plan, manifest, links to tasks/sessions |
-| Plan format (TypeScript type + Zod) | Contract between planner and implementer                          |
-| Planner capability prompt           | The most important artifact — determines plan quality             |
-| Implementer capability prompt       | Receives plan + context, writes code, runs checks                 |
-| `register_integration` MCP tools    | Safe, atomic DB writes from within agent sessions                 |
-| Repo-sync API endpoint              | Lets agents trigger file sync without direct FS access            |
-| Approval UI checkpoint              | User sees plan + subtasks before implementation starts            |
-| UI entry point ("Connect a Repo")   | Form that creates the parent task and kicks off the planner       |
+Almost nothing. The implementer runs in `bypassPermissions` mode — it can already:
+
+- Write files, run shell commands, run `pnpm typecheck && pnpm lint`
+- Register a capability: `curl POST /api/agent-capabilities` (existing route)
+- Register an MCP server: `curl POST /api/mcp-servers` (existing route)
+- Store plan: `save_plan` MCP tool (already exists)
+- Track status: task status + `add_progress_note` (already exists)
+- Store repo URL: `task.inputContext` JSONB (already exists)
+
+What's actually missing:
+
+| What                                  | Why                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| **Planner capability prompt**         | The most important artifact — determines plan quality                   |
+| **Implementer capability prompt**     | Receives plan, writes code, validates, registers                        |
+| **UI entry point** ("Connect a Repo") | Form that creates the task and spawns the planner session               |
+| **Manifest file convention**          | `src/integrations/<name>/manifest.json` — for tracking what was created |
+
+That's it. No new DB tables. No new MCP tools. No new TypeScript types. The plan format is just whatever the planner writes in `save_plan` — the implementer reads it as text.
 
 ---
 
 ## 9. Proposed Next Steps (ordered)
 
-### Step 1 — `repo_integrations` table + service
+### Step 1 — Planner capability prompt
 
-```sql
-CREATE TABLE repo_integrations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repo_url TEXT NOT NULL,
-  branch TEXT NOT NULL DEFAULT 'main',
-  name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-    -- 'pending' | 'planning' | 'awaiting_approval' | 'implementing' | 'active' | 'failed'
-  plan JSONB,                    -- structured plan from the planner agent
-  manifest_path TEXT,            -- path to src/integrations/<name>/manifest.json
-  parent_task_id UUID REFERENCES tasks(id),
-  planner_session_id UUID REFERENCES sessions(id),
-  implementer_session_id UUID REFERENCES sessions(id),
-  last_error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+Write the prompt template for the planner capability. Stored as a record in `agent_capabilities`. The agent:
 
-### Step 2 — Plan format (TypeScript type + Zod schema)
+- Reads `CLAUDE.md` + `planning/03-data-model.md`
+- Clones + reads the repo (checks for `llms.txt` first if present — LLM-friendly docs)
+- Reads one existing Agendo example matching the integration type
+- Calls `create_subtask` for any validation steps needed
+- Calls `save_plan` with the full integration plan as structured text
+- Stops — writes no code
 
-The structured contract the planner produces and the implementer consumes:
+### Step 2 — Test planner manually with token-optimizer
 
-```typescript
-type IntegrationPlan = {
-  name: string;
-  description: string;
-  repoUrl: string;
-  integrationType: 'capability' | 'mcp_server' | 'ui_feature' | 'mixed';
-  filesToCreate: string[];
-  filesToModify: string[];
-  dbChanges: Array<{ table: string; action: 'insert' | 'update'; data: Record<string, unknown> }>;
-  extraSteps: string[]; // e.g. "npm install", "npm run build"
-  validationSubtasks: string[]; // titles of validation subtasks the planner wants
-  agendoPatternsToFollow: string[]; // e.g. "src/app/api/tasks/route.ts for API patterns"
-  commitMessage: string;
-  estimatedComplexity: 'low' | 'medium' | 'high';
-};
-```
+Open a Claude session on a task with the token-optimizer URL in `inputContext`. Run the planner prompt. Evaluate: is the plan useful? Is the integration type correct? Are the subtasks sensible? Iterate on the prompt until the output is good.
 
-### Step 3 — Planner capability prompt
+### Step 3 — Implementer capability prompt
 
-The most important artifact. Tells the agent to:
+Write the prompt for the implementer. The agent:
 
-- Clone and read the repo (README, package.json, source structure)
-- Produce a valid `IntegrationPlan` JSON
-- Call `create_subtask` for each validation step it wants
-- Call `save_plan` with the plan
-- **Stop — write no code**
+- Reads the approved plan from `plan_versions`
+- Reads one existing example per file type before writing (read-before-write)
+- Writes files, validates per-file (`pnpm typecheck && pnpm lint`)
+- Registers results via existing REST APIs (`curl POST /api/agent-capabilities` etc.)
+- Creates `src/integrations/<name>/manifest.json`
+- Commits with standard format
 
-### Step 4 — `register_integration` MCP tools
+### Step 4 — Test implementer manually
 
-New tools in the Agendo MCP server:
+Run implementer on the token-optimizer plan. Watch it work in the session viewer. Fix prompt issues until the result is a working integration.
 
-- `create_integration_record(repoUrl, name)` — creates row in `repo_integrations`
-- `save_integration_plan(integrationId, plan)` — stores plan, sets status `awaiting_approval`
-- `register_capability(data)` — inserts into `agent_capabilities`
-- `register_mcp_server(data)` — inserts into `mcp_servers`
-- `finalize_integration(integrationId, manifestPath)` — sets status `active`
+### Step 5 — UI entry point ("Connect a Repo")
 
-### Step 5 — Implementer capability prompt
+Simple form in Settings:
 
-Receives: plan JSON + validation results + Agendo pattern examples.
-Does: writes code, runs `pnpm typecheck && pnpm lint && pnpm test`, fixes failures (max 3 iterations), commits, calls `finalize_integration`.
+- Repo URL (required), branch (optional), docs URL (optional)
+- On submit: creates task with `inputContext: { repoUrl, branch, docsUrl }` → spawns planner session
+- User lands in session viewer
 
-### Step 6 — Repo-sync API endpoint
+### Step 6 — Approval UI
 
-```
-POST /api/repo-sync/trigger
-Body: { repoUrl, branch, src, dest }
-```
+After planner finishes, the task is `awaiting_input`. A UI component on the task detail shows the plan and lets the user approve (triggers implementer session) or reject.
 
-Lets the implementer trigger file sync (for skill repos) without direct FS access.
+### Step 7 — Fix plugin system (parallel track)
 
-### Step 7 — UI entry point ("Connect a Repo")
-
-Form in Settings or Projects:
-
-- Repo URL (required)
-- Branch (optional, default: main)
-- Docs URL (optional — extra context for the planner)
-
-On submit: creates parent task → spawns planner session → user lands in session viewer watching the planner work.
-
-### Step 8 — Approval UI (plan checkpoint)
-
-After the planner finishes, the task moves to `awaiting_approval`. A UI component shows:
-
-- Integration type + description
-- Files to be created / modified
-- DB changes
-- Subtasks the planner wants to create
-
-User can approve, reject, or edit the plan before the implementer runs. This is the most important UX moment — it's where the user understands what's about to happen to their codebase.
-
-### Step 9 — End-to-end test with token-optimizer
-
-Run the full pipeline manually with the token-optimizer repo. Fix whatever breaks. This is the first real validation of whether the prompt design is good enough.
-
-### Step 10 — Fix plugin system (parallel track)
-
-1. Apply migration 0005 (plugins + plugin_store tables)
+1. Apply migration 0005
 2. Call `loadPlugins()` in worker startup
 3. Wire `dispatchHook()` into task-service and session-process
 4. Build HTTP bridge for plugin MCP tools → MCP server
@@ -492,6 +442,8 @@ The vision: give Agendo a repo URL, a multi-agent pipeline handles it. A planner
 
 **The pipeline structure is not hardcoded — the planner decides it.** Simple repos get plan + implement. Complex ones get plan + validation agents + implement. The task/subtask system is the orchestrator.
 
-**Each agent is just a Claude Code session** with the right prompt, context, and MCP tools. No new runtime infrastructure needed. What needs to be built: a DB table, a plan format, two capability prompts, a handful of MCP tools, an approval UI, and an entry point form.
+**Each agent is just a Claude Code session** with the right prompt and existing tools. No new infrastructure needed — no new DB tables, no new MCP tools, no new TypeScript types.
+
+What needs to be built: **two prompts + a UI form**. Everything else already exists.
 
 The plugin system is well-designed but entirely non-functional and not on the critical path. Fix it in parallel.
