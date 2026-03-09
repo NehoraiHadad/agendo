@@ -1,449 +1,370 @@
 # Repo Integration Analysis
 
-> Analysis of how to build an agent-driven repo integration system for Agendo.
-> Author: Claude | Date: 2026-03-09 | Status: **Revised v2 — multi-agent pipeline**
+> Author: Claude | Date: 2026-03-09 | Status: **v3 — evaluating actual implementation**
 
 ---
 
-## Vision (final)
+## What Was Built
 
-The goal is not to "register" external repos — it's to **embed them as native features inside Agendo**.
+The user implemented a simpler, more opinionated approach than the planning doc recommended. Here's what exists:
 
-A user gives the system a repo URL, docs, README, or anything that explains the project. A **multi-agent pipeline** handles the rest: one agent plans, optionally others validate, one implements. The result is a first-class capability inside Agendo — same UI, same patterns, no separate server.
+### Files
 
-**Each agent is a Claude Code session embedded in the application** — exactly like a conversation with Claude Code, but triggered from Agendo with the right context, tools, and permissions. The user watches each step in real-time via the session viewer and approves before the pipeline advances.
+```
+src/app/(dashboard)/integrations/page.tsx           Server component — fetches + renders
+src/app/(dashboard)/integrations/integrations-client.tsx  UI — list + add + remove buttons
+src/components/integrations/connect-repo-dialog.tsx  Dialog form — single Textarea input
+src/app/api/integrations/route.ts                   GET (list) + POST (create)
+src/app/api/integrations/[name]/route.ts            DELETE (spawn remover agent)
+scripts/seed-repo-integration-capabilities.ts       Seeds 3 capability prompts into DB
+src/lib/services/project-service.ts                 +getOrCreateSystemProject()
+```
 
-**The pipeline structure is not hardcoded.** The planning agent reads the repo and decides what steps are needed. A simple skill repo might need only plan + implement. A complex MCP server might need plan + security review + build validation + implement. The planner creates the subtasks; Agendo orchestrates them.
+### Architecture
+
+```
+User pastes source (URL / npm package / text description)
+  │
+  ▼
+POST /api/integrations
+  → creates task in "Agendo System" project (global, not per-project)
+  → finds repo-planner capability (any enabled agent)
+  → spawns planner session in plan mode
+  → redirects user to session viewer
+  │
+  ▼
+Planner agent (plan mode — read-only)
+  → reads task (gets source + integrationName)
+  → fetches README/package.json/llms.txt from source URL
+  → classifies: capability | ui_feature | library | unrecognized
+  → creates subtask "Implement: <name>"
+  → calls save_plan with full instructions for implementer
+  → calls start_agent_session → auto-spawns implementer
+  → marks own task done
+  │
+  ▼
+Implementer agent (bypassPermissions)
+  → clones/obtains source
+  → writes files / registers capabilities / configures MCP servers
+  → calls save_snapshot (intended as audit trail)
+  → commits with standard format
+  → marks task done
+```
+
+**Delete flow:**
+
+```
+User clicks Remove → DELETE /api/integrations/[name]
+  → finds original task by integrationName in inputContext
+  → creates "Remove integration: <name>" task
+  → spawns repo-remover agent (bypassPermissions)
+  → redirects to session viewer to watch it work
+```
+
+### Key Design Decisions vs. Planning Doc
+
+| Aspect              | Planning doc                                 | Actual implementation                            |
+| ------------------- | -------------------------------------------- | ------------------------------------------------ |
+| Source input        | Structured form (URL + branch + docsUrl)     | Free-form textarea (any text)                    |
+| Scope               | Per-project                                  | Global (system project)                          |
+| Approval checkpoint | Required between plan and implement          | **None — planner auto-spawns implementer**       |
+| Audit trail         | `src/integrations/<name>/manifest.json` file | `save_snapshot` MCP tool (DB)                    |
+| Removal             | Static (planned but not built)               | Agent-driven (repo-remover)                      |
+| Integration types   | capability / mcp_server / ui_feature / mixed | capability / ui_feature / library / unrecognized |
+| Capability seeding  | Manual DB insert / Settings UI               | `pnpm seed:integrations` script (idempotent)     |
 
 ---
 
-## 1. Current State Summary
+## What's Good
 
-### 1.1 repo-sync service (`src/lib/services/repo-sync/`)
+**1. Free-form source input is the right UX.** A single textarea that accepts anything — URL, package name, or description — is much lower friction than a structured form. The agent is intelligent enough to figure out what "add a linear integration" means without a URL. This correctly puts the intelligence in the agent, not in the UI.
 
-A standalone file-sync library. Clones an upstream GitHub repo (shallow) and copies specific paths to local destinations, tracking state in a JSON manifest.
+**2. Global integrations page is architecturally correct.** Integrations extend Agendo itself. They don't belong to a specific project. Removing the per-project scope simplifies the mental model. The "Agendo System" project as container is a clean solution.
 
-**What works:**
+**3. Agent-driven removal is elegant.** Instead of trying to statically track every change an agent might make, the remover agent reads the snapshot and git history, warns about post-integration modifications, and removes surgically. This handles cases that a static manifest can't — e.g., when the integration committed changes across multiple files or when subsequent work touched the same files.
 
-- `syncTarget()` — clone, compare commit SHA, copy changed files, update manifest
-- `syncAll()` — batch multiple targets
+**4. The planner auto-spawns the implementer.** This makes the system truly autonomous. The user watches the planner work, the planner produces a plan AND starts execution. No button-clicking in between. Fully hands-off.
 
-**What doesn't:**
+**5. Seeding is properly integrated.** `pnpm db:seed` now includes `seed-repo-integration-capabilities.ts`. The seed is idempotent (upsert on conflict). This means the system bootstraps itself correctly on first install.
 
-- Targets hardcoded in `targets.ts` — one entry: `token-optimizer → ~/.claude/skills/token-optimizer`
-- No API, no UI, no DB — adding a repo requires a code change
-- Never called from any startup path or scheduled job — dead library
-
-### 1.2 Plugin architecture (`src/lib/plugins/`)
-
-A complete, well-designed extension framework that is **entirely non-functional in production**.
-
-**What was built:** full types, registry, loader, context factory, DB-backed store, builtin repo-sync plugin, API routes, settings UI.
-
-**What doesn't work (5 critical gaps):**
-
-| Gap                               | Evidence                                                                                                   |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **DB tables missing**             | `plugins` and `plugin_store` not in DB. Migration `0005_wide_payback.sql` exists but never applied.        |
-| **`loadPlugins()` never called**  | Defined in `plugin-loader.ts:23`. Zero call sites — not in worker, not in Next.js startup.                 |
-| **`dispatchHook()` never called** | Only defined in `plugin-registry.ts:146`. Core events never piped to it.                                   |
-| **MCP tool bridge missing**       | MCP server is a separate esbuild bundle. `getAllMcpTools()` never called. Plugin tools never reach agents. |
-| **pg-boss bridge is a stub**      | `plugin-context.ts:48`: `return 'not-implemented'`. Jobs never flow to pg-boss.                            |
-
-### 1.3 What actually works
-
-- **`mcp_servers` table + `resolveSessionMcpServers()`** — DB-backed registry of external MCP servers, injected per session. Right primitive for MCP server repos.
-- **`start_agent_session` MCP tool** — agents can spawn subagents. The mechanism for triggering the integrator.
-- **`agentCapabilities` table** — prompt templates + interaction modes. A "repo integrator" is a natural capability.
-- **Session viewer + SSE streaming** — user can watch the integration agent work in real time.
+**6. MCP server type was deliberately removed.** The planning doc had `mcp_server` as a type. The implementation removed it and has the planner handle this under `library`. This is pragmatic — the capability/ui_feature/library distinction covers the real cases. An MCP server repo would be a `library` with specific registration instructions in the plan.
 
 ---
 
-## 2. The Integration Agent — What It Actually Is
+## Issues Found
 
-The "repo integrator" is **not a new kind of system**. It's a Claude Code session with:
+### Issue 1 — Critical: `save_snapshot` schema mismatch
 
-- The external repo cloned into a temp directory (or the URL passed as context)
-- Agendo's own codebase as the working directory
-- `bypassPermissions` mode so it can write files, run typecheck, run tests
-- A capability prompt that guides it through the 5-step pipeline below
-- The user watching via the session viewer in real time
-
-This means most of the infrastructure already exists. What's missing is the **prompt design**, the **pipeline structure**, and the **generated code tracking**.
-
----
-
-## 3. The Multi-Agent Pipeline
-
-The pipeline has a fixed entry and exit, but a variable middle. The planning agent decides the middle.
-
-```
-ENTRY: user submits repo URL / docs / README
-  │
-  ▼
-┌─────────────────────────────────────────────────┐
-│  AGENT 1: PLANNER  (plan mode, bypassPermissions) │
-│                                                   │
-│  • Clones repo, reads structure + docs            │
-│  • Understands: what is this? what does it do?    │
-│  • Decides: what type of integration is needed?   │
-│  • Writes a structured plan (save_plan MCP tool)  │
-│  • Creates subtasks for each remaining step       │
-│    via create_subtask MCP tool                    │
-│  • Stops — does NOT write any code                │
-└─────────────────────────────────────────────────┘
-  │
-  ▼
-[CHECKPOINT: user sees the plan + subtask list, approves / edits]
-  │
-  ▼
-┌─────────────────────────────────────────────────┐
-│  AGENT 2..N: VALIDATION AGENTS  (optional)       │
-│  Created by the planner if needed, e.g.:         │
-│  • Security review agent                         │
-│  • Build validation agent (npm install + build)  │
-│  • Compatibility check agent                     │
-│  Each produces a structured verdict              │
-└─────────────────────────────────────────────────┘
-  │
-  ▼
-[CHECKPOINT: user sees validation results if any concerns]
-  │
-  ▼
-┌─────────────────────────────────────────────────┐
-│  AGENT N+1: IMPLEMENTER  (bypassPermissions)     │
-│                                                   │
-│  • Receives: plan + validation results as context │
-│  • Writes code following Agendo's patterns        │
-│  • Runs: pnpm typecheck → pnpm lint → pnpm test  │
-│  • Fixes failures (max 3 iterations)             │
-│  • Commits with standard format                  │
-│  • Calls register_integration MCP tools          │
-│  • Marks integration active                      │
-└─────────────────────────────────────────────────┘
-  │
-  ▼
-EXIT: new capability live in Agendo
-```
-
-### Why separate planner and implementer?
-
-- **The planner doesn't know what the repo contains upfront.** Separating analysis from execution lets the plan be reviewed before anything is written to disk.
-- **The implementer gets a clean, structured brief.** It doesn't need to re-analyze the repo — it gets the plan as context and focuses on code quality.
-- **Validation steps are repo-specific.** A Claude skill needs no build step. An MCP server needs `npm install + build`. A full UI feature might need a design review. The planner decides; the pipeline adapts.
-- **Each step is auditable.** The user can see what each agent did, read its session log, and understand the chain of decisions.
-
-### How the planner creates the pipeline
-
-The planning agent uses existing Agendo MCP tools:
-
-```
-create_subtask("Validate: security review", assignee=claude)
-create_subtask("Validate: npm build", assignee=claude)
-create_subtask("Implement integration", assignee=claude)
-save_plan({ type, filesToCreate, filesToModify, dbChanges, ... })
-```
-
-The orchestration layer (Agendo) runs subtasks in order after each checkpoint passes. No custom orchestration code needed — this is just the existing task/subtask system.
-
----
-
-## 4. Marking Generated Code
-
-All code generated by the integration agent must be identifiable. Three layers:
-
-**Layer 1 — Git commits**
-Every commit from an integration run uses a consistent format:
-
-```
-feat(integration): add <name> from <repo>
-
-Generated by Agendo repo integrator.
-Source: https://github.com/org/repo
-Integration ID: <uuid>
-```
-
-**Layer 2 — Integration manifest file**
-Each integration creates a manifest at `src/integrations/<name>/manifest.json`:
+The implementer prompt tells the agent to call `save_snapshot` with this shape:
 
 ```json
 {
-  "integrationId": "<uuid>",
-  "repoUrl": "https://github.com/...",
-  "integratedAt": "2026-03-09T...",
-  "agentSessionId": "<uuid>",
-  "filesCreated": ["src/components/...", "src/app/api/..."],
-  "filesModified": ["src/components/settings/..."],
-  "dbRecords": [{ "table": "agent_capabilities", "id": "..." }]
+  "integrationName": "<repo-name>",
+  "commits": ["abc123"],
+  "filesCreated": ["src/integrations/..."],
+  "dbRecords": [{ "type": "capability", "id": "<uuid>", "agentId": "<uuid>" }]
 }
 ```
 
-This is the source of truth for "what did the agent create." Enables clean removal.
-
-**Layer 3 — `repo_integrations` DB table**
-Tracks status, links to task, links to session log, links to manifest. Makes integrations visible in the UI.
-
-**What NOT to do:** inline code comments like `// generated by agent`. Fragile, noisy, removed by refactors.
-
----
-
-## 5. What the Agent Needs as Context
-
-### The infrastructure is fixed — but the agent still reads and verifies
-
-Agendo is not a SaaS product that changes constantly. Once deployed, the codebase structure is **stable**. But this doesn't mean the prompt replaces reading the code. The agent must **actually read and verify** before making decisions.
-
-The balance:
-
-- **Prompt gives direction** — where to look, what to read first, what output shape is expected
-- **Agent reads and verifies** — reads actual files, confirms patterns before using them, doesn't assume
-
-A static "trust this map" description in the prompt can be wrong or outdated. An agent that reads the actual file cannot be.
-
-### What the planner prompt must include
-
-**1. Where to start** (orientation, not a substitute for reading):
-
-- "Read `CLAUDE.md` first — it contains the patterns and constraints"
-- "Read `planning/03-data-model.md` — it's the authoritative data model"
-- "Before deciding what to create, read one existing example of the same type"
-
-**2. The plan format** — the JSON schema the planner must output. This is the one truly static piece. The agent knows the shape its output must take before it starts.
-
-**3. Stopping rules** — explicit:
-
-- Do not write any code
-- Do not modify any files
-- Stop after `save_plan` is called
-
-**4. The repo input** — README, package.json, top-level structure passed as the task's initial context.
-
-### What the implementer prompt must include
-
-**1. The approved plan JSON** — the brief.
-
-**2. Read-before-write rule** — before writing each file, read an existing file of the same type first:
-
-- New API route → read `src/app/api/tasks/route.ts` first
-- New service → read `src/lib/services/task-service.ts` first
-- New page → read an existing `(app)/` page first
-
-**3. Validate-as-you-go** — run `pnpm typecheck && pnpm lint` after each file, fix before moving to the next. Not all at the end.
-
-**4. Commit format** — how to tag the integration commit.
-
----
-
-## 6. Use Case Walkthroughs (revised)
-
-### Case 1: Claude Skill Repo (`token-optimizer`)
-
-**What the agent finds:** `skills/token-optimizer/` directory with `CLAUDE.md` inside.
-
-**Integration spec output:**
+But the actual `save_snapshot` MCP tool (`src/lib/mcp/tools/snapshot-tools.ts:93`) takes:
 
 ```json
 {
-  "type": "capability",
-  "filesToCreate": [],
-  "dbChanges": [
-    {
-      "table": "agent_capabilities",
-      "action": "insert",
-      "data": {
-        "key": "token-optimize",
-        "label": "Token Optimizer",
-        "source": "skill",
-        "interactionMode": "prompt"
-      }
-    }
-  ],
-  "extraSteps": ["sync skill files to ~/.claude/skills/token-optimizer/"]
+  "name": "...",
+  "summary": "...",
+  "filesExplored": ["..."],
+  "findings": ["..."],
+  "hypotheses": ["..."],
+  "nextSteps": ["..."]
 }
 ```
 
-**Result:** New capability in Agendo. User opens a session with Claude, selects "Token Optimizer", it works — because the skill files are synced and Claude auto-discovers them.
+These don't overlap at all. The agent will either call the tool with wrong fields (which will be ignored or cause a Zod validation error), or it will adapt to the actual tool signature and lose the structured audit data entirely.
 
-**Code generated:** minimal — just DB record + sync trigger. No new React components needed.
+**The remover depends on this data.** The remover prompt says:
 
----
+> Look at the task snapshots for the shape: `{ integrationName, commits[], filesCreated[], dbRecords[] }`
 
-### Case 2: MCP Server Repo
+But those fields don't exist in any snapshot. The remover will find a snapshot with `keyFindings.findings[]` (text strings), not `filesCreated[]` (file paths). The structured removal flow will fail — the agent will fall back to the "inspect git log" path, which works but loses precision.
 
-**What the agent finds:** Node.js project with `@modelcontextprotocol/sdk` in `package.json`.
+**Fix options:**
 
-**Integration spec output:**
+A. **Fit the data into the existing snapshot schema** — store `filesCreated` in `filesExplored`, store commit SHAs in `findings`, store `dbRecords` as JSON strings in `findings`. Update both prompts to use this encoding. The snapshot tool works today without any schema change.
 
-```json
-{
-  "type": "mcp_server",
-  "extraSteps": ["npm install", "npm run build"],
-  "filesToCreate": ["src/integrations/my-mcp/manifest.json"],
-  "dbChanges": [
-    {
-      "table": "mcp_servers",
-      "action": "insert",
-      "data": {
-        "name": "my-mcp",
-        "command": "node",
-        "args": ["/data/agendo/repos/my-mcp/dist/index.js"]
-      }
-    }
-  ]
-}
+B. **Add custom fields to `save_snapshot`** — add `integrationData?: Record<string, unknown>` to the snapshot schema as a passthrough JSONB field. Clean but requires changing the MCP server, the snapshot API, and the DB schema.
+
+C. **Use `add_progress_note` as the audit trail instead** — the implementer calls `add_progress_note` with a JSON payload after each action. The remover reads progress notes from `get_task`. Notes are text, not structured — less reliable for querying but zero schema changes needed.
+
+**Recommendation: Option A.** Use the existing snapshot fields with a clear encoding convention. Update the prompts to match. No code changes needed.
+
+Prompt fix for implementer:
+
+```
+Call save_snapshot with:
+  name: "Integration: <integrationName>"
+  summary: "Integration of <source> completed. Type: <type>. Commit: <SHA>."
+  filesExplored: <list of filesCreated — paths of files you created>
+  findings: <commit SHAs, one per line: "commit:<SHA>">
+  nextSteps: <DB record JSON strings, one per line: '{"type":"capability","id":"<uuid>","agentId":"<uuid>"}'>
 ```
 
-**Result:** MCP server appears in Agendo's MCP server list. Sessions for configured projects automatically get this server's tools.
+Prompt fix for remover:
 
-**Code generated:** manifest file only. DB record created via service.
-
----
-
-### Case 3: Full UI Feature Repo
-
-**What the agent finds:** A standalone Next.js tool or utility with its own UI.
-
-**Integration spec output:**
-
-```json
-{
-  "type": "ui_feature",
-  "filesToCreate": [
-    "src/app/(app)/tools/my-tool/page.tsx",
-    "src/app/api/tools/my-tool/route.ts",
-    "src/components/tools/my-tool.tsx"
-  ],
-  "filesToModify": ["src/components/nav/sidebar.tsx"],
-  "dbChanges": []
-}
+```
+Read snapshot.keyFindings:
+  filesExplored = files that were created (to delete)
+  findings = lines starting with "commit:" contain the commit SHAs
+  nextSteps = JSON strings of DB records to delete
 ```
 
-**Result:** New page in Agendo's sidebar. User navigates to it like any other Agendo page.
-
-**Code generated:** full React components + API routes, following Agendo's App Router patterns.
+Ugly encoding, but works with zero infrastructure changes. If it gets messy, do Option B properly.
 
 ---
 
-## 7. Gap Analysis (updated)
+### Issue 2 — Moderate: No human review before code is written
 
-1. **No integration pipeline exists.** The 5-step flow doesn't exist anywhere. The agent, the spec format, the approval UI, the validation loop — all missing.
+The planner auto-spawns the implementer immediately after producing the plan. For a `capability` type (just DB record + skill files), this is completely safe. For a `ui_feature` type (new React pages, modified sidebar navigation), the implementer writes code and commits it without any human seeing the plan first.
 
-2. **`repo_integrations` table missing.** No DB table to track what was integrated, when, by which session, what files were created.
+This is a **deliberate design choice** — the user explicitly chose autonomy over oversight. It's the right default for the use case (this is an agent platform, not a consumer product). But it has consequences:
 
-3. **No "integration spec" format defined.** The structured JSON that drives the Generate step doesn't exist. This is the core contract between Analyze and Generate.
+- If the planner misclassifies the type, the implementer will build the wrong thing
+- If the planner's instructions are wrong, broken code gets committed
+- The user watches a planner session end, then a new implementer session appears — but they may not be watching
 
-4. **No capability prompt for the integrator.** The most important artifact — what the agent is told to do and how — doesn't exist.
+**Not a bug, but a risk.** Worth documenting. The mitigation is that the user is redirected to the planner's session viewer and can see the plan as it's being written. If the plan looks wrong, they could cancel the implementer session before it does anything destructive. But there's no prompt to do so.
 
-5. **No approval UI.** The checkpoint between Analyze and Generate has no UI in Agendo. User needs to see the spec and approve/reject.
-
-6. **Repo-sync service not callable via API.** The sync engine works but has no HTTP endpoint. The agent can't trigger it — it would have to call it directly via shell, which breaks the MCP tool model.
-
-7. **Plugin tables not migrated.** `plugins` and `plugin_store` missing from DB. Not blocking for the integration agent, but needed if we want scheduled re-sync jobs.
-
-8. **Plugin system dead.** `loadPlugins()` never called. Not blocking for MVP, but hooks (`task:created`, etc.) would be useful for triggering re-syncs.
-
-9. **No removal flow.** The manifest enables clean removal, but no agent or UI exists to perform it. An integration can be added but not removed cleanly.
-
-10. **No re-sync trigger.** When the upstream repo updates, there's no scheduled job or webhook to re-run the integration.
+If oversight is desired, the simplest fix is: **the planner doesn't call `start_agent_session`**. Instead, it ends with the plan saved and the "Implement" subtask created. The user sees the plan in the Plans UI and clicks "Execute" when ready. This is exactly what the planning doc recommended.
 
 ---
 
-## 8. Architecture Recommendation
+### Issue 3 — Minor: `library` type is underspecified
 
-**The multi-agent pipeline maps directly onto Agendo's existing task/subtask system.** No new orchestration infrastructure is needed. The planner creates subtasks; Agendo runs them in order.
+The planner classifies repos as `capability | ui_feature | library | unrecognized`. The prompt says:
 
-**Build the pipeline, not a framework.** The planner agent is just a capability with a well-crafted prompt. The implementer is another capability. The MCP tools they use are the interface to Agendo's primitives. There is no "integration engine" to build — just prompts, a DB table, and a handful of MCP tools.
+> library — npm/pip package, SDK, CLI tool — adds new functionality to Agendo
 
-**The agent IS the intelligence.** Don't build pattern-matching heuristics. Let the planner read the repo and decide what the pipeline looks like. The plan format constrains its output to what Agendo can act on.
+But the plan format template says:
 
-**The plugin system is not on the critical path.** Fix it in parallel as Agendo's internal extension mechanism.
+> [For npm packages / other:] describe how to obtain — install globally, clone, download, etc.
 
-### What's genuinely new to build
+"Adds new functionality to Agendo" means what exactly? If someone pastes `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem`, is that `library`? What does the implementer do with it — install it as an npm package? Register it as an MCP server? Clone it locally?
 
-Almost nothing. The implementer runs in `bypassPermissions` mode — it can already:
+The planner prompt doesn't tell the agent to use `POST /api/mcp-servers` for MCP server repos. The `mcp_server` type from the planning doc was removed, but the actual integration path for MCP server repos wasn't replaced.
 
-- Write files, run shell commands, run `pnpm typecheck && pnpm lint`
-- Register a capability: `curl POST /api/agent-capabilities` (existing route)
-- Register an MCP server: `curl POST /api/mcp-servers` (existing route)
-- Store plan: `save_plan` MCP tool (already exists)
-- Track status: task status + `add_progress_note` (already exists)
-- Store repo URL: `task.inputContext` JSONB (already exists)
+**Fix:** Add explicit guidance to the planner prompt for MCP server repos:
 
-What's actually missing:
-
-| What                                  | Why                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| **Planner capability prompt**         | The most important artifact — determines plan quality                   |
-| **Implementer capability prompt**     | Receives plan, writes code, validates, registers                        |
-| **UI entry point** ("Connect a Repo") | Form that creates the task and spawns the planner session               |
-| **Manifest file convention**          | `src/integrations/<name>/manifest.json` — for tracking what was created |
-
-That's it. No new DB tables. No new MCP tools. No new TypeScript types. The plan format is just whatever the planner writes in `save_plan` — the implementer reads it as text.
+```
+### MCP server repos (detected by: @modelcontextprotocol/sdk in package.json)
+Classify as: library
+In the plan's "Register in Agendo" section, include:
+  npm install && npm run build (or equivalent)
+  curl POST http://localhost:4100/api/mcp-servers with command/args pointing to built binary
+```
 
 ---
 
-## 9. Proposed Next Steps (ordered)
+### Issue 4 — Minor: Capabilities seeded for ALL agents
 
-### Step 1 — Planner capability prompt
+`seed-repo-integration-capabilities.ts` creates `repo-planner`, `repo-implementer`, and `repo-remover` for **every active AI agent** (Claude, Codex, Gemini).
 
-Write the prompt template for the planner capability. Stored as a record in `agent_capabilities`. The agent:
+`POST /api/integrations` then does:
 
-- Reads `CLAUDE.md` + `planning/03-data-model.md`
-- Clones + reads the repo (checks for `llms.txt` first if present — LLM-friendly docs)
-- Reads one existing Agendo example matching the integration type
-- Calls `create_subtask` for any validation steps needed
-- Calls `save_plan` with the full integration plan as structured text
-- Stops — writes no code
+```typescript
+.where(and(eq(agentCapabilities.key, 'repo-planner'), eq(agentCapabilities.isEnabled, true), eq(agents.isActive, true)))
+.limit(1)
+```
 
-### Step 2 — Test planner manually with token-optimizer
+This means whichever agent happens to be returned first gets the planner. If Codex has the capability and is returned first, the planner will be a Codex session. Codex might handle the planner prompt differently than Claude — particularly `start_agent_session` which goes through Agendo's MCP tools.
 
-Open a Claude session on a task with the token-optimizer URL in `inputContext`. Run the planner prompt. Evaluate: is the plan useful? Is the integration type correct? Are the subtasks sensible? Iterate on the prompt until the output is good.
+The planner prompt was written for Claude's behavior (`WebFetch`, reading raw.githubusercontent.com URLs, etc.). Codex and Gemini behave differently.
 
-### Step 3 — Implementer capability prompt
+**Fix:** In `POST /api/integrations`, filter to Claude specifically:
 
-Write the prompt for the implementer. The agent:
+```typescript
+.innerJoin(agents, and(eq(agents.id, agentCapabilities.agentId), eq(agents.binaryName, 'claude')))
+```
 
-- Reads the approved plan from `plan_versions`
-- Reads one existing example per file type before writing (read-before-write)
-- Writes files, validates per-file (`pnpm typecheck && pnpm lint`)
-- Registers results via existing REST APIs (`curl POST /api/agent-capabilities` etc.)
-- Creates `src/integrations/<name>/manifest.json`
-- Commits with standard format
+Or: only seed the capabilities for Claude in the seed script (check `agent.binaryName === 'claude'` before inserting).
 
-### Step 4 — Test implementer manually
+---
 
-Run implementer on the token-optimizer plan. Watch it work in the session viewer. Fix prompt issues until the result is a working integration.
+## Gap Analysis
 
-### Step 5 — UI entry point ("Connect a Repo")
+1. **`save_snapshot` format mismatch** (critical) — implementer and remover prompts use fields that don't exist in the snapshot schema. Structured removal will fail.
 
-Simple form in Settings:
+2. **`library` type missing MCP server path** — no guidance for registering MCP server repos. They'll be classified as library with no clear implementation path.
 
-- Repo URL (required), branch (optional), docs URL (optional)
-- On submit: creates task with `inputContext: { repoUrl, branch, docsUrl }` → spawns planner session
-- User lands in session viewer
+3. **No capability for planner agent selection** — `POST /api/integrations` finds any agent with `repo-planner`. Should filter to Claude.
 
-### Step 6 — Approval UI
+4. **No error recovery in planner → implementer chain** — if `start_agent_session` fails (e.g., the planner capability is wrong), the planner session ends cleanly but no implementer starts. The user sees the planner end; nothing happens. No error is surfaced.
 
-After planner finishes, the task is `awaiting_input`. A UI component on the task detail shows the plan and lets the user approve (triggers implementer session) or reject.
+5. **The integrations list has no link to sessions** — `integrations-client.tsx` shows status (done/in_progress/todo) but no way to click into the session that performed the integration. The user can't see what the agent did or re-open the log. A "View session" link would complete the UX.
 
-### Step 7 — Fix plugin system (parallel track)
+6. **No re-run on failure** — if the implementer fails (typecheck errors, API call failed), the task is left in a partial state. There's no way to re-run the implementer with the same plan without manually spawning a new session.
 
-1. Apply migration 0005
-2. Call `loadPlugins()` in worker startup
-3. Wire `dispatchHook()` into task-service and session-process
-4. Build HTTP bridge for plugin MCP tools → MCP server
-5. Replace pg-boss stub with real enqueue
+7. **`getOrCreateSystemProject` uses `process.cwd()` as rootPath** — this is the Agendo app directory. Correct for integrations that modify Agendo itself. But if Agendo is deployed in a different working directory than expected, this could mismatch.
+
+8. **`DELETE /api/integrations/[name]` has no confirmation in the UI** — `integrations-client.tsx` uses `window.confirm()`. Fine for now, but confirm dialogs are blocked in some browser contexts and feel janky. A shadcn AlertDialog would be better.
+
+---
+
+## Use Case Walkthroughs
+
+### Case 1: Claude skill (token-optimizer)
+
+**Input:** `https://github.com/anthropics/token-optimizer` or just `token-optimizer skill`
+
+**Planner reads:** README, CLAUDE.md, skill prompt text.
+**Classifies:** `capability`
+**Plan says:** Register capability via API with the skill's prompt template.
+**Implementer:** Calls `POST /api/agents/<claude-id>/capabilities` with the prompt. Done — no files written, no build step.
+**Snapshot:** `filesExplored: []`, `findings: ["commit:<SHA>"]`, `nextSteps: ['{"type":"capability","id":"..."}']`
+**Removal:** DELETE capability via API. No files to remove.
+
+**Status:** Works well. Lowest risk. Fully covered by the current prompts (modulo the snapshot format fix).
+
+---
+
+### Case 2: MCP server repo
+
+**Input:** `https://github.com/modelcontextprotocol/servers`
+
+**Planner reads:** README, package.json (finds `@modelcontextprotocol/sdk`).
+**Classifies:** `library` (mcp_server type was removed)
+**Plan says:** ??? — the planner prompt doesn't tell the agent to use `POST /api/mcp-servers`.
+
+**This case is currently broken.** The planner will produce a generic "library" plan with vague instructions. The implementer won't know to call the MCP server registration endpoint.
+
+**Fix:** Add MCP server detection + registration path to the planner prompt (see Issue 3 above).
+
+---
+
+### Case 3: Natural language description
+
+**Input:** `add a linear integration with task sync`
+
+**Planner reads:** No URL to fetch. Uses knowledge + description.
+**Classifies:** Likely `ui_feature` (needs a React component + API route) or `unrecognized`.
+
+**If ui_feature:** Plan says create a new page, API route, and some Linear API calls. Implementer writes code.
+**If unrecognized:** Planner logs "Cannot integrate: no clear integration path" and stops.
+
+**Status:** This case tests the agent's judgment. For a well-known service like Linear, Claude should handle it correctly. For obscure tools, `unrecognized` is the safe fallback. The flow works — but the quality of the result depends entirely on the planner's knowledge.
+
+---
+
+## Architecture Assessment
+
+The implementation makes a correct core choice: **the agent IS the intelligence**. There's no pattern-matching infrastructure, no plugin registry, no type system. The planner reads the source and decides. This is the right approach.
+
+The simplifications from the planning doc are mostly good:
+
+- Free-form input > structured form ✓
+- Global scope > per-project ✓
+- Agent-driven removal > static manifest ✓
+- Seeded capabilities > manual DB setup ✓
+
+The one simplification that introduces risk is **removing the approval checkpoint**. The planning doc's checkpoint exists not for bureaucratic reasons — it's so the user can catch a misclassified or malformed plan before code is written. For a system that modifies its own codebase autonomously, this matters.
+
+However, the current implementation is internally consistent. If you accept "fully autonomous" as the design goal, the implementation achieves it cleanly.
+
+---
+
+## Proposed Next Steps (ordered)
+
+### Step 1 — Fix the snapshot schema mismatch (critical, ~30 min)
+
+Update the implementer prompt in `seed-repo-integration-capabilities.ts` to fit the actual `save_snapshot` schema. Update the remover prompt to read the right fields. Re-run `pnpm seed:integrations`.
+
+No code changes — just prompt engineering.
+
+### Step 2 — Add MCP server path to planner prompt (~30 min)
+
+Add detection rule and registration instructions for MCP server repos to the planner prompt:
+
+- Detect: `@modelcontextprotocol/sdk` in package.json
+- Register via: `POST /api/mcp-servers`
+- Build step: `npm install && npm run build`
+
+### Step 3 — Filter planner lookup to Claude agent (~15 min)
+
+In `src/app/api/integrations/route.ts`, add `eq(agents.binaryName, 'claude')` to the planner lookup query.
+
+### Step 4 — Add session link to integrations list (~30 min)
+
+In `integrations-client.tsx`, add a "View session" link on each integration row. This requires storing `sessionId` in the task's `inputContext` (or querying sessions by `taskId`). The task already has `id`, so query `GET /api/sessions?taskId=<id>` to find the session.
+
+### Step 5 — Manual test: planner on token-optimizer
+
+Run the actual planner. Submit `https://github.com/anthropics/claude-code-skills` (or any real skill repo). Watch it in the session viewer. Evaluate:
+
+- Is the type classification correct?
+- Does the plan make sense?
+- Does `start_agent_session` succeed from plan mode?
+- Does the implementer session start?
+- Does the snapshot get saved correctly (after Step 1 fix)?
+
+Iterate on the prompts until the end-to-end flow works.
+
+### Step 6 — (Optional) Add approval checkpoint
+
+If the fully-autonomous behavior is too risky in practice, add a checkpoint:
+
+1. Remove `start_agent_session` call from the planner prompt
+2. The planner saves the plan and creates the "Implement" subtask — then stops
+3. The Integrations page shows integrations with status "pending review"
+4. Add a "Run implementer" button next to each pending integration
+
+This doesn't require changing the API or DB schema — just the planner prompt and a button in the UI.
 
 ---
 
 ## Summary
 
-The vision: give Agendo a repo URL, a multi-agent pipeline handles it. A planner reads the repo and produces a structured integration plan + creates subtasks for the steps needed. The user approves. An implementer executes the plan, writes code following Agendo's patterns, validates with typecheck/lint/tests, and registers the result. The output is a native feature inside Agendo.
+The implementation is lean, correct in its core decisions, and immediately testable. The three-capability design (planner / implementer / remover) with a global integrations page is the right abstraction.
 
-**The pipeline structure is not hardcoded — the planner decides it.** Simple repos get plan + implement. Complex ones get plan + validation agents + implement. The task/subtask system is the orchestrator.
+**One critical bug to fix before testing:** the snapshot schema mismatch will break the removal flow. Fix the prompts first.
 
-**Each agent is just a Claude Code session** with the right prompt and existing tools. No new infrastructure needed — no new DB tables, no new MCP tools, no new TypeScript types.
+**One underspecified case:** MCP server repos have no clear path through the `library` type. Add explicit guidance to the planner prompt.
 
-What needs to be built: **two prompts + a UI form**. Everything else already exists.
-
-The plugin system is well-designed but entirely non-functional and not on the critical path. Fix it in parallel.
+Everything else can be discovered and fixed through actual use.
