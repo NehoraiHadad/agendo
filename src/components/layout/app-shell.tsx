@@ -27,7 +27,7 @@ function MobileNavTrigger({ onClick, stats }: { onClick: () => void; stats: Syst
     <button
       onClick={onClick}
       aria-label="Open navigation"
-      className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
+      className="flex h-11 w-11 flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
     >
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/50 animate-pulse" />
       {stats ? (

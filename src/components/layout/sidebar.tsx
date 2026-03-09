@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FileText,
   PanelTop,
+  Plug,
   Settings,
   Search,
 } from 'lucide-react';
@@ -68,6 +69,7 @@ const navItems = [
     badgeKey: 'activeSessions' as const,
   },
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
+  { href: '/integrations', label: 'Integrations', icon: Plug, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
   { href: '/settings', label: 'Settings', icon: Settings, badgeKey: null },
 ];

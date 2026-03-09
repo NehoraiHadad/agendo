@@ -266,7 +266,7 @@ function SessionCard({ session, selected, onSelect, onDeleteOne }: SessionCardPr
         {canDelete && (
           <button
             onClick={() => onDeleteOne(session)}
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground/40 hover:text-destructive hover:bg-white/[0.06] transition-colors"
+            className="shrink-0 rounded-md p-2.5 text-muted-foreground/40 hover:text-destructive hover:bg-white/[0.06] transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
             aria-label="Delete session"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -450,37 +450,39 @@ export function SessionTable({ taskId }: SessionTableProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Toolbar: filters + bulk actions */}
-      <div className="flex items-center gap-3 mb-2 flex-wrap">
-        <Select value={statusFilter} onValueChange={handleStatusChange}>
-          <SelectTrigger className="w-[160px] border-white/[0.08] bg-white/[0.04]">
-            <SelectValue placeholder="Filter by status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {ALL_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s.replace('_', ' ')}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 mb-2">
+        <div className="flex gap-2">
+          <Select value={statusFilter} onValueChange={handleStatusChange}>
+            <SelectTrigger className="flex-1 sm:w-[160px] border-white/[0.08] bg-white/[0.04]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {ALL_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s.replace('_', ' ')}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Select value={kindFilter} onValueChange={handleKindChange}>
-          <SelectTrigger className="w-[160px] border-white/[0.08] bg-white/[0.04]">
-            <SelectValue placeholder="Filter by kind" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All kinds</SelectItem>
-            <SelectItem value="conversation">Conversations</SelectItem>
-            <SelectItem value="execution">Executions</SelectItem>
-          </SelectContent>
-        </Select>
+          <Select value={kindFilter} onValueChange={handleKindChange}>
+            <SelectTrigger className="flex-1 sm:w-[160px] border-white/[0.08] bg-white/[0.04]">
+              <SelectValue placeholder="Filter by kind" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All kinds</SelectItem>
+              <SelectItem value="conversation">Conversations</SelectItem>
+              <SelectItem value="execution">Executions</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
         {isLoading && <span className="text-sm text-muted-foreground/60">Loading...</span>}
 
         {/* Bulk delete bar */}
         {selected.size > 0 && (
-          <div className="ml-auto flex items-center gap-2">
+          <div className="sm:ml-auto flex items-center gap-2">
             <span className="text-xs text-muted-foreground/70">{selected.size} selected</span>
             <Button
               variant="destructive"

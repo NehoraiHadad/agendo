@@ -278,7 +278,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
         <div className="flex items-center gap-2 border-b border-white/[0.05] overflow-x-auto px-4 py-2 sm:px-6 sm:flex-wrap">
           <button
             onClick={() => setProjectFilter([])}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition-colors min-h-[36px] ${
+            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition-colors min-h-[40px] sm:min-h-[36px] ${
               selectedProjectIds.length === 0
                 ? 'border-white/20 bg-white/10 text-foreground'
                 : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'
@@ -292,7 +292,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
               <button
                 key={project.id}
                 onClick={() => toggleProjectFilter(project.id)}
-                className={`shrink-0 flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                className={`shrink-0 flex min-h-[40px] sm:min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
                   isSelected
                     ? 'border-white/20 bg-white/10 text-foreground'
                     : 'border-white/[0.06] text-muted-foreground/60 hover:border-white/10 hover:text-muted-foreground'

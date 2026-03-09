@@ -284,7 +284,7 @@ export async function startPlanConversation(
 
   const session = await createAndEnqueueSession({
     projectId: plan.projectId,
-    kind: 'conversation',
+    kind: 'plan',
     agentId: opts.agentId,
     capabilityId: opts.capabilityId,
     initialPrompt: finalPrompt,

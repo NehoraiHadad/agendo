@@ -270,7 +270,7 @@ export const sessions = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
-    kind: text('kind', { enum: ['conversation', 'execution'] })
+    kind: text('kind', { enum: ['conversation', 'execution', 'plan'] })
       .notNull()
       .default('execution'),
     agentId: uuid('agent_id')

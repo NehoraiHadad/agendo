@@ -168,6 +168,27 @@ export interface PurgeProjectOptions {
   withTasks?: boolean;
 }
 
+/**
+ * Returns the built-in "Agendo System" project (rootPath = cwd).
+ * Creates it on first call — idempotent via the rootPath unique constraint.
+ */
+export async function getOrCreateSystemProject(): Promise<Project> {
+  const systemRoot = process.cwd();
+  await db
+    .insert(projects)
+    .values({
+      name: 'Agendo System',
+      description: 'System project for Agendo integrations and automation',
+      rootPath: systemRoot,
+      color: '#10b981',
+      icon: '⚙️',
+    })
+    .onConflictDoNothing();
+  const rows = await db.select().from(projects).where(eq(projects.rootPath, systemRoot)).limit(1);
+  if (!rows[0]) throw new Error('Failed to create or find system project');
+  return rows[0];
+}
+
 export async function purgeProject(id: string, options: PurgeProjectOptions = {}): Promise<void> {
   const [existing] = await db
     .select({ id: projects.id })

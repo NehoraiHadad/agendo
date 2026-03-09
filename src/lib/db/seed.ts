@@ -7,6 +7,7 @@ import {
   getExistingSlugs,
   getExistingBinaryPaths,
 } from '@/lib/services/agent-service';
+import { getOrCreateSystemProject } from '@/lib/services/project-service';
 
 const log = createLogger('seed');
 
@@ -52,6 +53,8 @@ async function seedAgents(): Promise<void> {
 async function seed(): Promise<void> {
   await seedWorkerConfig();
   await seedAgents();
+  const sys = await getOrCreateSystemProject();
+  log.info({ id: sys.id, rootPath: sys.rootPath }, 'System project ready');
 }
 
 seed()

@@ -206,7 +206,7 @@ export class ApprovalHandler {
       // the agent stays in plan mode. The plan file was captured above — save its
       // content to the DB so the editor auto-refreshes. No approval card is shown.
       // Task sessions in plan mode show the approval card so the user can decide.
-      if (this.session.permissionMode === 'plan' && !this.session.taskId) {
+      if (this.session.kind === 'plan') {
         savePlanFromSession(this.session).catch((err: unknown) => {
           log.warn({ err }, 'Failed to auto-save plan');
         });

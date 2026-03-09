@@ -6,6 +6,7 @@ import { formatDistanceToNow } from 'date-fns';
 import {
   ArrowRight,
   Circle,
+  FileText,
   MessageCircle,
   Play,
   Plus,
@@ -16,13 +17,14 @@ import {
   Camera,
   ListTodo,
   Server,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react';
 import { QuickLaunchDialog } from '@/components/sessions/quick-launch-dialog';
 import { SnapshotsTab } from '@/components/snapshots/snapshots-tab';
 import { ProjectMcpConfig } from '@/components/mcp/project-mcp-config';
 import { Button } from '@/components/ui/button';
-import type { Project, Task, Agent, McpServer, ProjectMcpServer } from '@/lib/types';
+import type { Project, Task, Agent, McpServer, ProjectMcpServer, Plan } from '@/lib/types';
 import type { SessionWithAgent } from '@/lib/services/session-service';
 import type { SessionStatus } from '@/lib/realtime/events';
 
@@ -47,7 +49,7 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   done: 'Done',
 };
 
-type TabId = 'conversations' | 'sessions' | 'tasks' | 'snapshots' | 'mcp';
+type TabId = 'conversations' | 'sessions' | 'tasks' | 'snapshots' | 'plans' | 'mcp';
 
 interface ProjectMcpOverride extends ProjectMcpServer {
   mcpServer: McpServer;
@@ -61,6 +63,7 @@ interface ProjectHubClientProps {
   agents: Agent[];
   allMcpServers: McpServer[];
   mcpOverrides: ProjectMcpOverride[];
+  plans: Plan[];
 }
 
 export function ProjectHubClient({
@@ -71,6 +74,7 @@ export function ProjectHubClient({
   agents,
   allMcpServers,
   mcpOverrides,
+  plans,
 }: ProjectHubClientProps) {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [defaultAgentId, setDefaultAgentId] = useState<string | undefined>();
@@ -98,16 +102,12 @@ export function ProjectHubClient({
   }
 
   const tabs: { id: TabId; label: string; count: number; icon: React.ElementType }[] = [
-    {
-      id: 'conversations',
-      label: 'Conversations',
-      count: freeChats.length,
-      icon: MessageCircle,
-    },
+    { id: 'conversations', label: 'Chats', count: freeChats.length, icon: MessageCircle },
     { id: 'sessions', label: 'Sessions', count: taskSessions.length, icon: Play },
     { id: 'tasks', label: 'Tasks', count: openTasks.length, icon: ListTodo },
+    { id: 'plans', label: 'Plans', count: plans.length, icon: FileText },
     { id: 'snapshots', label: 'Snapshots', count: 0, icon: Camera },
-    { id: 'mcp', label: 'MCP Servers', count: allMcpServers.length, icon: Server },
+    { id: 'mcp', label: 'MCP', count: allMcpServers.length, icon: Server },
   ];
 
   return (
@@ -132,8 +132,8 @@ export function ProjectHubClient({
       </div>
 
       {/* Agent launchers */}
-      <section>
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+      <section className="space-y-3">
+        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           New Conversation
         </h2>
         {agents.length === 0 ? (
@@ -145,7 +145,7 @@ export function ProjectHubClient({
                 key={agent.id}
                 type="button"
                 onClick={() => openLaunch(agent.id, 'conversation')}
-                className="flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border border-white/[0.08] bg-card hover:border-white/[0.2] hover:bg-card/80 transition-colors text-sm font-medium min-w-[100px]"
+                className="flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border border-white/[0.08] bg-card hover:border-white/[0.2] hover:bg-card/80 transition-colors text-sm font-medium min-w-[100px] min-h-[72px]"
               >
                 <span className="flex items-center justify-center size-7">
                   {getAgentIcon(agent)}
@@ -167,7 +167,7 @@ export function ProjectHubClient({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 min-h-[44px] ${
                   activeTab === tab.id
                     ? 'border-primary text-foreground'
                     : 'border-transparent text-muted-foreground hover:text-foreground hover:border-white/[0.1]'
@@ -197,6 +197,7 @@ export function ProjectHubClient({
       {activeTab === 'sessions' && <SessionsTab sessions={taskSessions} />}
       {activeTab === 'tasks' && <TasksTab tasks={openTasks} projectId={project.id} />}
       {activeTab === 'snapshots' && <SnapshotsTab projectId={project.id} />}
+      {activeTab === 'plans' && <PlansTab plans={plans} projectId={project.id} />}
       {activeTab === 'mcp' && (
         <ProjectMcpConfig
           projectId={project.id}
@@ -329,6 +330,70 @@ function SessionsTab({ sessions }: { sessions: SessionWithAgent[] }) {
               <span className={`text-xs shrink-0 ${cfg.color}`}>{cfg.label}</span>
               <ArrowRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />
             </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const PLAN_STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  draft: { label: 'Draft', className: 'bg-zinc-800 text-zinc-400' },
+  ready: { label: 'Ready', className: 'bg-blue-900/40 text-blue-400' },
+  executing: { label: 'Executing', className: 'bg-amber-900/40 text-amber-400' },
+  done: { label: 'Done', className: 'bg-emerald-900/40 text-emerald-400' },
+  archived: { label: 'Archived', className: 'bg-zinc-800 text-zinc-500' },
+};
+
+function PlansTab({ plans, projectId: _projectId }: { plans: Plan[]; projectId: string }) {
+  if (plans.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <FileText className="size-10 mx-auto text-muted-foreground/30 mb-3" />
+        <p className="text-sm text-muted-foreground">No plans yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <ul className="space-y-1">
+      {plans.map((plan) => {
+        const badge = PLAN_STATUS_BADGE[plan.status] ?? PLAN_STATUS_BADGE.draft;
+        return (
+          <li key={plan.id} className="group/row flex items-center gap-1">
+            <Link
+              href={`/plans/${plan.id}`}
+              className="flex items-center gap-3 flex-1 min-w-0 px-3 py-2.5 rounded-lg hover:bg-white/[0.04] transition-colors group"
+            >
+              <FileText className="size-4 shrink-0 text-muted-foreground/40" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{plan.title}</p>
+                <p className="text-xs text-muted-foreground/50 mt-0.5" suppressHydrationWarning>
+                  {formatDistanceToNow(plan.createdAt, { addSuffix: true })}
+                </p>
+              </div>
+              <span
+                className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${badge.className}`}
+              >
+                {badge.label}
+              </span>
+              <ArrowRight className="size-3.5 text-muted-foreground/30 group-hover:text-muted-foreground shrink-0 transition-colors" />
+            </Link>
+            {plan.status === 'done' && (
+              <button
+                type="button"
+                title="Remove integration"
+                onClick={() => {
+                  const name = plan.title.replace(/^Integrate[:\s]+/i, '').trim();
+                  void fetch(`/api/integrations/${encodeURIComponent(name)}`, {
+                    method: 'DELETE',
+                  });
+                }}
+                className="p-2 rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover/row:opacity-100 shrink-0"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            )}
           </li>
         );
       })}
