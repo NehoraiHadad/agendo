@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plug, Loader2 } from 'lucide-react';
 import {
@@ -15,6 +15,20 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch } from '@/lib/api-types';
+import { agentColorKey } from '@/lib/utils/agent-switch-colors';
+import { getTeamColor } from '@/lib/utils/team-colors';
+
+interface AgentOption {
+  id: string;
+  name: string;
+}
+
+interface AgentWithCapabilities {
+  id: string;
+  name: string;
+  isActive: boolean;
+  capabilities: Array<{ id: string; key: string; isEnabled: boolean }>;
+}
 
 interface ConnectRepoDialogProps {
   open: boolean;
@@ -26,11 +40,37 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   const [source, setSource] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    fetch('/api/agents?capabilities=true', { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentWithCapabilities[] }>) : null))
+      .then((body) => {
+        if (controller.signal.aborted || !body?.data) return;
+        const rows: AgentOption[] = [];
+        for (const agent of body.data) {
+          if (!agent.isActive) continue;
+          const hasCap = agent.capabilities.some((c) => c.key === 'repo-planner' && c.isEnabled);
+          if (hasCap) rows.push({ id: agent.id, name: agent.name });
+        }
+        setAgents(rows);
+        if (rows.length > 0) setSelectedAgentId(rows[0].id);
+      })
+      .catch(() => {
+        /* silently ignore fetch errors */
+      });
+    return () => controller.abort();
+  }, [open]);
 
   function handleOpenChange(next: boolean) {
     if (!next) {
       setSource('');
       setError('');
+      setAgents([]);
+      setSelectedAgentId('');
     }
     onOpenChange(next);
   }
@@ -41,9 +81,11 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
     setIsSubmitting(true);
     setError('');
     try {
+      const body: Record<string, string> = { source: source.trim() };
+      if (selectedAgentId) body.agentId = selectedAgentId;
       const result = await apiFetch<{ data: { sessionId: string } }>('/api/integrations', {
         method: 'POST',
-        body: JSON.stringify({ source: source.trim() }),
+        body: JSON.stringify(body),
       });
       onOpenChange(false);
       router.push('/sessions/' + result.data.sessionId);
@@ -77,6 +119,35 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
 
         <form onSubmit={(e) => void handleSubmit(e)}>
           <DialogBody className="flex flex-col gap-4">
+            {agents.length > 1 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Agent
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                  {agents.map((agent) => {
+                    const color = getTeamColor(agentColorKey(agent.name));
+                    const isSelected = agent.id === selectedAgentId;
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        onClick={() => setSelectedAgentId(agent.id)}
+                        className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          isSelected
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                            : 'border-white/[0.08] bg-white/[0.02] text-muted-foreground hover:border-white/[0.14] hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <span className={`size-1.5 rounded-full shrink-0 ${color.pulse}`} />
+                        {agent.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label
                 htmlFor="int-source"

@@ -14,6 +14,8 @@ const postSchema = z.object({
   // Free-form: URL, package name, or natural language description
   source: z.string().min(3).max(2000),
   title: z.string().min(1).max(500).optional(),
+  // Optional: pin to a specific agent; falls back to first available repo-planner
+  agentId: z.string().uuid().optional(),
 });
 
 /**
@@ -73,7 +75,7 @@ export const GET = withErrorBoundary(async () => {
  */
 export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = await req.json();
-  const { source, title } = postSchema.parse(body);
+  const { source, title, agentId: requestedAgentId } = postSchema.parse(body);
 
   const integrationName = deriveIntegrationName(source);
   const systemProject = await getOrCreateSystemProject();
@@ -87,15 +89,19 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
         eq(agentCapabilities.key, 'repo-planner'),
         eq(agentCapabilities.isEnabled, true),
         eq(agents.isActive, true),
+        ...(requestedAgentId ? [eq(agents.id, requestedAgentId)] : []),
       ),
     )
     .limit(1);
 
   if (plannerRows.length === 0) {
-    throw new NotFoundError('Capability', 'repo-planner');
+    throw new NotFoundError(
+      'Capability',
+      requestedAgentId ? `repo-planner for agent ${requestedAgentId}` : 'repo-planner',
+    );
   }
 
-  const { agentId, capabilityId } = plannerRows[0];
+  const { agentId, capabilityId } = plannerRows[0] as { agentId: string; capabilityId: string };
 
   const task = await createTask({
     title: title ?? `Integrate: ${integrationName}`,
