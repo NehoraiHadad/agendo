@@ -132,7 +132,11 @@ curl -s -X POST http://localhost:4100/api/mcp-servers \\
 mkdir -p /data/agendo/repos
 git clone --depth=1 <repoUrl> /data/agendo/repos/<integrationName>
 cd /data/agendo/repos/<integrationName>
-npm install && npm run build   # or equivalent from README
+# Detect package manager from lockfile and install+build accordingly:
+# - pnpm-lock.yaml → pnpm install && pnpm run build
+# - yarn.lock → yarn install && yarn build
+# - bun.lockb → bun install && bun run build
+# - package-lock.json or none → npm install && npm run build
 
 # 2. Register with Agendo
 curl -s -X POST http://localhost:4100/api/mcp-servers \\
@@ -227,10 +231,10 @@ You can get the parent task's current description first with:
 4. Read reference file before writing each new file
 5. pnpm typecheck after each file → fix → max 3 tries
 6. pnpm typecheck && pnpm lint (final)
-7. git commit with format from plan
-8. update_task on PARENT task with implementation record (see above)
-9. add_progress_note("Integration complete: <type> registered successfully. Commit: <SHA>")
-10. update_task(status: "done") on own task`;
+7. If there are new/modified files in git: git commit with format from plan
+8. **MANDATORY — even if there are no code changes**: update_task on PARENT task with implementation record (see above). This is how the remover agent knows what to clean up. Without it, removal will fail. Include all dbRecords (MCP server IDs, capability IDs, etc.) and cloned repo paths.
+9. add_progress_note("Integration complete: <type> registered successfully.")
+10. update_task(status: "in_progress") then update_task(status: "done") on own task — MUST go through in_progress first`;
 
 const REPO_REMOVER_PROMPT = `You are the Agendo Repo Integration Remover.
 Your job: cleanly remove a previously installed repo integration.
@@ -246,8 +250,12 @@ Call get_task(originalTaskId) to read the original task.
 Look in task.description for a section starting with "## Implementation Record" followed by a JSON block.
 Parse the JSON to get: integrationName, commits[], filesCreated[], dbRecords[].
 
-If no implementation record in description: inspect git log for commits matching
-  "feat(integration): add <integrationName>"
+If no implementation record in description, use these fallbacks IN ORDER:
+1. Search MCP servers: curl -s http://localhost:4100/api/mcp-servers | jq '.[] | select(.name=="<integrationName>")'
+2. Search capabilities: for each agent, curl -s "http://localhost:4100/api/agents/<id>/capabilities" | jq '.data[] | select(.key | contains("<integrationName>"))'
+3. Search git log: git log --oneline --grep="feat(integration): add <integrationName>"
+4. Search cloned repos: ls /data/agendo/repos/<integrationName>
+Build the dbRecords, filesCreated, and clonedRepo lists from whatever you find.
 
 ## Step 3: Check for changes since integration
 
@@ -293,15 +301,22 @@ curl -s http://localhost:4100/api/agents | jq '.data[].id'
 curl -s "http://localhost:4100/api/agents/<agentId>/capabilities" | jq '.data[]|select(.key=="<key>")|.id'
 \`\`\`
 
-## Step 7: Commit and report
+## Step 7: Remove cloned repo
+If a clonedRepo path exists (from Implementation Record or /data/agendo/repos/<integrationName>):
+\`\`\`bash
+rm -rf /data/agendo/repos/<integrationName>
+\`\`\`
+
+## Step 8: Commit and report
+If there are git changes (deleted files etc.):
 \`\`\`bash
 cd /home/ubuntu/projects/agendo
 git add -A
 git commit -m "feat(integration): remove <integrationName>"
 \`\`\`
 
-add_progress_note("Removed integration: <integrationName>. Files: N removed. DB records: N deleted. Commit: <SHA>.")
-update_task(status: "done")`;
+add_progress_note("Removed integration: <integrationName>. Files: N removed. DB records: N deleted.")
+update_task(status: "in_progress") then update_task(status: "done")`;
 
 interface CapabilitySeed {
   key: string;
