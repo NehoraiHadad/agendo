@@ -189,15 +189,63 @@ Tracks status, links to task, links to session log, links to manifest. Makes int
 
 ## 5. What the Agent Needs as Context
 
-For the agent to write code that fits Agendo, it needs:
+### The infrastructure is fixed
 
-1. **`CLAUDE.md`** — already injected automatically into every Claude session
-2. **Relevant example files** — if creating a new capability: existing capability + API route + service. Injected into the prompt as reference.
-3. **The integration spec** (from step 1) — structured, JSON
-4. **The repo content** — README, package.json, key source files. Cloned to temp dir.
-5. **A clear prompt** — "You are integrating X into Agendo. Follow the patterns in the example files. Use the spec. Tag your commits."
+Agendo is not a SaaS product that changes constantly. Once deployed at a user's site, the codebase structure is **stable**. This means the planner prompt doesn't need to discover where things go at runtime — the structure can be **baked into the prompt itself**.
 
-The prompt template is the **most important artifact to get right**. It determines quality and reliability.
+This makes the planner:
+
+- **Faster** — no need to explore Agendo's directory tree before planning
+- **More reliable** — it works from known facts, not inference
+- **Consistent** — every integration follows the same structural map
+
+### What the planner prompt must include (static, baked in)
+
+**1. Agendo's directory map** — where each type of file goes:
+
+```
+src/app/(app)/          → Next.js pages (App Router)
+src/app/api/            → API routes
+src/components/         → React components
+src/lib/services/       → Service layer (DB queries)
+src/lib/mcp/tools/      → MCP server tools
+src/lib/db/schema.ts    → Single source of truth for DB schema
+planning/03-data-model.md → Authoritative data model
+```
+
+**2. Integration type → file map** — concrete examples per type:
+
+- `capability` → what files to create, what DB record to insert, which existing capability to follow as pattern
+- `mcp_server` → what DB record to insert, how build output is referenced
+- `ui_feature` → which page template to follow, where to add nav entry
+
+**3. Key constraints** (from CLAUDE.md, condensed):
+
+- TypeScript strict, no `any`
+- Named exports only
+- `params` is async in Next.js 16
+- `withErrorBoundary` pattern for API routes
+- esbuild for worker (not tsc)
+
+**4. The repo content** — README, package.json, top-level structure. Cloned to temp dir or passed as text.
+
+**5. The plan format** — the JSON schema the planner must output.
+
+### What NOT to put in the prompt
+
+- Full file contents of Agendo (too large, not needed)
+- Dynamic codebase exploration instructions ("first run `ls src/`")
+- Implementation details — those go in the implementer prompt
+
+### The implementer prompt
+
+Receives:
+
+- The approved plan JSON
+- 2–3 concrete example files matching the integration type (fetched at runtime based on plan type)
+- The repo content
+
+Does not receive the full Agendo codebase. Fetches only what it needs.
 
 ---
 
@@ -418,13 +466,26 @@ Body: { repoUrl, branch, src, dest }
 
 Lets the implementer trigger file sync (for skill repos) without direct FS access.
 
-### Step 7 — Approval UI
+### Step 7 — UI entry point ("Connect a Repo")
 
-Shows the plan + subtask list after the planner finishes. User can approve, reject, or edit before implementation starts. Could be a task detail panel or a dedicated integration review page.
+Form in Settings or Projects:
 
-### Step 8 — UI entry point ("Connect a Repo")
+- Repo URL (required)
+- Branch (optional, default: main)
+- Docs URL (optional — extra context for the planner)
 
-Form in Settings or Projects: repo URL + optional branch + optional docs URL. On submit: creates parent task, spawns planner session.
+On submit: creates parent task → spawns planner session → user lands in session viewer watching the planner work.
+
+### Step 8 — Approval UI (plan checkpoint)
+
+After the planner finishes, the task moves to `awaiting_approval`. A UI component shows:
+
+- Integration type + description
+- Files to be created / modified
+- DB changes
+- Subtasks the planner wants to create
+
+User can approve, reject, or edit the plan before the implementer runs. This is the most important UX moment — it's where the user understands what's about to happen to their codebase.
 
 ### Step 9 — End-to-end test with token-optimizer
 
