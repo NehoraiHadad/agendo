@@ -100,6 +100,7 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
         parentTaskId: storeTask.parentTaskId,
         assigneeAgentId: storeTask.assigneeAgentId,
         projectId: storeTask.projectId ?? null,
+        executionOrder: storeTask.executionOrder ?? null,
         dueAt,
       };
     });
