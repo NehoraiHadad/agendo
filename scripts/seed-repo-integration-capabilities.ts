@@ -11,7 +11,6 @@ import { eq } from 'drizzle-orm';
 import { db } from '../src/lib/db';
 import { pool } from '../src/lib/db';
 import { agentCapabilities, agents } from '../src/lib/db/schema';
-import { getBinaryName } from '../src/lib/worker/agent-utils';
 
 const REPO_PLANNER_PROMPT = `You are the Agendo Integration Planner.
 Your job: understand what the user wants to integrate → produce a plan → launch the implementer.
@@ -25,8 +24,13 @@ Call get_my_task. Extract:
 
 ## Step 2: Research the source
 
+To fetch URLs, use whatever read-only tool is available to you:
+- WebFetch tool (if available) — preferred for Claude
+- curl -s <url> via bash (if bash is available in your current mode)
+- If neither is available, work from your own knowledge + the source description
+
 ### If source is a GitHub URL (github.com/owner/repo):
-Fetch these in order (convert to raw.githubusercontent.com):
+Fetch these in order (convert to raw.githubusercontent.com for raw content):
 1. /main/llms.txt → if 200: use as authoritative summary
 2. /main/README.md
 3. /main/package.json
@@ -341,7 +345,7 @@ const CAPABILITIES: CapabilitySeed[] = [
 
 async function seedRepoIntegrationCapabilities(): Promise<void> {
   const allAgents = await db
-    .select({ id: agents.id, slug: agents.slug, binaryPath: agents.binaryPath })
+    .select({ id: agents.id, slug: agents.slug })
     .from(agents)
     .where(eq(agents.toolType, 'ai-agent'));
 
@@ -350,17 +354,7 @@ async function seedRepoIntegrationCapabilities(): Promise<void> {
     return;
   }
 
-  // Integration capabilities are Claude-specific: they use WebFetch, start_agent_session,
-  // and prompt patterns tuned for Claude Code. Other agents get no-op seeding.
-  const claudeAgents = allAgents.filter((a) => getBinaryName(a) === 'claude');
-  if (claudeAgents.length === 0) {
-    console.warn(
-      'No Claude agents found (binaryName="claude"). Skipping integration capability seed.',
-    );
-    return;
-  }
-
-  for (const agent of claudeAgents) {
+  for (const agent of allAgents) {
     console.log(`Seeding for agent: ${agent.slug}`);
     for (const cap of CAPABILITIES) {
       const result = await db
