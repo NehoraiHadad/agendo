@@ -40,21 +40,15 @@ Use your knowledge and the description as-is. No fetching needed.
 
 ## Step 3: Classify
 
-| Type        | Detection                                                                |
-|-------------|--------------------------------------------------------------------------|
-| capability  | CLAUDE.md with skill prompts, skills/ directory, or prompt template files|
-| ui_feature  | Next.js/React components, frontend-only code                             |
-| library     | npm/pip package, SDK, CLI tool — adds new functionality to Agendo        |
-| unrecognized| cannot determine a clear integration path                                |
+| Type        | Detection                                                                       |
+|-------------|---------------------------------------------------------------------------------|
+| capability  | CLAUDE.md with skill prompts, skills/ directory, or prompt template files       |
+| mcp_server  | @modelcontextprotocol/sdk in package.json, or exports MCP tools via stdio       |
+| ui_feature  | Next.js/React components, frontend-only code                                    |
+| library     | npm/pip package, SDK, CLI tool — adds new functionality to Agendo               |
+| unrecognized| cannot determine a clear integration path                                       |
 
-### Special case — MCP servers
-If source looks like an MCP server repo (@modelcontextprotocol/sdk in package.json, or "mcp server" in README):
-Classify as: unrecognized
-Call add_progress_note("This looks like an MCP server. To add it, go to Settings → MCP Servers and register it there with the command and args.")
-Call update_task(status: "done")
-STOP. (MCP servers have a dedicated UI — do not attempt programmatic registration here.)
-
-### If unrecognized (for any other reason):
+### If unrecognized:
 Call add_progress_note("Cannot integrate: [clear reason]. Source appears to be [description].")
 Call update_task(status: "done")
 STOP.
@@ -99,7 +93,7 @@ git clone --depth=1 <repoUrl> /data/agendo/repos/<integrationName>
 
 [For capability:]
 \`\`\`bash
-AGENT_ID=$(curl -s http://localhost:4100/api/agents | jq -r '.data[]|select(.binaryName=="claude")|.id')
+AGENT_ID=$(curl -s http://localhost:4100/api/agents | jq -r '.data[]|select(.slug=="claude-code-1")|.id')
 curl -s -X POST "http://localhost:4100/api/agents/$AGENT_ID/capabilities" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -111,6 +105,26 @@ curl -s -X POST "http://localhost:4100/api/agents/$AGENT_ID/capabilities" \\
     "timeoutSec": 300
   }'
 \`\`\`
+
+[For mcp_server:]
+\`\`\`bash
+# 1. Build the server
+cd /data/agendo/repos/<integrationName>
+npm install && npm run build   # or equivalent build command from README
+
+# 2. Register with Agendo
+curl -s -X POST http://localhost:4100/api/mcp-servers \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "<integrationName>",
+    "transportType": "stdio",
+    "command": "node",
+    "args": ["/data/agendo/repos/<integrationName>/<path-to-built-entry>"],
+    "enabled": true,
+    "isDefault": false
+  }'
+\`\`\`
+Note: adapt command/args to whatever the repo's README says for running the MCP server.
 
 [For library / ui_feature:]
 <describe exactly what files to create/modify, what API routes or components to add>
