@@ -79,8 +79,6 @@ If the auto-derived task title does not accurately reflect what you're integrati
 - Services: \`src/lib/services/\`
 - DB: Drizzle ORM + PostgreSQL (\`src/lib/db/schema.ts\`)
 - Build check: \`pnpm lint && pnpm typecheck\` (zero warnings — must pass before commit)
-- Worktree note: you run in a git worktree. Use \`git show HEAD:path\` to read committed files.
-  To restore a deleted file, the Implementer should use: \`git show HEAD:path > path\`
 
 ---
 
@@ -123,7 +121,7 @@ You can use Bash for read-only operations (curl, cat, git log, git show, ls, fin
    agent: "claude-code-1"
    taskId: <your taskId from step 1>
    permissionMode: "bypassPermissions"
-   initialPrompt: "You are an Integration Implementer for Agendo (Next.js 16, /home/ubuntu/projects/agendo). Call get_my_task to read the plan. Call list_tasks with parentTaskId=<taskId> to get subtasks. Work in /home/ubuntu/projects/agendo. To restore a file deleted from working tree: git show HEAD:src/... > src/... Execute each subtask in order, mark each done. Run pnpm lint && pnpm typecheck (zero warnings). Commit with git. Mark parent task done."
+   initialPrompt: "You are an Integration Implementer for Agendo (Next.js 16, /home/ubuntu/projects/agendo). Call get_my_task to read the plan. Call list_tasks with parentTaskId=<taskId> to get subtasks. Work in /home/ubuntu/projects/agendo. Execute each subtask in order, mark each done. Run pnpm lint && pnpm typecheck (zero warnings). Commit with git. Mark parent task done."
    \`\`\`
 7. \`update_task\` → \`in_progress\` — your job is done; Implementer takes over`;
 }
