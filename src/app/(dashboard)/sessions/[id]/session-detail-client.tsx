@@ -120,7 +120,6 @@ interface SessionDetailClientProps {
   agentName: string;
   agentSlug: string;
   agentBinaryPath: string;
-  capLabel: string;
   taskTitle: string;
   projectName: string;
   parentAgentName: string;
@@ -191,7 +190,6 @@ export function SessionDetailClient({
   agentName,
   agentSlug,
   agentBinaryPath,
-  capLabel,
   taskTitle,
   projectName,
   parentAgentName,
@@ -211,7 +209,6 @@ export function SessionDetailClient({
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [agentSwitchTarget, setAgentSwitchTarget] = useState<{
     agentId: string;
-    capabilityId: string;
     agentName: string;
   } | null>(null);
   const [isEnding, setIsEnding] = useState(false);
@@ -527,12 +524,6 @@ export function SessionDetailClient({
                   </Link>
                 </>
               )}
-              {session.kind !== 'conversation' && (
-                <>
-                  <span className="text-muted-foreground/20">·</span>
-                  <span>{capLabel}</span>
-                </>
-              )}
               {projectName && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
@@ -604,12 +595,6 @@ export function SessionDetailClient({
           {/* Mobile: meta info row — single truncated line */}
           <div className="sm:hidden order-4 w-full mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground/50 overflow-hidden min-w-0">
             <span className="text-muted-foreground/70 shrink-0">{agentName}</span>
-            {session.kind !== 'conversation' && (
-              <>
-                <span className="text-muted-foreground/25 shrink-0">·</span>
-                <span className="shrink-0">{capLabel}</span>
-              </>
-            )}
             {projectName && (
               <>
                 <span className="text-muted-foreground/25 shrink-0">·</span>
@@ -786,7 +771,7 @@ export function SessionDetailClient({
                     onClick={() => {
                       setShowMobileMenu(false);
                       // Open agent switch via a transient picker state
-                      setAgentSwitchTarget({ agentId: '', capabilityId: '', agentName: '' });
+                      setAgentSwitchTarget({ agentId: '', agentName: '' });
                     }}
                     className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-orange-400 hover:bg-orange-500/[0.08] active:bg-orange-500/[0.12] transition-colors"
                   >
@@ -962,9 +947,7 @@ export function SessionDetailClient({
                 currentAgentId={session.agentId}
                 currentAgentName={agentName}
                 sessionEnded={false}
-                onSelect={(agentId, capabilityId, name) =>
-                  setAgentSwitchTarget({ agentId, capabilityId, agentName: name })
-                }
+                onSelect={(agentId, name) => setAgentSwitchTarget({ agentId, agentName: name })}
               />
 
               {/* End session */}
@@ -1145,7 +1128,6 @@ export function SessionDetailClient({
         sourceAgentName={agentName}
         targetAgentId={agentSwitchTarget?.agentId ?? ''}
         targetAgentName={agentSwitchTarget?.agentName ?? ''}
-        targetCapabilityId={agentSwitchTarget?.capabilityId ?? ''}
         sessionId={session.id}
         onSuccess={(newSessionId) => {
           setAgentSwitchTarget(null);

@@ -28,7 +28,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
-import type { Agent, AgentCapability, McpServer, Task } from '@/lib/types';
+import type { Agent, McpServer, Task } from '@/lib/types';
 
 interface ModelOption {
   id: string;
@@ -60,8 +60,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
 
   const activeAgentId = agentIdProp ?? selectedAgentId;
 
-  const [promptCapId, setPromptCapId] = useState<string>('');
-  const [isLoadingCaps, setIsLoadingCaps] = useState(false);
   const [isLoadingTask, setIsLoadingTask] = useState(false);
   const [promptText, setPromptText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -98,30 +96,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [selectedBinaryPath, setSelectedBinaryPath] = useState('');
   const isClaudeAgent = deriveProvider(selectedBinaryPath) === 'claude';
 
-  const fetchCapabilities = useCallback(
-    async (signal: AbortSignal) => {
-      if (!activeAgentId) return;
-      setIsLoadingCaps(true);
-      try {
-        const res = await apiFetch<ApiResponse<AgentCapability[]>>(
-          `/api/agents/${activeAgentId}/capabilities`,
-          { signal },
-        );
-        if (!signal.aborted) {
-          const promptCaps = res.data.filter((c) => c.isEnabled && c.interactionMode === 'prompt');
-          if (promptCaps.length > 0) {
-            setPromptCapId(promptCaps[0].id);
-          }
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!signal.aborted) setIsLoadingCaps(false);
-      }
-    },
-    [activeAgentId],
-  );
-
   const fetchTask = useCallback(
     async (signal: AbortSignal) => {
       setIsLoadingTask(true);
@@ -149,7 +123,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     const { signal } = controller;
 
     setSelectedAgentId(agentIdProp ?? '');
-    setPromptCapId('');
     setError(null);
     setSelectedMcpIds(new Set());
     setMcpExpanded(false);
@@ -180,18 +153,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
       controller.abort();
     };
   }, [open, agentIdProp, fetchAgents, fetchTask, getDraft]);
-
-  useEffect(() => {
-    if (!open || !activeAgentId) return;
-    const controller = new AbortController();
-
-    setPromptCapId('');
-    void fetchCapabilities(controller.signal);
-
-    return () => {
-      controller.abort();
-    };
-  }, [open, activeAgentId, fetchCapabilities]);
 
   // Fetch models when agent changes
   const fetchModels = useCallback(async (signal: AbortSignal, binaryPath: string) => {
@@ -237,7 +198,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeAgentId || !promptCapId) return;
+    if (!activeAgentId) return;
 
     setIsSubmitting(true);
     setError(null);
@@ -248,7 +209,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
         body: JSON.stringify({
           taskId,
           agentId: activeAgentId,
-          capabilityId: promptCapId,
           initialPrompt: promptText || undefined,
           model: selectedModel || undefined,
           mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
@@ -265,8 +225,8 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     }
   }
 
-  const isLoading = isLoadingAgents || isLoadingCaps || isLoadingTask;
-  const canSubmit = !!activeAgentId && !!promptCapId && !isSubmitting && !isLoading;
+  const isLoading = isLoadingAgents || isLoadingTask;
+  const canSubmit = !!activeAgentId && !isSubmitting && !isLoading;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

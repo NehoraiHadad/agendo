@@ -5,7 +5,6 @@ import { startPlanConversation, getPlan } from '@/lib/services/plan-service';
 
 const startSchema = z.object({
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
 });

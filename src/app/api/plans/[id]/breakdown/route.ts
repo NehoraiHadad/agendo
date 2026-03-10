@@ -5,7 +5,6 @@ import { breakPlanIntoTasks } from '@/lib/services/plan-service';
 
 const breakdownSchema = z.object({
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
   model: z.string().optional(),
 });
 

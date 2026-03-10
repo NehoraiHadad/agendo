@@ -15,7 +15,6 @@ export interface CreateSnapshotInput {
 
 export interface ResumeFromSnapshotOpts {
   agentId: string;
-  capabilityId: string;
   permissionMode?: string;
   additionalContext?: string;
 }
@@ -133,7 +132,6 @@ export async function resumeFromSnapshot(
     projectId: snapshot.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
-    capabilityId: opts.capabilityId,
     initialPrompt,
     permissionMode: opts.permissionMode as
       | 'default'

@@ -28,7 +28,6 @@ export interface UpdatePlanPatch {
 
 export interface StartPlanConversationOpts {
   agentId: string;
-  capabilityId: string;
   model?: string;
   /** Optional user feedback to prepend to the agent-specific preamble. */
   initialPrompt?: string;
@@ -36,13 +35,11 @@ export interface StartPlanConversationOpts {
 
 export interface ExecutePlanOpts {
   agentId: string;
-  capabilityId: string;
   model?: string;
 }
 
 export interface ValidatePlanOpts {
   agentId: string;
-  capabilityId: string;
 }
 
 export interface SearchPlanResult {
@@ -170,7 +167,6 @@ Start by creating subtasks for each major step, then execute them one by one.`;
     taskId: task.id,
     kind: 'conversation',
     agentId: opts.agentId,
-    capabilityId: opts.capabilityId,
     initialPrompt,
     permissionMode: 'bypassPermissions',
     model: opts.model,
@@ -226,7 +222,6 @@ Remember: create tasks only. Do NOT implement any code changes.`;
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
-    capabilityId: opts.capabilityId,
     initialPrompt,
     permissionMode: 'bypassPermissions',
     model: opts.model,
@@ -286,7 +281,6 @@ export async function startPlanConversation(
     projectId: plan.projectId,
     kind: 'plan',
     agentId: opts.agentId,
-    capabilityId: opts.capabilityId,
     initialPrompt: finalPrompt,
     permissionMode,
     model: opts.model,
@@ -493,7 +487,6 @@ export async function validatePlan(
     projectId: plan.projectId,
     kind: 'conversation',
     agentId: opts.agentId,
-    capabilityId: opts.capabilityId,
     initialPrompt,
     beforeEnqueue: async () => {
       await db

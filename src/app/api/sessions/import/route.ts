@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { ConflictError, BadRequestError } from '@/lib/errors';
 import { db } from '@/lib/db';
-import { agents, agentCapabilities, sessions, projects } from '@/lib/db/schema';
+import { agents, sessions, projects } from '@/lib/db/schema';
 import { createSession } from '@/lib/services/session-service';
 import { convertClaudeJsonl, writeImportedLog } from '@/lib/services/cli-import';
 
@@ -36,7 +36,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     throw new ConflictError('Session already imported', { sessionId: existing.id });
   }
 
-  // Find Claude agent + prompt capability
+  // Find Claude agent
   const [claudeAgent] = await db
     .select({ id: agents.id })
     .from(agents)
@@ -45,21 +45,6 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
   if (!claudeAgent) {
     throw new BadRequestError('Claude agent not found. Please register a Claude agent first.');
-  }
-
-  const [capability] = await db
-    .select({ id: agentCapabilities.id })
-    .from(agentCapabilities)
-    .where(
-      and(
-        eq(agentCapabilities.agentId, claudeAgent.id),
-        eq(agentCapabilities.interactionMode, 'prompt'),
-      ),
-    )
-    .limit(1);
-
-  if (!capability) {
-    throw new BadRequestError('Claude prompt capability not found.');
   }
 
   // Convert JSONL
@@ -82,7 +67,6 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   const session = await createSession({
     taskId,
     agentId: claudeAgent.id,
-    capabilityId: capability.id,
     model: metadata.model ?? undefined,
   });
 

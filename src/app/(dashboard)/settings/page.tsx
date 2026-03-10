@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { listAgentsWithCapabilities } from '@/lib/services/agent-service';
+import { listAgents } from '@/lib/services/agent-service';
 import { listMcpServers } from '@/lib/services/mcp-server-service';
 import { db } from '@/lib/db';
 import { projects } from '@/lib/db/schema';
@@ -9,7 +9,7 @@ import { SettingsClient } from './settings-client';
 
 export default async function SettingsPage() {
   const [agents, mcpServers, allProjects] = await Promise.all([
-    listAgentsWithCapabilities(),
+    listAgents(),
     listMcpServers(),
     db
       .select({ id: projects.id, name: projects.name, rootPath: projects.rootPath })

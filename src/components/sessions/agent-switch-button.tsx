@@ -6,20 +6,10 @@ import { Button } from '@/components/ui/button';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { agentColorKey } from '@/lib/utils/agent-switch-colors';
 
-interface AgentWithPromptCapability {
-  id: string;
-  name: string;
-  isActive: boolean;
-  capabilities: Array<{
-    id: string;
-    interactionMode: string;
-  }>;
-}
-
 interface AgentRow {
   id: string;
   name: string;
-  capabilityId: string;
+  isActive: boolean;
 }
 
 export interface AgentSwitchButtonProps {
@@ -27,7 +17,7 @@ export interface AgentSwitchButtonProps {
   /** Unused at runtime but kept in the interface so callers can display the label. */
   currentAgentName?: string;
   sessionEnded: boolean;
-  onSelect: (agentId: string, capabilityId: string, agentName: string) => void;
+  onSelect: (agentId: string, agentName: string) => void;
 }
 
 export function AgentSwitchButton({
@@ -44,22 +34,14 @@ export function AgentSwitchButton({
   // Fetch agents on mount — no synchronous setState inside effect body
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/agents?capabilities=true', { signal: controller.signal })
-      .then((res) =>
-        res.ok ? (res.json() as Promise<{ data: AgentWithPromptCapability[] }>) : null,
-      )
+    fetch('/api/agents?group=ai', { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentRow[] }>) : null))
       .then((body) => {
         if (controller.signal.aborted || !body?.data) {
           setLoading(false);
           return;
         }
-        const rows: AgentRow[] = [];
-        for (const agent of body.data) {
-          if (!agent.isActive) continue;
-          const cap = agent.capabilities.find((c) => c.interactionMode === 'prompt');
-          if (cap) rows.push({ id: agent.id, name: agent.name, capabilityId: cap.id });
-        }
-        setAgents(rows);
+        setAgents(body.data.filter((a) => a.isActive));
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -80,7 +62,7 @@ export function AgentSwitchButton({
 
   const handleSelect = (agent: AgentRow) => {
     setOpen(false);
-    onSelect(agent.id, agent.capabilityId, agent.name);
+    onSelect(agent.id, agent.name);
   };
 
   return (

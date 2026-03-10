@@ -7,7 +7,7 @@ import { createTask, updateTask } from '@/lib/services/task-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getOrCreateSystemProject } from '@/lib/services/project-service';
 import { db } from '@/lib/db';
-import { agents, agentCapabilities, tasks } from '@/lib/db/schema';
+import { agents, tasks } from '@/lib/db/schema';
 import { eq, and, like } from 'drizzle-orm';
 
 const postSchema = z.object({
@@ -82,28 +82,24 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   const integrationName = deriveIntegrationName(source);
   const systemProject = await getOrCreateSystemProject();
 
-  const plannerRows = await db
-    .select({ agentId: agents.id, capabilityId: agentCapabilities.id })
-    .from(agentCapabilities)
-    .innerJoin(agents, eq(agents.id, agentCapabilities.agentId))
-    .where(
-      and(
-        eq(agentCapabilities.key, 'repo-planner'),
-        eq(agentCapabilities.isEnabled, true),
-        eq(agents.isActive, true),
-        ...(requestedAgentId ? [eq(agents.id, requestedAgentId)] : []),
-      ),
-    )
-    .limit(1);
+  const agentRow = requestedAgentId
+    ? await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.id, requestedAgentId), eq(agents.isActive, true)))
+        .limit(1)
+        .then((r) => r[0] ?? null)
+    : await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.isActive, true), eq(agents.toolType, 'ai-agent')))
+        .limit(1)
+        .then((r) => r[0] ?? null);
 
-  if (plannerRows.length === 0) {
-    throw new NotFoundError(
-      'Capability',
-      requestedAgentId ? `repo-planner for agent ${requestedAgentId}` : 'repo-planner',
-    );
+  if (!agentRow) {
+    throw new NotFoundError('Agent', requestedAgentId ?? 'active ai-agent');
   }
-
-  const { agentId, capabilityId } = plannerRows[0] as { agentId: string; capabilityId: string };
+  const agentId = agentRow.id;
 
   const task = await createTask({
     title: title ?? `Integrate: ${integrationName}`,
@@ -123,7 +119,6 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     projectId: systemProject.id,
     kind: 'conversation',
     agentId,
-    capabilityId,
     permissionMode: 'plan',
   });
 

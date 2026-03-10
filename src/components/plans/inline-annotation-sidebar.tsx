@@ -16,18 +16,14 @@ import { ANNOTATION_CONFIGS, ANNOTATION_TYPE_ORDER } from '@/lib/utils/annotatio
 import { serializeAnnotations } from '@/lib/utils/annotation-serializer';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { PlanAnnotation, AnnotationType, BlockSelection } from '@/lib/types/annotations';
-import type { Agent, AgentCapability } from '@/lib/types';
+import type { Agent } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Local types
 // ---------------------------------------------------------------------------
 
-interface AgentWithCapabilities extends Agent {
-  capabilities: AgentCapability[];
-}
-
 interface AgentsApiResponse {
-  data: AgentWithCapabilities[];
+  data: Agent[];
 }
 
 type FormState = {
@@ -162,7 +158,7 @@ export function InlineAnnotationSidebar({
   const [form, setForm] = useState<FormState>({ type: null, comment: '', suggestedText: '' });
 
   // Agent picker + send state
-  const [agents, setAgents] = useState<AgentWithCapabilities[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -184,16 +180,14 @@ export function InlineAnnotationSidebar({
     setLoadingAgents(true);
     setAgentError(null);
 
-    void apiFetch<AgentsApiResponse>('/api/agents?capabilities=true&group=ai')
+    void apiFetch<AgentsApiResponse>('/api/agents?group=ai')
       .then((res) => {
         if (cancelled) return;
-        const promptAgents = res.data.filter((a) =>
-          a.capabilities?.some((cap) => cap.interactionMode === 'prompt'),
-        );
-        setAgents(promptAgents);
+        const activeAgents = res.data.filter((a) => a.isActive);
+        setAgents(activeAgents);
         setLoadingAgents(false);
-        if (promptAgents.length > 0) {
-          setSelectedAgentId(promptAgents[0].id);
+        if (activeAgents.length > 0) {
+          setSelectedAgentId(activeAgents[0].id);
         }
       })
       .catch((err: unknown) => {
@@ -241,11 +235,6 @@ export function InlineAnnotationSidebar({
 
   const canSend = !isSending && (annotations.length > 0 || globalComment.trim().length > 0);
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-  const selectedCapability = selectedAgent?.capabilities.find(
-    (cap) => cap.interactionMode === 'prompt',
-  );
-
   const handleSendToChat = useCallback(async () => {
     if (!conversationSessionId || isSending) return;
     setIsSending(true);
@@ -265,7 +254,7 @@ export function InlineAnnotationSidebar({
   }, [conversationSessionId, isSending, annotations, globalComment, onFeedbackSent]);
 
   const handleStartAndSend = useCallback(async () => {
-    if (!selectedCapability || isSending) return;
+    if (!selectedAgentId || isSending) return;
     setIsSending(true);
     setSendError(null);
     try {
@@ -276,7 +265,6 @@ export function InlineAnnotationSidebar({
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: selectedCapability.id,
             initialPrompt: feedback,
           }),
         },
@@ -289,7 +277,6 @@ export function InlineAnnotationSidebar({
       setIsSending(false);
     }
   }, [
-    selectedCapability,
     selectedAgentId,
     planId,
     isSending,
@@ -482,9 +469,7 @@ export function InlineAnnotationSidebar({
                 Loading agents…
               </div>
             ) : agents.length === 0 && !agentError ? (
-              <p className="text-[11px] text-muted-foreground/40">
-                No agents with prompt capabilities found.
-              </p>
+              <p className="text-[11px] text-muted-foreground/40">No active agents found.</p>
             ) : agents.length > 0 ? (
               <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                 <SelectTrigger className="w-full border-white/[0.08] bg-white/[0.04] h-8 text-[11px]">
@@ -530,7 +515,7 @@ export function InlineAnnotationSidebar({
         ) : (
           <Button
             size="sm"
-            disabled={!canSend || !selectedCapability || loadingAgents}
+            disabled={!canSend || !selectedAgentId || loadingAgents}
             onClick={() => void handleStartAndSend()}
             className="w-full h-8 gap-1.5 bg-violet-600/80 hover:bg-violet-600 text-white border-0 text-xs disabled:opacity-40"
           >

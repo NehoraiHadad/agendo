@@ -5,7 +5,6 @@ import { resumeFromSnapshot } from '@/lib/services/snapshot-service';
 
 const resumeSchema = z.object({
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
   permissionMode: z
     .enum(['default', 'bypassPermissions', 'acceptEdits', 'plan', 'dontAsk'])
     .optional(),

@@ -5,7 +5,6 @@ import { validatePlan } from '@/lib/services/plan-service';
 
 const validatePlanSchema = z.object({
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
 });
 
 export const POST = withErrorBoundary(

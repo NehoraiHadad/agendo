@@ -3,15 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Bot, ChevronRight, Search as SearchIcon, Zap } from 'lucide-react';
+import { Bot, ChevronRight, Search as SearchIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import type { AgentWithCapabilities } from '@/lib/services/agent-service';
+import type { Agent } from '@/lib/types';
 
 interface AgentCardsProps {
-  initialAgents: AgentWithCapabilities[];
+  initialAgents: Agent[];
 }
 
 /** Binary path to a brand-ish color */
@@ -30,7 +29,7 @@ function agentIcon(binaryPath: string) {
 }
 
 export function AgentCards({ initialAgents }: AgentCardsProps) {
-  const [agents, setAgents] = useState(initialAgents);
+  const [agents, setAgents] = useState<Agent[]>(initialAgents);
 
   async function toggleActive(agentId: string, isActive: boolean) {
     try {
@@ -92,7 +91,6 @@ export function AgentCards({ initialAgents }: AgentCardsProps) {
           {agents.map((agent) => {
             const color = agentColor(agent.binaryPath);
             const icon = agentIcon(agent.binaryPath);
-            const capCount = agent.capabilities.length;
 
             return (
               <div
@@ -137,21 +135,6 @@ export function AgentCards({ initialAgents }: AgentCardsProps) {
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Link>
-                  </div>
-
-                  {/* Capabilities summary */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {capCount > 0 ? (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] border-blue-500/20 text-blue-400/70 bg-blue-500/[0.06] gap-1"
-                      >
-                        <Zap className="h-2.5 w-2.5" />
-                        {capCount} capabilit{capCount !== 1 ? 'ies' : 'y'}
-                      </Badge>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground/25">No capabilities</span>
-                    )}
                   </div>
 
                   {/* Quick toggles */}

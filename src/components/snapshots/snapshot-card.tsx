@@ -55,18 +55,10 @@ interface ResumeDialogProps {
   snapshot: ContextSnapshot;
 }
 
-interface CapabilityOption {
-  id: string;
-  label: string;
-  agentId: string;
-  agentName: string;
-}
-
 function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
-  const [capabilities, setCapabilities] = useState<CapabilityOption[]>([]);
   const [isLaunching, setIsLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,20 +73,8 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
       });
   }, [open]);
 
-  useEffect(() => {
-    if (!selectedAgentId) return;
-    void fetch(`/api/agents/${selectedAgentId}/capabilities?mode=prompt`)
-      .then((r) => r.json() as Promise<{ data: Array<{ id: string; label: string }> }>)
-      .then(({ data }) => {
-        setCapabilities(
-          data.map((c) => ({ id: c.id, label: c.label, agentId: selectedAgentId, agentName: '' })),
-        );
-      });
-  }, [selectedAgentId]);
-
   async function handleResume() {
-    const cap = capabilities[0];
-    if (!cap || isLaunching) return;
+    if (!selectedAgentId || isLaunching) return;
     setIsLaunching(true);
     setError(null);
     try {
@@ -104,7 +84,6 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: cap.id,
             permissionMode: 'bypassPermissions',
           }),
         },
@@ -163,7 +142,7 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
           <Button
             size="sm"
             onClick={() => void handleResume()}
-            disabled={!selectedAgentId || capabilities.length === 0 || isLaunching}
+            disabled={!selectedAgentId || isLaunching}
             className="gap-1.5"
           >
             {isLaunching ? (

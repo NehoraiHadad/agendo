@@ -11,7 +11,7 @@ import {
   isNotNull,
 } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
+import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { ConflictError, NotFoundError } from '@/lib/errors';
 import { publish, channelName, broadcastSessionStatus } from '@/lib/realtime/pg-notify';
@@ -26,7 +26,6 @@ export interface CreateSessionInput {
   projectId?: string;
   kind?: SessionKind;
   agentId: string;
-  capabilityId: string;
   idleTimeoutSec?: number;
   initialPrompt?: string;
   permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
@@ -58,7 +57,6 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       projectId: projectId ?? null,
       kind: input.kind ?? 'conversation',
       agentId: input.agentId,
-      capabilityId: input.capabilityId,
       idleTimeoutSec: input.idleTimeoutSec ?? 600,
       status: 'idle', // session starts idle, goes active when worker claims it
       initialPrompt: input.initialPrompt,
@@ -82,7 +80,6 @@ export async function getSession(id: string): Promise<Session> {
 export interface SessionWithDetails extends Session {
   agentName: string | null;
   agentSlug: string | null;
-  capLabel: string | null;
   taskTitle: string | null;
   projectName: string | null;
 }
@@ -93,13 +90,11 @@ export async function getSessionWithDetails(id: string): Promise<SessionWithDeta
       session: sessions,
       agentName: agents.name,
       agentSlug: agents.slug,
-      capLabel: agentCapabilities.label,
       taskTitle: tasks.title,
       projectName: projects.name,
     })
     .from(sessions)
     .leftJoin(agents, eq(sessions.agentId, agents.id))
-    .leftJoin(agentCapabilities, eq(sessions.capabilityId, agentCapabilities.id))
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
     .leftJoin(projects, eq(projects.id, sessions.projectId))
     .where(eq(sessions.id, id))
@@ -111,7 +106,6 @@ export async function getSessionWithDetails(id: string): Promise<SessionWithDeta
     ...row.session,
     agentName: row.agentName,
     agentSlug: row.agentSlug,
-    capLabel: row.capLabel,
     taskTitle: row.taskTitle,
     projectName: row.projectName,
   };
@@ -213,7 +207,6 @@ export async function forkSession(
       projectId: parent.projectId,
       kind: parent.kind,
       agentId: parent.agentId,
-      capabilityId: parent.capabilityId,
       idleTimeoutSec: parent.idleTimeoutSec,
       status: 'idle',
       permissionMode: parent.permissionMode as
@@ -275,7 +268,6 @@ export async function restartFreshFromSession(
       projectId: parent.projectId,
       kind: 'conversation',
       agentId: parent.agentId,
-      capabilityId: parent.capabilityId,
       idleTimeoutSec: parent.idleTimeoutSec,
       status: 'idle',
       permissionMode,

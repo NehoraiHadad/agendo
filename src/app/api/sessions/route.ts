@@ -7,7 +7,6 @@ import {
   type SessionKind,
 } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
-import { assertPromptModeCapability } from '@/lib/services/capability-service';
 import { z } from 'zod';
 
 const createSessionSchema = z.object({
@@ -15,7 +14,6 @@ const createSessionSchema = z.object({
   projectId: z.string().uuid().optional(),
   kind: z.enum(['conversation', 'execution']).optional(),
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
   initialPrompt: z.string().optional(),
   permissionMode: z.enum(['default', 'bypassPermissions', 'acceptEdits']).optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -50,14 +48,11 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
 export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = createSessionSchema.parse(await req.json());
 
-  await assertPromptModeCapability(body.capabilityId);
-
   const session = await createSession({
     taskId: body.taskId,
     projectId: body.projectId,
     kind: body.kind,
     agentId: body.agentId,
-    capabilityId: body.capabilityId,
     initialPrompt: body.initialPrompt,
     permissionMode: body.permissionMode,
     allowedTools: body.allowedTools,

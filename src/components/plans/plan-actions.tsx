@@ -21,26 +21,14 @@ import {
 } from '@/components/ui/select';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
-import type { Agent, AgentCapability } from '@/lib/types';
+import type { Agent } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface AgentWithCapabilities extends Agent {
-  capabilities: AgentCapability[];
-}
-
 interface AgentsApiResponse {
-  data: AgentWithCapabilities[];
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function findFirstPromptCapability(agent: AgentWithCapabilities): AgentCapability | undefined {
-  return agent.capabilities?.find((cap) => cap.interactionMode === 'prompt');
+  data: Agent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +49,7 @@ export function PlanActions({
   conversationActive,
 }: PlanActionsProps) {
   const router = useRouter();
-  const [agents, setAgents] = useState<AgentWithCapabilities[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
 
   // Dialog state
@@ -87,14 +75,14 @@ export function PlanActions({
     setError(null);
     let cancelled = false;
 
-    apiFetch<AgentsApiResponse>('/api/agents?capabilities=true&group=ai')
+    apiFetch<AgentsApiResponse>('/api/agents?group=ai')
       .then((res) => {
         if (cancelled) return;
-        const promptAgents = res.data.filter((a) => findFirstPromptCapability(a));
-        setAgents(promptAgents);
+        const activeAgents = res.data.filter((a) => a.isActive);
+        setAgents(activeAgents);
         setLoadingAgents(false);
-        if (promptAgents.length > 0) {
-          setSelectedAgentId(promptAgents[0].id);
+        if (activeAgents.length > 0) {
+          setSelectedAgentId(activeAgents[0].id);
         }
       })
       .catch((err: unknown) => {
@@ -108,11 +96,8 @@ export function PlanActions({
     };
   }, []);
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-  const selectedCapability = selectedAgent ? findFirstPromptCapability(selectedAgent) : undefined;
-
   async function handleValidate() {
-    if (!selectedCapability || isValidating) return;
+    if (!selectedAgentId || isValidating) return;
     setIsValidating(true);
     setError(null);
     try {
@@ -122,7 +107,6 @@ export function PlanActions({
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: selectedCapability.id,
           }),
         },
       );
@@ -135,7 +119,7 @@ export function PlanActions({
   }
 
   async function handleExecute() {
-    if (!selectedCapability || isExecuting) return;
+    if (!selectedAgentId || isExecuting) return;
     setIsExecuting(true);
     setError(null);
     try {
@@ -145,7 +129,6 @@ export function PlanActions({
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: selectedCapability.id,
             permissionMode,
           }),
         },
@@ -159,7 +142,7 @@ export function PlanActions({
   }
 
   async function handleBreakdown() {
-    if (!selectedCapability || isBreakingDown) return;
+    if (!selectedAgentId || isBreakingDown) return;
     setIsBreakingDown(true);
     setError(null);
     try {
@@ -169,7 +152,6 @@ export function PlanActions({
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: selectedCapability.id,
           }),
         },
       );
@@ -276,9 +258,7 @@ export function PlanActions({
                   <Loader2 className="size-3 animate-spin" /> Loading agents...
                 </div>
               ) : agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/60">
-                  No agents with prompt capabilities found.
-                </p>
+                <p className="text-xs text-muted-foreground/60">No active agents found.</p>
               ) : (
                 <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                   <SelectTrigger className="w-full border-white/[0.08] bg-white/[0.04]">
@@ -297,12 +277,6 @@ export function PlanActions({
                 </Select>
               )}
             </div>
-
-            {selectedCapability && (
-              <p className="text-[11px] text-muted-foreground/50">
-                Capability: {selectedCapability.label}
-              </p>
-            )}
           </div>
 
           <DialogFooter>
@@ -312,7 +286,7 @@ export function PlanActions({
             <Button
               size="sm"
               onClick={() => void handleValidate()}
-              disabled={isValidating || !selectedCapability}
+              disabled={isValidating || !selectedAgentId}
               className="gap-1.5 bg-blue-500/15 text-blue-400 border-blue-500/25 hover:bg-blue-500/25"
             >
               {isValidating ? (
@@ -355,9 +329,7 @@ export function PlanActions({
                   <Loader2 className="size-3 animate-spin" /> Loading agents...
                 </div>
               ) : agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/60">
-                  No agents with prompt capabilities found.
-                </p>
+                <p className="text-xs text-muted-foreground/60">No active agents found.</p>
               ) : (
                 <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                   <SelectTrigger className="w-full border-white/[0.08] bg-white/[0.04]">
@@ -376,12 +348,6 @@ export function PlanActions({
                 </Select>
               )}
             </div>
-
-            {selectedCapability && (
-              <p className="text-[11px] text-muted-foreground/50">
-                Capability: {selectedCapability.label}
-              </p>
-            )}
           </div>
 
           <DialogFooter>
@@ -391,7 +357,7 @@ export function PlanActions({
             <Button
               size="sm"
               onClick={() => void handleBreakdown()}
-              disabled={isBreakingDown || !selectedCapability}
+              disabled={isBreakingDown || !selectedAgentId}
               className="gap-1.5 bg-amber-500/15 text-amber-400 border-amber-500/25 hover:bg-amber-500/25"
             >
               {isBreakingDown ? (
@@ -433,9 +399,7 @@ export function PlanActions({
                   <Loader2 className="size-3 animate-spin" /> Loading agents...
                 </div>
               ) : agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/60">
-                  No agents with prompt capabilities found.
-                </p>
+                <p className="text-xs text-muted-foreground/60">No active agents found.</p>
               ) : (
                 <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                   <SelectTrigger className="w-full border-white/[0.08] bg-white/[0.04]">
@@ -469,12 +433,6 @@ export function PlanActions({
                 </SelectContent>
               </Select>
             </div>
-
-            {selectedCapability && (
-              <p className="text-[11px] text-muted-foreground/50">
-                Capability: {selectedCapability.label}
-              </p>
-            )}
           </div>
 
           <DialogFooter>
@@ -484,7 +442,7 @@ export function PlanActions({
             <Button
               size="sm"
               onClick={() => void handleExecute()}
-              disabled={isExecuting || !selectedCapability}
+              disabled={isExecuting || !selectedAgentId}
               className="gap-1.5 bg-violet-500/15 text-violet-400 border-violet-500/25 hover:bg-violet-500/25"
             >
               {isExecuting ? (

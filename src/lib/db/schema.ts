@@ -12,7 +12,6 @@ import {
   jsonb,
   timestamp,
   primaryKey,
-  unique,
   uniqueIndex,
   index,
   check,
@@ -56,21 +55,7 @@ export const sessionStatusEnum = pgEnum('session_status', [
   'ended',
 ]);
 
-export const interactionModeEnum = pgEnum('interaction_mode', ['prompt']);
-
 export const agentKindEnum = pgEnum('agent_kind', ['builtin', 'custom']);
-
-export const capabilitySourceEnum = pgEnum('capability_source', [
-  'manual',
-  'builtin',
-  'preset',
-  'scan_help',
-  'scan_completion',
-  'scan_fig',
-  'scan_mcp',
-  'scan_man',
-  'llm_generated',
-]);
 
 // How an agent was discovered: auto-scan, preset match, or manual add.
 export const discoveryMethodEnum = pgEnum('discovery_method', ['preset', 'path_scan', 'manual']);
@@ -116,38 +101,6 @@ export const agents = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('idx_agents_workspace').on(table.workspaceId, table.isActive)],
-);
-
-// --- Agent Capabilities -----------------------------------------------------
-
-export const agentCapabilities = pgTable(
-  'agent_capabilities',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
-    key: text('key').notNull(),
-    label: text('label').notNull(),
-    description: text('description'),
-    source: capabilitySourceEnum('source').notNull(),
-    interactionMode: interactionModeEnum('interaction_mode').notNull().default('prompt'),
-    // Template with placeholders like {{task_title}}, {{input_context.prompt_additions}}.
-    promptTemplate: text('prompt_template'),
-    requiresApproval: boolean('requires_approval').notNull().default(false),
-    isEnabled: boolean('is_enabled').notNull().default(true),
-    // 0=safe, 1=caution, 2=dangerous, 3=destructive.
-    dangerLevel: smallint('danger_level').notNull().default(0),
-    timeoutSec: integer('timeout_sec').notNull().default(300),
-    maxOutputBytes: integer('max_output_bytes')
-      .notNull()
-      .default(10 * 1024 * 1024), // 10MB
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    unique('uq_agent_capability_key').on(table.agentId, table.key),
-    index('idx_capabilities_agent').on(table.agentId, table.isEnabled),
-  ],
 );
 
 // --- Projects ---------------------------------------------------------------
@@ -276,9 +229,6 @@ export const sessions = pgTable(
     agentId: uuid('agent_id')
       .notNull()
       .references(() => agents.id),
-    capabilityId: uuid('capability_id')
-      .notNull()
-      .references(() => agentCapabilities.id),
     status: sessionStatusEnum('status').notNull().default('active'),
     pid: integer('pid'),
     workerId: text('worker_id'),

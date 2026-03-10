@@ -1,11 +1,11 @@
 import { accessSync, constants } from 'node:fs';
 import { db } from '@/lib/db';
-import { agents, agentCapabilities } from '@/lib/db/schema';
+import { agents } from '@/lib/db/schema';
 import type { ParsedFlag } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { ValidationError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
-import type { Agent, AgentCapability, NewAgent } from '@/lib/types';
+import type { Agent, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
 
@@ -129,24 +129,8 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
     metadata: preset?.metadata ?? {},
   });
 
-  // Create default capabilities from preset
-  if (preset?.defaultCapabilities.length) {
-    for (const cap of preset.defaultCapabilities) {
-      await db.insert(agentCapabilities).values({
-        agentId: agent.id,
-        key: cap.key,
-        label: cap.label,
-        description: cap.description,
-        source: 'preset',
-        interactionMode: 'prompt',
-        promptTemplate: cap.promptTemplate,
-        dangerLevel: cap.dangerLevel,
-        timeoutSec: cap.timeoutSec,
-        isEnabled: true,
-      });
-    }
-  } else {
-    // For non-preset tools, try to extract schema from --help
+  // For non-preset tools, try to extract schema from --help
+  if (!preset) {
     let schema = tool.schema;
     if (!schema) {
       const helpText = await getHelpText(tool.path);
@@ -182,31 +166,6 @@ export async function listAgents(): Promise<Agent[]> {
     .from(agents)
     .where(eq(agents.toolType, 'ai-agent'))
     .orderBy(desc(agents.createdAt));
-}
-
-export type AgentWithCapabilities = Agent & { capabilities: AgentCapability[] };
-
-/** Fetch all agents with their capabilities joined. Used for agent picker UIs. */
-export async function listAgentsWithCapabilities(): Promise<AgentWithCapabilities[]> {
-  const rows = await db
-    .select({ agent: agents, capability: agentCapabilities })
-    .from(agents)
-    .leftJoin(agentCapabilities, eq(agentCapabilities.agentId, agents.id))
-    .where(eq(agents.toolType, 'ai-agent'))
-    .orderBy(desc(agents.createdAt));
-
-  // Group capabilities by agent
-  const agentMap = new Map<string, AgentWithCapabilities>();
-  for (const row of rows) {
-    if (!agentMap.has(row.agent.id)) {
-      agentMap.set(row.agent.id, { ...row.agent, capabilities: [] });
-    }
-    if (row.capability) {
-      agentMap.get(row.agent.id)?.capabilities.push(row.capability);
-    }
-  }
-
-  return [...agentMap.values()];
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {

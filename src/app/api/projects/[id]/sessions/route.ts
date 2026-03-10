@@ -4,10 +4,6 @@ import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getProject } from '@/lib/services/project-service';
 import { createSession } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
-import { BadRequestError } from '@/lib/errors';
-import { db } from '@/lib/db';
-import { agentCapabilities } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
 
 const quickLaunchSchema = z.object({
   agentId: z.string().uuid(),
@@ -28,30 +24,12 @@ export const POST = withErrorBoundary(
     // Validate project exists
     await getProject(id);
 
-    // Find prompt-mode capability for the agent
-    const [cap] = await db
-      .select({ id: agentCapabilities.id })
-      .from(agentCapabilities)
-      .where(
-        and(
-          eq(agentCapabilities.agentId, body.agentId),
-          eq(agentCapabilities.interactionMode, 'prompt'),
-          eq(agentCapabilities.isEnabled, true),
-        ),
-      )
-      .limit(1);
-
-    if (!cap) {
-      throw new BadRequestError('Agent has no prompt-mode capability');
-    }
-
     if (body.kind === 'conversation') {
       // Conversation mode: create session directly with projectId, no task
       const session = await createSession({
         projectId: id,
         kind: 'conversation',
         agentId: body.agentId,
-        capabilityId: cap.id,
         initialPrompt: body.initialPrompt,
         permissionMode: 'bypassPermissions',
         mcpServerIds: body.mcpServerIds,
@@ -70,7 +48,6 @@ export const POST = withErrorBoundary(
       projectId: id,
       kind: 'execution',
       agentId: body.agentId,
-      capabilityId: cap.id,
       initialPrompt: body.initialPrompt,
       permissionMode: 'bypassPermissions',
       mcpServerIds: body.mcpServerIds,

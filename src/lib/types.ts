@@ -3,7 +3,6 @@ import type * as schema from './db/schema';
 
 // ---- DB row types ----
 export type Agent = InferSelectModel<typeof schema.agents>;
-export type AgentCapability = InferSelectModel<typeof schema.agentCapabilities>;
 export type Task = InferSelectModel<typeof schema.tasks>;
 export type TaskEvent = InferSelectModel<typeof schema.taskEvents>;
 export type WorkerHeartbeat = InferSelectModel<typeof schema.workerHeartbeats>;
@@ -11,7 +10,6 @@ export type Session = InferSelectModel<typeof schema.sessions>;
 export type Project = InferSelectModel<typeof schema.projects>;
 
 export type NewAgent = InferInsertModel<typeof schema.agents>;
-export type NewCapability = InferInsertModel<typeof schema.agentCapabilities>;
 export type NewTask = InferInsertModel<typeof schema.tasks>;
 export type NewSession = InferInsertModel<typeof schema.sessions>;
 export type NewProject = InferInsertModel<typeof schema.projects>;
@@ -28,9 +26,7 @@ export type ProjectMcpServer = InferSelectModel<typeof schema.projectMcpServers>
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];
-export type InteractionMode = (typeof schema.interactionModeEnum.enumValues)[number];
 export type AgentKind = (typeof schema.agentKindEnum.enumValues)[number];
-export type CapabilitySource = (typeof schema.capabilitySourceEnum.enumValues)[number];
 export type DiscoveryMethod = (typeof schema.discoveryMethodEnum.enumValues)[number];
 export type SessionStatus = (typeof schema.sessionStatusEnum.enumValues)[number];
 export type PlanStatus = (typeof schema.planStatusEnum.enumValues)[number];

@@ -7,11 +7,10 @@ import { cn } from '@/lib/utils';
 import { AgentCards } from '@/components/settings/agent-cards';
 import { McpServerCards } from '@/components/settings/mcp-server-cards';
 import { ConfigEditorClient } from '../config/config-editor-client';
-import type { AgentWithCapabilities } from '@/lib/services/agent-service';
-import type { McpServer } from '@/lib/types';
+import type { Agent, McpServer } from '@/lib/types';
 
 interface SettingsClientProps {
-  agents: AgentWithCapabilities[];
+  agents: Agent[];
   mcpServers: McpServer[];
   projects: { id: string; name: string; rootPath: string }[];
 }

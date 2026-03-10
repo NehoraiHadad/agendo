@@ -23,7 +23,6 @@ interface Props {
   agentName: string;
   agentSlug: string;
   agentBinaryPath: string;
-  capLabel: string;
   taskTitle: string;
   projectName: string;
   parentAgentName: string;

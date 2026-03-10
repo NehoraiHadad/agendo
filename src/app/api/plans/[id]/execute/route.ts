@@ -5,7 +5,6 @@ import { executePlan } from '@/lib/services/plan-service';
 
 const executePlanSchema = z.object({
   agentId: z.string().uuid(),
-  capabilityId: z.string().uuid(),
   model: z.string().optional(),
 });
 

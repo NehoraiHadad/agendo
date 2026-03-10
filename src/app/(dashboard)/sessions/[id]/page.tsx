@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
-import { sessions, agents, agentCapabilities, tasks, projects } from '@/lib/db/schema';
+import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { SessionDetailWrapper } from './session-detail-wrapper';
 
@@ -15,13 +15,11 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       agentName: agents.name,
       agentSlug: agents.slug,
       agentBinaryPath: agents.binaryPath,
-      capLabel: agentCapabilities.label,
       taskTitle: tasks.title,
       projectName: projects.name,
     })
     .from(sessions)
     .innerJoin(agents, eq(sessions.agentId, agents.id))
-    .innerJoin(agentCapabilities, eq(sessions.capabilityId, agentCapabilities.id))
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
     .leftJoin(projects, eq(projects.id, sessions.projectId))
     .where(eq(sessions.id, id))
@@ -29,8 +27,7 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
 
   if (rows.length === 0) notFound();
 
-  const { session, agentName, agentSlug, agentBinaryPath, capLabel, taskTitle, projectName } =
-    rows[0];
+  const { session, agentName, agentSlug, agentBinaryPath, taskTitle, projectName } = rows[0];
 
   // Fetch parent session agent name for lineage display
   let parentAgentName = '';
@@ -55,7 +52,6 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       agentName={agentName}
       agentSlug={agentSlug}
       agentBinaryPath={agentBinaryPath}
-      capLabel={capLabel}
       taskTitle={taskTitle ?? ''}
       projectName={projectName ?? ''}
       parentAgentName={parentAgentName}

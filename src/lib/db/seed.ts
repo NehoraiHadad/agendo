@@ -40,11 +40,8 @@ async function seedAgents(): Promise<void> {
 
   for (const tool of discovered) {
     await createFromDiscovery(tool);
-    const capCount = tool.preset?.defaultCapabilities.length ?? 0;
     const wasExisting = tool.isConfirmed ? ' (already registered)' : '';
-    console.log(
-      `  \u2713 Discovered: ${tool.name} at ${tool.path} \u2014 registered with ${capCount} capability${capCount !== 1 ? 'ies' : ''}${wasExisting}`,
-    );
+    console.log(`  \u2713 Discovered: ${tool.name} at ${tool.path}${wasExisting}`);
   }
 
   log.info({ count: discovered.length }, 'Agent discovery complete');

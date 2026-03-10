@@ -86,7 +86,6 @@ import { BadRequestError, ConflictError, NotFoundError } from '@/lib/errors';
 const PARENT_SESSION_ID = '11111111-1111-1111-1111-111111111111';
 const NEW_AGENT_ID = '22222222-2222-2222-2222-222222222222';
 const CLAUDE_AGENT_ID = '33333333-3333-3333-3333-333333333333';
-const CAPABILITY_ID = '44444444-4444-4444-4444-444444444444';
 const NEW_SESSION_ID = '55555555-5555-5555-5555-555555555555';
 const TASK_ID = '66666666-6666-6666-6666-666666666666';
 const PROJECT_ID = '77777777-7777-7777-7777-777777777777';
@@ -94,7 +93,6 @@ const PROJECT_ID = '77777777-7777-7777-7777-777777777777';
 const mockParent = {
   id: PARENT_SESSION_ID,
   agentId: CLAUDE_AGENT_ID,
-  capabilityId: 'claude-cap-id',
   taskId: TASK_ID,
   projectId: PROJECT_ID,
   status: 'awaiting_input',
@@ -135,19 +133,10 @@ const mockExtracted = {
 };
 
 const mockNewAgent = { id: NEW_AGENT_ID, name: 'Gemini CLI' };
-const mockParentAgent = { name: 'Claude Code' };
-const CAPABILITY_ID_2 = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const mockCapability = {
-  id: CAPABILITY_ID,
-  agentId: NEW_AGENT_ID,
-  isEnabled: true,
-  interactionMode: 'prompt',
-};
 
 const mockNewSession = {
   id: NEW_SESSION_ID,
   agentId: NEW_AGENT_ID,
-  capabilityId: CAPABILITY_ID,
   taskId: TASK_ID,
   projectId: PROJECT_ID,
   status: 'idle',
@@ -162,21 +151,11 @@ const mockNewSession = {
 };
 
 /**
- * Queues the three sequential db.select() results for a happy-path fork:
+ * Queues the DB select results for a happy-path fork:
  * 1. new agent lookup → [newAgent] or []
- * 2. parent agent name lookup → [parentAgent] or []
- * 3. capability lookup → [capability] or []
  */
-function queueDbSelectResults(
-  newAgent: unknown | null,
-  parentAgent: unknown | null,
-  capability: unknown | null,
-): void {
-  mockState.selectQueue = [
-    newAgent ? [newAgent] : [],
-    parentAgent ? [parentAgent] : [],
-    capability ? [capability] : [],
-  ];
+function queueDbSelectResults(newAgent: unknown | null): void {
+  mockState.selectQueue = [newAgent ? [newAgent] : []];
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +176,7 @@ describe('forkSessionToAgent', () => {
 
   describe('happy path — hybrid mode', () => {
     it('creates session with correct fields, and returns contextMeta', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       const result = await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -220,7 +199,6 @@ describe('forkSessionToAgent', () => {
           projectId: PROJECT_ID,
           kind: 'conversation',
           agentId: NEW_AGENT_ID,
-          capabilityId: CAPABILITY_ID,
           permissionMode: 'bypassPermissions',
           allowedTools: ['Bash', 'Edit'],
           idleTimeoutSec: 600,
@@ -241,7 +219,7 @@ describe('forkSessionToAgent', () => {
 
   describe('happy path — full mode', () => {
     it('passes contextMode="full" to extractSessionContext', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -257,7 +235,7 @@ describe('forkSessionToAgent', () => {
 
   describe('additional instructions', () => {
     it('appends additionalInstructions to the extracted prompt', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -275,7 +253,7 @@ describe('forkSessionToAgent', () => {
 
   describe('field inheritance', () => {
     it('copies taskId, projectId, permissionMode, allowedTools, idleTimeoutSec from parent', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -292,7 +270,7 @@ describe('forkSessionToAgent', () => {
     });
 
     it('does NOT copy model (agent-specific)', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -305,7 +283,7 @@ describe('forkSessionToAgent', () => {
     });
 
     it('does NOT set forkSourceRef (cross-agent cannot resume parent history)', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,
@@ -367,7 +345,7 @@ describe('forkSessionToAgent', () => {
 
     it('does NOT throw for valid fork state "active"', async () => {
       mockGetSession.mockResolvedValue({ ...mockParent, status: 'active' });
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await expect(
         forkSessionToAgent({
@@ -380,7 +358,7 @@ describe('forkSessionToAgent', () => {
 
     it('does NOT throw for valid fork state "awaiting_input"', async () => {
       // mockParent already has status: 'awaiting_input'
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       await expect(
         forkSessionToAgent({
@@ -394,7 +372,7 @@ describe('forkSessionToAgent', () => {
 
   describe('validation — unknown new agent', () => {
     it('throws NotFoundError when newAgentId does not exist in DB', async () => {
-      queueDbSelectResults(null /* no agent */, mockParentAgent, mockCapability);
+      queueDbSelectResults(null /* no agent */);
 
       await expect(
         forkSessionToAgent({
@@ -406,103 +384,6 @@ describe('forkSessionToAgent', () => {
 
       expect(mockCreateSession).not.toHaveBeenCalled();
       expect(mockEnqueueSession).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('validation — missing capability', () => {
-    it('throws BadRequestError when target agent has no enabled prompt capabilities', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, null /* no capability */);
-
-      await expect(
-        forkSessionToAgent({
-          parentSessionId: PARENT_SESSION_ID,
-          newAgentId: NEW_AGENT_ID,
-          contextMode: 'hybrid',
-        }),
-      ).rejects.toThrow(BadRequestError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('explicit capabilityId', () => {
-    it('uses the provided capabilityId when valid', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
-
-      const result = await forkSessionToAgent({
-        parentSessionId: PARENT_SESSION_ID,
-        newAgentId: NEW_AGENT_ID,
-        capabilityId: CAPABILITY_ID,
-        contextMode: 'hybrid',
-      });
-
-      const createArg = mockCreateSession.mock.calls[0][0] as Record<string, unknown>;
-      expect(createArg['capabilityId']).toBe(CAPABILITY_ID);
-      expect(result.session).toBe(mockNewSession);
-    });
-
-    it('throws NotFoundError when capabilityId does not exist', async () => {
-      queueDbSelectResults(mockNewAgent, mockParentAgent, null);
-
-      await expect(
-        forkSessionToAgent({
-          parentSessionId: PARENT_SESSION_ID,
-          newAgentId: NEW_AGENT_ID,
-          capabilityId: CAPABILITY_ID_2,
-          contextMode: 'hybrid',
-        }),
-      ).rejects.toThrow(NotFoundError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
-    });
-
-    it('throws BadRequestError when capability belongs to a different agent', async () => {
-      const wrongAgentCap = { ...mockCapability, agentId: CLAUDE_AGENT_ID };
-      queueDbSelectResults(mockNewAgent, mockParentAgent, wrongAgentCap);
-
-      await expect(
-        forkSessionToAgent({
-          parentSessionId: PARENT_SESSION_ID,
-          newAgentId: NEW_AGENT_ID,
-          capabilityId: CAPABILITY_ID,
-          contextMode: 'hybrid',
-        }),
-      ).rejects.toThrow(BadRequestError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
-    });
-
-    it('throws BadRequestError when capability is disabled', async () => {
-      const disabledCap = { ...mockCapability, isEnabled: false };
-      queueDbSelectResults(mockNewAgent, mockParentAgent, disabledCap);
-
-      await expect(
-        forkSessionToAgent({
-          parentSessionId: PARENT_SESSION_ID,
-          newAgentId: NEW_AGENT_ID,
-          capabilityId: CAPABILITY_ID,
-          contextMode: 'hybrid',
-        }),
-      ).rejects.toThrow(BadRequestError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
-    });
-
-    it('throws BadRequestError when capability is not prompt mode', async () => {
-      const templateCap = { ...mockCapability, interactionMode: 'template' };
-      queueDbSelectResults(mockNewAgent, mockParentAgent, templateCap);
-
-      await expect(
-        forkSessionToAgent({
-          parentSessionId: PARENT_SESSION_ID,
-          newAgentId: NEW_AGENT_ID,
-          capabilityId: CAPABILITY_ID,
-          contextMode: 'hybrid',
-        }),
-      ).rejects.toThrow(BadRequestError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
     });
   });
 
@@ -519,7 +400,7 @@ describe('forkSessionToAgent', () => {
         },
       };
       mockExtractSessionContext.mockResolvedValue(emptyExtracted);
-      queueDbSelectResults(mockNewAgent, mockParentAgent, mockCapability);
+      queueDbSelectResults(mockNewAgent);
 
       const result = await forkSessionToAgent({
         parentSessionId: PARENT_SESSION_ID,

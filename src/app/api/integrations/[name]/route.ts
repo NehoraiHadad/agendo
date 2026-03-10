@@ -3,7 +3,7 @@ import { sql, eq, and } from 'drizzle-orm';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { NotFoundError } from '@/lib/errors';
 import { db } from '@/lib/db';
-import { agents, agentCapabilities, tasks } from '@/lib/db/schema';
+import { agents, tasks } from '@/lib/db/schema';
 import { getOrCreateSystemProject } from '@/lib/services/project-service';
 import { createTask } from '@/lib/services/task-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
@@ -25,7 +25,7 @@ export const DELETE = withErrorBoundary(
 
     // Find the original integration task by integrationName in inputContext
     const [originalTask] = await db
-      .select({ id: tasks.id, title: tasks.title })
+      .select({ id: tasks.id, title: tasks.title, assigneeAgentId: tasks.assigneeAgentId })
       .from(tasks)
       .where(
         and(
@@ -39,25 +39,19 @@ export const DELETE = withErrorBoundary(
       throw new NotFoundError('Integration', name);
     }
 
-    // Find any active agent with the repo-remover capability
-    const removerRows = await db
-      .select({ agentId: agents.id, capabilityId: agentCapabilities.id })
-      .from(agentCapabilities)
-      .innerJoin(agents, eq(agents.id, agentCapabilities.agentId))
-      .where(
-        and(
-          eq(agentCapabilities.key, 'repo-remover'),
-          eq(agentCapabilities.isEnabled, true),
-          eq(agents.isActive, true),
-        ),
-      )
-      .limit(1);
-
-    if (removerRows.length === 0) {
-      throw new NotFoundError('Capability', 'repo-remover');
+    // Reuse the same agent that ran the original task, or fall back to first active ai-agent
+    let agentId: string;
+    if (originalTask.assigneeAgentId) {
+      agentId = originalTask.assigneeAgentId;
+    } else {
+      const [fallback] = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.isActive, true), eq(agents.toolType, 'ai-agent')))
+        .limit(1);
+      if (!fallback) throw new NotFoundError('Agent', 'active ai-agent');
+      agentId = fallback.id;
     }
-
-    const { agentId, capabilityId } = removerRows[0];
 
     // Remove the original integration task from the board so it no longer appears in the UI
     await db.delete(tasks).where(eq(tasks.id, originalTask.id));
@@ -81,7 +75,6 @@ export const DELETE = withErrorBoundary(
       projectId: systemProject.id,
       kind: 'conversation',
       agentId,
-      capabilityId,
       permissionMode: 'bypassPermissions',
     });
 

@@ -28,7 +28,7 @@ import { PlanDiffCard } from '@/components/plans/plan-diff-card';
 import { useSessionStream } from '@/hooks/use-session-stream';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { extractPlanEdits } from '@/lib/utils/plan-edit-parser';
-import type { Agent, AgentCapability } from '@/lib/types';
+import type { Agent } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
   getLatestContextStats,
@@ -90,12 +90,8 @@ const MODE_CONFIG: Record<PermissionMode, ModeConfigEntry> = {
 // Types
 // ---------------------------------------------------------------------------
 
-interface AgentWithCapabilities extends Agent {
-  capabilities: AgentCapability[];
-}
-
 interface AgentsApiResponse {
-  data: AgentWithCapabilities[];
+  data: Agent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +178,7 @@ export function PlanConversationPanel({
   onNewChat,
 }: PlanConversationPanelProps) {
   // Agent picker state
-  const [agents, setAgents] = useState<AgentWithCapabilities[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(!conversationSessionId);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -263,16 +259,14 @@ export function PlanConversationPanel({
 
     let cancelled = false;
 
-    void apiFetch<AgentsApiResponse>('/api/agents?capabilities=true&group=ai')
+    void apiFetch<AgentsApiResponse>('/api/agents?group=ai')
       .then((res) => {
         if (cancelled) return;
-        const promptAgents = res.data.filter((a) =>
-          a.capabilities?.some((cap) => cap.interactionMode === 'prompt'),
-        );
-        setAgents(promptAgents);
+        const activeAgents = res.data.filter((a) => a.isActive);
+        setAgents(activeAgents);
         setLoadingAgents(false);
-        if (promptAgents.length > 0) {
-          setSelectedAgentId(promptAgents[0].id);
+        if (activeAgents.length > 0) {
+          setSelectedAgentId(activeAgents[0].id);
         }
       })
       .catch((err: unknown) => {
@@ -286,13 +280,8 @@ export function PlanConversationPanel({
     };
   }, [conversationSessionId]);
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-  const selectedCapability = selectedAgent?.capabilities.find(
-    (cap) => cap.interactionMode === 'prompt',
-  );
-
   const handleStartConversation = useCallback(async () => {
-    if (!selectedCapability || isStarting) return;
+    if (!selectedAgentId || isStarting) return;
     setIsStarting(true);
     setStartError(null);
     try {
@@ -302,7 +291,6 @@ export function PlanConversationPanel({
           method: 'POST',
           body: JSON.stringify({
             agentId: selectedAgentId,
-            capabilityId: selectedCapability.id,
           }),
         },
       );
@@ -311,7 +299,7 @@ export function PlanConversationPanel({
       setStartError(err instanceof Error ? err.message : 'Failed to start conversation');
       setIsStarting(false);
     }
-  }, [selectedCapability, selectedAgentId, planId, isStarting, onSessionCreated]);
+  }, [selectedAgentId, planId, isStarting, onSessionCreated]);
 
   const handleApply = useCallback(
     (editId: string, newContent: string) => {
@@ -380,6 +368,7 @@ export function PlanConversationPanel({
   // Fetch available models from the agent's provider
   useEffect(() => {
     if (!initEvent?.cwd) return; // wait for init to know the agent
+    const selectedAgent = agents.find((a) => a.id === selectedAgentId);
     const provider = selectedAgent?.binaryPath
       ? deriveProvider(selectedAgent.binaryPath)
       : 'claude';
@@ -393,7 +382,7 @@ export function PlanConversationPanel({
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [initEvent?.cwd, selectedAgent?.binaryPath]);
+  }, [initEvent?.cwd, selectedAgentId, agents]);
 
   // Derive current model from stream events (same logic as session-detail-client)
   const events = stream.events;
@@ -640,9 +629,7 @@ export function PlanConversationPanel({
                   Loading agents...
                 </div>
               ) : agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/50">
-                  No agents with prompt capabilities found.
-                </p>
+                <p className="text-xs text-muted-foreground/50">No active agents found.</p>
               ) : (
                 <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                   <SelectTrigger className="w-full border-white/[0.08] bg-white/[0.04]">
@@ -671,7 +658,7 @@ export function PlanConversationPanel({
             <Button
               size="sm"
               onClick={() => void handleStartConversation()}
-              disabled={isStarting || !selectedCapability}
+              disabled={isStarting || !selectedAgentId}
               className="gap-1.5 bg-amber-500/15 text-amber-400 border-amber-500/25 hover:bg-amber-500/25 self-start"
             >
               {isStarting ? (

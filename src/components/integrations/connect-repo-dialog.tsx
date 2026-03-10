@@ -23,11 +23,10 @@ interface AgentOption {
   name: string;
 }
 
-interface AgentWithCapabilities {
+interface Agent {
   id: string;
   name: string;
   isActive: boolean;
-  capabilities: Array<{ id: string; key: string; isEnabled: boolean }>;
 }
 
 interface ConnectRepoDialogProps {
@@ -46,16 +45,13 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    fetch('/api/agents?capabilities=true', { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentWithCapabilities[] }>) : null))
+    fetch('/api/agents?group=ai', { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: Agent[] }>) : null))
       .then((body) => {
         if (controller.signal.aborted || !body?.data) return;
-        const rows: AgentOption[] = [];
-        for (const agent of body.data) {
-          if (!agent.isActive) continue;
-          const hasCap = agent.capabilities.some((c) => c.key === 'repo-planner' && c.isEnabled);
-          if (hasCap) rows.push({ id: agent.id, name: agent.name });
-        }
+        const rows: AgentOption[] = body.data
+          .filter((a) => a.isActive)
+          .map((a) => ({ id: a.id, name: a.name }));
         setAgents(rows);
         if (rows.length > 0) setSelectedAgentId(rows[0].id);
       })

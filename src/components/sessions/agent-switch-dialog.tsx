@@ -21,14 +21,12 @@ export type ContextMode = 'hybrid' | 'full';
 interface AgentOption {
   id: string;
   name: string;
-  capabilityId: string;
 }
 
-interface AgentWithCapabilities {
+interface AgentSimple {
   id: string;
   name: string;
   isActive: boolean;
-  capabilities: Array<{ id: string; interactionMode: string }>;
 }
 
 interface ContextMeta {
@@ -58,7 +56,6 @@ export interface AgentSwitchDialogProps {
   /** Pass empty string to enter picker mode (mobile) */
   targetAgentId: string;
   targetAgentName: string;
-  targetCapabilityId: string;
   sessionId: string;
   onSuccess: (newSessionId: string) => void;
 }
@@ -106,7 +103,6 @@ export function AgentSwitchDialog({
   sourceAgentName,
   targetAgentId,
   targetAgentName,
-  targetCapabilityId,
   sessionId,
   onSuccess,
 }: AgentSwitchDialogProps) {
@@ -179,19 +175,16 @@ export function AgentSwitchDialog({
     const controller = new AbortController();
     // Set loading inside a microtask to avoid synchronous setState-in-effect lint rule
     Promise.resolve().then(() => setLoadingAgents(true));
-    fetch('/api/agents?capabilities=true', { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentWithCapabilities[] }>) : null))
+    fetch('/api/agents?group=ai', { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentSimple[] }>) : null))
       .then((body) => {
         if (controller.signal.aborted || !body?.data) {
           setLoadingAgents(false);
           return;
         }
-        const rows: AgentOption[] = [];
-        for (const agent of body.data) {
-          if (!agent.isActive) continue;
-          const cap = agent.capabilities.find((c) => c.interactionMode === 'prompt');
-          if (cap) rows.push({ id: agent.id, name: agent.name, capabilityId: cap.id });
-        }
+        const rows: AgentOption[] = body.data
+          .filter((a) => a.isActive)
+          .map((a) => ({ id: a.id, name: a.name }));
         setAgents(rows);
         setLoadingAgents(false);
       })
@@ -217,7 +210,6 @@ export function AgentSwitchDialog({
     // Start slow-request timer
     slowTimerRef.current = setTimeout(() => setIsSlow(true), SLOW_THRESHOLD_MS);
 
-    const capId = pickerMode ? (pickedAgent?.capabilityId ?? '') : targetCapabilityId;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/fork-to-agent`, {
         method: 'POST',
@@ -225,7 +217,6 @@ export function AgentSwitchDialog({
         signal: controller.signal,
         body: JSON.stringify({
           agentId: resolvedAgentId,
-          capabilityId: capId,
           contextMode,
           ...(additionalInstructions.trim()
             ? { additionalInstructions: additionalInstructions.trim() }

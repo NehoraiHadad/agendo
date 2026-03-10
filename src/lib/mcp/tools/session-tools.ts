@@ -22,23 +22,12 @@ export async function handleStartAgentSession(args: {
   // 1. Resolve agent slug → UUID
   const agentId = await resolveAgentSlug(args.agent);
 
-  // 2. Find a prompt-mode capability for this agent
-  const capabilities = (await apiCall(`/api/agents/${agentId}/capabilities`)) as Array<{
-    id: string;
-    interactionMode: string;
-  }>;
-  const promptCap = capabilities.find((c) => c.interactionMode === 'prompt');
-  if (!promptCap) {
-    throw new Error(`Agent "${args.agent}" has no prompt-mode capability. Cannot start a session.`);
-  }
-
-  // 3. Create and enqueue the session (fire-and-forget).
+  // 2. Create and enqueue the session (fire-and-forget).
   const session = (await apiCall('/api/sessions', {
     method: 'POST',
     body: {
       taskId: args.taskId,
       agentId,
-      capabilityId: promptCap.id,
       initialPrompt: args.initialPrompt,
       permissionMode: args.permissionMode ?? 'bypassPermissions',
       ...(args.model ? { model: args.model } : {}),

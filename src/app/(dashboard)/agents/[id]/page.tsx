@@ -4,17 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
-import { CapabilityList } from '@/components/agents/capability-list';
 import { RefreshFlagsButton } from '@/components/agents/refresh-flags-button';
 import { McpConfigCard } from '@/components/agents/mcp-config-card';
 import { getAgentById } from '@/lib/services/agent-service';
-import { getCapabilitiesByAgent } from '@/lib/services/capability-service';
 
 export default async function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const agent = await getAgentById(id).catch(() => notFound());
-  const capabilities = await getCapabilitiesByAgent(id);
 
   const backHref = '/settings';
   const backLabel = 'Back to Settings';
@@ -77,17 +74,6 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
               <dd className="mt-1 font-mono text-xs text-muted-foreground/70">{agent.slug}</dd>
             </div>
           </dl>
-        </CardContent>
-      </Card>
-
-      <Card className="border-white/[0.06]">
-        <CardHeader>
-          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
-            Capabilities ({capabilities.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <CapabilityList agentId={id} initialCapabilities={capabilities} />
         </CardContent>
       </Card>
 

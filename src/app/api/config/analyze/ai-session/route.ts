@@ -8,9 +8,6 @@ import { BadRequestError } from '@/lib/errors';
 import { getAgentBySlug } from '@/lib/services/agent-service';
 import { createSession } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
-import { db } from '@/lib/db';
-import { agentCapabilities } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
 
 // ─── Skill installer ─────────────────────────────────────────────────────────
 
@@ -74,25 +71,9 @@ export const POST = withErrorBoundary(async () => {
   const agent = await getAgentBySlug('claude-code-1');
   if (!agent) throw new BadRequestError('Claude agent (claude-code-1) not found');
 
-  // 3. Find its prompt-mode capability
-  const [cap] = await db
-    .select({ id: agentCapabilities.id })
-    .from(agentCapabilities)
-    .where(
-      and(
-        eq(agentCapabilities.agentId, agent.id),
-        eq(agentCapabilities.interactionMode, 'prompt'),
-        eq(agentCapabilities.isEnabled, true),
-      ),
-    )
-    .limit(1);
-
-  if (!cap) throw new BadRequestError('No prompt-mode capability found for Claude agent');
-
-  // 4. Create the session (no task — ad-hoc analysis run)
+  // 3. Create the session (no task — ad-hoc analysis run)
   const session = await createSession({
     agentId: agent.id,
-    capabilityId: cap.id,
     initialPrompt: INITIAL_PROMPT,
     permissionMode: 'bypassPermissions',
     kind: 'execution',

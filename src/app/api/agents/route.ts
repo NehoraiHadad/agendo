@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
-import {
-  listAgents,
-  listAgentsWithCapabilities,
-  createAgent,
-  getAgentBySlug,
-} from '@/lib/services/agent-service';
+import { listAgents, createAgent, getAgentBySlug } from '@/lib/services/agent-service';
 
 const createAgentSchema = z.object({
   name: z.string().min(1).max(100),
@@ -26,8 +21,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     return NextResponse.json({ data: agent ? [agent] : [] });
   }
 
-  const withCapabilities = url.searchParams.get('capabilities') === 'true';
-  const data = withCapabilities ? await listAgentsWithCapabilities() : await listAgents();
+  const data = await listAgents();
   return NextResponse.json({ data });
 });
 
