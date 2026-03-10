@@ -60,13 +60,21 @@ export const GET = withErrorBoundary(async () => {
     );
   }
 
-  // Run measure.py — writes to snapshot_current.json then prints a summary
+  // Run snapshot + coach in parallel (coach is non-fatal)
+  let coachResult: { stdout: string } | null = null;
   try {
-    await execFileAsync('python3', [measurePy, 'snapshot', 'current'], {
-      timeout: 30_000,
-      // Run from home dir so cwd-based project detection falls back gracefully
-      cwd: homedir(),
-    });
+    const [, coachRes] = await Promise.all([
+      execFileAsync('python3', [measurePy, 'snapshot', 'current'], {
+        timeout: 30_000,
+        // Run from home dir so cwd-based project detection falls back gracefully
+        cwd: homedir(),
+      }),
+      execFileAsync('python3', [measurePy, 'coach', '--json'], {
+        timeout: 30_000,
+        cwd: homedir(),
+      }).catch(() => null),
+    ]);
+    coachResult = coachRes;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
@@ -85,5 +93,14 @@ export const GET = withErrorBoundary(async () => {
   const raw = await readFile(SNAPSHOT_PATH, 'utf-8');
   const snapshot = JSON.parse(raw) as Record<string, unknown>;
 
-  return NextResponse.json({ data: snapshot });
+  let coachData: Record<string, unknown> | null = null;
+  if (coachResult?.stdout) {
+    try {
+      coachData = JSON.parse(coachResult.stdout) as Record<string, unknown>;
+    } catch {
+      // ignore parse errors — coach data is best-effort
+    }
+  }
+
+  return NextResponse.json({ data: snapshot, coach: coachData });
 });

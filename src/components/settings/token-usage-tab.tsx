@@ -1,9 +1,37 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { RefreshCw, AlertTriangle, CheckCircle, Info, Zap } from 'lucide-react';
+import { RefreshCw, AlertTriangle, CheckCircle, Info, Zap, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface CoachPattern {
+  name: string;
+  severity?: 'high' | 'medium' | 'low';
+  detail: string;
+  fix?: string;
+  savings?: string;
+}
+
+interface CoachData {
+  health_score: number;
+  snapshot: {
+    total_overhead: number;
+    overhead_pct: number;
+    context_window: number;
+    usable_tokens: number;
+    skill_count: number;
+    skill_tokens: number;
+    claude_md_tokens: number;
+    mcp_server_count: number;
+    mcp_tokens: number;
+  };
+  patterns_bad: CoachPattern[];
+  patterns_good: { name: string; detail: string }[];
+  questions: string[];
+}
 
 // ─── Types (mirroring measure.py snapshot JSON) ───────────────────────────────
 
@@ -275,6 +303,102 @@ function buildSuggestions(
   return suggestions;
 }
 
+function healthScoreColor(score: number): string {
+  if (score >= 80) return 'oklch(0.65 0.15 140)';
+  if (score >= 60) return 'oklch(0.72 0.18 60)';
+  return 'oklch(0.65 0.22 25)';
+}
+
+function severityColor(severity?: string): string {
+  if (severity === 'high') return 'oklch(0.65 0.22 25)';
+  if (severity === 'medium') return 'oklch(0.72 0.18 60)';
+  return 'oklch(0.55 0.08 260)';
+}
+
+function HealthScoreCard({ coach }: { coach: CoachData }) {
+  const color = healthScoreColor(coach.health_score);
+  const { overhead_pct, usable_tokens } = coach.snapshot;
+  return (
+    <div
+      className="rounded-lg border border-white/[0.06] p-3 col-span-2 sm:col-span-1"
+      style={{ background: 'oklch(0.09 0 0)' }}
+    >
+      <div className="text-[11px] text-muted-foreground/40 mb-1">Health Score</div>
+      <div className="text-2xl font-bold font-mono leading-none" style={{ color }}>
+        {coach.health_score}
+        <span className="text-sm font-normal text-muted-foreground/40">/100</span>
+      </div>
+      <div className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${coach.health_score}%`, background: color }}
+        />
+      </div>
+      <div className="text-[11px] text-muted-foreground/40 mt-1.5">
+        {overhead_pct}% startup · ~{Math.round(usable_tokens / 1000)}K usable
+      </div>
+    </div>
+  );
+}
+
+function PatternAnalysis({ coach }: { coach: CoachData }) {
+  return (
+    <div
+      className="rounded-lg border border-white/[0.06] overflow-hidden shrink-0"
+      style={{ background: 'oklch(0.09 0 0)' }}
+    >
+      <div className="px-4 py-2.5 border-b border-white/[0.04]">
+        <h3 className="text-[12px] font-semibold text-foreground/70">Health Analysis</h3>
+      </div>
+      <div className="px-4 divide-y divide-white/[0.03]">
+        {coach.patterns_bad.map((p, i) => (
+          <div key={i} className="py-2.5">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{
+                  color: severityColor(p.severity),
+                  background: `${severityColor(p.severity)}18`,
+                }}
+              >
+                {p.severity ?? 'info'}
+              </span>
+              <span className="text-[12px] font-medium text-foreground/80">{p.name}</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground/50 leading-relaxed">{p.detail}</p>
+            {p.fix && (
+              <div className="flex items-start gap-1.5 mt-1">
+                <Wrench className="h-3 w-3 shrink-0 mt-0.5 text-muted-foreground/30" />
+                <span className="text-[11px] text-muted-foreground/40">{p.fix}</span>
+              </div>
+            )}
+            {p.savings && (
+              <p className="text-[11px] mt-0.5" style={{ color: 'oklch(0.65 0.15 140)' }}>
+                {p.savings}
+              </p>
+            )}
+          </div>
+        ))}
+        {coach.patterns_good.map((p, i) => (
+          <div key={i} className="flex gap-2.5 py-2.5">
+            <CheckCircle
+              className="h-3.5 w-3.5 shrink-0 mt-0.5"
+              style={{ color: 'oklch(0.65 0.15 140)' }}
+            />
+            <div className="min-w-0">
+              <div className="text-[12px] font-medium text-foreground/80">{p.name}</div>
+              <div className="text-[11px] text-muted-foreground/50 mt-0.5">{p.detail}</div>
+            </div>
+          </div>
+        ))}
+        {coach.patterns_bad.length === 0 && coach.patterns_good.length === 0 && (
+          <div className="py-3 text-[12px] text-muted-foreground/40">No patterns detected.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function BarRow({
@@ -353,6 +477,7 @@ function SuggestionRow({
 
 export function TokenUsageTab() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [coach, setCoach] = useState<CoachData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notInstalled, setNotInstalled] = useState(false);
@@ -371,8 +496,9 @@ export function TokenUsageTab() {
         setError(body.message ?? 'Failed to run measure.py');
         return;
       }
-      const body = (await res.json()) as { data: Snapshot };
+      const body = (await res.json()) as { data: Snapshot; coach: CoachData | null };
       setSnapshot(body.data);
+      setCoach(body.coach ?? null);
       setNotInstalled(false);
     } catch {
       setError('Network error — could not reach /api/token-usage');
@@ -490,7 +616,7 @@ export function TokenUsageTab() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 shrink-0">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
         <div
           className="rounded-lg border border-white/[0.06] p-3"
           style={{ background: 'oklch(0.09 0 0)' }}
@@ -534,6 +660,8 @@ export function TokenUsageTab() {
             <div className="text-[11px] text-muted-foreground/40 mt-1">from JSONL session logs</div>
           </div>
         )}
+
+        {coach && <HealthScoreCard coach={coach} />}
       </div>
 
       {/* Breakdown */}
@@ -577,20 +705,24 @@ export function TokenUsageTab() {
         </div>
       )}
 
-      {/* Suggestions */}
-      <div
-        className="rounded-lg border border-white/[0.06] overflow-hidden shrink-0"
-        style={{ background: 'oklch(0.09 0 0)' }}
-      >
-        <div className="px-4 py-2.5 border-b border-white/[0.04]">
-          <h3 className="text-[12px] font-semibold text-foreground/70">Recommendations</h3>
+      {/* Health Analysis (coach) or basic Recommendations fallback */}
+      {coach ? (
+        <PatternAnalysis coach={coach} />
+      ) : (
+        <div
+          className="rounded-lg border border-white/[0.06] overflow-hidden shrink-0"
+          style={{ background: 'oklch(0.09 0 0)' }}
+        >
+          <div className="px-4 py-2.5 border-b border-white/[0.04]">
+            <h3 className="text-[12px] font-semibold text-foreground/70">Recommendations</h3>
+          </div>
+          <div className="px-4">
+            {suggestions.map((s, i) => (
+              <SuggestionRow key={i} {...s} />
+            ))}
+          </div>
         </div>
-        <div className="px-4">
-          {suggestions.map((s, i) => (
-            <SuggestionRow key={i} {...s} />
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
