@@ -347,13 +347,19 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
     // The request_id MUST be inside `response`, not at the top level — Claude's injectControlResponse()
     // does `H.response?.request_id` and silently returns if not found.
     const behavior = decision === 'deny' ? 'deny' : 'allow';
+    // IMPORTANT: omit `updatedInput` entirely when we have no update to pass.
+    // The CLI does `if (k.updatedInput !== undefined) Y = k.updatedInput` — so sending
+    // an empty object {} would replace the tool's original input (e.g. Bash's {command})
+    // with {}, causing "undefined is not an object (evaluating 'H.includes')" crashes.
+    // Only include updatedInput when there is an actual value to inject (e.g. AskUserQuestion answers).
+    const updatedInput =
+      typeof decision === 'object' && decision.updatedInput ? decision.updatedInput : undefined;
     const innerResponse: Record<string, unknown> =
       behavior === 'deny'
         ? { behavior: 'deny', message: 'User denied', interrupt: false }
         : {
             behavior: 'allow',
-            updatedInput:
-              typeof decision === 'object' && decision.updatedInput ? decision.updatedInput : {},
+            ...(updatedInput !== undefined ? { updatedInput } : {}),
           };
 
     const stdin = this.childProcess?.stdin;
