@@ -59,6 +59,9 @@ export const DELETE = withErrorBoundary(
 
     const { agentId, capabilityId } = removerRows[0];
 
+    // Remove the original integration task from the board so it no longer appears in the UI
+    await db.delete(tasks).where(eq(tasks.id, originalTask.id));
+
     // Create a removal task under the system project
     const removalTask = await createTask({
       title: `Remove integration: ${name}`,

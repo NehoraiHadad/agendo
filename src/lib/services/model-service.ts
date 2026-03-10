@@ -343,10 +343,15 @@ async function readGeminiModels(): Promise<ModelOption[]> {
     const modelsJsPath = await findGeminiModelsJs();
     if (!modelsJsPath) return [];
 
-    // require() is more robust than regex parsing -- survives minification,
-    // whitespace changes, and constant reordering.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = require(modelsJsPath) as Record<string, unknown>;
+    // Parse exported constants from models.js via regex.
+    // Avoids dynamic require() which Turbopack can't resolve, and avoids
+    // eval/vm which execute arbitrary code.
+    const { readFile: rf } = await import('node:fs/promises');
+    const code = await rf(modelsJsPath, 'utf-8');
+    const m: Record<string, string> = {};
+    for (const match of code.matchAll(/export\s+const\s+(\w+)\s*=\s*['"]([^'"]+)['"]/g)) {
+      m[match[1]] = match[2];
+    }
 
     const previewEnabled = await isGeminiPreviewEnabled();
     const models: ModelOption[] = [];
