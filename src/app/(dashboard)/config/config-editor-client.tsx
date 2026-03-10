@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import Link from 'next/link';
-import { Settings, Loader2, AlertCircle, BarChart2 } from 'lucide-react';
+import { Settings, Loader2, AlertCircle } from 'lucide-react';
 import { ConfigScopeSelector } from '@/components/config/config-scope-selector';
 import { ConfigFileTree, type TreeNode } from '@/components/config/config-file-tree';
 import { ConfigEditorTextarea } from '@/components/config/config-editor-textarea';
-import { TokenBudgetPanel } from '@/components/config/token-budget-panel';
 import { cn } from '@/lib/utils';
 
 interface ProjectOption {
@@ -265,15 +263,6 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
             </p>
           </div>
 
-          {/* Full Analysis link */}
-          <Link
-            href="/config/analyze"
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/30 hover:text-muted-foreground/60 transition-colors shrink-0"
-          >
-            <BarChart2 className="h-3 w-3" />
-            Full Analysis
-          </Link>
-
           {/* Session token overhead summary */}
           {(totalTokens > 0 || (isProjectScope && (globalTokens ?? 0) > 0)) &&
             (() => {
@@ -371,12 +360,9 @@ export function ConfigEditorClient({ projects }: ConfigEditorClientProps) {
               </div>
             </div>
           ) : !selectedFile ? (
-            <TokenBudgetPanel
-              tree={tree}
-              isProjectScope={isProjectScope}
-              globalTokens={globalTokens}
-              alwaysTotal={combined}
-            />
+            <div className="flex flex-1 items-center justify-center">
+              <p className="text-xs text-muted-foreground/30">Select a file to edit</p>
+            </div>
           ) : (
             <ConfigEditorTextarea
               content={fileContent}
