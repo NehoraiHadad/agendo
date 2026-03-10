@@ -46,12 +46,20 @@ function deriveIntegrationName(source: string): string {
 }
 
 /**
- * Builds the full task description for an integration planner session.
- * Gives the agent codebase context + a decision framework so it can
- * work autonomously even from a vague user request.
+ * Builds the planner prompt for an integration session.
+ *
+ * The planner researches the source, creates subtasks, saves a plan, then
+ * spawns a separate Implementer session via start_agent_session.
+ * The Implementer executes the subtasks and commits — the Planner never writes code.
  */
 function buildIntegrationDescription(source: string): string {
-  return `## What to integrate
+  return `## Your role: Integration Planner
+
+You research the source, decide how to integrate it into Agendo, create concrete subtasks, save a plan, then spawn an Implementer agent to do the actual coding. You do NOT write code yourself.
+
+---
+
+## What to integrate
 ${source}
 
 If the auto-derived task title does not accurately reflect what you're integrating, call update_task with a better title (e.g. "Integrate: <proper-name>").
@@ -66,49 +74,53 @@ If the auto-derived task title does not accurately reflect what you're integrati
 - UI components: \`src/components/\` — shadcn/ui + Tailwind CSS
 - Services: \`src/lib/services/\`
 - DB: Drizzle ORM + PostgreSQL (\`src/lib/db/schema.ts\`)
-- Build check: \`pnpm lint && pnpm typecheck\` (zero warnings policy — must pass before commit)
-- PM2: \`pm2 restart agendo\` (port 4100), \`pm2 restart agendo-worker\`
+- Build check: \`pnpm lint && pnpm typecheck\` (zero warnings — must pass before commit)
+- PM2: \`pm2 restart agendo\` (port 4100)
 
 ---
 
 ## Integration decision framework
 
-**Step 1 — Read the actual source code.** Do NOT guess or reimagine what the repo does.
-Fetch the real files from GitHub raw URLs (README, main source files, key scripts).
-You must have read the actual code before writing a single line of your own.
+**Read the actual source first.** Do NOT guess. Fetch README, main source files, key scripts from GitHub raw URLs before deciding anything.
 
-**Step 2 — Decide what to integrate.** Not everything in a repo needs to be integrated. Focus on the part that is actually useful inside Agendo.
-
-**Step 3 — Choose the right embedding strategy (based on what you actually read):**
+**Embedding strategy (choose based on what you read):**
 
 | What the repo provides | Strategy |
 |---|---|
 | npm/JS package | Install + import directly |
-| React components | Copy or install, embed in the right page |
-| Plain HTML/JS UI | Port to React — don't iframe if avoidable |
-| Python/CLI tool | Call via \`child_process\` from an API route (on-demand, NOT a persistent daemon) |
-| Simple logic only | Port to TypeScript based on the actual source — do NOT invent or reimagine |
+| React components | Copy or install, embed in right page |
+| Plain HTML/JS UI | Port to React — don't iframe |
+| Python/CLI tool | Call via \`child_process\` from API route (on-demand, not a daemon) |
+| Logic only | Port to TypeScript from the actual source |
 
-**Step 4 — Decide where it lives in Agendo:**
-- New standalone feature → \`src/app/(dashboard)/[name]/page.tsx\`
-- Extension of an existing page → add a tab (e.g. in \`/config\`, \`/settings\`)
+**Where it lives:**
+- New feature → \`src/app/(dashboard)/[name]/page.tsx\`
+- Extension of existing page → add a tab (e.g. in \`/config\`, \`/settings\`)
 - Background utility → \`src/lib/services/\` or \`src/lib/utils/\`
-- New API endpoint → \`src/app/api/[name]/route.ts\`
+- New API → \`src/app/api/[name]/route.ts\`
 
-**Step 5 — Avoid running extra servers.** If the repo has a built-in HTTP server, replace it with an API route in Next.js that returns the same data.
+**No extra servers.** Replace any built-in HTTP server with a Next.js API route.
 
 ---
 
-## Workflow
+## Planner workflow
 
-1. \`get_my_task\` — read this description and extract what to integrate
-2. Explore the repo (fetch README, main files from GitHub raw URLs)
-3. Explore the relevant Agendo files (understand existing patterns)
-4. \`add_progress_note\` with your integration plan (what, where, how)
-5. Implement — install deps if needed, write code, wire up UI
-6. \`pnpm lint && pnpm typecheck\` — fix all errors (zero warnings)
-7. \`git add ... && git commit\`
-8. \`update_task\` → \`done\``;
+1. \`get_my_task\` — save your taskId, read what to integrate
+2. Fetch the actual repo files (README, source files) from GitHub raw URLs
+3. Read relevant Agendo files to understand existing patterns
+4. \`create_subtask\` × 2–5 — one per coherent chunk of work. Each subtask must include:
+   - Exact file paths to create or modify
+   - Exact commands to run (install, build, etc.)
+   - What the end result should look like
+5. \`save_plan\` — full implementation brief: architecture decision, embedding strategy, file list, code snippets the Implementer needs
+6. \`start_agent_session\` — spawn the Implementer:
+   \`\`\`
+   agent: "claude-code-1"
+   taskId: <your taskId from step 1>
+   permissionMode: "bypassPermissions"
+   initialPrompt: "You are an Integration Implementer. Call get_my_task to read the integration plan and list_tasks (filter by parentTaskId) to get your subtasks. Execute each subtask in order — mark each done as you finish it. Run pnpm lint && pnpm typecheck and fix all errors. Commit with git. Mark the parent task done when complete."
+   \`\`\`
+7. \`update_task\` → \`in_progress\` — planning done; Implementer takes over`;
 }
 
 /**
