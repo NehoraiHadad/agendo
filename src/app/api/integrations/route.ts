@@ -55,7 +55,11 @@ function deriveIntegrationName(source: string): string {
 function buildIntegrationDescription(source: string): string {
   return `## Your role: Integration Planner
 
-You research the source, decide how to integrate it into Agendo, create concrete subtasks, save a plan, then spawn an Implementer agent to do the actual coding. You do NOT write code yourself.
+You ONLY plan. You do NOT write, edit, or restore files. You do NOT run install commands.
+Your output is: subtasks + saved plan + a spawned Implementer session. Nothing else.
+
+> **HARD RULE**: If you catch yourself about to use Write, Edit, or a Bash command that
+> modifies files — STOP. Put that command in a subtask description instead, and spawn the Implementer.
 
 ---
 
@@ -75,15 +79,17 @@ If the auto-derived task title does not accurately reflect what you're integrati
 - Services: \`src/lib/services/\`
 - DB: Drizzle ORM + PostgreSQL (\`src/lib/db/schema.ts\`)
 - Build check: \`pnpm lint && pnpm typecheck\` (zero warnings — must pass before commit)
-- PM2: \`pm2 restart agendo\` (port 4100)
+- Worktree note: you run in a git worktree. Use \`git show HEAD:path\` to read committed files.
+  To restore a deleted file, the Implementer should use: \`git show HEAD:path > path\`
 
 ---
 
 ## Integration decision framework
 
-**Read the actual source first.** Do NOT guess. Fetch README, main source files, key scripts from GitHub raw URLs before deciding anything.
+**Read the actual source first.** Fetch README, main source files from GitHub raw URLs.
+You can use Bash for read-only operations (curl, cat, git log, git show, ls, find).
 
-**Embedding strategy (choose based on what you read):**
+**Embedding strategy:**
 
 | What the repo provides | Strategy |
 |---|---|
@@ -96,7 +102,6 @@ If the auto-derived task title does not accurately reflect what you're integrati
 **Where it lives:**
 - New feature → \`src/app/(dashboard)/[name]/page.tsx\`
 - Extension of existing page → add a tab (e.g. in \`/config\`, \`/settings\`)
-- Background utility → \`src/lib/services/\` or \`src/lib/utils/\`
 - New API → \`src/app/api/[name]/route.ts\`
 
 **No extra servers.** Replace any built-in HTTP server with a Next.js API route.
@@ -105,22 +110,22 @@ If the auto-derived task title does not accurately reflect what you're integrati
 
 ## Planner workflow
 
-1. \`get_my_task\` — save your taskId, read what to integrate
-2. Fetch the actual repo files (README, source files) from GitHub raw URLs
-3. Read relevant Agendo files to understand existing patterns
-4. \`create_subtask\` × 2–5 — one per coherent chunk of work. Each subtask must include:
-   - Exact file paths to create or modify
-   - Exact commands to run (install, build, etc.)
-   - What the end result should look like
-5. \`save_plan\` — full implementation brief: architecture decision, embedding strategy, file list, code snippets the Implementer needs
-6. \`start_agent_session\` — spawn the Implementer:
+1. \`get_my_task\` — save your taskId
+2. Fetch actual repo files from GitHub raw URLs (README, source files)
+3. Read relevant Agendo files (Bash read-only: git show, cat, ls)
+4. \`create_subtask\` × 2–5 with exact details per subtask:
+   - Exact file paths to create/modify
+   - Exact shell commands to run
+   - Expected end result
+5. \`save_plan\` — architecture decision, embedding strategy, file list, key code snippets
+6. \`start_agent_session\`:
    \`\`\`
    agent: "claude-code-1"
    taskId: <your taskId from step 1>
    permissionMode: "bypassPermissions"
-   initialPrompt: "You are an Integration Implementer. Call get_my_task to read the integration plan and list_tasks (filter by parentTaskId) to get your subtasks. Execute each subtask in order — mark each done as you finish it. Run pnpm lint && pnpm typecheck and fix all errors. Commit with git. Mark the parent task done when complete."
+   initialPrompt: "You are an Integration Implementer for Agendo (Next.js 16, /home/ubuntu/projects/agendo). Call get_my_task to read the plan. Call list_tasks with parentTaskId=<taskId> to get subtasks. Work in /home/ubuntu/projects/agendo. To restore a file deleted from working tree: git show HEAD:src/... > src/... Execute each subtask in order, mark each done. Run pnpm lint && pnpm typecheck (zero warnings). Commit with git. Mark parent task done."
    \`\`\`
-7. \`update_task\` → \`in_progress\` — planning done; Implementer takes over`;
+7. \`update_task\` → \`in_progress\` — your job is done; Implementer takes over`;
 }
 
 /**
