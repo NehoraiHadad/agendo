@@ -181,7 +181,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   const session = await createAndEnqueueSession({
     taskId: task.id,
     projectId: systemProject.id,
-    kind: 'conversation',
+    kind: 'integration',
     agentId,
     permissionMode: 'bypassPermissions',
   });

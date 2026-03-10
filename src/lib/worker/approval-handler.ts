@@ -182,6 +182,13 @@ export class ApprovalHandler {
       return 'allow';
     }
 
+    // Integration sessions run fully autonomously — auto-approve all tool requests,
+    // including ExitPlanMode (so the planner can proceed to implementation without
+    // waiting for a human to click through the approval card).
+    if (this.session.kind === 'integration') {
+      return 'allow';
+    }
+
     // Auto-deny any previous pending approval for the same tool to prevent duplicate cards.
     const existingApprovalId = this.pendingApprovalsByTool.get(toolName);
     if (existingApprovalId) {

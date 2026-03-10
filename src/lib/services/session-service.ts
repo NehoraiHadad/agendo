@@ -19,7 +19,7 @@ import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
 import type { AgendoControl } from '@/lib/realtime/events';
 
-export type SessionKind = 'conversation' | 'execution' | 'plan';
+export type SessionKind = 'conversation' | 'execution' | 'plan' | 'integration';
 
 export interface CreateSessionInput {
   taskId?: string;
