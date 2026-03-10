@@ -73,11 +73,13 @@ If the auto-derived task title does not accurately reflect what you're integrati
 
 ## Integration decision framework
 
-**Step 1 — Understand the repo first.** Fetch its README and key files before writing a single line of code.
+**Step 1 — Read the actual source code.** Do NOT guess or reimagine what the repo does.
+Fetch the real files from GitHub raw URLs (README, main source files, key scripts).
+You must have read the actual code before writing a single line of your own.
 
 **Step 2 — Decide what to integrate.** Not everything in a repo needs to be integrated. Focus on the part that is actually useful inside Agendo.
 
-**Step 3 — Choose the right embedding strategy:**
+**Step 3 — Choose the right embedding strategy (based on what you actually read):**
 
 | What the repo provides | Strategy |
 |---|---|
@@ -85,7 +87,7 @@ If the auto-derived task title does not accurately reflect what you're integrati
 | React components | Copy or install, embed in the right page |
 | Plain HTML/JS UI | Port to React — don't iframe if avoidable |
 | Python/CLI tool | Call via \`child_process\` from an API route (on-demand, NOT a persistent daemon) |
-| Simple logic only | Port to TypeScript — no external dependency needed |
+| Simple logic only | Port to TypeScript based on the actual source — do NOT invent or reimagine |
 
 **Step 4 — Decide where it lives in Agendo:**
 - New standalone feature → \`src/app/(dashboard)/[name]/page.tsx\`
