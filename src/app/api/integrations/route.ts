@@ -103,7 +103,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
   const task = await createTask({
     title: title ?? `Integrate: ${integrationName}`,
-    description: `Integration plan and execution for: ${source}`,
+    description: `Integration plan and execution for: ${source}\n\nIf the auto-derived task title does not accurately reflect the integration, call update_task with a better title (e.g. "Integrate: <proper-name>").`,
     projectId: systemProject.id,
     assigneeAgentId: agentId,
     inputContext: {
