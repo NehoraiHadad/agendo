@@ -153,12 +153,12 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
         .where(and(eq(agents.id, requestedAgentId), eq(agents.isActive, true)))
         .limit(1)
         .then((r) => r[0] ?? null)
-    : await db
-        .select({ id: agents.id })
+    : // Prefer Claude (slug contains 'claude') — best for autonomous codebase integration
+      await db
+        .select({ id: agents.id, slug: agents.slug })
         .from(agents)
         .where(and(eq(agents.isActive, true), eq(agents.toolType, 'ai-agent')))
-        .limit(1)
-        .then((r) => r[0] ?? null);
+        .then((rows) => rows.find((r) => r.slug.includes('claude')) ?? rows[0] ?? null);
 
   if (!agentRow) {
     throw new NotFoundError('Agent', requestedAgentId ?? 'active ai-agent');
