@@ -183,7 +183,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     projectId: systemProject.id,
     kind: 'conversation',
     agentId,
-    permissionMode: 'plan',
+    permissionMode: 'bypassPermissions',
   });
 
   // Store sessionId so the UI can link to the planner session.
