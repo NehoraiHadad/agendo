@@ -200,11 +200,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     projectId: systemProject.id,
     kind: 'integration',
     agentId,
-    // bypassPermissions so the planner can use Bash for read-only research (curl, cat, ls).
-    // plan mode blocks Bash at the CLI level before any can_use_tool request is sent, which
-    // breaks the planner's ability to inspect the repo. File-write restrictions are enforced
-    // by the HARD RULE in the planner prompt — not by the permission mode.
-    permissionMode: 'bypassPermissions',
+    permissionMode: 'plan',
   });
 
   // Store sessionId so the UI can link to the planner session.
