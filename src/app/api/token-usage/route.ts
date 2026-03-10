@@ -1,0 +1,89 @@
+import { NextResponse } from 'next/server';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { homedir } from 'os';
+import path from 'path';
+import { withErrorBoundary } from '@/lib/api-handler';
+
+const execFileAsync = promisify(execFile);
+
+const MEASURE_PY_PATHS = [
+  path.join(homedir(), '.claude', 'skills', 'token-optimizer', 'scripts', 'measure.py'),
+  // Plugin install path (glob pattern would be needed for exact match; try common cache location)
+  path.join(
+    homedir(),
+    '.claude',
+    'plugins',
+    'cache',
+    'token-optimizer',
+    'skills',
+    'token-optimizer',
+    'scripts',
+    'measure.py',
+  ),
+];
+
+const SNAPSHOT_PATH = path.join(
+  homedir(),
+  '.claude',
+  '_backups',
+  'token-optimizer',
+  'snapshot_current.json',
+);
+
+function findMeasurePy(): string | null {
+  for (const p of MEASURE_PY_PATHS) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * GET /api/token-usage
+ *
+ * Runs measure.py snapshot current and returns the parsed JSON snapshot.
+ * Returns 404 if measure.py is not installed.
+ * Returns 500 if the subprocess fails.
+ */
+export const GET = withErrorBoundary(async () => {
+  const measurePy = findMeasurePy();
+  if (!measurePy) {
+    return NextResponse.json(
+      {
+        error: 'not_installed',
+        message:
+          'token-optimizer is not installed. Run: /plugin marketplace add alexgreensh/token-optimizer',
+      },
+      { status: 404 },
+    );
+  }
+
+  // Run measure.py — writes to snapshot_current.json then prints a summary
+  try {
+    await execFileAsync('python3', [measurePy, 'snapshot', 'current'], {
+      timeout: 30_000,
+      // Run from home dir so cwd-based project detection falls back gracefully
+      cwd: homedir(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: 'subprocess_failed', message: `measure.py failed: ${msg}` },
+      { status: 500 },
+    );
+  }
+
+  if (!existsSync(SNAPSHOT_PATH)) {
+    return NextResponse.json(
+      { error: 'no_snapshot', message: 'Snapshot file not found after running measure.py' },
+      { status: 500 },
+    );
+  }
+
+  const raw = await readFile(SNAPSHOT_PATH, 'utf-8');
+  const snapshot = JSON.parse(raw) as Record<string, unknown>;
+
+  return NextResponse.json({ data: snapshot });
+});

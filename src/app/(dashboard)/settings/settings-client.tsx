@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Settings, Bot, Server, FileCode } from 'lucide-react';
+import { Settings, Bot, Server, FileCode, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AgentCards } from '@/components/settings/agent-cards';
 import { McpServerCards } from '@/components/settings/mcp-server-cards';
+import { TokenUsageTab } from '@/components/settings/token-usage-tab';
 import { ConfigEditorClient } from '../config/config-editor-client';
 import type { Agent, McpServer } from '@/lib/types';
 
@@ -19,6 +20,7 @@ const tabs = [
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'mcp', label: 'MCP Servers', icon: Server },
   { id: 'config', label: 'Config Files', icon: FileCode },
+  { id: 'token-usage', label: 'Token Usage', icon: Zap },
 ] as const;
 
 type TabId = (typeof tabs)[number]['id'];
@@ -91,6 +93,7 @@ export function SettingsClient({ agents, mcpServers, projects }: SettingsClientP
         {activeTab === 'agents' && <AgentCards initialAgents={agents} />}
         {activeTab === 'mcp' && <McpServerCards initialServers={mcpServers} />}
         {activeTab === 'config' && <ConfigEditorClient projects={projects} />}
+        {activeTab === 'token-usage' && <TokenUsageTab />}
       </div>
     </div>
   );
