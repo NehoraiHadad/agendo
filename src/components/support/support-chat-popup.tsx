@@ -252,7 +252,7 @@ export function SupportChatPopup({ onClose }: SupportChatPopupProps) {
     try {
       await apiFetch(`/api/sessions/${sessionId}/message`, {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ message: text }),
       });
     } catch {
       // Restore message on failure

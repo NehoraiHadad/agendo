@@ -323,7 +323,7 @@ export function buildDisplayItems(
       case 'user:message': {
         // Skip injected team messages — already shown via team:message cards.
         // session-team-manager.ts pushes these as "[Message from teammate X]:\n..."
-        if (ev.text.startsWith('[Message from teammate ')) break;
+        if (ev.text?.startsWith('[Message from teammate ')) break;
 
         items.push({
           kind: 'user',
