@@ -637,7 +637,7 @@ Goal: validate that the planner prompt produces a useful, actionable plan.
 curl -X POST http://localhost:4100/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "Integrate: token-optimizer",
+    "title": "Integrate: claude-code-skills",
     "projectId": "<agendo-project-id>",
     "status": "in_progress"
   }'
@@ -670,13 +670,13 @@ curl -X POST http://localhost:4100/api/sessions \
 Test repos (ordered by increasing complexity):
 
 1. Simple Claude skill: `https://github.com/anthropics/claude-code-skills` (if public)
-   OR use the existing `~/.claude/skills/token-optimizer` as a local test
+   OR use any local skill repo under `~/.claude/skills` as a test
 2. MCP server: `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem`
 3. More complex: a real tool with build steps
 
 ### Phase 3: Test implementer manually ★ SECOND TEST
 
-After the planner produces a good plan for the token-optimizer:
+After the planner produces a good plan for the test repo:
 
 1. Read the plan content from `/plans?projectId=<agendo-id>`
 2. Create the "Implement" subtask manually (or use the one the planner created)
@@ -779,8 +779,8 @@ The following tasks capture this plan as actionable work items:
 | 4   | Create ConnectRepoDialog component                    | Task | Phase 5; ~45 min                    |
 | 5   | Add Connect Repo button to ProjectHubClient           | Task | Phase 5; depends on #4              |
 | 6   | Fix executePlan to pass plan content as initialPrompt | Task | Phase 6; ~20 min                    |
-| 7   | Manual test: planner on token-optimizer repo          | Task | Phase 2; human + agent              |
-| 8   | Manual test: implementer on token-optimizer plan      | Task | Phase 3; human + agent              |
+| 7   | Manual test: planner on skill repo                    | Task | Phase 2; human + agent              |
+| 8   | Manual test: implementer on skill repo plan           | Task | Phase 3; human + agent              |
 
 ---
 

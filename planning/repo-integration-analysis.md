@@ -250,9 +250,9 @@ Or: only seed the capabilities for Claude in the seed script (check `agent.binar
 
 ## Use Case Walkthroughs
 
-### Case 1: Claude skill (token-optimizer)
+### Case 1: Claude skill (example skill repo)
 
-**Input:** `https://github.com/anthropics/token-optimizer` or just `token-optimizer skill`
+**Input:** `https://github.com/anthropics/claude-code-skills` or a local Claude skill repo
 
 **Planner reads:** README, CLAUDE.md, skill prompt text.
 **Classifies:** `capability`
@@ -334,7 +334,7 @@ In `src/app/api/integrations/route.ts`, add `eq(agents.binaryName, 'claude')` to
 
 In `integrations-client.tsx`, add a "View session" link on each integration row. This requires storing `sessionId` in the task's `inputContext` (or querying sessions by `taskId`). The task already has `id`, so query `GET /api/sessions?taskId=<id>` to find the session.
 
-### Step 5 — Manual test: planner on token-optimizer
+### Step 5 — Manual test: planner on a skill repo
 
 Run the actual planner. Submit `https://github.com/anthropics/claude-code-skills` (or any real skill repo). Watch it in the session viewer. Evaluate:
 

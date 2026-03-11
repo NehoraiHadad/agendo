@@ -1,9 +1,21 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { RefreshCw, AlertTriangle, CheckCircle, Info, Zap, Wrench } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import {
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle,
+  Info,
+  Zap,
+  Wrench,
+  Play,
+  LayoutDashboard,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+
+const CLAUDE_AGENT_ID = 'CLAUDE_AGENT_ID_PLACEHOLDER';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -476,11 +488,36 @@ function SuggestionRow({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function TokenUsageTab() {
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [coach, setCoach] = useState<CoachData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notInstalled, setNotInstalled] = useState(false);
+  const [auditLaunching, setAuditLaunching] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+
+  const runFullAudit = useCallback(async () => {
+    setAuditLaunching(true);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: CLAUDE_AGENT_ID,
+          initialPrompt: '/token-optimizer',
+          permissionMode: 'bypassPermissions',
+        }),
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { data: { id: string } };
+        router.push(`/sessions/${body.data.id}`);
+      }
+    } finally {
+      setAuditLaunching(false);
+    }
+  }, [router]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -527,11 +564,29 @@ export function TokenUsageTab() {
             Measure your per-session token overhead across CLAUDE.md, MEMORY.md, skills, commands,
             and MCP servers.
           </p>
+          <p className="text-[11px] text-muted-foreground/30 mt-2">
+            Claude Code only — requires{' '}
+            <a
+              href="https://github.com/alexgreensh/token-optimizer"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-muted-foreground/50"
+            >
+              token-optimizer
+            </a>{' '}
+            installed as a plugin.
+          </p>
         </div>
-        <Button size="sm" onClick={refresh} className="mt-2">
-          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-          Run Analysis
-        </Button>
+        <div className="flex gap-2 mt-2">
+          <Button size="sm" onClick={refresh}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Run Analysis
+          </Button>
+          <Button size="sm" variant="outline" onClick={runFullAudit} disabled={auditLaunching}>
+            <Play className="h-3.5 w-3.5 mr-1.5" />
+            {auditLaunching ? 'Starting…' : 'Full Audit'}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -603,16 +658,42 @@ export function TokenUsageTab() {
             Snapshot: {new Date(snapshot.timestamp).toLocaleString()}
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={refresh}
-          disabled={loading}
-          className="h-7 text-[12px]"
-        >
-          <RefreshCw className={cn('h-3 w-3 mr-1.5', loading && 'animate-spin')} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setShowDashboard((v) => {
+                if (!v) setDashboardLoading(true);
+                return !v;
+              });
+            }}
+            className="h-7 text-[12px]"
+          >
+            <LayoutDashboard className="h-3 w-3 mr-1.5" />
+            {showDashboard ? 'Hide Dashboard' : 'Dashboard'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={runFullAudit}
+            disabled={auditLaunching}
+            className="h-7 text-[12px]"
+          >
+            <Play className="h-3 w-3 mr-1.5" />
+            {auditLaunching ? 'Starting…' : 'Full Audit'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refresh}
+            disabled={loading}
+            className="h-7 text-[12px]"
+          >
+            <RefreshCw className={cn('h-3 w-3 mr-1.5', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -721,6 +802,30 @@ export function TokenUsageTab() {
               <SuggestionRow key={i} {...s} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Interactive Dashboard (generated by measure.py) */}
+      {showDashboard && (
+        <div className="rounded-lg border border-white/[0.06] overflow-hidden shrink-0 relative">
+          {dashboardLoading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 z-10">
+              <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className="text-center">
+                <p className="text-sm font-medium">Generating dashboard…</p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Scanning session logs (~60s)
+                </p>
+              </div>
+            </div>
+          )}
+          <iframe
+            src="/api/token-usage/dashboard"
+            className="w-full"
+            style={{ height: '80vh', border: 'none', opacity: dashboardLoading ? 0 : 1 }}
+            title="Token Optimizer Dashboard"
+            onLoad={() => setDashboardLoading(false)}
+          />
         </div>
       )}
     </div>
