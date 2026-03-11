@@ -97,7 +97,7 @@ type Decision = 'allow' | 'deny' | 'allow-session';
 
 export function ToolApprovalCard({
   sessionId,
-  sessionStatus: _sessionStatus,
+  sessionStatus,
   approvalId,
   toolName,
   toolInput,
@@ -206,6 +206,7 @@ export function ToolApprovalCard({
       <InteractiveTool
         toolName={toolName}
         sessionId={sessionId}
+        sessionStatus={sessionStatus}
         input={toolInput}
         isAnswered={decided}
         respond={async (payload) => {

@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { Menu } from 'lucide-react';
+import { Menu, HelpCircle } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './sidebar';
 import { NotificationToggle } from '@/components/pwa/notification-toggle';
 import { IosInstallHint } from '@/components/pwa/ios-install-hint';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { SupportChatPopup } from '@/components/support/support-chat-popup';
+import { UiGuideOverlay } from '@/components/support/ui-guide-overlay';
 import { cn } from '@/lib/utils';
 
 interface SystemStats {
@@ -27,6 +29,7 @@ function MobileNavTrigger({ onClick, stats }: { onClick: () => void; stats: Syst
     <button
       onClick={onClick}
       aria-label="Open navigation"
+      data-guide="nav-sidebar"
       className="flex h-11 w-11 flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
     >
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/50 animate-pulse" />
@@ -65,6 +68,7 @@ const CommandPalette = dynamic(
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
   const [sysStats, setSysStats] = useState<SystemStats | null>(null);
 
   useEffect(() => {
@@ -114,6 +118,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="flex-1 text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
               agenDo
             </span>
+            <button
+              onClick={() => setSupportOpen(true)}
+              aria-label="Open support chat"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground/50 hover:text-foreground/70 hover:bg-white/[0.06] transition-colors"
+            >
+              <HelpCircle className="h-4 w-4" />
+            </button>
             <NotificationToggle />
           </header>
           <IosInstallHint />
@@ -124,6 +135,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </div>
+      <UiGuideOverlay />
+      {supportOpen && <SupportChatPopup onClose={() => setSupportOpen(false)} />}
+      {/* Desktop floating button */}
+      {!supportOpen && (
+        <button
+          onClick={() => setSupportOpen(true)}
+          aria-label="Open support chat"
+          className={cn(
+            'fixed bottom-6 right-6 z-50 hidden sm:flex',
+            'h-12 w-12 items-center justify-center rounded-full',
+            'bg-primary/15 border border-primary/25 backdrop-blur-sm',
+            'text-primary hover:bg-primary/25 hover:border-primary/40',
+            'shadow-lg hover:shadow-primary/20 transition-all duration-200',
+            'hover:scale-105 active:scale-95',
+          )}
+        >
+          <HelpCircle className="h-5 w-5" />
+        </button>
+      )}
     </TooltipProvider>
   );
 }

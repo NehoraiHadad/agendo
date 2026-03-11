@@ -217,6 +217,16 @@
   100% { background-position: 0% 50%; }
 }
 
+/* Guide highlight — soft glow beacon for support agent UI navigation */
+@keyframes guideGlow {
+  0%, 100% { box-shadow: 0 0 0 2px oklch(0.72 0.22 280 / 0.7), 0 0 12px 4px oklch(0.72 0.22 280 / 0.25); }
+  50%      { box-shadow: 0 0 0 2px oklch(0.72 0.22 280 / 1), 0 0 24px 8px oklch(0.72 0.22 280 / 0.4); }
+}
+@keyframes guideAppear {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
 /* Travel dot — CSS Motion Path animation for team diagram message pulses */
 @keyframes travelDot {
   0%   { offset-distance: 0%; opacity: 1; }
@@ -356,4 +366,17 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+
+  /* Guide highlight — soft glow on the actual UI element */
+  .guide-highlight {
+    position: relative;
+    z-index: 40;
+    border-radius: inherit;
+    background-color: oklch(0.72 0.22 280 / 0.08) !important;
+    animation: guideGlow 2s ease-in-out infinite, guideAppear 0.3s ease-out both;
+  }
+  .guide-highlight-1 { animation-delay: 0s, 0s; }
+  .guide-highlight-2 { animation-delay: 0s, 0.15s; }
+  .guide-highlight-3 { animation-delay: 0s, 0.3s; }
+  .guide-highlight-4 { animation-delay: 0s, 0.45s; }
 }

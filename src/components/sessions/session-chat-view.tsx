@@ -134,6 +134,38 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
 };
 
 // ---------------------------------------------------------------------------
+// Guide marker parser — extracts [GUIDE: step1 → step2] from agent text
+// ---------------------------------------------------------------------------
+
+function parseGuideMarker(text: string): string[] | null {
+  const match = text.match(/\[GUIDE:\s*(.+?)\]/);
+  if (!match) return null;
+  return match[1]
+    .split('→')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function stripGuideMarkers(text: string): string {
+  return text.replace(/\[GUIDE:\s*.+?\]\n?/g, '');
+}
+
+function GuideBreadcrumb({ steps }: { steps: string[] }) {
+  return (
+    <div className="flex items-center gap-1 flex-wrap mt-2 mb-0.5">
+      {steps.map((step, i) => (
+        <span key={i} className="flex items-center gap-1">
+          {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/40" />}
+          <span className="text-xs font-medium text-primary/90 bg-primary/10 rounded px-1.5 py-0.5">
+            {step}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Message timestamp formatter
 // ---------------------------------------------------------------------------
 
@@ -589,6 +621,8 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
     const part = parts[i];
 
     if (part.kind === 'text') {
+      const guideSteps = parseGuideMarker(part.text);
+      const displayText = guideSteps ? stripGuideMarkers(part.text) : part.text;
       result.push(
         <div
           key={`t-${startIdx}`}
@@ -596,8 +630,9 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
           style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-            {part.text}
+            {displayText}
           </ReactMarkdown>
+          {guideSteps && <GuideBreadcrumb steps={guideSteps} />}
           <CopyButton
             text={part.text}
             className="absolute top-1 right-1 opacity-0 group-hover/textbubble:opacity-100 transition-opacity"

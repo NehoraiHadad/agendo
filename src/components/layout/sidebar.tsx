@@ -262,10 +262,12 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
             pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
           const badgeCount = item.badgeKey && stats ? stats[item.badgeKey] : 0;
 
+          const guideSlug = item.label.toLowerCase().replace(/\s+/g, '-');
           const linkContent = (
             <Link
               href={item.href}
               onClick={onMobileClose}
+              data-guide={`nav-${guideSlug}`}
               className={cn(
                 'relative flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium rounded-lg transition-all duration-150 group',
                 'min-h-[40px]',

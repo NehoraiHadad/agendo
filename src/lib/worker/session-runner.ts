@@ -20,6 +20,7 @@ import { listTaskEvents } from '@/lib/services/task-event-service';
 import {
   generateExecutionPreamble,
   generatePlanningPreamble,
+  generateSupportPreamble,
   generateResumeContext,
 } from '@/lib/worker/session-preambles';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
@@ -185,14 +186,21 @@ export async function runSession(
     agent.mcpEnabled &&
     (binaryName === 'claude' || binaryName === 'gemini' || binaryName === 'codex');
   let codexDeveloperInstructions: string | undefined;
-  if (hasMcp && !resumeRef && prompt) {
+
+  // Support sessions: always inject preamble (no MCP dependency)
+  if (session.kind === 'support' && !resumeRef && prompt) {
+    const supportPreamble = generateSupportPreamble();
+    if (binaryName === 'codex') {
+      codexDeveloperInstructions = supportPreamble;
+    } else {
+      prompt = supportPreamble + prompt;
+    }
+  } else if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
     const preamble = session.taskId
       ? generateExecutionPreamble(projectName, session.taskId)
       : generatePlanningPreamble(projectName);
     if (binaryName === 'codex') {
-      // Codex: inject preamble as developerInstructions (system-level, not a user turn)
-      // instead of prepending to the prompt. This keeps the user's initial message clean.
       codexDeveloperInstructions = preamble;
     } else {
       prompt = preamble + prompt;

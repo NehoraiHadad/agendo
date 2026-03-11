@@ -159,13 +159,17 @@ export function ProjectHubClient({
 
       {/* Tabs */}
       <div className="border-b border-white/[0.06]">
-        <nav className="flex gap-0 -mb-px overflow-x-auto scrollbar-none" aria-label="Project tabs">
+        <nav
+          className="flex gap-0 -mb-px py-1 overflow-x-auto overflow-y-visible scrollbar-none"
+          aria-label="Project tabs"
+        >
           {tabs.map((tab) => {
             const TabIcon = tab.icon;
             return (
               <button
                 key={tab.id}
                 type="button"
+                data-guide={`project-${tab.id}-tab`}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 min-h-[44px] ${
                   activeTab === tab.id

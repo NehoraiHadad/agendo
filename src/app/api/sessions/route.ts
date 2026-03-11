@@ -12,7 +12,7 @@ import { z } from 'zod';
 const createSessionSchema = z.object({
   taskId: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
-  kind: z.enum(['conversation', 'execution']).optional(),
+  kind: z.enum(['conversation', 'execution', 'support']).optional(),
   agentId: z.string().uuid(),
   initialPrompt: z.string().optional(),
   permissionMode: z.enum(['default', 'bypassPermissions', 'acceptEdits']).optional(),
@@ -31,7 +31,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
     agentId: url.searchParams.get('agentId') ?? undefined,
     status: url.searchParams.get('status') ?? undefined,
     kind:
-      kindParam === 'conversation' || kindParam === 'execution'
+      kindParam === 'conversation' || kindParam === 'execution' || kindParam === 'support'
         ? (kindParam as SessionKind)
         : undefined,
     page: url.searchParams.has('page') ? Number(url.searchParams.get('page')) : undefined,

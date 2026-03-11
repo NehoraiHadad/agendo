@@ -69,11 +69,12 @@ export function SettingsClient({ agents, mcpServers, projects }: SettingsClientP
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 mb-4 px-0.5 shrink-0 overflow-x-auto">
+      <div className="flex gap-1 mb-4 px-0.5 py-1 shrink-0 overflow-x-auto overflow-y-visible">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
+            data-guide={`settings-${tab.label.toLowerCase().replace(/\s+/g, '-')}-tab`}
             onClick={() => handleTabChange(tab.id)}
             className={cn(
               'flex items-center gap-2 px-3.5 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 whitespace-nowrap',
