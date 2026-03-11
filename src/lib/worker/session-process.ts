@@ -48,7 +48,6 @@ import { Future } from '@/lib/utils/future';
 import { resetRecoveryCount } from '@/worker/zombie-reconciler';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
-import { mapClaudeJsonToEvents } from '@/lib/worker/adapters/claude-event-mapper';
 import type { InFlightTool } from '@/lib/worker/interruption-marker';
 import {
   ExitContext,
@@ -232,36 +231,6 @@ export class SessionProcess {
       activeToolUseIds: this.activeToolUseIds,
       emitEvent: (payload) => this.emitEvent(payload),
       onEmittedEvent: (event) => this.onEmittedEvent(event),
-      mapClaudeJson: (parsed, callbacks) =>
-        mapClaudeJsonToEvents(parsed, {
-          ...callbacks,
-          onMessageStart: (stats) => {
-            callbacks.onMessageStart?.(stats);
-            // Emit real-time context bar update so the workspace header
-            // updates mid-turn, not just after agent:result fires.
-            if (this.dataPipeline.lastContextWindow) {
-              const used =
-                stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
-              void this.emitEvent({
-                type: 'agent:usage',
-                used,
-                size: this.dataPipeline.lastContextWindow,
-              });
-            }
-          },
-          onResultStats: (costUsd, turns) => {
-            void db
-              .update(sessions)
-              .set({
-                ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-                ...(turns !== null && { totalTurns: turns }),
-              })
-              .where(eq(sessions.id, this.session.id))
-              .catch((err: unknown) => {
-                log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
-              });
-          },
-        }),
     });
 
     // Persist the log file path so the frontend can fetch it later.

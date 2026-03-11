@@ -30,6 +30,15 @@ export async function apiCall(path: string, options: ApiCallOptions = {}): Promi
   }
 
   const res = await fetch(url, init);
+  const contentType = res.headers.get('content-type') ?? '';
+
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    throw new Error(
+      `API error ${res.status}: expected JSON but got ${contentType || 'unknown content-type'}. Body: ${text.slice(0, 200)}`,
+    );
+  }
+
   const json = (await res.json()) as {
     data?: unknown;
     error?: { message?: string };

@@ -13,7 +13,6 @@ import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload } from '@/lib/realtime/events';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
-import type { ClaudeEventMapperCallbacks } from '@/lib/worker/adapters/claude-event-mapper';
 
 const log = createLogger('session-data-pipeline');
 
@@ -41,11 +40,6 @@ export interface DataPipelineDeps {
   activeToolUseIds: Set<string>;
   emitEvent: (payload: AgendoEventPayload) => Promise<AgendoEvent>;
   onEmittedEvent: (event: AgendoEvent) => Promise<void>;
-  /** Fallback mapper for Claude NDJSON — called when adapter has no mapJsonToEvents. */
-  mapClaudeJson: (
-    parsed: Record<string, unknown>,
-    callbacks: ClaudeEventMapperCallbacks,
-  ) => AgendoEventPayload[];
 }
 
 // ---------------------------------------------------------------------------
@@ -152,21 +146,16 @@ export class SessionDataPipeline {
         // detection + assistant UUID capture). No-op for Codex/Gemini.
         this.deps.adapter.preProcessLine?.(parsed);
 
+        if (!this.deps.adapter.mapJsonToEvents) {
+          log.warn(
+            { sessionId: this.deps.sessionId, line: trimmed.slice(0, 200) },
+            'Adapter has no mapJsonToEvents — skipping NDJSON line',
+          );
+          continue;
+        }
         let partials: AgendoEventPayload[];
         try {
-          partials = this.deps.adapter.mapJsonToEvents
-            ? this.deps.adapter.mapJsonToEvents(parsed)
-            : this.deps.mapClaudeJson(parsed, {
-                clearDeltaBuffers: () => this.deps.activityTracker.clearDeltaBuffers(),
-                appendDelta: (text) => this.deps.activityTracker.appendDelta(text),
-                appendThinkingDelta: (text) => this.deps.activityTracker.appendThinkingDelta(text),
-                onMessageStart: (stats) => {
-                  this._lastPerCallContextStats = stats;
-                },
-                onResultStats: () => {
-                  // Handled by onEmittedEvent in session-process.ts
-                },
-              });
+          partials = this.deps.adapter.mapJsonToEvents(parsed);
         } catch (mapErr) {
           log.warn(
             { err: mapErr, sessionId: this.deps.sessionId, line: trimmed.slice(0, 200) },

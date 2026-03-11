@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
-import { ClaudeAdapter } from '@/lib/worker/adapters/claude-adapter';
+import { ClaudeSdkAdapter } from '@/lib/worker/adapters/claude-sdk-adapter';
 import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
 import type { Agent } from '@/lib/types';
@@ -35,9 +35,9 @@ function makeAgent(binaryPath: string): Agent {
 }
 
 describe('selectAdapter', () => {
-  it('returns ClaudeAdapter for claude binary', () => {
+  it('returns ClaudeSdkAdapter for claude binary', () => {
     const adapter = selectAdapter(makeAgent('/usr/local/bin/claude'));
-    expect(adapter).toBeInstanceOf(ClaudeAdapter);
+    expect(adapter).toBeInstanceOf(ClaudeSdkAdapter);
   });
 
   it('returns CodexAppServerAdapter for codex binary', () => {

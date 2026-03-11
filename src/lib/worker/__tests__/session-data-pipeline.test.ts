@@ -17,7 +17,7 @@ function makeDeps(overrides?: Partial<DataPipelineDeps>): DataPipelineDeps {
     sessionId: 'test-session-1',
     logWriter: { write: vi.fn() },
     adapter: {
-      mapJsonToEvents: undefined,
+      mapJsonToEvents: vi.fn().mockReturnValue([]),
       preProcessLine: undefined,
       lastAssistantUuid: undefined,
     },
@@ -39,7 +39,6 @@ function makeDeps(overrides?: Partial<DataPipelineDeps>): DataPipelineDeps {
       text: '',
     } as AgendoEvent),
     onEmittedEvent: vi.fn().mockResolvedValue(undefined),
-    mapClaudeJson: vi.fn().mockReturnValue([]),
     ...overrides,
   };
 }
@@ -124,7 +123,9 @@ describe('SessionDataPipeline', () => {
       expect(deps.emitEvent).not.toHaveBeenCalled();
 
       // Second chunk completes the line
-      deps.mapClaudeJson = vi.fn().mockReturnValue([{ type: 'agent:text', text: 'hi' }]);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+        { type: 'agent:text', text: 'hi' },
+      ]);
       await pipeline.processChunk('tant"}\n');
       expect(deps.emitEvent).toHaveBeenCalled();
     });
@@ -132,7 +133,9 @@ describe('SessionDataPipeline', () => {
     it('processes multiple complete lines in a single chunk', async () => {
       const events1: AgendoEventPayload[] = [{ type: 'agent:text', text: 'line1' }];
       const events2: AgendoEventPayload[] = [{ type: 'agent:text', text: 'line2' }];
-      deps.mapClaudeJson = vi.fn().mockReturnValueOnce(events1).mockReturnValueOnce(events2);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(events1)
+        .mockReturnValueOnce(events2);
 
       await pipeline.processChunk('{"a":1}\n{"b":2}\n');
       expect(deps.emitEvent).toHaveBeenCalledTimes(2);
@@ -175,7 +178,7 @@ describe('SessionDataPipeline', () => {
         toolName: 'ExitPlanMode',
         input: {},
       };
-      deps.mapClaudeJson = vi.fn().mockReturnValue([toolStart]);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>).mockReturnValue([toolStart]);
 
       await pipeline.processChunk('{"type":"tool"}\n');
 
@@ -193,7 +196,7 @@ describe('SessionDataPipeline', () => {
         toolUseId: 'tu-2',
         content: 'done',
       };
-      deps.mapClaudeJson = vi.fn().mockReturnValue([toolEnd]);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>).mockReturnValue([toolEnd]);
       (deps.approvalHandler.isSuppressedToolEnd as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
       await pipeline.processChunk('{"type":"tool_end"}\n');
@@ -213,7 +216,7 @@ describe('SessionDataPipeline', () => {
         turns: 3,
         durationMs: 500,
       };
-      deps.mapClaudeJson = vi.fn().mockReturnValue([resultPayload]);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>).mockReturnValue([resultPayload]);
       deps.adapter.lastAssistantUuid = 'uuid-abc';
 
       // Set per-call stats via the pipeline's public method
@@ -271,19 +274,18 @@ describe('SessionDataPipeline', () => {
       await pipeline.processChunk('{"type":"custom"}\n');
 
       expect(deps.adapter.mapJsonToEvents).toHaveBeenCalled();
-      expect(deps.mapClaudeJson).not.toHaveBeenCalled();
       expect(deps.emitEvent).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'agent:text', text: 'custom' }),
       );
     });
 
-    it('falls back to mapClaudeJson when adapter has no mapJsonToEvents', async () => {
+    it('skips NDJSON lines when adapter has no mapJsonToEvents', async () => {
       deps.adapter.mapJsonToEvents = undefined;
-      deps.mapClaudeJson = vi.fn().mockReturnValue([{ type: 'agent:text', text: 'claude' }]);
 
       await pipeline.processChunk('{"type":"assistant"}\n');
 
-      expect(deps.mapClaudeJson).toHaveBeenCalled();
+      // Line should be silently skipped — no event emitted
+      expect(deps.emitEvent).not.toHaveBeenCalled();
     });
   });
 
@@ -305,7 +307,7 @@ describe('SessionDataPipeline', () => {
   describe('post-emit callback', () => {
     it('calls onEmittedEvent for each emitted event', async () => {
       const payload: AgendoEventPayload = { type: 'agent:text', text: 'test' };
-      deps.mapClaudeJson = vi.fn().mockReturnValue([payload]);
+      (deps.adapter.mapJsonToEvents as ReturnType<typeof vi.fn>).mockReturnValue([payload]);
 
       const fakeEvent = {
         id: 1,
@@ -329,7 +331,7 @@ describe('SessionDataPipeline', () => {
   describe('error handling', () => {
     it('continues processing other lines when mapJsonToEvents throws', async () => {
       const goodPayload: AgendoEventPayload = { type: 'agent:text', text: 'good' };
-      deps.mapClaudeJson = vi
+      deps.adapter.mapJsonToEvents = vi
         .fn()
         .mockImplementationOnce(() => {
           throw new Error('parse fail');
