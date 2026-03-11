@@ -13,13 +13,6 @@ import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realt
 import type { Session } from '@/lib/types';
 import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
 
-type AskUserQuestion = {
-  question: string;
-  header: string;
-  options: Array<{ label: string; description: string; markdown?: string }>;
-  multiSelect: boolean;
-};
-
 /**
  * ApprovalHandler manages all state and logic related to per-tool approval gates,
  * interactive tool responses (AskUserQuestion), and suppressed tool tracking.
@@ -54,10 +47,6 @@ export class ApprovalHandler {
   private pendingApprovals = new Map<string, (decision: PermissionDecision) => void>();
   /** Maps toolName → pending approvalId, so a duplicate call auto-denies the old one. */
   private pendingApprovalsByTool = new Map<string, string>();
-  /** tool_use IDs for interactive tools awaiting a human response via the UI. */
-  private pendingHumanResponseIds = new Set<string>();
-  /** Stores AskUserQuestion questions indexed by requestId for use when the answer arrives. */
-  private pendingAskUserQuestions = new Map<string, AskUserQuestion[]>();
   /** toolUseIds for APPROVAL_GATED_TOOLS — suppress their agent:tool-start/end events. */
   private suppressedToolUseIds = new Set<string>();
   constructor(
@@ -72,27 +61,8 @@ export class ApprovalHandler {
   ) {}
 
   // ---------------------------------------------------------------------------
-  // Detection helpers for SessionProcess.onData
+  // Suppression helpers for SessionProcess.onData
   // ---------------------------------------------------------------------------
-
-  /**
-   * Inspect user-turn content blocks for is_error tool_results.
-   * When found for an active tool, marks the toolUseId as pending a human response.
-   * Call this from onData when parsing a `type: 'user'` NDJSON line.
-   */
-  checkForHumanResponseBlocks(
-    content: Array<Record<string, unknown>>,
-    activeToolUseIds: Set<string>,
-  ): void {
-    for (const block of content) {
-      if (block.type === 'tool_result' && block.is_error === true) {
-        const id = (block.tool_use_id as string | undefined) ?? '';
-        if (id && activeToolUseIds.has(id)) {
-          this.pendingHumanResponseIds.add(id);
-        }
-      }
-    }
-  }
 
   /** Mark a tool-start as suppressed (used for APPROVAL_GATED_TOOLS in onData). */
   suppressToolStart(toolUseId: string): void {
@@ -108,11 +78,6 @@ export class ApprovalHandler {
     activeToolUseIds.delete(toolUseId);
     this.suppressedToolUseIds.delete(toolUseId);
     return true;
-  }
-
-  /** True when the given toolUseId is waiting for a human response card. */
-  isPendingHumanResponse(toolUseId: string): boolean {
-    return this.pendingHumanResponseIds.has(toolUseId);
   }
 
   /** Clear all suppressed tool IDs (called from handleCancel / handleInterrupt). */
@@ -134,16 +99,6 @@ export class ApprovalHandler {
       this.pendingApprovals.delete(approvalId);
     }
     return resolver;
-  }
-
-  /**
-   * Remove and return the stored AskUserQuestion questions for a requestId.
-   * Returns an empty array if not found.
-   */
-  takeQuestions(requestId: string): AskUserQuestion[] {
-    const questions = this.pendingAskUserQuestions.get(requestId) ?? [];
-    this.pendingAskUserQuestions.delete(requestId);
-    return questions;
   }
 
   // ---------------------------------------------------------------------------
@@ -248,38 +203,10 @@ export class ApprovalHandler {
   // ---------------------------------------------------------------------------
 
   /**
-   * Send a tool_result back to Claude for a pending tool_use (e.g. AskUserQuestion).
+   * Send a tool_result back to the agent for a pending tool_use.
    * Only valid when the session is active or awaiting_input.
    */
   async pushToolResult(toolUseId: string, content: string): Promise<void> {
-    // AskUserQuestion special path: Claude already consumed an error tool_result
-    // automatically (non-interactive mode), so we can't use sendToolResult.
-    // Instead: emit agent:tool-end to mark the UI card as answered, then send
-    // the user's answer as a regular user message so Claude can act on it.
-    if (this.pendingHumanResponseIds.has(toolUseId)) {
-      this.pendingHumanResponseIds.delete(toolUseId);
-      this.activeToolUseIds.delete(toolUseId);
-      // Emit tool-end with full JSON so the UI can display the selected option.
-      await this.emitEvent({ type: 'agent:tool-end', toolUseId, content });
-      // Extract just the answer values — Claude already has the question in
-      // context, so sending {"answers":{"Q":"A"}} is redundant and noisy.
-      let messageText = content;
-      try {
-        const parsed = JSON.parse(content) as { answers?: Record<string, string> };
-        if (parsed.answers) {
-          const values = Object.values(parsed.answers);
-          messageText = values.join(', ');
-        }
-      } catch {
-        // fall back to raw content
-      }
-      await this.emitEvent({ type: 'user:message', text: messageText });
-      await this.transitionTo('active');
-      this.resetIdleTimer();
-      await this.adapter.sendMessage(messageText);
-      return;
-    }
-
     if (!this.adapter.sendToolResult) {
       log.warn('adapter does not support sendToolResult');
       return;

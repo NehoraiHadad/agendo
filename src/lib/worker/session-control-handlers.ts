@@ -353,23 +353,6 @@ export async function handleToolResult(
 }
 
 /**
- * Handle an answer-question control: resolve the pending AskUserQuestion
- * approval with the user's answers.
- */
-export async function handleAnswerQuestion(
-  control: Extract<AgendoControl, { type: 'answer-question' }>,
-  ctx: SessionControlCtx,
-): Promise<void> {
-  const resolver = ctx.approvalHandler.takeResolver(control.requestId);
-  if (resolver) {
-    const questions = ctx.approvalHandler.takeQuestions(control.requestId);
-    resolver({ behavior: 'allow', updatedInput: { questions, answers: control.answers } });
-  } else {
-    log.warn({ requestId: control.requestId }, 'answer-question for unknown requestId');
-  }
-}
-
-/**
  * Handle a steer control: inject a steering message into the current turn.
  */
 export async function handleSteer(

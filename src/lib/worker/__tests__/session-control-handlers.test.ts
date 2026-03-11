@@ -16,7 +16,6 @@ function makeCtx(overrides?: Partial<SessionControlCtx>): SessionControlCtx {
     approvalHandler: {
       pushToolResult: vi.fn(),
       takeResolver: vi.fn(),
-      takeQuestions: vi.fn(),
       clearSuppressed: vi.fn(),
       drain: vi.fn(),
       persistAllowedTool: vi.fn(),
@@ -72,47 +71,6 @@ describe('handleToolResult', () => {
     const ctx = makeCtx();
     await handleToolResult(control, ctx, 'idle');
     expect(ctx.approvalHandler.pushToolResult).not.toHaveBeenCalled();
-  });
-});
-
-describe('handleAnswerQuestion', () => {
-  it('resolves approval with updated input when resolver exists', async () => {
-    const { handleAnswerQuestion } = await import('@/lib/worker/session-control-handlers');
-    const resolver = vi.fn();
-    const questions = { q1: 'What is your name?' };
-    const ctx = makeCtx();
-    (ctx.approvalHandler.takeResolver as ReturnType<typeof vi.fn>).mockReturnValue(resolver);
-    (ctx.approvalHandler.takeQuestions as ReturnType<typeof vi.fn>).mockReturnValue(questions);
-
-    const control = {
-      type: 'answer-question',
-      requestId: 'req-1',
-      answers: { q1: 'Alice' },
-    } as Extract<AgendoControl, { type: 'answer-question' }>;
-
-    await handleAnswerQuestion(control, ctx);
-    expect(ctx.approvalHandler.takeResolver).toHaveBeenCalledWith('req-1');
-    expect(ctx.approvalHandler.takeQuestions).toHaveBeenCalledWith('req-1');
-    expect(resolver).toHaveBeenCalledWith({
-      behavior: 'allow',
-      updatedInput: { questions, answers: { q1: 'Alice' } },
-    });
-  });
-
-  it('logs warning when resolver does not exist', async () => {
-    const { handleAnswerQuestion } = await import('@/lib/worker/session-control-handlers');
-    const ctx = makeCtx();
-    (ctx.approvalHandler.takeResolver as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
-    const control = {
-      type: 'answer-question',
-      requestId: 'req-unknown',
-      answers: {},
-    } as Extract<AgendoControl, { type: 'answer-question' }>;
-
-    // Should not throw
-    await handleAnswerQuestion(control, ctx);
-    expect(ctx.approvalHandler.takeQuestions).not.toHaveBeenCalled();
   });
 });
 

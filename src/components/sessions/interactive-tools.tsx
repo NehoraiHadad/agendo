@@ -229,7 +229,7 @@ function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: Int
     }
 
     try {
-      await respond({ kind: 'approval', decision: 'allow', updatedInput: { answers } });
+      await respond({ kind: 'approval', decision: 'allow', updatedInput: { questions, answers } });
       setSubmitted(true);
       onResolved?.();
     } catch (err) {

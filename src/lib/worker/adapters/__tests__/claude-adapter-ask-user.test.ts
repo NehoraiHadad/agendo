@@ -216,7 +216,9 @@ describe('ClaudeAdapter — AskUserQuestion protocol', () => {
     expect(resp.subtype).toBe('success');
     const inner = resp.response as Record<string, unknown>;
     expect(inner.behavior).toBe('allow');
-    expect(inner.updatedInput).toEqual({});
+    // updatedInput is intentionally omitted for non-interactive tools —
+    // sending {} would overwrite the tool's original input with an empty object.
+    expect(inner.updatedInput).toBeUndefined();
   });
 
   it('sends deny response when handler returns deny', async () => {

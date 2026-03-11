@@ -252,12 +252,6 @@ export type AgendoControl =
       content: string;
     }
   | {
-      /** Answer an AskUserQuestion prompt — keyed by requestId from the agent:ask-user event. */
-      type: 'answer-question';
-      requestId: string;
-      answers: Record<string, string>;
-    }
-  | {
       /** Change the permission mode of a live session. Worker restarts the process with the new mode. */
       type: 'set-permission-mode';
       mode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';

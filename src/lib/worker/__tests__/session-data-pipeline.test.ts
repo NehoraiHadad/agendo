@@ -23,9 +23,7 @@ function makeDeps(overrides?: Partial<DataPipelineDeps>): DataPipelineDeps {
     },
     approvalHandler: {
       isSuppressedToolEnd: vi.fn().mockReturnValue(false),
-      isPendingHumanResponse: vi.fn().mockReturnValue(false),
       suppressToolStart: vi.fn(),
-      checkForHumanResponseBlocks: vi.fn(),
     },
     activityTracker: {
       clearDeltaBuffers: vi.fn(),
@@ -199,27 +197,6 @@ describe('SessionDataPipeline', () => {
       (deps.approvalHandler.isSuppressedToolEnd as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
       await pipeline.processChunk('{"type":"tool_end"}\n');
-      expect(deps.emitEvent).not.toHaveBeenCalled();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Interactive tool suppression (AskUserQuestion)
-  // -------------------------------------------------------------------------
-
-  describe('interactive tool suppression', () => {
-    it('suppresses tool-end for pending human response tools', async () => {
-      const toolEnd: AgendoEventPayload = {
-        type: 'agent:tool-end',
-        toolUseId: 'tu-human',
-        content: 'error',
-      };
-      deps.mapClaudeJson = vi.fn().mockReturnValue([toolEnd]);
-      (deps.approvalHandler.isPendingHumanResponse as ReturnType<typeof vi.fn>).mockReturnValue(
-        true,
-      );
-
-      await pipeline.processChunk('{"x":1}\n');
       expect(deps.emitEvent).not.toHaveBeenCalled();
     });
   });

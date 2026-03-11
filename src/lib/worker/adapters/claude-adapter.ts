@@ -22,12 +22,6 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
   private adapterDataBuffer = '';
   /** Last assistant message UUID for conversation branching (--resume-session-at). */
   lastAssistantUuid?: string;
-  /** Injected by SessionProcess for interactive tool failure detection. */
-  private humanResponseChecker:
-    | ((content: Array<Record<string, unknown>>, activeToolUseIds: Set<string>) => void)
-    | null = null;
-  /** Reference to SessionProcess's active tool use IDs set. */
-  private activeToolUseIdsRef: Set<string> | null = null;
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
     return this.launch(prompt, opts, []);
@@ -56,26 +50,10 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Wire the context needed for preProcessLine (called by SessionProcess in start()).
-   */
-  setPreProcessContext(
-    checker: (content: Array<Record<string, unknown>>, activeToolUseIds: Set<string>) => void,
-    activeToolUseIds: Set<string>,
-  ): void {
-    this.humanResponseChecker = checker;
-    this.activeToolUseIdsRef = activeToolUseIds;
-  }
-
-  /**
    * Claude-specific pre-processing of raw NDJSON lines before event mapping.
-   * Detects interactive tool failures (type:'user' with is_error tool_results)
-   * and captures assistant message UUIDs for conversation branching.
+   * Captures assistant message UUIDs for conversation branching (--resume-session-at).
    */
   preProcessLine(parsed: Record<string, unknown>): void {
-    if (parsed.type === 'user' && this.humanResponseChecker && this.activeToolUseIdsRef) {
-      const msg = parsed.message as { content?: Array<Record<string, unknown>> } | undefined;
-      this.humanResponseChecker(msg?.content ?? [], this.activeToolUseIdsRef);
-    }
     if (parsed.type === 'assistant' && typeof parsed.uuid === 'string') {
       this.lastAssistantUuid = parsed.uuid;
     }

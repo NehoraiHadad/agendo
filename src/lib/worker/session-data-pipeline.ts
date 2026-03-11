@@ -31,12 +31,7 @@ export interface DataPipelineDeps {
   };
   approvalHandler: {
     isSuppressedToolEnd(toolUseId: string, activeToolUseIds: Set<string>): boolean;
-    isPendingHumanResponse(toolUseId: string): boolean;
     suppressToolStart(toolUseId: string): void;
-    checkForHumanResponseBlocks(
-      content: Array<Record<string, unknown>>,
-      activeToolUseIds: Set<string>,
-    ): void;
   };
   activityTracker: {
     clearDeltaBuffers(): void;
@@ -203,13 +198,6 @@ export class SessionDataPipeline {
 
           // Suppress the error tool-end for any interactive tool: the UI card
           // stays live and pushToolResult routes the human's answer when it arrives.
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.deps.approvalHandler.isPendingHumanResponse(partial.toolUseId)
-          ) {
-            continue; // suppress — keep in activeToolUseIds until human responds
-          }
-
           const enrichedPartial = enrichResultPayload(
             partial,
             this._lastPerCallContextStats,

@@ -28,7 +28,6 @@ import {
   handleToolApproval,
   handleRedirect,
   handleToolResult,
-  handleAnswerQuestion,
   handleSteer,
   handleRollback,
   handleReEnqueue,
@@ -306,13 +305,6 @@ export class SessionProcess {
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
 
-    // Wire pre-process context for Claude-specific NDJSON detection
-    // (interactive tool failure check + assistant UUID capture).
-    this.adapter.setPreProcessContext?.(
-      (content, toolIds) => this.approvalHandler.checkForHumanResponseBlocks(content, toolIds),
-      this.activeToolUseIds,
-    );
-
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
     this.adapter.onSessionRef?.((ref) => {
@@ -479,8 +471,6 @@ export class SessionProcess {
       await handleToolApproval(control, ctrl);
     } else if (control.type === 'tool-result') {
       await handleToolResult(control, ctrl, this.status);
-    } else if (control.type === 'answer-question') {
-      await handleAnswerQuestion(control, ctrl);
     } else if (control.type === 'set-permission-mode') {
       await handleSetPermissionMode(control.mode, ctrl);
     } else if (control.type === 'set-model') {
