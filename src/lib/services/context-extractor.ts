@@ -10,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { readEventsFromLog } from '@/lib/realtime/event-utils';
 import { getSessionWithDetails } from '@/lib/services/session-service';
 import { callSummarizationProvider } from '@/lib/services/summarization-providers';
+import { readNativeSession } from '@/lib/services/native-session-reader';
+import type { NativeTurn } from '@/lib/services/native-session-reader';
 import type { AgendoEvent } from '@/lib/realtime/event-types';
 
 // ============================================================================
@@ -273,6 +275,89 @@ export function segmentTurns(events: AgendoEvent[]): Turn[] {
   });
 
   return turns;
+}
+
+// ============================================================================
+// nativeTurnsToContextTurns
+// ============================================================================
+
+/**
+ * Converts NativeTurn[] (from the native session readers) into the internal
+ * Turn format used by context-extractor's buildPrompt().
+ *
+ * Strategy: pair consecutive user + assistant NativeTurns into a single Turn.
+ * If a NativeTurn doesn't have a matching partner (e.g. a trailing assistant
+ * turn or an orphan user turn), it's still emitted as a Turn with the
+ * missing side left empty.
+ *
+ * Tool result content is appended to assistantText so it appears verbatim in
+ * the rendered context prompt.
+ */
+export function nativeTurnsToContextTurns(nativeTurns: NativeTurn[]): Turn[] {
+  const turns: Turn[] = [];
+  let i = 0;
+
+  while (i < nativeTurns.length) {
+    const current = nativeTurns[i];
+
+    if (current.role === 'user') {
+      // Try to pair with the next assistant turn
+      const next = nativeTurns[i + 1];
+      if (next && next.role === 'assistant') {
+        turns.push(buildTurnFromPair(current, next, turns.length + 1));
+        i += 2;
+      } else {
+        // Orphan user turn
+        turns.push(buildTurnFromPair(current, null, turns.length + 1));
+        i += 1;
+      }
+    } else {
+      // Orphan assistant turn (no preceding user turn in this window)
+      turns.push(buildTurnFromPair(null, current, turns.length + 1));
+      i += 1;
+    }
+  }
+
+  return turns;
+}
+
+function buildTurnFromPair(
+  userTurn: NativeTurn | null,
+  assistantTurn: NativeTurn | null,
+  index: number,
+): Turn {
+  const userText = userTurn?.text ?? '';
+  let assistantText = assistantTurn?.text ?? '';
+
+  // Append tool result content to assistantText so it's visible in verbatim renders
+  if (assistantTurn && assistantTurn.toolResults.length > 0) {
+    const resultLines: string[] = [];
+    for (const tr of assistantTurn.toolResults) {
+      if (tr.content.trim()) {
+        resultLines.push(`[Tool result]: ${tr.content}`);
+      }
+    }
+    if (resultLines.length > 0) {
+      assistantText = assistantText
+        ? `${assistantText}\n\n${resultLines.join('\n')}`
+        : resultLines.join('\n');
+    }
+  }
+
+  const toolCalls: ToolCall[] =
+    assistantTurn?.toolCalls.map((tc) => ({
+      toolName: tc.toolName,
+      input: tc.input,
+    })) ?? [];
+
+  return {
+    index,
+    userText,
+    assistantText,
+    toolCalls,
+    costUsd: null,
+    model: null,
+  };
 }
 
 // ============================================================================
@@ -594,6 +679,48 @@ export async function extractSessionContext(
     taskTitle: session.taskTitle,
     projectName: session.projectName,
   };
+
+  // Try native reader first — richer tool results than the event-log path
+  if (session.sessionRef && session.agentSlug) {
+    const projectCwd = session.projectRootPath ?? process.cwd();
+    const native = await readNativeSession(session.sessionRef, session.agentSlug, projectCwd, {
+      includeToolResults: true,
+      maxToolResultChars: 2000,
+      includeBashOutput: true,
+      maxTurns: 0,
+    });
+    if (native && native.turns.length > 0) {
+      const turns = nativeTurnsToContextTurns(native.turns);
+
+      const verbatimCount =
+        resolvedOptions.mode === 'full'
+          ? turns.length
+          : Math.min(resolvedOptions.recentTurnCount, turns.length);
+      const summarizeCount = turns.length - verbatimCount;
+
+      let llmSummary: string | null = null;
+      if (resolvedOptions.mode === 'hybrid' && summarizeCount > 0) {
+        const turnsToSummarize = turns.slice(0, summarizeCount);
+        llmSummary = await summarizeConversation(sessionId, turnsToSummarize);
+      }
+
+      const prompt = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
+
+      return {
+        prompt,
+        meta: {
+          totalTurns: turns.length,
+          includedVerbatimTurns: verbatimCount,
+          summarizedTurns: summarizeCount,
+          estimatedTokens: Math.ceil(prompt.length / 4),
+          previousAgent: session.agentName ?? 'Unknown',
+          taskTitle: session.taskTitle ?? undefined,
+          projectName: session.projectName ?? undefined,
+          llmSummarized: llmSummary !== null,
+        },
+      };
+    }
+  }
 
   // No log file — return empty context
   if (!session.logFilePath) {

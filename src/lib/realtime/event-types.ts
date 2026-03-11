@@ -95,6 +95,10 @@ export type AgendoEvent =
       tools?: string[];
       permissionMode?: string;
     })
+  | (EventBase & {
+      type: 'session:commands';
+      slashCommands: Array<{ name: string; description: string; argumentHint: string }>;
+    })
   | (EventBase & { type: 'session:state'; status: SessionStatus })
   | (EventBase & { type: 'session:mode-change'; mode: string })
   | (EventBase & {

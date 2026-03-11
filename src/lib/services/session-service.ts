@@ -82,6 +82,7 @@ export interface SessionWithDetails extends Session {
   agentSlug: string | null;
   taskTitle: string | null;
   projectName: string | null;
+  projectRootPath: string | null;
 }
 
 export async function getSessionWithDetails(id: string): Promise<SessionWithDetails> {
@@ -92,6 +93,7 @@ export async function getSessionWithDetails(id: string): Promise<SessionWithDeta
       agentSlug: agents.slug,
       taskTitle: tasks.title,
       projectName: projects.name,
+      projectRootPath: projects.rootPath,
     })
     .from(sessions)
     .leftJoin(agents, eq(sessions.agentId, agents.id))
@@ -108,6 +110,7 @@ export async function getSessionWithDetails(id: string): Promise<SessionWithDeta
     agentSlug: row.agentSlug,
     taskTitle: row.taskTitle,
     projectName: row.projectName,
+    projectRootPath: row.projectRootPath,
   };
 }
 

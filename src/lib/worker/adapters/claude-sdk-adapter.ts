@@ -414,6 +414,10 @@ export class ClaudeSdkAdapter implements AgentAdapter {
         if (payloads.length > 0) {
           for (const cb of this.eventCallbacks) cb(payloads);
         }
+        // After system:init is emitted, enrich with rich command metadata (fire-and-forget)
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          this.fetchAndEmitRichCommands();
+        }
       }
     } catch (err) {
       exitCode = 1;
@@ -425,6 +429,27 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       this.inputQueue.end();
       for (const cb of this.exitCallbacks) cb(exitCode);
     }
+  }
+
+  private fetchAndEmitRichCommands(): void {
+    const q = this.queryInstance;
+    if (!q) return;
+    q.supportedCommands()
+      .then((commands) => {
+        if (!this.alive) return; // session ended before we got results
+        const payload: AgendoEventPayload = {
+          type: 'session:commands',
+          slashCommands: commands.map((c) => ({
+            name: c.name,
+            description: c.description,
+            argumentHint: c.argumentHint,
+          })),
+        };
+        for (const cb of this.eventCallbacks) cb([payload]);
+      })
+      .catch((err) => {
+        log.debug({ err }, 'supportedCommands() failed — skipping rich command enrichment');
+      });
   }
 
   private buildCanUseTool() {
