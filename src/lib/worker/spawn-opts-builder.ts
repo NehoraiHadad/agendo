@@ -23,6 +23,7 @@ export function buildSpawnOpts(
     policyFilePath?: string;
     mcpConfigPath?: string;
     mcpServers?: AcpMcpServer[];
+    sdkMcpServers?: SpawnOpts['sdkMcpServers'];
     initialImage?: ImageContent;
     developerInstructions?: string;
   },
@@ -38,12 +39,13 @@ export function buildSpawnOpts(
     allowedTools: session.allowedTools ?? [],
     ...(opts.mcpConfigPath ? { extraArgs: ['--mcp-config', opts.mcpConfigPath] } : {}),
     ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
+    ...(opts.sdkMcpServers ? { sdkMcpServers: opts.sdkMcpServers } : {}),
     ...(opts.policyFilePath ? { policyFiles: [opts.policyFilePath] } : {}),
     ...(opts.initialImage ? { initialImage: opts.initialImage } : {}),
     // Sync Claude's session ID with agendo's DB session ID
     sessionId: session.id,
-    // Only use our MCP servers when an MCP config is provided
-    strictMcpConfig: !!opts.mcpConfigPath,
+    // Only use our MCP servers when an MCP config or SDK servers are provided
+    strictMcpConfig: !!opts.mcpConfigPath || !!opts.sdkMcpServers,
     // Forward model if set on the session (e.g. from DB or API)
     ...(session.model ? { model: session.model } : {}),
     // Forward effort level if set on the session (Claude: low/medium/high thinking depth)

@@ -100,6 +100,49 @@ export function generateSessionMcpConfig(
   return { mcpServers };
 }
 
+/**
+ * Generate SDK-format MCP servers for the Claude Agent SDK.
+ * Returns a Record compatible with SDK Options.mcpServers (no temp file needed).
+ * This replaces the temp JSON file approach used with --mcp-config.
+ */
+export function generateSdkSessionMcpServers(
+  serverPath: string,
+  identity: SessionIdentity,
+  additionalServers: ResolvedMcpServer[] = [],
+): Record<string, { command: string; args?: string[]; env?: Record<string, string> }> {
+  const agendoUrl = process.env.AGENDO_URL ?? 'http://localhost:4100';
+
+  const servers: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  > = {
+    agendo: {
+      command: 'node',
+      args: [serverPath],
+      env: {
+        AGENDO_URL: agendoUrl,
+        AGENDO_SESSION_ID: identity.sessionId,
+        AGENDO_TASK_ID: identity.taskId ?? '',
+        AGENDO_AGENT_ID: identity.agentId,
+        AGENDO_PROJECT_ID: identity.projectId ?? '',
+      },
+    },
+  };
+
+  for (const server of additionalServers) {
+    if (server.transportType === 'stdio' && server.command) {
+      servers[server.name] = {
+        command: server.command,
+        args: server.args ?? [],
+        ...(server.env ? { env: server.env } : {}),
+      };
+    }
+    // Skip HTTP servers — SDK stdio-only for now
+  }
+
+  return servers;
+}
+
 export function generateClaudeMcpConfig(serverPath: string): object {
   return {
     mcpServers: {

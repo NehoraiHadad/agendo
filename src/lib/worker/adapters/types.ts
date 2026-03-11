@@ -65,6 +65,16 @@ export interface SpawnOpts {
   sessionId?: string;
   /** Text to append to Claude's system prompt (e.g., MCP context preamble). */
   appendSystemPrompt?: string;
+  /** SDK-format MCP server configs for Claude SDK adapter (replaces mcpConfigPath/--mcp-config). */
+  sdkMcpServers?: Record<
+    string,
+    {
+      type?: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  >;
   /** When true, pass --worktree to create an isolated git worktree (Claude only). */
   useWorktree?: boolean;
   /** When true, adds --fork-session to --resume so Claude creates a new session ID
@@ -80,8 +90,8 @@ export interface SpawnOpts {
 
 export interface ManagedProcess {
   pid: number;
-  tmuxSession: string;
-  stdin: NodeJS.WritableStream | null; // Direct stdin access for hot messages
+  tmuxSession?: string; // Optional: SDK adapter doesn't use tmux
+  stdin?: NodeJS.WritableStream | null; // Optional: SDK adapter doesn't expose raw stdin
   kill: (signal: NodeJS.Signals) => void;
   onData: (cb: (chunk: string) => void) => void;
   onExit: (cb: (code: number | null) => void) => void;
@@ -94,6 +104,20 @@ export interface ImageContent {
 
 /** Callback type injected by SessionProcess to handle per-tool approval requests. */
 export type ToolApprovalFn = (request: ApprovalRequest) => Promise<PermissionDecision>;
+
+/** Callbacks injected by SessionProcess for SDK adapters that handle stream_event
+ *  delta buffering internally (instead of relying on SessionDataPipeline's NDJSON path). */
+export interface ActivityCallbacks {
+  clearDeltaBuffers(): void;
+  appendDelta(text: string): void;
+  appendThinkingDelta(text: string): void;
+  onMessageStart?(stats: {
+    inputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+  }): void;
+  onResultStats?(costUsd: number | null, turns: number | null): void;
+}
 
 export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
@@ -117,6 +141,9 @@ export interface AgentAdapter {
   steer?(message: string): Promise<void>;
   /** Rollback the last N turns in the thread (Codex only). */
   rollback?(numTurns?: number): Promise<void>;
+  /** Inject activity callbacks for SDK adapters that handle stream_event delta buffering
+   *  internally. Called by SessionProcess before start(). */
+  setActivityCallbacks?(callbacks: ActivityCallbacks): void;
   /** Map a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
    *  When present, session-process.ts delegates to this instead of mapClaudeJsonToEvents. */
   mapJsonToEvents?(
@@ -139,6 +166,8 @@ export interface SessionStartOptions {
   envOverrides?: Record<string, string>;
   mcpConfigPath?: string;
   mcpServers?: AcpMcpServer[];
+  /** SDK-format MCP servers for Claude SDK adapter (no temp file needed). */
+  sdkMcpServers?: SpawnOpts['sdkMcpServers'];
   initialImage?: ImageContent;
   displayText?: string;
   resumeSessionAt?: string;

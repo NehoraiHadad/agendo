@@ -19,7 +19,7 @@
     "terminal:dev": "tsx watch src/terminal/server.ts",
     "worker:dev": "tsx watch src/worker/index.ts",
     "dev:all": "concurrently -k -n app,worker,term -c cyan,yellow,green \"pnpm dev\" \"pnpm worker:dev\" \"pnpm terminal:dev\"",
-    "worker:build": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker/index.js --tsconfig=tsconfig.worker.json --external:pg-native --external:bufferutil --external:utf-8-validate --external:pino-pretty",
+    "worker:build": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker/index.js --tsconfig=tsconfig.worker.json --external:pg-native --external:bufferutil --external:utf-8-validate --external:pino-pretty --external:@anthropic-ai/claude-agent-sdk",
     "build:mcp": "tsx src/lib/mcp/build.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.72",
     "@anthropic-ai/sdk": "^0.77.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",

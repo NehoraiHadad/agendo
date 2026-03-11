@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
@@ -13,7 +13,10 @@ import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { getBinaryName } from '@/lib/worker/agent-utils';
-import { generateSessionMcpConfig, generateGeminiAcpMcpServers } from '@/lib/mcp/config-templates';
+import {
+  generateSdkSessionMcpServers,
+  generateGeminiAcpMcpServers,
+} from '@/lib/mcp/config-templates';
 import { resolveSessionMcpServers, resolveByMcpServerIds } from '@/lib/services/mcp-server-service';
 import { getDefaultModel, type Provider } from '@/lib/services/model-service';
 import { listTaskEvents } from '@/lib/services/task-event-service';
@@ -23,7 +26,7 @@ import {
   generateSupportPreamble,
   generateResumeContext,
 } from '@/lib/worker/session-preambles';
-import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
+import type { AcpMcpServer, ImageContent, SpawnOpts } from '@/lib/worker/adapters/types';
 
 /** Map CLI binary name to model-service provider. */
 function binaryNameToProvider(name: string): Provider | null {
@@ -140,11 +143,9 @@ export async function runSession(
     );
   }
 
-  // Phase A: Generate a session-scoped MCP config file when the agent has MCP
-  // enabled and a server path is configured. The file embeds the session
-  // identity so the MCP server can associate tool calls with this session/task.
-  // Only claude supports --mcp-config; skip for codex, gemini, etc.
-  let mcpConfigPath: string | undefined;
+  // Phase A: Generate SDK-format MCP servers for Claude (no temp file needed).
+  // The SDK accepts MCP server configs directly in Options.mcpServers.
+  let sdkMcpServers: SpawnOpts['sdkMcpServers'] | undefined;
   if (agent.mcpEnabled && config.MCP_SERVER_PATH && binaryName === 'claude') {
     const identity = {
       sessionId,
@@ -152,10 +153,8 @@ export async function runSession(
       agentId: session.agentId,
       projectId: resolvedProjectId,
     };
-    const mcpConfig = generateSessionMcpConfig(config.MCP_SERVER_PATH, identity, additionalMcps);
-    mcpConfigPath = `/tmp/agendo-mcp-${sessionId}.json`;
-    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-    log.info({ sessionId }, 'Claude MCP config written');
+    sdkMcpServers = generateSdkSessionMcpServers(config.MCP_SERVER_PATH, identity, additionalMcps);
+    log.info({ sessionId }, 'Claude SDK MCP servers generated');
   }
 
   // Phase A2: For Gemini and Codex, inject MCP servers with session identity.
@@ -293,7 +292,7 @@ export async function runSession(
     resumeRef: resumeRef ?? session.sessionRef ?? undefined,
     spawnCwd: resolvedCwd,
     envOverrides,
-    mcpConfigPath,
+    sdkMcpServers,
     mcpServers,
     initialImage,
     displayText: userResumeText,
@@ -310,18 +309,10 @@ export async function runSession(
   liveSessionProcs.set(sessionId, sessionProc);
   log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot released for session');
 
-  // Wire exit cleanup: remove from both maps when the process actually exits,
-  // and clean up the ephemeral MCP config file written for this session.
+  // Wire exit cleanup: remove from both maps when the process actually exits.
   void sessionProc.waitForExit().then(() => {
     allSessionProcs.delete(sessionId);
     liveSessionProcs.delete(sessionId);
     log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'session removed from live map');
-    if (mcpConfigPath) {
-      try {
-        unlinkSync(mcpConfigPath);
-      } catch {
-        // Best-effort: file may already be gone.
-      }
-    }
   });
 }

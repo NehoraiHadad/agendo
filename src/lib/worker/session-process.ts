@@ -200,6 +200,7 @@ export class SessionProcess {
       spawnCwd: spawnCwdOpt,
       envOverrides,
       mcpConfigPath,
+      sdkMcpServers,
       mcpServers,
       initialImage,
       displayText,
@@ -297,6 +298,7 @@ export class SessionProcess {
     const spawnOpts = buildSpawnOpts(this.session, this.spawnCwd, childEnv, {
       policyFilePath: this.policyFilePath ?? undefined,
       mcpConfigPath,
+      sdkMcpServers,
       mcpServers,
       initialImage,
       developerInstructions,
@@ -304,6 +306,39 @@ export class SessionProcess {
 
     // Wire approval handler so adapter can request per-tool approval
     this.adapter.setApprovalHandler((req) => this.approvalHandler.handleApprovalRequest(req));
+
+    // Wire activity callbacks for SDK adapters that handle stream_event delta buffering
+    // internally (e.g. ClaudeSdkAdapter). The adapter uses these to flush text/thinking
+    // deltas and persist cost stats — bypassing the NDJSON pipeline's callback path.
+    this.adapter.setActivityCallbacks?.({
+      clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
+      appendDelta: (text) => this.activityTracker.appendDelta(text),
+      appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
+      onMessageStart: (stats) => {
+        // Emit real-time context bar update when a new API call starts.
+        if (this.dataPipeline.lastContextWindow) {
+          const used =
+            stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
+          void this.emitEvent({
+            type: 'agent:usage',
+            used,
+            size: this.dataPipeline.lastContextWindow,
+          });
+        }
+      },
+      onResultStats: (costUsd, turns) => {
+        void db
+          .update(sessions)
+          .set({
+            ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
+            ...(turns !== null && { totalTurns: turns }),
+          })
+          .where(eq(sessions.id, this.session.id))
+          .catch((err: unknown) => {
+            log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
+          });
+      },
+    });
 
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)

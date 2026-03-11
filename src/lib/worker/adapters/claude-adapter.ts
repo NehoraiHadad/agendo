@@ -59,9 +59,8 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
     }
   }
 
-  // Claude Code built-in slash commands that must be written as raw text to stdin
-  // so the readline layer intercepts them as CLI commands (not NDJSON user messages).
-  // Source: `claude --help` and Claude Code docs.
+  // Claude Code slash commands verified to work as raw text in stream-json (piped) mode.
+  // /btw and other TUI-only commands do NOT work here — stream-json expects NDJSON on stdin.
   private static readonly KNOWN_SLASH_COMMANDS = new Set([
     'compact',
     'clear',
@@ -94,10 +93,10 @@ export class ClaudeAdapter extends BaseAgentAdapter implements AgentAdapter {
       // Reset thinking state so the next data chunk triggers thinking=true
       this.hasEmittedThinking = false;
 
-      // Slash commands: only route KNOWN Claude Code commands as raw readline text.
-      // Unknown /something is sent as a regular NDJSON message so Claude treats it as text.
+      // Slash commands: only route verified commands as raw readline text.
+      // Unknown /something is sent as NDJSON so Claude treats it as text.
       if (!image && message?.startsWith('/')) {
-        const cmd = message.trim().split(/\s+/)[0].slice(1); // e.g. "clear" from "/clear foo"
+        const cmd = message.trim().split(/\s+/)[0].slice(1);
         if (ClaudeAdapter.KNOWN_SLASH_COMMANDS.has(cmd)) {
           this.childProcess.stdin.write(message.trim() + '\n');
           return;

@@ -39,6 +39,12 @@ const COMMANDS_WITH_ARGS = new Set(['compact', 'model', 'pr_comments', 'review']
 // the slash_commands field of the system:init event (Claude only advertises
 // skills + a subset of builtins there).
 const BUILTIN_COMMANDS: SlashCommand[] = [
+  {
+    name: '/btw',
+    description: 'Ask a quick question without adding it to conversation history',
+    category: 'builtin',
+    hasArgs: true,
+  },
   { name: '/clear', description: 'Clear conversation history', category: 'builtin' },
   {
     name: '/compact',
