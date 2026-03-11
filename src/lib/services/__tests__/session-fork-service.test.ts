@@ -328,8 +328,11 @@ describe('forkSessionToAgent', () => {
       expect(mockEnqueueSession).not.toHaveBeenCalled();
     });
 
-    it('throws ConflictError when parent status is "idle"', async () => {
+    it('does NOT throw for valid fork state "idle" (Agendo idle-timeout suspends to idle)', async () => {
+      // Sessions suspended by Agendo's idle-timeout land in 'idle', not 'ended'.
+      // They have a full conversation log and should be fork-able.
       mockGetSession.mockResolvedValue({ ...mockParent, status: 'idle' });
+      queueDbSelectResults(mockNewAgent);
 
       await expect(
         forkSessionToAgent({
@@ -337,10 +340,7 @@ describe('forkSessionToAgent', () => {
           newAgentId: NEW_AGENT_ID,
           contextMode: 'hybrid',
         }),
-      ).rejects.toThrow(ConflictError);
-
-      expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      ).resolves.toBeDefined();
     });
 
     it('does NOT throw for valid fork state "active"', async () => {

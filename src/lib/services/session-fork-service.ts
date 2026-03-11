@@ -33,13 +33,16 @@ export interface ForkToAgentResult {
 }
 
 /** Session statuses from which a cross-agent fork is permitted. */
-const VALID_FORK_STATES = new Set(['active', 'awaiting_input']);
+const VALID_FORK_STATES = new Set(['active', 'awaiting_input', 'idle']);
 
 /**
  * Fork an existing session to a different agent.
  *
  * Validates that:
- * - Parent session is in a forkable state (active or awaiting_input)
+ * - Parent session is in a forkable state (active, awaiting_input, or idle).
+ *   'idle' is included because Agendo's own idle-timeout suspends sessions to
+ *   'idle' (not 'ended') so they remain cold-resumable. Those sessions have a
+ *   full conversation log that can be transferred just like any active session.
  * - The new agent differs from the parent's agent
  * - The new agent exists and has at least one enabled capability
  *
