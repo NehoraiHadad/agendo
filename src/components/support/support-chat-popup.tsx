@@ -246,15 +246,17 @@ export function SupportChatPopup({ onClose }: SupportChatPopupProps) {
 
   const handleSendMessage = useCallback(async () => {
     if (!sessionId || !message.trim() || isSending) return;
+    const text = message.trim();
+    setMessage('');
     setIsSending(true);
     try {
-      await apiFetch(`/api/sessions/${sessionId}/messages`, {
+      await apiFetch(`/api/sessions/${sessionId}/message`, {
         method: 'POST',
-        body: JSON.stringify({ text: message.trim() }),
+        body: JSON.stringify({ text }),
       });
-      setMessage('');
     } catch {
-      /* ignore */
+      // Restore message on failure
+      setMessage(text);
     } finally {
       setIsSending(false);
     }
@@ -271,21 +273,10 @@ export function SupportChatPopup({ onClose }: SupportChatPopupProps) {
     [sessionId, handleSendMessage, handleStartSession],
   );
 
-  const isThinking = useMemo(() => {
-    if (!events.length) return false;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i];
-      if (ev.type === 'agent:text' || ev.type === 'agent:result') return false;
-      if (
-        ev.type === 'agent:activity' &&
-        'thinking' in ev &&
-        (ev as AgendoEvent & { thinking: boolean }).thinking
-      )
-        return true;
-      if (ev.type === 'agent:tool-start') return true;
-    }
-    return false;
-  }, [events]);
+  // Use sessionStatus as the authoritative source for thinking state.
+  // Event-based scanning is unreliable because SSE replays historical
+  // agent:activity events that can be stale after the session goes idle.
+  const isThinking = sessionStatus === 'active';
 
   const canSend =
     message.trim().length > 0 &&
@@ -418,7 +409,7 @@ export function SupportChatPopup({ onClose }: SupportChatPopupProps) {
               )}
             </div>
           ))}
-          {(isThinking || (sessionStatus === 'active' && messages.length === 0)) && (
+          {isThinking && (
             <div className="flex items-center gap-1.5 px-3 py-2">
               <div className="flex gap-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-typing-dot" />
