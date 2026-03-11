@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { existsSync, readFileSync } from 'node:fs';
+import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { subscribe, channelName, publish } from '@/lib/realtime/pg-notify';
 import { readEventsFromLog } from '@/lib/realtime/events';
+import { mapSessionMessagesToEvents } from '@/lib/realtime/session-message-mapper';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
@@ -58,8 +60,31 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // 1. Emit current session state immediately
       send(makeSessionStateEvent(session));
 
-      // 2. Catchup: read session log file for events after lastEventId
-      if (session.logFilePath && existsSync(session.logFilePath)) {
+      // 2. Catchup: replay historical events after lastEventId.
+      //
+      // For Claude sessions (sessionRef set): call getSessionMessages() to read
+      // directly from Claude's authoritative JSONL transcript. This avoids the
+      // fake-NDJSON serialize→write→read→parse round-trip and works even when the
+      // agendo log file is missing or corrupted.
+      //
+      // For non-Claude sessions (Codex, Gemini) and as a fallback: read the
+      // agendo log file as before.
+      let catchupDone = false;
+
+      if (session.sessionRef) {
+        try {
+          const sdkMessages = await getSessionMessages(session.sessionRef);
+          const catchupEvents = mapSessionMessagesToEvents(sdkMessages, id, lastEventId);
+          for (const ev of catchupEvents) {
+            send(ev);
+          }
+          catchupDone = true;
+        } catch {
+          // SDK call failed (session not found on disk, etc.) — fall back to log file
+        }
+      }
+
+      if (!catchupDone && session.logFilePath && existsSync(session.logFilePath)) {
         try {
           const logContent = readFileSync(session.logFilePath, 'utf-8');
           const catchupEvents = readEventsFromLog(logContent, lastEventId);
