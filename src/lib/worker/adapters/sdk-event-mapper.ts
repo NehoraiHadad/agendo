@@ -1,12 +1,8 @@
 /**
  * Maps typed SDKMessage objects (from @anthropic-ai/claude-agent-sdk) to AgendoEventPayload arrays.
  *
- * This is the SDK-native counterpart to claude-event-mapper.ts, which parses raw NDJSON strings.
- * The SDK gives us pre-parsed typed objects — this module converts them to the same
+ * The SDK gives us pre-parsed typed objects — this module converts them to the
  * AgendoEventPayload[] format that the rest of agendo consumes.
- *
- * Mirrors the logic of claude-event-mapper.ts exactly, but replaces all JSON.parse
- * and Record<string, unknown> casts with proper SDK type narrowing.
  */
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';

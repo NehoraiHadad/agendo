@@ -42,6 +42,8 @@ export function buildSdkOptions(opts: SpawnOpts, canUseTool: CanUseTool): Option
     allowedTools: opts.allowedTools,
     mcpServers: opts.sdkMcpServers,
     persistSession: !opts.noSessionPersistence,
+    enableFileCheckpointing: opts.enableFileCheckpointing ?? false,
+    outputFormat: opts.outputFormat,
     includePartialMessages: true,
     maxBudgetUsd: opts.maxBudgetUsd,
     fallbackModel: opts.fallbackModel,
@@ -49,6 +51,12 @@ export function buildSdkOptions(opts: SpawnOpts, canUseTool: CanUseTool): Option
       ? { type: 'preset', preset: 'claude_code', append: opts.appendSystemPrompt }
       : undefined,
     canUseTool,
+    // SDK hook callbacks (TypeScript in-process hooks, not shell-based .claude/hooks/)
+    ...(opts.sdkHooks ? { hooks: opts.sdkHooks } : {}),
+    // Programmatically defined subagents
+    ...(opts.sdkAgents ? { agents: opts.sdkAgents } : {}),
+    // Main thread agent name
+    ...(opts.sdkAgent ? { agent: opts.sdkAgent } : {}),
     // Force a specific session UUID (syncs with agendo's session ID)
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),

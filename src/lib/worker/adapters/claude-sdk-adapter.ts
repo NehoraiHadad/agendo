@@ -240,6 +240,55 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     }
   }
 
+  async setMcpServers(servers: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    if (!this.queryInstance) {
+      log.debug('setMcpServers called but queryInstance is null');
+      return null;
+    }
+    try {
+      const result = await this.queryInstance.setMcpServers(
+        servers as Parameters<Query['setMcpServers']>[0],
+      );
+      return result as unknown as Record<string, unknown>;
+    } catch (err) {
+      log.warn({ err }, 'setMcpServers failed');
+      return null;
+    }
+  }
+
+  async reconnectMcpServer(serverName: string): Promise<void> {
+    if (!this.queryInstance) {
+      log.debug({ serverName }, 'reconnectMcpServer called but queryInstance is null');
+      return;
+    }
+    await this.queryInstance.reconnectMcpServer(serverName);
+  }
+
+  async toggleMcpServer(serverName: string, enabled: boolean): Promise<void> {
+    if (!this.queryInstance) {
+      log.debug({ serverName, enabled }, 'toggleMcpServer called but queryInstance is null');
+      return;
+    }
+    await this.queryInstance.toggleMcpServer(serverName, enabled);
+  }
+
+  async rewindFiles(
+    userMessageId: string,
+    dryRun?: boolean,
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.queryInstance) {
+      log.debug('rewindFiles called but queryInstance is null');
+      return null;
+    }
+    try {
+      const result = await this.queryInstance.rewindFiles(userMessageId, { dryRun });
+      return result as unknown as Record<string, unknown>;
+    } catch (err) {
+      log.warn({ err, userMessageId }, 'rewindFiles failed');
+      return null;
+    }
+  }
+
   async getMcpStatus(): Promise<Record<string, unknown> | null> {
     if (!this.queryInstance) {
       log.debug('getMcpStatus called but queryInstance is null');
@@ -272,14 +321,6 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     const msg = rest as unknown as SDKMessage;
 
     return mapSdkMessageToAgendoEvents(msg, this.getSdkCallbacks());
-  }
-
-  // -------------------------------------------------------------------------
-  // preProcessLine — no-op for SDK adapter (handled in mapJsonToEvents)
-  // -------------------------------------------------------------------------
-
-  preProcessLine(_parsed: Record<string, unknown>): void {
-    // Assistant UUID capture is handled inside mapJsonToEvents via onAssistantUuid callback
   }
 
   // -------------------------------------------------------------------------

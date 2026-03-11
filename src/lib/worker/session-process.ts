@@ -284,6 +284,11 @@ export class SessionProcess {
       appendDelta: (text) => this.activityTracker.appendDelta(text),
       appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
       onMessageStart: (stats) => {
+        // Store per-call stats so enrichResultPayload attaches them to agent:result.
+        // Without this, the UI falls back to aggregated modelUsage which inflates
+        // the context bar for multi-tool-call turns.
+        this.dataPipeline.setPerCallContextStats(stats);
+
         // Emit real-time context bar update when a new API call starts.
         if (this.dataPipeline.lastContextWindow) {
           const used =
@@ -483,6 +488,38 @@ export class SessionProcess {
       await handleSteer(control, ctrl);
     } else if (control.type === 'rollback') {
       await handleRollback(control, ctrl);
+    } else if (control.type === 'mcp-set-servers') {
+      if (ctrl.adapter.setMcpServers) {
+        const result = await ctrl.adapter.setMcpServers(control.servers);
+        await ctrl.emitEvent({
+          type: 'system:info',
+          message: `MCP servers updated: ${JSON.stringify(result)}`,
+        });
+      }
+    } else if (control.type === 'mcp-reconnect') {
+      if (ctrl.adapter.reconnectMcpServer) {
+        await ctrl.adapter.reconnectMcpServer(control.serverName);
+        await ctrl.emitEvent({
+          type: 'system:info',
+          message: `MCP server '${control.serverName}' reconnected`,
+        });
+      }
+    } else if (control.type === 'mcp-toggle') {
+      if (ctrl.adapter.toggleMcpServer) {
+        await ctrl.adapter.toggleMcpServer(control.serverName, control.enabled);
+        await ctrl.emitEvent({
+          type: 'system:info',
+          message: `MCP server '${control.serverName}' ${control.enabled ? 'enabled' : 'disabled'}`,
+        });
+      }
+    } else if (control.type === 'rewind-files') {
+      if (ctrl.adapter.rewindFiles) {
+        const result = await ctrl.adapter.rewindFiles(control.userMessageId, control.dryRun);
+        await ctrl.emitEvent({
+          type: 'system:info',
+          message: `Rewind files result: ${JSON.stringify(result)}`,
+        });
+      }
     }
   }
 

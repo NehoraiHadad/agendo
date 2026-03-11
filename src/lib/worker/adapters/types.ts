@@ -75,6 +75,10 @@ export interface SpawnOpts {
       env?: Record<string, string>;
     }
   >;
+  /** When true, enable file checkpointing so files can be rewound to previous states (Claude SDK only). */
+  enableFileCheckpointing?: boolean;
+  /** Structured output format — agent returns JSON validated against the given schema (Claude SDK only). */
+  outputFormat?: { type: 'json_schema'; schema: Record<string, unknown>; name?: string };
   /** When true, pass --worktree to create an isolated git worktree (Claude only). */
   useWorktree?: boolean;
   /** When true, adds --fork-session to --resume so Claude creates a new session ID
@@ -86,6 +90,41 @@ export interface SpawnOpts {
   /** System-level instructions injected before the user's initial message.
    *  For Codex app-server: passed as `developerInstructions` in thread/start. */
   developerInstructions?: string;
+  /** SDK hook callbacks keyed by HookEvent name (e.g. PreToolUse, PostToolUse).
+   *  Each value is an array of HookCallbackMatcher objects. Claude SDK only. */
+  sdkHooks?: Partial<
+    Record<
+      string,
+      Array<{
+        matcher?: string;
+        hooks: Array<
+          (
+            input: Record<string, unknown>,
+            toolUseID: string | undefined,
+            options: { signal: AbortSignal },
+          ) => Promise<Record<string, unknown>>
+        >;
+        timeout?: number;
+      }>
+    >
+  >;
+  /** Programmatically defined subagents keyed by agent name.
+   *  Each value is an AgentDefinition. Claude SDK only. */
+  sdkAgents?: Record<
+    string,
+    {
+      description: string;
+      prompt: string;
+      tools?: string[];
+      disallowedTools?: string[];
+      model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+      skills?: string[];
+      maxTurns?: number;
+    }
+  >;
+  /** When set, uses the named agent definition (from sdkAgents or settings) as
+   *  the main thread agent. Claude SDK only. */
+  sdkAgent?: string;
 }
 
 export interface ManagedProcess {
@@ -137,6 +176,14 @@ export interface AgentAdapter {
   setModel?(model: string): Promise<boolean>;
   /** Query MCP server connection status via control_request. */
   getMcpStatus?(): Promise<Record<string, unknown> | null>;
+  /** Replace all MCP servers on a live session (Claude SDK only). */
+  setMcpServers?(servers: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  /** Reconnect a specific MCP server by name (Claude SDK only). */
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  /** Enable/disable a specific MCP server by name (Claude SDK only). */
+  toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
+  /** Rewind files to the state at a given user message (requires enableFileCheckpointing, Claude SDK only). */
+  rewindFiles?(userMessageId: string, dryRun?: boolean): Promise<Record<string, unknown> | null>;
   /** Inject a steering message into the current running turn (Codex only). */
   steer?(message: string): Promise<void>;
   /** Rollback the last N turns in the thread (Codex only). */
@@ -145,16 +192,11 @@ export interface AgentAdapter {
    *  internally. Called by SessionProcess before start(). */
   setActivityCallbacks?(callbacks: ActivityCallbacks): void;
   /** Map a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
-   *  When present, session-process.ts delegates to this instead of mapClaudeJsonToEvents. */
+   *  Used by SessionDataPipeline for adapter-specific event parsing. */
   mapJsonToEvents?(
     parsed: Record<string, unknown>,
   ): import('@/lib/realtime/events').AgendoEventPayload[];
-  /** Pre-process a parsed NDJSON line before event mapping. Adapter-specific
-   *  detection (e.g. Claude's assistant UUID capture)
-   *  that shouldn't run for other adapters. */
-  preProcessLine?(parsed: Record<string, unknown>): void;
-  /** The last captured assistant message UUID, used for conversation branching.
-   *  Set by preProcessLine on adapters that support it (Claude only). */
+  /** The last captured assistant message UUID, used for conversation branching (Claude only). */
   lastAssistantUuid?: string;
 }
 

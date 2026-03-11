@@ -18,7 +18,6 @@ function makeDeps(overrides?: Partial<DataPipelineDeps>): DataPipelineDeps {
     logWriter: { write: vi.fn() },
     adapter: {
       mapJsonToEvents: vi.fn().mockReturnValue([]),
-      preProcessLine: undefined,
       lastAssistantUuid: undefined,
     },
     approvalHandler: {

@@ -1,6 +1,7 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -239,22 +240,67 @@ async function readCodexModelsFromCache(): Promise<ModelOption[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Claude: extract model picker entries from the CLI binary via `strings`
+// Claude: query models via the @anthropic-ai/claude-agent-sdk
 // ---------------------------------------------------------------------------
 
+/** Resolve the path to the SDK's cli.js (needed for pathToClaudeCodeExecutable). */
+function resolveCliPath(): string {
+  const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
+  return join(sdkEntry, '..', 'cli.js');
+}
+
 /**
- * Parse Claude CLI binary for model picker entries.
- *
- * No official `claude model list` command exists (feature request:
- * github.com/anthropics/claude-code/issues/12612). The binary embeds
- * `descriptionForModel` strings like:
- *   "Opus 4.6 - most capable for complex work"
- *   "Sonnet 4.6 - best for everyday tasks..."
- *
- * We pipe `strings` into `grep` to avoid buffering the full ~35MB output.
- * This is fragile but currently the only option without an API key.
+ * Query Claude models via the SDK's `supportedModels()` method.
+ * Creates a short-lived Query instance with a streaming prompt, calls
+ * supportedModels(), then closes the query immediately.
+ */
+async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
+  // Create a never-resolving async iterable so the query stays open
+  // long enough for us to call supportedModels().
+  const prompt: AsyncIterable<never> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => new Promise<IteratorResult<never>>(() => {}), // hangs until close()
+      };
+    },
+  };
+
+  const q = sdkQuery({
+    prompt,
+    options: {
+      pathToClaudeCodeExecutable: resolveCliPath(),
+    },
+  });
+
+  try {
+    const models = await q.supportedModels();
+    return models.map((m) => ({
+      id: m.value,
+      label: m.displayName,
+      description: m.description,
+    }));
+  } finally {
+    q.close();
+  }
+}
+
+/**
+ * Read Claude models. Primary: SDK supportedModels(). Fallback: strings/grep on binary.
  */
 async function readClaudeModels(): Promise<ModelOption[]> {
+  try {
+    const models = await readClaudeModelsViaSdk();
+    if (models.length > 0) return models;
+  } catch {
+    // SDK approach failed, fall through to legacy
+  }
+  return readClaudeModelsLegacy();
+}
+
+/**
+ * Legacy fallback: parse Claude CLI binary for model picker entries via strings/grep.
+ */
+async function readClaudeModelsLegacy(): Promise<ModelOption[]> {
   try {
     const binaryPath = await resolveClaudeBinary();
     if (!binaryPath) return [];

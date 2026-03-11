@@ -32,7 +32,16 @@ export const POST = withErrorBoundary(
 
     // Only allow types that require simple PG NOTIFY relay (not the ones with
     // dedicated routes that do extra DB work, like 'message' and 'cancel').
-    const allowedTypes = new Set(['tool-approval', 'tool-result', 'steer', 'rollback']);
+    const allowedTypes = new Set([
+      'tool-approval',
+      'tool-result',
+      'steer',
+      'rollback',
+      'mcp-set-servers',
+      'mcp-reconnect',
+      'mcp-toggle',
+      'rewind-files',
+    ]);
     if (!allowedTypes.has(body.type)) {
       throw new BadRequestError(`Control type '${body.type}' is not handled by this endpoint`);
     }

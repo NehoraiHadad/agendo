@@ -25,7 +25,6 @@ export interface DataPipelineDeps {
   logWriter: { write(chunk: string, stream: 'stdout' | 'stderr' | 'system' | 'user'): void };
   adapter: {
     mapJsonToEvents?(parsed: Record<string, unknown>): AgendoEventPayload[];
-    preProcessLine?(parsed: Record<string, unknown>): void;
     lastAssistantUuid?: string;
   };
   approvalHandler: {
@@ -142,10 +141,6 @@ export class SessionDataPipeline {
       }
 
       try {
-        // Delegate adapter-specific pre-processing (Claude: interactive tool failure
-        // detection + assistant UUID capture). No-op for Codex/Gemini.
-        this.deps.adapter.preProcessLine?.(parsed);
-
         if (!this.deps.adapter.mapJsonToEvents) {
           log.warn(
             { sessionId: this.deps.sessionId, line: trimmed.slice(0, 200) },

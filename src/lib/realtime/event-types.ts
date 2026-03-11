@@ -270,6 +270,28 @@ export type AgendoControl =
       /** Rollback the last N turns in a Codex thread (conversation-only, files unchanged). */
       type: 'rollback';
       numTurns?: number;
+    }
+  | {
+      /** Replace all MCP servers on a live session (Claude SDK only). */
+      type: 'mcp-set-servers';
+      servers: Record<string, unknown>;
+    }
+  | {
+      /** Reconnect a specific MCP server by name (Claude SDK only). */
+      type: 'mcp-reconnect';
+      serverName: string;
+    }
+  | {
+      /** Enable/disable a specific MCP server by name (Claude SDK only). */
+      type: 'mcp-toggle';
+      serverName: string;
+      enabled: boolean;
+    }
+  | {
+      /** Rewind files to the state at a given user message (requires file checkpointing, Claude SDK only). */
+      type: 'rewind-files';
+      userMessageId: string;
+      dryRun?: boolean;
     };
 
 // ============================================================================
