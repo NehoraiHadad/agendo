@@ -227,7 +227,6 @@ export class SessionProcess {
       logWriter: this.logWriter,
       adapter: this.adapter,
       approvalHandler: this.approvalHandler,
-      activityTracker: this.activityTracker,
       activeToolUseIds: this.activeToolUseIds,
       emitEvent: (payload) => this.emitEvent(payload),
       onEmittedEvent: (event) => this.onEmittedEvent(event),
@@ -378,7 +377,11 @@ export class SessionProcess {
       .where(eq(sessions.id, this.session.id));
 
     // Wire process output and exit handlers.
+    // onData: NDJSON stdout path for CLI adapters (Codex, Gemini).
+    // onEvents: direct typed-payload path for SDK adapters (Claude SDK) — bypasses
+    //           NDJSON buffering/parsing and routes straight to processEvents().
     this.managedProcess.onData((chunk) => void this.onData(chunk));
+    this.managedProcess.onEvents?.((payloads) => void this.dataPipeline.processEvents(payloads));
     this.managedProcess.onExit((code) => void this.onExit(code));
 
     this.activityTracker.startHeartbeat();

@@ -24,11 +24,6 @@ function makeDeps(overrides?: Partial<DataPipelineDeps>): DataPipelineDeps {
       isSuppressedToolEnd: vi.fn().mockReturnValue(false),
       suppressToolStart: vi.fn(),
     },
-    activityTracker: {
-      clearDeltaBuffers: vi.fn(),
-      appendDelta: vi.fn(),
-      appendThinkingDelta: vi.fn(),
-    },
     activeToolUseIds: new Set<string>(),
     emitEvent: vi.fn().mockResolvedValue({
       id: 1,

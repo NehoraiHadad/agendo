@@ -134,6 +134,12 @@ export interface ManagedProcess {
   kill: (signal: NodeJS.Signals) => void;
   onData: (cb: (chunk: string) => void) => void;
   onExit: (cb: (code: number | null) => void) => void;
+  /**
+   * Optional direct-event path for SDK adapters that produce typed AgendoEventPayloads
+   * without going through the NDJSON string pipe. When present, SessionProcess wires
+   * this to SessionDataPipeline.processEvents() instead of the normal processChunk path.
+   */
+  onEvents?: (cb: (payloads: import('@/lib/realtime/events').AgendoEventPayload[]) => void) => void;
 }
 
 export interface ImageContent {

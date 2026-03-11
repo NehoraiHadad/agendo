@@ -17,11 +17,16 @@ import {
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+function makeHeaders(contentType = 'application/json') {
+  return { get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null) };
+}
+
 function mockApiResponse(data: unknown, status = 200) {
   mockFetch.mockResolvedValueOnce({
     ok: status >= 200 && status < 300,
     status,
     statusText: status === 200 ? 'OK' : 'Error',
+    headers: makeHeaders(),
     json: async () => ({ data }),
   });
 }
@@ -31,6 +36,7 @@ function mockApiError(message: string, status = 400) {
     ok: false,
     status,
     statusText: 'Bad Request',
+    headers: makeHeaders(),
     json: async () => ({ error: { message } }),
   });
 }
@@ -122,6 +128,7 @@ describe('apiCall', () => {
       ok: false,
       status: 500,
       statusText: 'Internal Server Error',
+      headers: makeHeaders(),
       json: async () => ({}),
     });
 

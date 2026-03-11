@@ -2,15 +2,16 @@
  * Claude SDK Adapter — drives Claude Code via @anthropic-ai/claude-agent-sdk
  * instead of spawning a CLI process and parsing raw NDJSON.
  *
- * The SDK gives us typed SDKMessage objects. We serialize them as fake NDJSON
- * (with a `__agendoSdk` marker) so that SessionDataPipeline's existing line-
- * buffering + JSON-parsing path can call our `mapJsonToEvents()` method.
+ * The SDK gives us typed SDKMessage objects. We map them directly to
+ * AgendoEventPayloads via mapSdkMessageToAgendoEvents() and emit them through
+ * the ManagedProcess.onEvents() callback — bypassing the NDJSON string pipe
+ * entirely. SessionDataPipeline.processEvents() handles suppression, enrichment,
+ * and final emission (log write + PG NOTIFY) the same way as the NDJSON path.
  */
 
 import {
   query,
   type Query,
-  type SDKMessage,
   type SDKUserMessage,
   type PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -99,13 +100,13 @@ export class ClaudeSdkAdapter implements AgentAdapter {
   private queryInstance: Query | null = null;
   private inputQueue = new AsyncQueue<SDKUserMessage>();
   private alive = false;
-  private dataCallbacks: Array<(chunk: string) => void> = [];
+  private eventCallbacks: Array<(payloads: AgendoEventPayload[]) => void> = [];
   private exitCallbacks: Array<(code: number | null) => void> = [];
   private thinkingCallback: ((thinking: boolean) => void) | null = null;
   private approvalHandler: ToolApprovalFn | null = null;
   private sessionRefCallback: ((ref: string) => void) | null = null;
   private activityCallbacks: ActivityCallbacks | null = null;
-  /** Cached SdkEventMapperCallbacks — built once on first mapJsonToEvents call. */
+  /** Cached SdkEventMapperCallbacks — built once on first runQueryLoop call. */
   private sdkCallbacks: SdkEventMapperCallbacks | null = null;
   /** Last assistant message UUID for conversation branching. */
   lastAssistantUuid?: string;
@@ -304,26 +305,6 @@ export class ClaudeSdkAdapter implements AgentAdapter {
   }
 
   // -------------------------------------------------------------------------
-  // mapJsonToEvents — called by SessionDataPipeline for each parsed NDJSON line
-  // -------------------------------------------------------------------------
-
-  mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
-    // Only process our fake-NDJSON relay messages
-    if (!parsed.__agendoSdk) return [];
-
-    // Handle our synthetic error event (inside the __agendoSdk guard)
-    if (parsed.type === '__error__') {
-      return [{ type: 'system:error', message: String(parsed.message ?? 'Unknown SDK error') }];
-    }
-
-    // Strip the marker and treat as SDKMessage
-    const { __agendoSdk: _, ...rest } = parsed;
-    const msg = rest as unknown as SDKMessage;
-
-    return mapSdkMessageToAgendoEvents(msg, this.getSdkCallbacks());
-  }
-
-  // -------------------------------------------------------------------------
   // Private implementation
   // -------------------------------------------------------------------------
 
@@ -348,7 +329,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
 
   private _start(prompt: string, opts: SpawnOpts, resumeRef?: string): ManagedProcess {
     this.alive = true;
-    this.dataCallbacks = [];
+    this.eventCallbacks = [];
     this.exitCallbacks = [];
     this.inputQueue = new AsyncQueue<SDKUserMessage>();
     this.lastAssistantUuid = undefined;
@@ -357,13 +338,17 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     // Build canUseTool callback that delegates to the approval handler
     const canUseTool = this.buildCanUseTool();
 
-    // Build SDK options from SpawnOpts, then spread in resume/fork options
+    // Build SDK options from SpawnOpts, then spread in resume/fork options.
+    // IMPORTANT: when resuming, omit sessionId — passing both --resume and
+    // --session-id causes Claude CLI to fail with "No conversation found"
+    // because --session-id overrides the resume lookup.
     const baseOptions = buildSdkOptions(opts, canUseTool);
     const sdkOptions = {
       ...baseOptions,
       ...(resumeRef
         ? {
             resume: resumeRef,
+            sessionId: undefined, // must not conflict with resume
             ...(opts.resumeSessionAt ? { resumeSessionAt: opts.resumeSessionAt } : {}),
             ...(opts.forkSession ? { forkSession: opts.forkSession } : {}),
           }
@@ -411,8 +396,10 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       kill: (_signal: NodeJS.Signals) => {
         this.queryInstance?.close();
       },
-      onData: (cb) => this.dataCallbacks.push(cb),
+      // No NDJSON stdout — this adapter emits typed events directly via onEvents.
+      onData: (_cb) => {},
       onExit: (cb) => this.exitCallbacks.push(cb),
+      onEvents: (cb) => this.eventCallbacks.push(cb),
     };
   }
 
@@ -422,19 +409,17 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       const q = this.queryInstance;
       if (!q) return;
       for await (const msg of q) {
-        // Serialize the SDKMessage as fake NDJSON with our marker
-        const line = JSON.stringify({ __agendoSdk: true, ...msg });
-        for (const cb of this.dataCallbacks) cb(line + '\n');
+        // Map the typed SDKMessage directly to AgendoEventPayloads — no JSON round-trip.
+        const payloads = mapSdkMessageToAgendoEvents(msg, this.getSdkCallbacks());
+        if (payloads.length > 0) {
+          for (const cb of this.eventCallbacks) cb(payloads);
+        }
       }
     } catch (err) {
       exitCode = 1;
-      // Emit a synthetic error event through the fake-NDJSON relay
-      const errLine = JSON.stringify({
-        __agendoSdk: true,
-        type: '__error__',
-        message: String(err),
-      });
-      for (const cb of this.dataCallbacks) cb(errLine + '\n');
+      // Emit a synthetic error event directly
+      const errPayloads: AgendoEventPayload[] = [{ type: 'system:error', message: String(err) }];
+      for (const cb of this.eventCallbacks) cb(errPayloads);
     } finally {
       this.alive = false;
       this.inputQueue.end();

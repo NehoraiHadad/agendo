@@ -31,11 +31,6 @@ export interface DataPipelineDeps {
     isSuppressedToolEnd(toolUseId: string, activeToolUseIds: Set<string>): boolean;
     suppressToolStart(toolUseId: string): void;
   };
-  activityTracker: {
-    clearDeltaBuffers(): void;
-    appendDelta(text: string): void;
-    appendThinkingDelta(text: string): void;
-  };
   activeToolUseIds: Set<string>;
   emitEvent: (payload: AgendoEventPayload) => Promise<AgendoEvent>;
   onEmittedEvent: (event: AgendoEvent) => Promise<void>;
@@ -159,37 +154,7 @@ export class SessionDataPipeline {
           continue;
         }
 
-        for (const partial of partials) {
-          // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
-          // These appear only as control_request approval cards — not as ToolCard widgets.
-          if (
-            partial.type === 'agent:tool-start' &&
-            ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
-          ) {
-            this.deps.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
-            this.deps.approvalHandler.suppressToolStart(partial.toolUseId);
-            continue;
-          }
-          if (
-            partial.type === 'agent:tool-end' &&
-            this.deps.approvalHandler.isSuppressedToolEnd(
-              partial.toolUseId,
-              this.deps.activeToolUseIds,
-            )
-          ) {
-            continue;
-          }
-
-          // Suppress the error tool-end for any interactive tool: the UI card
-          // stays live and pushToolResult routes the human's answer when it arrives.
-          const enrichedPartial = enrichResultPayload(
-            partial,
-            this._lastPerCallContextStats,
-            this.deps.adapter.lastAssistantUuid,
-          );
-          const event = await this.deps.emitEvent(enrichedPartial);
-          await this.deps.onEmittedEvent(event);
-        }
+        await this.emitPayloads(partials);
       } catch (err) {
         // Event emission failed (transient DB/publish error). Log but don't
         // surface raw JSON to the user — it would appear as a broken UI element.
@@ -242,5 +207,60 @@ export class SessionDataPipeline {
     const text = this.dataBuffer;
     this.dataBuffer = '';
     return text;
+  }
+
+  /**
+   * Direct-event path for SDK adapters: accept already-typed AgendoEventPayloads
+   * and route them through the same suppression, enrichment, and emission logic
+   * as processChunk — but skip NDJSON buffering, JSON parsing, and stdout log writes.
+   *
+   * Used by ClaudeSdkAdapter which produces typed SDKMessage objects natively.
+   * The events are still written to the log file by emitEvent() itself (as [system]
+   * entries), so SSE catchup and audit trail are unaffected.
+   */
+  async processEvents(payloads: AgendoEventPayload[]): Promise<void> {
+    await this.emitPayloads(payloads);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Apply approval-gated suppression, enrich result payloads with per-call
+   * context stats, then emit and fire post-emit side-effects.
+   * Shared by processChunk (NDJSON path) and processEvents (SDK direct path).
+   */
+  private async emitPayloads(partials: AgendoEventPayload[]): Promise<void> {
+    for (const partial of partials) {
+      // Suppress tool-start/tool-end for approval-gated tools (ExitPlanMode, …).
+      // These appear only as control_request approval cards — not as ToolCard widgets.
+      if (
+        partial.type === 'agent:tool-start' &&
+        ApprovalHandler.APPROVAL_GATED_TOOLS.has(partial.toolName)
+      ) {
+        this.deps.activeToolUseIds.add(partial.toolUseId); // keep for cleanup
+        this.deps.approvalHandler.suppressToolStart(partial.toolUseId);
+        continue;
+      }
+      if (
+        partial.type === 'agent:tool-end' &&
+        this.deps.approvalHandler.isSuppressedToolEnd(partial.toolUseId, this.deps.activeToolUseIds)
+      ) {
+        continue;
+      }
+
+      try {
+        const enrichedPartial = enrichResultPayload(
+          partial,
+          this._lastPerCallContextStats,
+          this.deps.adapter.lastAssistantUuid,
+        );
+        const event = await this.deps.emitEvent(enrichedPartial);
+        await this.deps.onEmittedEvent(event);
+      } catch (err) {
+        log.error({ err, sessionId: this.deps.sessionId }, 'Failed to emit event');
+      }
+    }
   }
 }
