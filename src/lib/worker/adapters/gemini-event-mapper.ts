@@ -29,7 +29,11 @@ export type GeminiEvent =
       entries: Array<{ content: string; priority: string; status: string }>;
     }
   | { type: 'gemini:mode-change'; modeId: string }
-  | { type: 'gemini:usage'; used: number; size: number };
+  | { type: 'gemini:usage'; used: number; size: number }
+  | {
+      type: 'gemini:commands';
+      commands: Array<{ name: string; description: string; argumentHint: string }>;
+    };
 
 // ---------------------------------------------------------------------------
 // Main mapper: GeminiEvent → AgendoEventPayload[]
@@ -166,6 +170,12 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
     // -----------------------------------------------------------------------
     case 'gemini:usage':
       return [{ type: 'agent:usage', used: event.used, size: event.size }];
+
+    // -----------------------------------------------------------------------
+    // gemini:commands → session:commands (slash command discovery)
+    // -----------------------------------------------------------------------
+    case 'gemini:commands':
+      return [{ type: 'session:commands', slashCommands: event.commands }];
 
     default:
       return [];

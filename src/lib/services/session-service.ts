@@ -238,6 +238,7 @@ export async function forkSession(
     await enqueueSession({
       sessionId: fork.id,
       resumeSessionAt: resumeAt,
+      resumePrompt: initialPrompt,
     });
   }
 

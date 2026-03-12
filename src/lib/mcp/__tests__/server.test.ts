@@ -277,7 +277,8 @@ describe('handleListTasks', () => {
       expect.stringContaining('/api/tasks?status=todo&limit=50'),
       expect.anything(),
     );
-    expect(result).toEqual([{ id: 'task-1' }, { id: 'task-2' }]);
+    // Returns paginated shape { tasks, nextCursor }
+    expect(result).toEqual({ tasks: [{ id: 'task-1' }, { id: 'task-2' }], nextCursor: null });
   });
 
   it('defaults limit to 100', async () => {
@@ -300,10 +301,13 @@ describe('handleListTasks', () => {
 
     const result = await handleListTasks({ assignee: 'claude-code' });
 
-    expect(result).toEqual([
-      { id: 'task-1', assigneeAgentId: 'agent-a' },
-      { id: 'task-3', assigneeAgentId: 'agent-a' },
-    ]);
+    expect(result).toEqual({
+      tasks: [
+        { id: 'task-1', assigneeAgentId: 'agent-a' },
+        { id: 'task-3', assigneeAgentId: 'agent-a' },
+      ],
+      nextCursor: null,
+    });
   });
 });
 
@@ -527,7 +531,10 @@ describe('handleGetMyTask', () => {
 
   it('calls GET /api/tasks/:id using AGENDO_TASK_ID', async () => {
     process.env.AGENDO_TASK_ID = 'my-task-uuid';
+    // handleGetMyTask makes 3 parallel calls: task, subtasks, events
     mockApiResponse({ id: 'my-task-uuid', title: 'My task' });
+    mockApiResponse([]);
+    mockApiResponse([]);
 
     const result = await handleGetMyTask();
 
@@ -535,14 +542,22 @@ describe('handleGetMyTask', () => {
       expect.stringContaining('/api/tasks/my-task-uuid'),
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(result).toEqual({ id: 'my-task-uuid', title: 'My task' });
+    expect(result).toEqual({
+      id: 'my-task-uuid',
+      title: 'My task',
+      subtasks: [],
+      progressNotes: [],
+    });
 
     delete process.env.AGENDO_TASK_ID;
   });
 
   it('propagates API errors', async () => {
     process.env.AGENDO_TASK_ID = 'missing-uuid';
+    // 3 parallel calls; first one errors, others succeed (Promise.all rejects on first error)
     mockApiError('Task not found', 404);
+    mockApiResponse([]);
+    mockApiResponse([]);
 
     await expect(handleGetMyTask()).rejects.toThrow('Task not found');
 
@@ -556,7 +571,9 @@ describe('handleGetMyTask', () => {
 
 describe('handleGetTask', () => {
   it('calls GET /api/tasks/:id with the provided taskId', async () => {
+    // handleGetTask makes 2 parallel calls: task + subtasks
     mockApiResponse({ id: 'task-abc', title: 'Some task' });
+    mockApiResponse([]);
 
     const result = await handleGetTask({ taskId: 'task-abc' });
 
@@ -564,11 +581,13 @@ describe('handleGetTask', () => {
       expect.stringContaining('/api/tasks/task-abc'),
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(result).toEqual({ id: 'task-abc', title: 'Some task' });
+    expect(result).toEqual({ id: 'task-abc', title: 'Some task', subtasks: [] });
   });
 
   it('propagates API errors', async () => {
+    // 2 parallel calls; first one errors (Promise.all rejects on first error)
     mockApiError('Task not found', 404);
+    mockApiResponse([]);
 
     await expect(handleGetTask({ taskId: 'ghost-uuid' })).rejects.toThrow('Task not found');
   });

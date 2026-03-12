@@ -14,6 +14,8 @@ interface WebTerminalProps {
 const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 5000;
+/** After fast retries are exhausted, keep probing at this interval (ms). */
+const SLOW_RECONNECT_INTERVAL = 15_000;
 
 export function WebTerminal({
   executionId,
@@ -35,6 +37,8 @@ export function WebTerminal({
     resizeObserver: null as ResizeObserver | null,
     reconnectAttempt: 0,
     reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+    /** Populated after init() — resets attempt counter and triggers a fresh connect. */
+    retryFn: null as (() => void) | null,
   });
 
   const connect = useCallback(
@@ -111,8 +115,8 @@ export function WebTerminal({
             return;
           }
 
-          // Attempt reconnection
           if (state.reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
+            // Fast-retry phase: exponential backoff up to MAX_RECONNECT_ATTEMPTS
             state.reconnectAttempt++;
             const delay = Math.min(
               RECONNECT_BASE_DELAY * Math.pow(1.5, state.reconnectAttempt - 1),
@@ -121,18 +125,30 @@ export function WebTerminal({
             setReconnecting(true);
             terminal.write('\r\n\x1b[33m[Reconnecting...]\x1b[0m\r\n');
             state.reconnectTimer = setTimeout(() => {
-              if (!state.disposed) connect(terminal, fitAddon);
+              if (!state.disposed) void connect(terminal, fitAddon);
             }, delay);
           } else {
+            // Slow-retry phase: server may be restarting — keep probing every 15 s
+            // instead of giving up permanently. User can also click "Retry" to try
+            // immediately.
             setReconnecting(false);
-            setError('Connection lost — reload to retry');
+            setError('Terminal server offline — retrying automatically…');
+            terminal.write('\r\n\x1b[31m[Server offline — will retry in 15 s]\x1b[0m\r\n');
+            state.reconnectTimer = setTimeout(() => {
+              if (!state.disposed) {
+                state.reconnectAttempt = 0; // reset burst counter for next round
+                setError(null);
+                setReconnecting(true);
+                void connect(terminal, fitAddon);
+              }
+            }, SLOW_RECONNECT_INTERVAL);
           }
         };
 
         ws.onerror = () => {
           // onclose will fire after this — reconnection handled there
         };
-      } catch (err) {
+      } catch (_err) {
         if (!state.disposed) {
           if (state.reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
             state.reconnectAttempt++;
@@ -142,12 +158,21 @@ export function WebTerminal({
             );
             setReconnecting(true);
             state.reconnectTimer = setTimeout(() => {
-              if (!state.disposed) connect(terminal, fitAddon);
+              if (!state.disposed) void connect(terminal, fitAddon);
             }, delay);
           } else {
-            setError(err instanceof Error ? err.message : 'Failed to connect');
+            // Token fetch or WS setup failed — fall into slow-retry mode
+            setError('Terminal server offline — retrying automatically…');
             setReconnecting(false);
             setIsConnecting(false);
+            state.reconnectTimer = setTimeout(() => {
+              if (!state.disposed) {
+                state.reconnectAttempt = 0;
+                setError(null);
+                setReconnecting(true);
+                void connect(terminal, fitAddon);
+              }
+            }, SLOW_RECONNECT_INTERVAL);
           }
         }
       }
@@ -237,6 +262,17 @@ export function WebTerminal({
         resizeObserver.observe(containerRef.current);
         state.resizeObserver = resizeObserver;
 
+        // Expose a retry function so the error overlay button can trigger reconnection
+        // even after the automatic retry loop has been exhausted.
+        state.retryFn = () => {
+          if (state.disposed) return;
+          clearTimeout(state.reconnectTimer ?? undefined);
+          state.reconnectAttempt = 0;
+          setError(null);
+          setReconnecting(true);
+          void connect(terminal, fitAddon);
+        };
+
         // Connect
         await connect(terminal, fitAddon);
       } catch (err) {
@@ -260,6 +296,7 @@ export function WebTerminal({
       state.fitAddon = null;
       state.resizeObserver = null;
       state.reconnectAttempt = 0;
+      state.retryFn = null;
     };
   }, [executionId, sessionId, fontSize, connect]);
 
@@ -276,8 +313,14 @@ export function WebTerminal({
         </div>
       )}
       {error && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#1a1b26]">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#1a1b26]">
           <span className="text-sm text-red-400">{error}</span>
+          <button
+            onClick={() => stateRef.current.retryFn?.()}
+            className="rounded border border-zinc-600 bg-zinc-800 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-700 active:bg-zinc-600"
+          >
+            Retry now
+          </button>
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" />

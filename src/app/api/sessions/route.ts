@@ -63,7 +63,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   });
 
   if (body.initialPrompt) {
-    await enqueueSession({ sessionId: session.id });
+    await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
   }
 
   return NextResponse.json({ data: { id: session.id } }, { status: 201 });

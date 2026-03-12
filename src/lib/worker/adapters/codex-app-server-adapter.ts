@@ -1,4 +1,7 @@
 import * as readline from 'node:readline';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import * as tmux from '@/lib/worker/tmux-manager';
 import { createLogger } from '@/lib/logger';
 import type {
@@ -98,6 +101,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private turnActive = false;
   /** Interval handle for the MCP server health check (mcpServerStatus/list). */
   private mcpHealthCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** Working directory for the session — stored for skills/list call and filesystem scan. */
+  private sessionCwd = '';
 
   /** NDJSON JSON-RPC transport layer (handles send/receive/dispatch). */
   private _transport: NdjsonRpcTransport | null = null;
@@ -122,6 +127,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.model = opts.model;
     this.mcpServers = opts.mcpServers;
     this.developerInstructions = opts.developerInstructions;
+    this.sessionCwd = opts.cwd ?? '';
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -139,6 +145,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.model = opts.model;
     this.mcpServers = opts.mcpServers;
     this.developerInstructions = opts.developerInstructions;
+    this.sessionCwd = opts.cwd ?? '';
     this.dataCallbacks = [];
     this.exitCallbacks = [];
     this.tmuxSessionName = `codex-as-${opts.executionId}`;
@@ -370,8 +377,112 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       });
     }
 
-    // 3. Start first turn with initial prompt
+    // 3. Fetch skills (fire-and-forget — don't block the first turn)
+    this.fetchAndEmitSkills().catch((err: unknown) => {
+      log.warn({ err }, 'skills fetch failed (non-fatal)');
+    });
+
+    // 4. Start first turn with initial prompt
     await this.startTurn(initialPrompt);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: skills discovery (RPC + filesystem)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Calls `skills/list` on the Codex app-server and supplements with filesystem
+   * SKILL.md scanning (same directories Codex reads from: ~/.agents/skills/ and
+   * {cwd}/.codex/skills/). Emits an `as:skills` synthetic event which the mapper
+   * converts to `session:commands`.
+   */
+  private async fetchAndEmitSkills(): Promise<void> {
+    const skills: Array<{ name: string; description: string; shortDescription?: string }> = [];
+    const seen = new Set<string>();
+
+    // 1. Try skills/list RPC (Codex app-server v2+)
+    if (this.sessionCwd) {
+      try {
+        const result = await this.transport.call(
+          'skills/list',
+          { cwds: [this.sessionCwd] },
+          10_000,
+        );
+        type SkillEntry = {
+          name?: string;
+          description?: string;
+          interface?: { shortDescription?: string };
+        };
+        const rpcSkills = (result.skills as SkillEntry[] | undefined) ?? [];
+        for (const s of rpcSkills) {
+          if (!s.name) continue;
+          skills.push({
+            name: s.name,
+            description: s.description ?? s.name,
+            shortDescription: s.interface?.shortDescription,
+          });
+          seen.add(s.name);
+        }
+        log.info({ count: rpcSkills.length }, 'skills/list RPC returned skills');
+      } catch (err) {
+        // Non-fatal: older Codex versions may not support skills/list
+        log.debug({ err }, 'skills/list RPC not available or failed, falling back to filesystem');
+      }
+    }
+
+    // 2. Filesystem fallback: scan ~/.agents/skills/ and {cwd}/.codex/skills/
+    const fsDirs = [
+      join(homedir(), '.agents', 'skills'),
+      join(this.sessionCwd, '.codex', 'skills'),
+    ];
+    const fsSkills = this.loadSkillsFromFilesystem(fsDirs);
+    for (const s of fsSkills) {
+      if (seen.has(s.name)) continue; // RPC result wins
+      skills.push(s);
+      seen.add(s.name);
+    }
+
+    if (skills.length > 0) {
+      this.emitSynthetic({ type: 'as:skills', skills });
+    }
+  }
+
+  /**
+   * Scans the given directories for SKILL.md files, extracting name and
+   * description from YAML frontmatter (same pattern as Claude's loadCustomCommands).
+   * Each skill directory is expected to contain a single SKILL.md file; the skill
+   * name is derived from the parent directory name.
+   */
+  private loadSkillsFromFilesystem(
+    dirs: string[],
+  ): Array<{ name: string; description: string; shortDescription?: string }> {
+    const results: Array<{ name: string; description: string; shortDescription?: string }> = [];
+    for (const dir of dirs) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name);
+      } catch {
+        continue; // directory doesn't exist
+      }
+      for (const skillDir of entries) {
+        const skillFile = join(dir, skillDir, 'SKILL.md');
+        let description = skillDir.replace(/-/g, ' ');
+        let shortDescription: string | undefined;
+        try {
+          const content = readFileSync(skillFile, 'utf-8');
+          const descMatch = content.match(/^description:\s*(.+)$/m);
+          if (descMatch) description = descMatch[1].trim();
+          const shortMatch = content.match(/^short[-_]description:\s*(.+)$/im);
+          if (shortMatch) shortDescription = shortMatch[1].trim();
+        } catch {
+          // SKILL.md not present or unreadable — still include with dir-name fallback
+        }
+        results.push({ name: skillDir, description, shortDescription });
+      }
+    }
+    return results;
   }
 
   // -------------------------------------------------------------------------

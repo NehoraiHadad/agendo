@@ -416,11 +416,12 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
     });
   }
 
-  // Mid-turn worker restart: auto-resume so the agent doesn't need a human nudge.
+  // Mid-turn interruption auto-resume: fires for both planned terminations
+  // (terminateKilled = worker/mode-change restart) and unexpected crashes
+  // (agendo restart, MCP drop, CLI crash, etc.).
   // Only fires when the session was genuinely mid-work (active, not awaiting_input),
   // has a resumable sessionRef, and no other re-enqueue path is already running.
-  // resumePrompt is explicitly set so the agent gets a sensible continuation
-  // message instead of the original initialPrompt (first message of the session).
+  // resumePrompt gives the agent context so it knows to continue rather than repeat.
   const resumeRef = ctx.sessionRef ?? ctx.dbSessionRef ?? null;
   if (
     wasInterruptedMidTurn &&
@@ -429,16 +430,22 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
     !ctx.exitContext.clearContextRestart &&
     !ctx.exitContext.modeChangeRestart
   ) {
+    const resumePrompt = ctx.exitContext.terminateKilled
+      ? 'The worker restarted. Please continue where you left off.'
+      : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
     enqueueSession({
       sessionId: ctx.sessionId,
       resumeRef,
-      resumePrompt: 'The worker restarted. Please continue where you left off.',
+      resumePrompt,
     }).catch((err: unknown) => {
       log.error(
         { err, sessionId: ctx.sessionId },
         'Failed to re-enqueue session after mid-turn interruption',
       );
     });
-    log.info({ sessionId: ctx.sessionId }, 'Session auto-resumed after mid-turn worker restart');
+    log.info(
+      { sessionId: ctx.sessionId, terminateKilled: ctx.exitContext.terminateKilled },
+      'Session auto-resumed after mid-turn interruption',
+    );
   }
 }

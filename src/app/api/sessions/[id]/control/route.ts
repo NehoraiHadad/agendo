@@ -120,7 +120,11 @@ export const POST = withErrorBoundary(
             .set({ permissionMode: newMode, initialPrompt })
             .where(eq(sessions.id, id));
 
-          await enqueueSession({ sessionId: id, resumeRef: session.sessionRef ?? undefined });
+          await enqueueSession({
+            sessionId: id,
+            resumeRef: session.sessionRef ?? undefined,
+            resumePrompt: initialPrompt,
+          });
 
           return NextResponse.json({ data: { resuming: true } }, { status: 202 });
         }

@@ -18,7 +18,11 @@ export type AppServerSyntheticEvent =
   | { type: 'as:info'; message: string }
   | { type: 'as:compact-start' }
   | { type: 'as:turn.completed'; status: string; error: AppServerTurnError | null }
-  | { type: 'as:error'; message: string };
+  | { type: 'as:error'; message: string }
+  | {
+      type: 'as:skills';
+      skills: Array<{ name: string; description: string; shortDescription?: string }>;
+    };
 
 export interface AppServerTurnError {
   message: string;
@@ -280,6 +284,19 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
     // -----------------------------------------------------------------------
     case 'as:error':
       return [{ type: 'system:error', message: `Codex error: ${event.message}` }];
+
+    // -----------------------------------------------------------------------
+    // skills → session:commands (Codex uses $skill-name prefix, not /)
+    // -----------------------------------------------------------------------
+    case 'as:skills': {
+      const cmds = event.skills.map((s) => ({
+        name: '$' + s.name,
+        description: s.shortDescription ?? s.description ?? s.name,
+        argumentHint: '',
+      }));
+      if (cmds.length === 0) return [];
+      return [{ type: 'session:commands', slashCommands: cmds }];
+    }
 
     default:
       return [];

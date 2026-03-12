@@ -37,7 +37,7 @@ export const POST = withErrorBoundary(
       });
 
       if (body.initialPrompt) {
-        await enqueueSession({ sessionId: session.id });
+        await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
       }
 
       return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
@@ -55,7 +55,7 @@ export const POST = withErrorBoundary(
     });
 
     if (body.initialPrompt) {
-      await enqueueSession({ sessionId: session.id });
+      await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
     }
 
     return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });

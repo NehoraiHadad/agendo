@@ -117,11 +117,12 @@ export async function runSession(
     envOverrides['AGENDO_PROJECT_ID'] = resolvedProjectId;
   }
 
-  // Resolve the prompt:
-  // - On cold resume (resumeRef set): use resumePrompt from job data (the user's new message).
-  //   session.initialPrompt is NOT used here so it stays as the original first prompt for the UI.
-  // - On first spawn (no resumeRef): use session.initialPrompt (the original user prompt).
-  let prompt = (resumeRef ? resumePrompt : undefined) ?? session.initialPrompt ?? '';
+  // Resolve the prompt from job data. resumePrompt covers both first-spawn and cold-resume —
+  // all enqueue callsites now pass it explicitly. session.initialPrompt is kept as a fallback
+  // for backward-compat (old jobs in flight) and for clearContextRestart child sessions whose
+  // prompt is written to DB by restartFreshFromSession(). The UI reads session.initialPrompt
+  // directly for the InitialPromptBanner and search; the worker no longer depends on it.
+  let prompt = resumePrompt ?? session.initialPrompt ?? '';
   if (!prompt && task) {
     prompt = [task.title, task.description ?? ''].filter(Boolean).join('\n\n');
   }

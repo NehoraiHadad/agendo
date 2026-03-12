@@ -107,12 +107,11 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
 
       zombieRecoveryCount.set(session.id, recoveryCount + 1);
 
-      await db
-        .update(sessions)
-        .set({ initialPrompt: 'The worker restarted. Please continue where you left off.' })
-        .where(eq(sessions.id, session.id));
-
-      await enqueueSession({ sessionId: session.id, resumeRef: session.sessionRef });
+      await enqueueSession({
+        sessionId: session.id,
+        resumeRef: session.sessionRef,
+        resumePrompt: 'The worker restarted. Please continue where you left off.',
+      });
       log.info(
         {
           sessionId: session.id,

@@ -179,7 +179,7 @@ describe('determineExitStatus', () => {
     expect(deps.transitionTo).toHaveBeenCalledWith('idle');
   });
 
-  it('emits error and transitions to ended on crash (non-zero exit)', async () => {
+  it('emits info and transitions to idle on crash (non-zero exit, auto-recovery)', async () => {
     const ctx = new ExitContext();
     const deps = makeExitStatusDeps();
 
@@ -187,14 +187,15 @@ describe('determineExitStatus', () => {
 
     expect(deps.emitEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'system:error',
+        type: 'system:info',
         message: expect.stringContaining('exit code 1'),
       }),
     );
-    expect(deps.transitionTo).toHaveBeenCalledWith('ended');
+    // Crashes now transition to idle for auto-recovery instead of ended
+    expect(deps.transitionTo).toHaveBeenCalledWith('idle');
   });
 
-  it('emits error and transitions to ended on null exit code (crash)', async () => {
+  it('emits info and transitions to idle on null exit code (crash + auto-recovery)', async () => {
     const ctx = new ExitContext();
     const deps = makeExitStatusDeps();
 
@@ -202,11 +203,11 @@ describe('determineExitStatus', () => {
 
     expect(deps.emitEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'system:error',
+        type: 'system:info',
         message: expect.stringContaining('exit code null'),
       }),
     );
-    expect(deps.transitionTo).toHaveBeenCalledWith('ended');
+    expect(deps.transitionTo).toHaveBeenCalledWith('idle');
   });
 
   it('records interruption event when interrupted mid-turn with task', async () => {

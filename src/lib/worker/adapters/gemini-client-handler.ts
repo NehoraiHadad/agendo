@@ -141,6 +141,16 @@ export class GeminiClientHandler implements Client {
       case 'usage_update':
         this.emitNdjson({ type: 'gemini:usage', used: update.used, size: update.size });
         break;
+      case 'available_commands_update':
+        this.emitNdjson({
+          type: 'gemini:commands',
+          commands: (update.availableCommands ?? []).map((cmd) => ({
+            name: cmd.name,
+            description: cmd.description,
+            argumentHint: '',
+          })),
+        });
+        break;
       case 'tool_call_update': {
         const { toolCallId, content, status } = update;
         if (toolCallId && this.activeToolCalls.has(toolCallId)) {

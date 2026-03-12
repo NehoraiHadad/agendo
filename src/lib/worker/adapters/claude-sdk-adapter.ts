@@ -9,6 +9,9 @@
  * and final emission (log write + PG NOTIFY) the same way as the NDJSON path.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, basename } from 'node:path';
+import { homedir } from 'node:os';
 import {
   query,
   type Query,
@@ -110,6 +113,8 @@ export class ClaudeSdkAdapter implements AgentAdapter {
   private sdkCallbacks: SdkEventMapperCallbacks | null = null;
   /** Last assistant message UUID for conversation branching. */
   lastAssistantUuid?: string;
+  /** Working directory for the current session — used to find project-local custom commands. */
+  private spawnCwd = process.cwd();
 
   // -------------------------------------------------------------------------
   // AgentAdapter interface
@@ -329,6 +334,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
 
   private _start(prompt: string, opts: SpawnOpts, resumeRef?: string): ManagedProcess {
     this.alive = true;
+    this.spawnCwd = opts.cwd;
     this.eventCallbacks = [];
     this.exitCallbacks = [];
     this.inputQueue = new AsyncQueue<SDKUserMessage>();
@@ -431,19 +437,62 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     }
   }
 
+  /**
+   * Scan ~/.claude/commands/ and {cwd}/.claude/commands/ for custom .md commands.
+   * Parses YAML frontmatter to extract description and argument-hint fields.
+   * Returns command objects in the same shape as SDK supportedCommands() results.
+   */
+  private loadCustomCommands(
+    cwd: string,
+  ): Array<{ name: string; description: string; argumentHint: string }> {
+    const dirs = [join(homedir(), '.claude', 'commands'), join(cwd, '.claude', 'commands')];
+    const commands: Array<{ name: string; description: string; argumentHint: string }> = [];
+    for (const dir of dirs) {
+      let files: string[];
+      try {
+        files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+      } catch {
+        continue; // directory doesn't exist
+      }
+      for (const file of files) {
+        const name = basename(file, '.md');
+        let description = name.replace(/-/g, ' ');
+        let argumentHint = '';
+        try {
+          const content = readFileSync(join(dir, file), 'utf-8');
+          const descMatch = content.match(/^description:\s*(.+)$/m);
+          if (descMatch) description = descMatch[1].trim();
+          const hintMatch = content.match(/^argument-hint:\s*(.+)$/m);
+          if (hintMatch) argumentHint = hintMatch[1].trim();
+        } catch {
+          // skip malformed files
+        }
+        commands.push({ name, description, argumentHint });
+      }
+    }
+    return commands;
+  }
+
   private fetchAndEmitRichCommands(): void {
     const q = this.queryInstance;
     if (!q) return;
     q.supportedCommands()
       .then((commands) => {
         if (!this.alive) return; // session ended before we got results
+        // Merge built-in SDK commands with custom commands from ~/.claude/commands/
+        // and {cwd}/.claude/commands/. SDK built-ins win on name collision.
+        const sdkNames = new Set(commands.map((c) => c.name));
+        const custom = this.loadCustomCommands(this.spawnCwd).filter((c) => !sdkNames.has(c.name));
         const payload: AgendoEventPayload = {
           type: 'session:commands',
-          slashCommands: commands.map((c) => ({
-            name: c.name,
-            description: c.description,
-            argumentHint: c.argumentHint,
-          })),
+          slashCommands: [
+            ...commands.map((c) => ({
+              name: c.name,
+              description: c.description,
+              argumentHint: c.argumentHint,
+            })),
+            ...custom,
+          ],
         };
         for (const cb of this.eventCallbacks) cb([payload]);
       })

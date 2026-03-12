@@ -152,11 +152,16 @@ export async function determineExitStatus(
   }
 
   // Determine final session status based on exit code.
-  // cancelKilled = user pressed Stop → already ended by the cancel route, no error.
-  // Clean exit (0) = agent finished normally → idle (resumable).
-  // terminateKilled = graceful worker shutdown → idle (auto-resumable on next message).
+  // cancelKilled    = user pressed Stop → ended (not resumable).
+  // Clean exit (0)  = agent finished normally → idle (resumable).
+  // terminateKilled = graceful worker shutdown → idle (auto-resumable).
   // interrupt / idle-timeout → idle (resumable).
-  // Anything else → ended (crash / unsupported command).
+  // Unexpected crash (non-zero, no known reason) while active → idle + auto-resume.
+  //   This covers infrastructure restarts (e.g. agendo restart dropping MCP), agent
+  //   CLI crashes, and any other unplanned exits. The session stays resumable so the
+  //   agent can continue its work after the infrastructure recovers.
+  //   `wasInterruptedMidTurn` is set for this case by the caller, which triggers
+  //   handleReEnqueue to fire the auto-resume path.
   if (deps.currentStatus === 'active' || deps.currentStatus === 'awaiting_input') {
     if (ctx.cancelKilled) {
       await deps.transitionTo('ended');
@@ -169,30 +174,22 @@ export async function determineExitStatus(
     ) {
       await deps.transitionTo('idle');
     } else {
+      // Unexpected exit — keep idle so the session can auto-resume.
+      // Emit a warning (not a hard error) so the user sees what happened.
       await deps.emitEvent({
-        type: 'system:error',
+        type: 'system:info',
         message:
-          `Session ended unexpectedly (exit code ${exitCode ?? 'null'}). ` +
-          `This may be caused by a configuration error, an unsupported command, or an agent CLI crash.`,
+          `Session exited unexpectedly (exit code ${exitCode ?? 'null'}). ` +
+          `Attempting auto-recovery…`,
       });
-      await deps.transitionTo('ended');
-      // Kill the companion terminal tmux session — session is no longer resumable.
-      spawnSync('tmux', ['kill-session', '-t', `shell-${deps.sessionId}`], { stdio: 'ignore' });
+      await deps.transitionTo('idle');
+      // Leave the tmux session alive — the agent may resume it.
     }
   }
 
-  // Persist endedAt timestamp when the session is ended.
-  // Note: We check the actual DB status since transitionTo may have changed it.
-  // In the extracted version, the caller is responsible for checking final status.
-  // We use a simple heuristic: if we just called transitionTo('ended'), persist endedAt.
-  if (
-    ctx.cancelKilled ||
-    ((deps.currentStatus === 'active' || deps.currentStatus === 'awaiting_input') &&
-      !ctx.terminateKilled &&
-      exitCode !== 0 &&
-      ctx.reason !== 'idle-timeout' &&
-      ctx.reason !== 'interrupt')
-  ) {
+  // Persist endedAt only for permanent ends (user cancel).
+  // Unexpected crashes now go to idle (auto-resume), so endedAt should NOT be set.
+  if (ctx.cancelKilled) {
     await db.update(sessions).set({ endedAt: new Date() }).where(eq(sessions.id, deps.sessionId));
   }
 }

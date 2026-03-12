@@ -245,6 +245,15 @@ export class SessionProcess {
       },
     );
 
+    // Emit an explicit session:state { active } event so the frontend always
+    // transitions to "Active" when a session starts (or cold-resumes).
+    // claimSession() already set the DB to 'active', but it doesn't publish
+    // to PG NOTIFY. transitionTo('active') would be a no-op here because
+    // this.status is pre-initialized to 'active' (the duplicate-guard fires).
+    // Emitting directly ensures connected browsers see the status change
+    // regardless of whether this is a fresh spawn, cold-resume, or fork-start.
+    await this.emitEvent({ type: 'session:state', status: 'active' });
+
     const childEnv = buildChildEnv(
       process.env,
       { sessionId: this.session.id, agentId: this.session.agentId, taskId: this.session.taskId },
@@ -686,7 +695,14 @@ export class SessionProcess {
     }
 
     // Capture mid-turn state BEFORE status transitions, for use in auto-resume below.
-    const wasInterruptedMidTurn = this.exitCtx.terminateKilled && this.status === 'active';
+    // Covers both planned terminations (terminateKilled) and unexpected crashes
+    // (non-zero exit, no known reason) — e.g. agendo restart dropping the MCP
+    // connection while the agent was actively working.
+    const wasInterruptedMidTurn =
+      this.status === 'active' &&
+      !this.exitCtx.cancelKilled &&
+      (this.exitCtx.terminateKilled ||
+        (exitCode !== 0 && exitCode !== null && this.exitCtx.reason === 'none'));
 
     await determineExitStatus(this.exitCtx, exitCode, wasInterruptedMidTurn, {
       sessionId: this.session.id,

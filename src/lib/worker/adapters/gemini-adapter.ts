@@ -1,4 +1,7 @@
 import { createLogger } from '@/lib/logger';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, basename, extname, relative } from 'node:path';
+import { homedir } from 'node:os';
 
 const log = createLogger('gemini-adapter');
 import { AsyncLock } from '@/lib/utils/async-lock';
@@ -13,6 +16,80 @@ import type {
   SpawnOpts,
 } from '@/lib/worker/adapters/types';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+
+/** Slash command entry returned from TOML scanning. */
+interface SlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+/**
+ * Extract a simple string field value from a TOML file using regex.
+ * Only handles `key = "value"` and `key = 'value'` patterns (single-line).
+ */
+function extractTomlString(content: string, key: string): string {
+  const match = content.match(new RegExp(`^${key}\\s*=\\s*["']([^"'\\r\\n]*)["']`, 'm'));
+  return match?.[1] ?? '';
+}
+
+/**
+ * Recursively list all `.toml` files under `dir`, returning their paths.
+ * Errors (missing dir, permissions, etc.) are silently ignored.
+ */
+function listTomlFiles(dir: string): string[] {
+  const results: string[] = [];
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...listTomlFiles(fullPath));
+      } else if (entry.isFile() && extname(entry.name) === '.toml') {
+        results.push(fullPath);
+      }
+    }
+  } catch {
+    // Directory doesn't exist or is not readable — skip silently
+  }
+  return results;
+}
+
+/**
+ * Scan `~/.gemini/commands/` and `<cwd>/.gemini/commands/` for custom TOML commands.
+ * Subdirectories create namespaced commands: `git/commit.toml` → `/git:commit`.
+ * Returns an array of slash command descriptors, deduplicated by name (cwd takes priority).
+ */
+function loadGeminiCustomCommands(cwd: string): SlashCommand[] {
+  const globalDir = join(homedir(), '.gemini', 'commands');
+  const localDir = join(cwd, '.gemini', 'commands');
+
+  const commandsMap = new Map<string, SlashCommand>();
+
+  for (const dir of [globalDir, localDir]) {
+    const tomlFiles = listTomlFiles(dir);
+    for (const filePath of tomlFiles) {
+      try {
+        const relPath = relative(dir, filePath);
+        const parts = relPath.split('/');
+        const stemName = basename(parts[parts.length - 1], '.toml');
+        const namespace = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+        const commandName = namespace ? `/${namespace}:${stemName}` : `/${stemName}`;
+
+        const content = readFileSync(filePath, 'utf-8');
+        const description = extractTomlString(content, 'description');
+        const prompt = extractTomlString(content, 'prompt');
+        const argumentHint = prompt ? '<text>' : '';
+
+        commandsMap.set(commandName, { name: commandName, description, argumentHint });
+      } catch {
+        // Malformed or unreadable file — skip silently
+      }
+    }
+  }
+
+  return Array.from(commandsMap.values());
+}
 
 export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
@@ -36,6 +113,8 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
    *  emitting orphaned tool-end events in default mode (where tools are
    *  tracked via the permission handler instead). */
   private activeToolCalls = new Set<string>();
+  /** Cached custom TOML commands for ACP-command merging. */
+  private customTomlCommands: SlashCommand[] = [];
 
   /** Timeout for session/prompt ACP requests (10 minutes). */
   static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -337,6 +416,13 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       this.emitNdjson({ type: 'gemini:init', model: opts.model, sessionId: this.sessionId });
     }
 
+    // Load custom TOML commands and emit them (merged with any future ACP commands)
+    this.customTomlCommands = loadGeminiCustomCommands(opts.cwd);
+    if (this.customTomlCommands.length > 0) {
+      // Emit TOML-only commands immediately; ACP update (if it arrives) will also be merged
+      this.emitNdjson({ type: 'gemini:commands', commands: this.customTomlCommands });
+    }
+
     // 3. First prompt
     await this.sendPrompt(prompt);
   }
@@ -371,9 +457,24 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
    * Emit a synthetic NDJSON line to all dataCallbacks. session-process.ts
    * parses these through the standard NDJSON pipeline and delegates to
    * mapJsonToEvents (gemini-event-mapper.ts).
+   *
+   * For `gemini:commands` events, merges ACP commands with locally-scanned
+   * custom TOML commands. ACP commands take priority on name collision.
    */
   private emitNdjson(event: GeminiEvent): void {
-    const line = JSON.stringify(event) + '\n';
+    let finalEvent = event;
+    if (event.type === 'gemini:commands' && this.customTomlCommands.length > 0) {
+      // Merge: start with TOML commands, overwrite with ACP commands (ACP takes priority)
+      const merged = new Map<string, SlashCommand>();
+      for (const cmd of this.customTomlCommands) {
+        merged.set(cmd.name, cmd);
+      }
+      for (const cmd of event.commands) {
+        merged.set(cmd.name, cmd);
+      }
+      finalEvent = { type: 'gemini:commands', commands: Array.from(merged.values()) };
+    }
+    const line = JSON.stringify(finalEvent) + '\n';
     for (const cb of this.dataCallbacks) cb(line);
   }
 }
