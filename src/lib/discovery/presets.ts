@@ -109,6 +109,50 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
       homepage: 'https://docs.github.com/copilot/how-tos/copilot-cli',
     },
   },
+
+  opencode: {
+    binaryName: 'opencode',
+    displayName: 'OpenCode',
+    kind: 'builtin',
+    toolType: 'ai-agent',
+    discoveryMethod: 'preset',
+    // All provider API keys that OpenCode can use
+    envAllowlist: [
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'GOOGLE_GENERATIVE_AI_API_KEY',
+      'GEMINI_API_KEY',
+      'OPENROUTER_API_KEY',
+      'GROQ_API_KEY',
+      'XAI_API_KEY',
+      'AWS_ACCESS_KEY_ID',
+      'AWS_SECRET_ACCESS_KEY',
+      'AWS_REGION',
+      'AZURE_API_KEY',
+      'AZURE_RESOURCE_NAME',
+      'GITHUB_TOKEN',
+      'MISTRAL_API_KEY',
+      'DEEPSEEK_API_KEY',
+      'FIREWORKS_API_KEY',
+      'OPENCODE_API_KEY',
+      // Internal config injection (for permission bypass and MCP pre-config)
+      'OPENCODE_CONFIG_CONTENT',
+    ],
+    maxConcurrent: 1,
+    mcpEnabled: true,
+    sessionConfig: {
+      sessionIdSource: 'acp', // ACP session/new response contains sessionId
+      resumeFlags: ['-s', '{{sessionRef}}'],
+      continueFlags: ['-c'],
+      bidirectionalProtocol: 'acp',
+    },
+    metadata: {
+      icon: 'terminal',
+      color: '#8B5CF6',
+      description: 'OpenCode — open-source terminal coding agent with multi-provider support',
+      homepage: 'https://opencode.ai',
+    },
+  },
 };
 
 /**

@@ -3,6 +3,7 @@ import { ClaudeSdkAdapter } from '@/lib/worker/adapters/claude-sdk-adapter';
 import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
 import { CopilotAdapter } from '@/lib/worker/adapters/copilot-adapter';
+import { OpenCodeAdapter } from '@/lib/worker/adapters/opencode-adapter';
 import type { Agent } from '@/lib/types';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 
@@ -12,6 +13,7 @@ const ADAPTER_MAP: Record<string, new () => AgentAdapter> = {
   codex: CodexAppServerAdapter,
   gemini: GeminiAdapter,
   copilot: CopilotAdapter,
+  opencode: OpenCodeAdapter,
 };
 
 /**
