@@ -6,7 +6,14 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { apiCall, resolveAgentSlug, parsePriority, wrapToolCall } from './shared.js';
+import {
+  apiCall,
+  apiCallWithMeta,
+  resolveAgentSlug,
+  parsePriority,
+  wrapToolCall,
+  AGENT_NOTE,
+} from './shared.js';
 
 // ---------------------------------------------------------------------------
 // Handlers (exported for testing)
@@ -69,23 +76,31 @@ export async function handleListTasks(args: {
   status?: string;
   assignee?: string;
   limit?: number;
+  parentTaskId?: string;
+  projectId?: string;
+  cursor?: string;
+  q?: string;
 }): Promise<unknown> {
   const params = new URLSearchParams();
   if (args.status) params.set('status', args.status);
   params.set('limit', String(args.limit ?? 100));
+  if (args.parentTaskId) params.set('parentTaskId', args.parentTaskId);
+  if (args.projectId) params.set('projectId', args.projectId);
+  if (args.cursor) params.set('cursor', args.cursor);
+  if (args.q) params.set('q', args.q);
 
   const qs = params.toString();
-  const result = (await apiCall(`/api/tasks?${qs}`)) as Array<{
-    assigneeAgentId?: string | null;
-  }>;
+  const { data, meta } = await apiCallWithMeta(`/api/tasks?${qs}`);
+  let tasks = (data as Array<{ assigneeAgentId?: string | null }>) ?? [];
+  const nextCursor = (meta as { nextCursor?: string | null } | null)?.nextCursor ?? null;
 
   // Client-side filter by assignee if provided
-  if (args.assignee && Array.isArray(result)) {
+  if (args.assignee) {
     const agentId = await resolveAgentSlug(args.assignee);
-    return result.filter((t) => t.assigneeAgentId === agentId);
+    tasks = tasks.filter((t) => t.assigneeAgentId === agentId);
   }
 
-  return result;
+  return { tasks, nextCursor };
 }
 
 export async function handleGetMyTask(): Promise<unknown> {
@@ -96,11 +111,33 @@ export async function handleGetMyTask(): Promise<unknown> {
         'This is a planning conversation with no assigned task. Use create_task to create tasks.',
     };
   }
-  return apiCall(`/api/tasks/${taskId}`);
+  const [task, subtasks, allEvents] = await Promise.all([
+    apiCall(`/api/tasks/${taskId}`),
+    apiCall(`/api/tasks/${taskId}/subtasks`),
+    apiCall(`/api/tasks/${taskId}/events`),
+  ]);
+
+  const progressNotes = (allEvents as Array<{ eventType: string }>).filter(
+    (e) => e.eventType === AGENT_NOTE,
+  );
+
+  return {
+    ...(task as Record<string, unknown>),
+    subtasks,
+    progressNotes,
+  };
 }
 
 export async function handleGetTask(args: { taskId: string }): Promise<unknown> {
-  return apiCall(`/api/tasks/${args.taskId}`);
+  const [task, subtasks] = await Promise.all([
+    apiCall(`/api/tasks/${args.taskId}`),
+    apiCall(`/api/tasks/${args.taskId}/subtasks`),
+  ]);
+
+  return {
+    ...(task as Record<string, unknown>),
+    subtasks,
+  };
 }
 
 export async function handleSetExecutionOrder(args: { taskIds: string[] }): Promise<unknown> {
@@ -165,11 +202,15 @@ export function registerTaskTools(server: McpServer): void {
 
   server.tool(
     'list_tasks',
-    'List tasks, optionally filtered by status and assignee',
+    'List tasks with optional filters. Supports pagination via cursor.',
     {
       status: z.string().optional().describe('Filter by task status'),
       assignee: z.string().optional().describe('Filter by agent slug'),
       limit: z.number().optional().describe('Maximum number of tasks to return (default 100)'),
+      parentTaskId: z.string().optional().describe('Filter by parent task UUID (list subtasks)'),
+      projectId: z.string().optional().describe('Filter by project UUID'),
+      cursor: z.string().optional().describe('Pagination cursor from previous response nextCursor'),
+      q: z.string().optional().describe('Search query to filter tasks by title'),
     },
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     (args) => wrapToolCall(() => handleListTasks(args)),
@@ -177,7 +218,7 @@ export function registerTaskTools(server: McpServer): void {
 
   server.tool(
     'get_my_task',
-    'Get the full details of the task assigned to this session, including title, description, status, subtasks, and progress notes',
+    'Get the full details of the task assigned to this session, including title, description, status, subtasks[], and progressNotes[]',
     {},
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     () => wrapToolCall(() => handleGetMyTask()),
@@ -185,7 +226,7 @@ export function registerTaskTools(server: McpServer): void {
 
   server.tool(
     'get_task',
-    'Get the full details of any task by its ID',
+    'Get the full details of any task by its ID, including subtasks[]',
     {
       taskId: z.string().describe('UUID of the task to retrieve'),
     },

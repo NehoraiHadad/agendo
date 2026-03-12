@@ -7,6 +7,9 @@
 
 export const AGENDO_URL = process.env.AGENDO_URL ?? 'http://localhost:4100';
 
+/** Event type constant for agent progress notes. */
+export const AGENT_NOTE = 'agent_note';
+
 // ---------------------------------------------------------------------------
 // HTTP helper
 // ---------------------------------------------------------------------------
@@ -16,7 +19,17 @@ interface ApiCallOptions {
   body?: unknown;
 }
 
-export async function apiCall(path: string, options: ApiCallOptions = {}): Promise<unknown> {
+async function fetchJson(
+  path: string,
+  options: ApiCallOptions = {},
+): Promise<{
+  data?: unknown;
+  meta?: unknown;
+  error?: { message?: string };
+  ok: boolean;
+  status: number;
+  statusText: string;
+}> {
   const url = `${AGENDO_URL}${path}`;
   const { method = 'GET', body } = options;
 
@@ -41,15 +54,46 @@ export async function apiCall(path: string, options: ApiCallOptions = {}): Promi
 
   const json = (await res.json()) as {
     data?: unknown;
+    meta?: unknown;
     error?: { message?: string };
   };
 
-  if (!res.ok) {
-    const errMsg = json.error?.message ?? `API error ${res.status}: ${res.statusText}`;
+  return { ...json, ok: res.ok, status: res.status, statusText: res.statusText };
+}
+
+export async function apiCall(path: string, options: ApiCallOptions = {}): Promise<unknown> {
+  const json = await fetchJson(path, options);
+  if (!json.ok) {
+    const errMsg = json.error?.message ?? `API error ${json.status}: ${json.statusText}`;
     throw new Error(errMsg);
   }
-
   return json.data;
+}
+
+/** Like apiCall but also returns the `meta` field (e.g. pagination cursors). */
+export async function apiCallWithMeta(
+  path: string,
+  options: ApiCallOptions = {},
+): Promise<{ data: unknown; meta: unknown }> {
+  const json = await fetchJson(path, options);
+  if (!json.ok) {
+    const errMsg = json.error?.message ?? `API error ${json.status}: ${json.statusText}`;
+    throw new Error(errMsg);
+  }
+  return { data: json.data, meta: json.meta };
+}
+
+// ---------------------------------------------------------------------------
+// Task ID resolution
+// ---------------------------------------------------------------------------
+
+/** Resolves taskId from an explicit arg or falls back to AGENDO_TASK_ID env var. Throws if neither is set. */
+export function resolveTaskId(taskIdArg: string | undefined): string {
+  const taskId = taskIdArg ?? process.env.AGENDO_TASK_ID;
+  if (!taskId) {
+    throw new Error('No taskId provided and AGENDO_TASK_ID not set');
+  }
+  return taskId;
 }
 
 // ---------------------------------------------------------------------------

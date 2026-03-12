@@ -6,23 +6,26 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { apiCall, wrapToolCall } from './shared.js';
+import { apiCall, wrapToolCall, resolveTaskId, AGENT_NOTE } from './shared.js';
 
 // ---------------------------------------------------------------------------
 // Handler (exported for testing)
 // ---------------------------------------------------------------------------
 
+export async function handleGetProgressNotes(args: { taskId?: string }): Promise<unknown> {
+  const taskId = resolveTaskId(args.taskId);
+  const events = (await apiCall(`/api/tasks/${taskId}/events`)) as Array<{ eventType: string }>;
+  return events.filter((e) => e.eventType === AGENT_NOTE);
+}
+
 export async function handleAddProgressNote(args: {
   note: string;
   taskId?: string;
 }): Promise<unknown> {
-  const taskId = args.taskId ?? process.env.AGENDO_TASK_ID;
-  if (!taskId) {
-    throw new Error('No taskId provided and AGENDO_TASK_ID not set');
-  }
+  const taskId = resolveTaskId(args.taskId);
   return apiCall(`/api/tasks/${taskId}/events`, {
     method: 'POST',
-    body: { eventType: 'agent_note', payload: { note: args.note } },
+    body: { eventType: AGENT_NOTE, payload: { note: args.note } },
   });
 }
 
@@ -31,6 +34,16 @@ export async function handleAddProgressNote(args: {
 // ---------------------------------------------------------------------------
 
 export function registerProgressTools(server: McpServer): void {
+  server.tool(
+    'get_progress_notes',
+    'Get the progress note history for a task. Returns all agent_note events in chronological order.',
+    {
+      taskId: z.string().optional().describe('Task ID (defaults to the session task)'),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    (args) => wrapToolCall(() => handleGetProgressNotes(args)),
+  );
+
   server.tool(
     'add_progress_note',
     'Add a progress note to the current task. Use this to report milestones, blockers, or intermediate results.',

@@ -1,5 +1,5 @@
 /**
- * Subtask tools: create_subtask
+ * Subtask tools: create_subtask, list_subtasks
  *
  * IMPORTANT: No `@/` path aliases — bundled with esbuild.
  */
@@ -41,11 +41,25 @@ export async function handleCreateSubtask(args: {
   return apiCall('/api/tasks', { method: 'POST', body });
 }
 
+export async function handleListSubtasks(args: { taskId: string }): Promise<unknown> {
+  return apiCall(`/api/tasks/${args.taskId}/subtasks`);
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
 export function registerSubtaskTools(server: McpServer): void {
+  server.tool(
+    'list_subtasks',
+    'List all subtasks of a parent task',
+    {
+      taskId: z.string().describe('UUID of the parent task'),
+    },
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    (args) => wrapToolCall(() => handleListSubtasks(args)),
+  );
+
   server.tool(
     'create_subtask',
     'Create a subtask under an existing parent task',

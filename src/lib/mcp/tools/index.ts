@@ -33,8 +33,8 @@ export {
   handleSetExecutionOrder,
   handleListReadyTasks,
 } from './task-tools.js';
-export { handleCreateSubtask } from './subtask-tools.js';
-export { handleAddProgressNote } from './progress-tools.js';
+export { handleCreateSubtask, handleListSubtasks } from './subtask-tools.js';
+export { handleAddProgressNote, handleGetProgressNotes } from './progress-tools.js';
 export { handleListProjects, handleGetProject } from './project-tools.js';
 export { handleStartAgentSession, handleAssignTask } from './session-tools.js';
 export { handleSaveSnapshot, handleUpdateSnapshot } from './snapshot-tools.js';

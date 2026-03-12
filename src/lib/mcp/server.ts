@@ -63,7 +63,9 @@ export {
   handleGetMyTask,
   handleGetTask,
   handleCreateSubtask,
+  handleListSubtasks,
   handleAddProgressNote,
+  handleGetProgressNotes,
   handleListProjects,
   handleGetProject,
   handleStartAgentSession,
@@ -74,4 +76,11 @@ export {
   handleSetExecutionOrder,
   handleListReadyTasks,
 } from './tools/index.js';
-export { apiCall, resolveAgentSlug, parsePriority } from './tools/shared.js';
+export {
+  apiCall,
+  apiCallWithMeta,
+  resolveAgentSlug,
+  resolveTaskId,
+  parsePriority,
+  AGENT_NOTE,
+} from './tools/shared.js';
