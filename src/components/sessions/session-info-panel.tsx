@@ -128,6 +128,14 @@ export function SessionInfoPanel({
   const mcpServers = initEvent?.mcpServers ?? [];
   const model = initEvent?.model ?? session.model;
   const slashCommands = initEvent?.slashCommands ?? [];
+
+  // Rich command data from session:commands event (emitted after init by SDK adapter)
+  const richCommandsEvent = stream.events
+    .filter(
+      (e): e is Extract<AgendoEvent, { type: 'session:commands' }> => e.type === 'session:commands',
+    )
+    .at(-1);
+  const richSlashCommands = richCommandsEvent?.slashCommands ?? null;
   const stats = getResultStats(stream.events);
   const rateLimit = getLatestRateLimitEvent(stream.events);
   // Use latest-turn stats for context window (cumulative sum is semantically wrong for fill %)
@@ -481,7 +489,32 @@ export function SessionInfoPanel({
       {/* Slash Commands */}
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
         <SectionHeading>Available Commands</SectionHeading>
-        {slashCommands.length === 0 ? (
+        {richSlashCommands ? (
+          richSlashCommands.length === 0 ? (
+            <p className="text-xs text-muted-foreground/50">No slash commands available.</p>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {richSlashCommands.map((cmd) => (
+                <div
+                  key={cmd.name}
+                  className="flex items-baseline gap-2 py-1 border-b border-white/[0.04] last:border-0"
+                >
+                  <span className="font-mono text-xs shrink-0 text-foreground/80">/{cmd.name}</span>
+                  {cmd.argumentHint && (
+                    <span className="font-mono text-[10px] text-primary/50 shrink-0">
+                      {cmd.argumentHint}
+                    </span>
+                  )}
+                  {cmd.description && (
+                    <span className="text-[11px] text-muted-foreground/55 truncate">
+                      {cmd.description}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+        ) : slashCommands.length === 0 ? (
           <p className="text-xs text-muted-foreground/50">No slash commands available.</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">

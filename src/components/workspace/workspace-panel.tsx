@@ -98,6 +98,13 @@ export function WorkspacePanel({
   const slashCommands = initEvent?.slashCommands;
   const mcpServers = initEvent?.mcpServers;
 
+  // Rich command metadata from session:commands event (emitted by SDK adapter after init)
+  const richSlashCommands = stream.events
+    .filter(
+      (e): e is Extract<typeof e, { type: 'session:commands' }> => e.type === 'session:commands',
+    )
+    .at(-1)?.slashCommands;
+
   const currentStatus = stream.sessionStatus as SessionStatus | null;
 
   const contextStats = useMemo(() => getLatestContextStats(stream.events), [stream.events]);
@@ -146,6 +153,7 @@ export function WorkspacePanel({
         sessionId={sessionId}
         status={currentStatus}
         slashCommands={slashCommands}
+        richSlashCommands={richSlashCommands}
         mcpServers={mcpServers}
       />
     </div>

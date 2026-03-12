@@ -24,74 +24,28 @@ interface SlashCommand {
   name: string;
   description: string;
   hasArgs?: boolean;
+  /** Actual argument hint from the SDK, e.g. "<instructions>" or "<file>" */
+  argumentHint?: string;
   /** Needs a native UI interaction; cannot be sent as raw text */
   interactive?: boolean;
-  /** Crashes Claude in stream-json mode — must be blocked at the UI layer */
+  /** Requires interactive TUI; cannot be used in headless mode */
   blocked?: boolean;
-  category?: 'skill' | 'builtin';
 }
 
-// Commands that accept arguments (agent doesn't tell us this, so we maintain
-// a small set here just for the "+ args" label and to keep cursor after name).
-const COMMANDS_WITH_ARGS = new Set(['compact', 'model', 'pr_comments', 'review']);
-
-// Built-in Claude Code commands that are always available but NOT included in
-// the slash_commands field of the system:init event (Claude only advertises
-// skills + a subset of builtins there).
-const BUILTIN_COMMANDS: SlashCommand[] = [
-  {
-    name: '/btw',
-    description: 'Ask a quick question without adding it to conversation history',
-    category: 'builtin',
-    hasArgs: true,
-  },
-  { name: '/clear', description: 'Clear conversation history', category: 'builtin' },
-  {
-    name: '/compact',
-    description: 'Compact context with summary',
-    category: 'builtin',
-    hasArgs: true,
-  },
-  { name: '/cost', description: 'Show token usage and cost', category: 'builtin' },
-  { name: '/status', description: 'Show account and system status', category: 'builtin' },
-  { name: '/doctor', description: 'Check system health', category: 'builtin' },
-  { name: '/bug', description: 'Submit a bug report', category: 'builtin' },
-  { name: '/help', description: 'Show help and all commands', category: 'builtin' },
-  { name: '/vim', description: 'Toggle vim keybindings', category: 'builtin' },
-  { name: '/model', description: 'Switch the AI model', category: 'builtin', interactive: true },
-  {
-    name: '/memory',
-    description: 'Edit Claude memory files',
-    category: 'builtin',
-    interactive: true,
-  },
-  { name: '/exit', description: 'End the current session', category: 'builtin', interactive: true },
-  {
-    name: '/terminal',
-    description: 'Open a terminal session',
-    category: 'builtin',
-    interactive: true,
-  },
-  { name: '/mcp', description: 'List MCP server connections', category: 'builtin', blocked: true },
-  {
-    name: '/permissions',
-    description: 'List tool permissions',
-    category: 'builtin',
-    blocked: true,
-  },
-  {
-    name: '/login',
-    description: 'Switch Anthropic account',
-    category: 'builtin',
-    interactive: true,
-  },
-  {
-    name: '/logout',
-    description: 'Log out of current account',
-    category: 'builtin',
-    interactive: true,
-  },
-];
+// UI behaviour flags for known commands — applied on top of SDK-provided data.
+// The SDK gives us name/description/argumentHint but not which commands open native
+// UI dialogs (interactive) or produce unreadable TUI output (blocked).
+// These are Agendo-UI concerns, not agent-protocol concerns.
+const COMMAND_FLAGS: Record<string, Pick<SlashCommand, 'interactive' | 'blocked'>> = {
+  '/model': { interactive: true },
+  '/memory': { interactive: true },
+  '/exit': { interactive: true },
+  '/terminal': { interactive: true },
+  '/login': { interactive: true },
+  '/logout': { interactive: true },
+  '/mcp': { blocked: true },
+  '/permissions': { blocked: true },
+};
 
 // ---------------------------------------------------------------------------
 // SlashCommandPicker
@@ -112,10 +66,6 @@ function SlashCommandPicker({
 }: SlashCommandPickerProps) {
   if (commands.length === 0) return null;
 
-  const hasSkills = commands.some((c) => c.category === 'skill' || !c.category);
-  const hasBuiltins = commands.some((c) => c.category === 'builtin');
-  const showCategories = hasSkills && hasBuiltins;
-
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1.5 z-50 rounded-xl border border-white/[0.10] bg-[oklch(0.085_0_0)] shadow-[0_-8px_32px_oklch(0_0_0/0.5),0_0_0_1px_oklch(1_0_0/0.04)] overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06] bg-white/[0.02]">
@@ -127,28 +77,9 @@ function SlashCommandPicker({
         </span>
       </div>
       <ul className="max-h-48 overflow-auto" role="listbox">
-        {showCategories && hasSkills && (
-          <li className="px-3 pt-2 pb-0.5" aria-hidden>
-            <span className="text-[9px] font-semibold text-muted-foreground/30 uppercase tracking-widest">
-              Skills
-            </span>
-          </li>
-        )}
         {commands.map((cmd, i) => {
-          const isFirstBuiltin =
-            showCategories &&
-            cmd.category === 'builtin' &&
-            (i === 0 || commands[i - 1]?.category !== 'builtin');
-
           return (
             <li key={`${i}-${cmd.name}`}>
-              {isFirstBuiltin && (
-                <div className="px-3 pt-2 pb-0.5 border-t border-white/[0.06] mt-1">
-                  <span className="text-[9px] font-semibold text-muted-foreground/30 uppercase tracking-widest">
-                    Commands
-                  </span>
-                </div>
-              )}
               <div
                 role="option"
                 aria-selected={i === activeIdx}
@@ -170,7 +101,7 @@ function SlashCommandPicker({
                   {cmd.blocked && (
                     <span
                       className="text-amber-500/50 text-[10px] font-mono"
-                      title="Not available in stream mode"
+                      title="Opens interactive TUI — not available in this view"
                     >
                       ⊘
                     </span>
@@ -179,7 +110,9 @@ function SlashCommandPicker({
                     <ExternalLink className="size-2.5 text-muted-foreground/30" />
                   )}
                   {cmd.hasArgs && !cmd.interactive && !cmd.blocked && (
-                    <span className="text-muted-foreground/40 italic text-[10px]">+ args</span>
+                    <span className="text-muted-foreground/40 italic text-[10px]">
+                      {cmd.argumentHint ?? '+ args'}
+                    </span>
                   )}
                 </span>
               </div>
@@ -205,8 +138,10 @@ interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
   onSent?: (text: string, imageDataUrl?: string) => void;
-  /** Live slash commands received from the agent's system:init event */
+  /** Live slash commands received from the agent's system:init event (bare names, fallback) */
   slashCommands?: string[];
+  /** Rich slash commands from the agent's session:commands event (name + description + argumentHint) */
+  richSlashCommands?: Array<{ name: string; description: string; argumentHint: string }>;
   /** MCP servers received from the agent's system:init event */
   mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>;
   /** Agent binary path — used to derive provider for model picker */
@@ -237,7 +172,7 @@ function getBlockedMessage(
   if (name === '/permissions') {
     return 'Session permission mode is set at launch time and cannot be changed mid-session.';
   }
-  return `"${name}" cannot be sent in stream-json mode.`;
+  return `"${name}" opens an interactive TUI that cannot be used in this session view.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +194,7 @@ export function SessionMessageInput({
   status,
   onSent,
   slashCommands,
+  richSlashCommands,
   mcpServers,
   agentBinaryPath,
   neverStarted,
@@ -302,28 +238,37 @@ export function SessionMessageInput({
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Live commands from the agent + always-on builtins Claude doesn't advertise.
-  // Live list takes priority; builtins fill in whatever is missing.
-  // Deduplicate live commands (Claude can report the same skill multiple times).
-  const seenLive = new Set<string>();
-  const liveCommands: SlashCommand[] = (slashCommands ?? []).flatMap((name) => {
-    const key = `/${name}`;
-    if (seenLive.has(key)) return [];
-    seenLive.add(key);
-    return [
-      {
-        name: key,
-        description: name.replace(/-/g, ' '),
-        hasArgs: COMMANDS_WITH_ARGS.has(name),
-        category: 'skill' as const,
-      },
-    ];
-  });
-  const liveNames = new Set(liveCommands.map((c) => c.name));
-  const allCommands: SlashCommand[] = [
-    ...liveCommands,
-    ...BUILTIN_COMMANDS.filter((c) => !liveNames.has(c.name)),
-  ];
+  // Build the command list for the picker.
+  // Rich path (session:commands event): full SDK list with UI-behaviour flags applied.
+  // Bare fallback (system:init only): skill names only — no guessing at builtins.
+  const allCommands: SlashCommand[] = (() => {
+    if (richSlashCommands && richSlashCommands.length > 0) {
+      const seen = new Set<string>();
+      return richSlashCommands.flatMap((rc) => {
+        const key = `/${rc.name}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        const hint = rc.argumentHint || undefined;
+        return [
+          {
+            name: key,
+            description: rc.description,
+            hasArgs: !!hint,
+            argumentHint: hint,
+            ...COMMAND_FLAGS[key],
+          },
+        ];
+      });
+    }
+    // Bare names only — wait for the SDK to return rich data before showing builtins
+    const seen = new Set<string>();
+    return (slashCommands ?? []).flatMap((name) => {
+      const key = `/${name}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ name: key, description: name.replace(/-/g, ' ') }];
+    });
+  })();
 
   const slashQuery = showPicker ? message.slice(1) : '';
   const filteredCommands = allCommands.filter((c) =>

@@ -1223,6 +1223,13 @@ export function SessionChatView({
   const slashCommands = initEvent?.slashCommands;
   const mcpServers = initEvent?.mcpServers;
 
+  // Rich command metadata from session:commands event (emitted by SDK adapter after init)
+  const richSlashCommands = stream.events
+    .filter(
+      (e): e is Extract<typeof e, { type: 'session:commands' }> => e.type === 'session:commands',
+    )
+    .at(-1)?.slashCommands;
+
   const isActive = currentStatus === 'active';
 
   // Drive typing indicator from session status OR from agent:activity thinking events.
@@ -1537,6 +1544,7 @@ export function SessionChatView({
             status={currentStatus as SessionStatus}
             onSent={handleSent}
             slashCommands={slashCommands}
+            richSlashCommands={richSlashCommands}
             mcpServers={mcpServers}
             agentBinaryPath={agentBinaryPath}
             neverStarted={currentStatus === 'idle' && stream.events.length === 0}
