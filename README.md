@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <img src=".github/assets/agendo-lifecycle.svg" alt="Agendo Lifecycle" width="900"/>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js" alt="Next.js 16">
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/PostgreSQL-17-336791?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
