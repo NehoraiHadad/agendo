@@ -39,8 +39,11 @@ Open http://localhost:4100
 - **Agent discovery** — auto-detects Claude, Codex, and Gemini CLIs from your PATH
 - **Kanban board** — organize work, assign to agents, track progress in real time
 - **Live sessions** — bidirectional chat with agents, real-time log streaming
+- **Token streaming** — real-time character-level output via `--include-partial-messages`
 - **MCP integration** — agents create tasks, report status, and spawn sub-agents autonomously
-- **Multi-agent orchestration** — coordinate multiple agents across projects
+- **Multi-agent orchestration** — coordinate multiple agents with a live team panel (member list, task assignments, inter-agent messages)
+- **Plan mode** — per-agent plan capture (Claude native ExitPlanMode, universal `save_plan` MCP tool)
+- **Interactive tools** — AskUserQuestion prompts and ExitPlanMode flow rendered inline in the UI
 - **Built-in terminal** — xterm.js + node-pty, directly in the browser
 - **PWA** — installable on mobile, push notifications when agents need input
 
@@ -208,16 +211,17 @@ Docker Desktop must have WSL 2 integration enabled for PostgreSQL.
 
 ## Tech Stack
 
-| Layer     | Technology                                   |
-| --------- | -------------------------------------------- |
-| Framework | Next.js 16, React 19, TypeScript strict      |
-| Database  | PostgreSQL + Drizzle ORM                     |
-| Queue     | pg-boss v10                                  |
-| UI        | shadcn/ui + Tailwind CSS v4                  |
-| State     | Zustand (client), Server Components (server) |
-| Real-time | SSE + PG NOTIFY                              |
-| Terminal  | xterm.js v6 + node-pty + ws                  |
-| MCP       | @modelcontextprotocol/sdk (stdio)            |
+| Layer       | Technology                                   |
+| ----------- | -------------------------------------------- |
+| Framework   | Next.js 16, React 19, TypeScript strict      |
+| Database    | PostgreSQL + Drizzle ORM                     |
+| Queue       | pg-boss v10                                  |
+| UI          | shadcn/ui + Tailwind CSS v4                  |
+| State       | Zustand (client), Server Components (server) |
+| Real-time   | SSE + PG NOTIFY                              |
+| Terminal    | xterm.js v6 + node-pty + ws                  |
+| MCP         | @modelcontextprotocol/sdk (stdio)            |
+| Drag & Drop | @dnd-kit                                     |
 
 ---
 

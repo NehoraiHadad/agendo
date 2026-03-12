@@ -42,7 +42,7 @@ pnpm db:setup                   # create schema from scratch (drizzle-kit push)
 pnpm db:generate                # generate migration from schema changes (for upgrades)
 pnpm db:migrate                 # apply migrations (for upgrades)
 pnpm db:studio                  # open Drizzle Studio (web UI)
-pnpm db:seed                    # seed database
+pnpm db:seed                    # seed database (runs seed.ts + seed-repo-integration-capabilities.ts)
 
 # Worker dev (hot-reload, no build needed)
 pnpm worker:dev                 # tsx watch for local dev
@@ -68,7 +68,7 @@ pnpm worker:dev                 # tsx watch for local dev
 | Worker          | —    | `agendo-worker`   |
 | Terminal server | 4101 | `agendo-terminal` |
 
-Config: `/home/ubuntu/projects/ecosystem.config.js`. After env changes: `pm2 restart <name> --update-env && pm2 save`. To fully purge old vars: `pm2 delete <name> && pm2 start ecosystem.config.js --only <name>`.
+Config: `/home/ubuntu/projects/agendo/ecosystem.config.js`. After env changes: `pm2 restart <name> --update-env && pm2 save`. To fully purge old vars: `pm2 delete <name> && pm2 start ecosystem.config.js --only <name>`.
 
 Worker reads env from `ecosystem.config.js` (NOT `.env.local`). The Next.js app reads `.env.local`.
 
@@ -134,6 +134,19 @@ The system runs as three cooperating processes:
 
 Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via PG NOTIFY (`agendo_control_*`); worker streams `AgendoEvent`s back via PG NOTIFY (`agendo_events_*`). Use POST `/api/sessions`.
 
+### Session `kind` Field
+
+- `kind='conversation'` — all normal agent sessions (free chat and task sessions). Always persistent. This is the default.
+- `kind='execution'` — reserved for ephemeral background runs (e.g. config analysis). Sets `--no-session-persistence` for Claude.
+
+Preamble routing uses `session.taskId` (not `kind`): if `taskId` is present, the execution preamble is injected; otherwise the planning preamble is used.
+
+### Session Permission Modes
+
+- `bypassPermissions` — auto-approves everything, including Bash and MCP tool calls. Use for autonomous agents that need to run shell commands or call MCP tools without prompts.
+- `acceptEdits` — auto-approves file Edit/Write/Read tools only. Blocks Bash and MCP tool calls (agents will pause waiting for approval). Do **not** use for agents that need MCP updates or build steps.
+- `default` — interactive; prompts the user for each approval.
+
 ## Real-Time Flow
 
 ```
@@ -169,7 +182,7 @@ Adapters expose a standard interface: they parse stdout into `AgendoEventPayload
 ## Critical Rules
 
 1. **Port 4100** for Next.js dev server (3000 is taken by another app)
-2. **NEVER run `pnpm dev` directly** — use `pm2 restart agendo`
+2. **NEVER run `pnpm dev` directly in production** — use `pm2 restart agendo` (or `pnpm dev:all` in local dev only)
 3. **No `any` types** — TypeScript strict mode, always
 4. **`params` is async** in Next.js 16 — always `const { id } = await params;`
 5. **Named exports only** (except Next.js pages/layouts/routes)

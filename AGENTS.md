@@ -119,15 +119,19 @@ Required (validated with Zod on startup via `src/lib/config.ts`):
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `JWT_SECRET` — min 16 chars, used for API auth
-- `LOG_DIR` — defaults to `/data/agendo/logs`
+- `LOG_DIR` — defaults to `./logs` (production ecosystem.config.js sets it to `/data/agendo/logs`)
 - `ALLOWED_WORKING_DIRS` — colon-separated allowed dirs
 - `MCP_SERVER_PATH` — path to bundled MCP server (`dist/mcp-server.js`)
+- `AGENDO_URL` — URL the MCP server uses to call back into the Next.js API (default: `http://localhost:4100`)
 
 ## Key Domain Concepts
 
-- **Sessions** — long-lived AI conversations (multi-turn, via `run-session` queue)
-- **Executions** — fire-and-forget CLI commands (via `execute-capability` queue)
-- **Adapters** — per-CLI parsers in `src/lib/worker/adapters/` (claude, codex-app-server, gemini)
+- **Sessions** — long-lived AI conversations (`run-session` queue). Persistent subprocess, multi-turn interaction. Created via POST `/api/sessions`.
+- **Executions** — fire-and-forget template/CLI commands (`execute-capability` queue). No persistent process. Created via POST `/api/executions`.
+- **Adapters** — per-CLI protocol handlers in `src/lib/worker/adapters/`:
+  - `claude-adapter.ts` — Claude Code CLI (persistent session, no `-p` flag)
+  - `codex-app-server-adapter.ts` — OpenAI Codex via `codex app-server` JSON-RPC (NOT `codex exec`)
+  - `gemini-adapter.ts` — Gemini CLI via ACP protocol
 - **AgendoEvents** — typed event system for real-time communication (PG NOTIFY + SSE)
 
 ## Source of Truth
