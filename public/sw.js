@@ -2,6 +2,10 @@
 // Handles push notifications and notification click events.
 /* global clients */
 
+// Activate new SW immediately without waiting for all tabs to close
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
+
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
@@ -9,7 +13,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body,
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    badge: '/icons/badge-96.png',
     vibrate: [100, 50, 100],
     data: { url: data.url ?? '/' },
   };
