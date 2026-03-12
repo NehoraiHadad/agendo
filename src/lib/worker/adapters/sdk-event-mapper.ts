@@ -63,7 +63,9 @@ export function mapSdkMessageToAgendoEvents(
   // ── system:init — announces session ID, model, slash commands, MCP servers ──────────────────
   if (msg.type === 'system' && msg.subtype === 'init') {
     callbacks.onSessionRef?.(msg.session_id);
-    callbacks.onThinkingChange?.(false);
+    // Note: do NOT call onThinkingChange(false) here — system:init marks the start
+    // of a session, not the end of a turn. Firing false here causes a premature
+    // awaiting_input transition before the agent has done any work.
     return [
       {
         type: 'session:init',

@@ -337,9 +337,16 @@ export class SessionProcess {
     // Wire thinking callback for agent:activity events
     this.adapter.onThinkingChange((thinking) => {
       void this.emitEvent({ type: 'agent:activity', thinking });
-      // When thinking stops, transition to awaiting_input (works for all adapters:
-      // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
-      if (!thinking && !this.exitCtx.interruptInProgress) {
+      if (thinking) {
+        // Agent started thinking → ensure DB reflects active work.
+        // This handles the case where system:init (or another event) previously
+        // transitioned us to awaiting_input before the agent had started its turn.
+        if (this.status === 'awaiting_input') {
+          void this.transitionTo('active');
+        }
+      } else if (!this.exitCtx.interruptInProgress) {
+        // When thinking stops, transition to awaiting_input (works for all adapters:
+        // Claude handles it via agent:result; for Codex/Gemini this is the only signal).
         void this.transitionTo('awaiting_input').then(() => this.activityTracker.recordActivity());
       }
     });
