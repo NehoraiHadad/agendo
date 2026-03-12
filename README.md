@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="public/docs/screenshots/agendo_dashboard_clean.png" alt="Agendo Dashboard" width="720">
+  <img src="public/screenshot-desktop.png" alt="Agendo Dashboard" width="720">
 </p>
 
 ---
