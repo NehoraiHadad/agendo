@@ -160,6 +160,9 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     this.inputQueue.push({
       type: 'user',
       message: { role: 'user', content: msgContent },
+      // session_id is required by the SDKUserMessage type but ignored by the SDK —
+      // QueryInstance manages its own _sessionId internally. The SDK's own send()
+      // method also passes '' here (see sdk.mjs). Safe to leave empty.
       session_id: '',
       parent_tool_use_id: null,
     });
@@ -178,6 +181,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     this.inputQueue.push({
       type: 'user',
       message: { role: 'user', content: [toolResultBlock] },
+      // session_id: ignored by SDK — see sendMessage() comment above.
       session_id: '',
       parent_tool_use_id: null,
     });
@@ -378,7 +382,10 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       ];
     }
 
-    // Push the initial message into the queue
+    // Push the initial message into the queue.
+    // session_id: ignored by SDK — QueryInstance tracks it internally (see sendMessage()).
+    // Even if we had a resumeRef, passing it here is not needed — resume is handled
+    // via sdkOptions.resume in the query() call below.
     this.inputQueue.push({
       type: 'user',
       message: { role: 'user', content: initialContent },
