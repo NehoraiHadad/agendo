@@ -7,7 +7,7 @@ import type { TaskEvent } from '@/lib/types';
 export function generateExecutionPreamble(projectName: string, taskId: string): string {
   return (
     `[Agendo Context: task_id=${taskId}, project=${projectName}]\n` +
-    `Agendo MCP tools are available. See your task with get_my_task. Report all progress with add_progress_note.\n` +
+    `Agendo MCP tools are available. Start by calling get_my_task to see your full task details, current status, subtasks, and prior progress notes. Report all progress with add_progress_note.\n` +
     `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
     `  - A clear title: "Add MCP tool: <tool_name>"\n` +
     `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +

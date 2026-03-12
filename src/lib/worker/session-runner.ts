@@ -124,7 +124,9 @@ export async function runSession(
   // directly for the InitialPromptBanner and search; the worker no longer depends on it.
   let prompt = resumePrompt ?? session.initialPrompt ?? '';
   if (!prompt && task) {
-    prompt = [task.title, task.description ?? ''].filter(Boolean).join('\n\n');
+    // Use only the title as the directive — full details (description, status,
+    // subtasks, progress notes) are retrieved via get_my_task at session start.
+    prompt = task.title;
   }
 
   // Determine the binary basename so we can gate claude-only features below.
