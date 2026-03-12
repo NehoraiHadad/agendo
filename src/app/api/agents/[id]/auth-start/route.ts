@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { assertUUID } from '@/lib/api-handler';
 import { getAgentById } from '@/lib/services/agent-service';
-import { getAuthConfig } from '@/lib/services/agent-auth-service';
+import { getAuthConfig, setRunningAuthProcess } from '@/lib/services/agent-auth-service';
 import { AppError, BadRequestError, NotFoundError } from '@/lib/errors';
 
 const SSE_HEADERS = {
@@ -13,6 +13,14 @@ const SSE_HEADERS = {
   'Cache-Control': 'no-cache',
   Connection: 'keep-alive',
 };
+
+/** Patterns that indicate the CLI is waiting for user input (e.g. an authorization code) */
+const INPUT_PROMPT_PATTERNS = [
+  /paste.*(?:code|token)/i,
+  /authorization\s*code/i,
+  /enter.*(?:code|token|key)/i,
+  /verification\s*code/i,
+];
 
 function sseEvent(data: Record<string, unknown>): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
@@ -25,9 +33,11 @@ export async function POST(
   // Pre-flight: validate agent and auth config before opening the stream
   let credentialPaths: string[];
   let authCommand: string;
+  let agentId: string;
 
   try {
     const { id } = await params;
+    agentId = id;
     assertUUID(id, 'Agent');
     const agent = await getAgentById(id);
     const binaryName = path.basename(agent.binaryPath);
@@ -35,6 +45,13 @@ export async function POST(
 
     if (!config) {
       throw new BadRequestError('No auth config for this agent', { binaryName });
+    }
+
+    if (config.noCliAuth) {
+      throw new BadRequestError(
+        `${config.displayName} has no CLI auth command. It authenticates via browser on first interactive run.`,
+        { binaryName },
+      );
     }
 
     // Support optional provider/method for multi-provider agents (e.g. OpenCode)
@@ -68,6 +85,7 @@ export async function POST(
   // Pre-flight passed — open the SSE stream
   const capturedCredentialPaths = credentialPaths;
   const capturedAuthCommand = authCommand;
+  const capturedAgentId = agentId;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -75,10 +93,16 @@ export async function POST(
       const proc = spawn(cmd, args, {
         shell: true,
         env: { ...process.env, FORCE_COLOR: '0' },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'], // stdin is pipe so we can send auth codes
       });
 
+      // Register the process so auth-input can pipe data to it
+      setRunningAuthProcess(capturedAgentId, proc);
+
       let closed = false;
+      let urlSent = false;
+      let inputPromptSent = false;
+
       function close() {
         if (closed) return;
         closed = true;
@@ -86,9 +110,28 @@ export async function POST(
       }
 
       function handleOutput(text: string) {
+        // Detect OAuth URLs
         const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
-        if (urlMatch) {
+        if (urlMatch && !urlSent) {
+          urlSent = true;
           controller.enqueue(sseEvent({ type: 'url', url: urlMatch[1] }));
+        }
+
+        // Detect input prompts (e.g. "Paste the authorization code here:")
+        if (!inputPromptSent) {
+          const isInputPrompt = INPUT_PROMPT_PATTERNS.some((p) => p.test(text));
+          if (isInputPrompt) {
+            inputPromptSent = true;
+            // Clean up the prompt text for display
+            // eslint-disable-next-line no-control-regex
+            const ansiPattern = /\x1B\[[0-9;]*m/g;
+            const promptText = text
+              .replace(/[┌│└◆●▪▫]/g, '')
+              .replace(ansiPattern, '')
+              .replace(/\[?\?25[lh]\]?/g, '')
+              .trim();
+            controller.enqueue(sseEvent({ type: 'input_needed', prompt: promptText }));
+          }
         }
       }
 

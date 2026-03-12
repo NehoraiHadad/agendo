@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import type { AuthStatusResult, OAuthProvider } from '@/hooks/use-agent-auth';
 
-type OAuthStep = 'idle' | 'starting' | 'waiting' | 'success' | 'error';
+type OAuthStep = 'idle' | 'starting' | 'waiting' | 'input_needed' | 'success' | 'error';
 
 interface AgentAuthModalProps {
   agentId: string;
@@ -52,10 +52,14 @@ export function AgentAuthModal({
   const [oauthStep, setOauthStep] = useState<OAuthStep>('idle');
   const [oauthUrl, setOauthUrl] = useState<string | null>(null);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oauthInputPrompt, setOauthInputPrompt] = useState<string | null>(null);
+  const [oauthInputValue, setOauthInputValue] = useState('');
+  const [oauthInputSending, setOauthInputSending] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<OAuthProvider | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const hasProviderPicker = status.oauthProviders.length > 0;
+  const showCliTab = !status.noCliAuth;
 
   function resetState() {
     setApiKeyValue('');
@@ -65,6 +69,9 @@ export function AgentAuthModal({
     setOauthStep('idle');
     setOauthUrl(null);
     setOauthError(null);
+    setOauthInputPrompt(null);
+    setOauthInputValue('');
+    setOauthInputSending(false);
     setSelectedProvider(null);
     abortRef.current?.abort();
   }
@@ -107,6 +114,8 @@ export function AgentAuthModal({
     setOauthStep('starting');
     setOauthUrl(null);
     setOauthError(null);
+    setOauthInputPrompt(null);
+    setOauthInputValue('');
     if (provider) setSelectedProvider(provider);
 
     const controller = new AbortController();
@@ -148,13 +157,17 @@ export function AgentAuthModal({
           if (!jsonStr) continue;
 
           const event = JSON.parse(jsonStr) as {
-            type: 'url' | 'success' | 'error';
+            type: 'url' | 'success' | 'error' | 'input_needed';
             url?: string;
             message?: string;
+            prompt?: string;
           };
 
           if (event.type === 'url' && event.url) {
             setOauthUrl(event.url);
+          } else if (event.type === 'input_needed') {
+            setOauthStep('input_needed');
+            setOauthInputPrompt(event.prompt ?? 'Paste the authorization code');
           } else if (event.type === 'success') {
             setOauthStep('success');
             onAuthChanged();
@@ -174,7 +187,37 @@ export function AgentAuthModal({
     }
   }
 
+  async function handleOAuthInputSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!oauthInputValue.trim()) return;
+
+    setOauthInputSending(true);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/auth-input`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: oauthInputValue.trim() }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+
+      // Go back to waiting — the SSE stream will emit success or error
+      setOauthStep('waiting');
+      setOauthInputPrompt(null);
+      setOauthInputValue('');
+    } catch (err) {
+      setOauthError(err instanceof Error ? err.message : 'Failed to send input');
+      setOauthStep('error');
+    } finally {
+      setOauthInputSending(false);
+    }
+  }
+
   const hasMultipleEnvVars = envVarOptions.length > 1;
+  const defaultTab = showCliTab ? 'api-key' : 'api-key';
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -186,14 +229,16 @@ export function AgentAuthModal({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="api-key" className="w-full">
+        <Tabs defaultValue={defaultTab} className="w-full">
           <TabsList className="w-full">
             <TabsTrigger value="api-key" className="flex-1">
               API Key
             </TabsTrigger>
-            <TabsTrigger value="oauth" className="flex-1">
-              CLI Login
-            </TabsTrigger>
+            {showCliTab && (
+              <TabsTrigger value="oauth" className="flex-1">
+                CLI Login
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* API Key tab */}
@@ -255,82 +300,122 @@ export function AgentAuthModal({
           </TabsContent>
 
           {/* OAuth tab */}
-          <TabsContent value="oauth" className="mt-4">
-            <div className="space-y-4">
-              {/* Provider picker for multi-provider agents (e.g. OpenCode) */}
-              {oauthStep === 'idle' && hasProviderPicker && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Select a provider:</p>
-                  {status.oauthProviders.map((p) => (
-                    <Button
-                      key={p.provider}
-                      variant="outline"
-                      className="w-full justify-start text-sm"
-                      onClick={() => void handleOAuthStart(p)}
+          {showCliTab && (
+            <TabsContent value="oauth" className="mt-4">
+              <div className="space-y-4">
+                {/* Provider picker for multi-provider agents (e.g. OpenCode) */}
+                {oauthStep === 'idle' && hasProviderPicker && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Select a provider:</p>
+                    {status.oauthProviders.map((p) => (
+                      <Button
+                        key={p.provider}
+                        variant="outline"
+                        className="w-full justify-start text-sm"
+                        onClick={() => void handleOAuthStart(p)}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Single-provider agents: simple login button */}
+                {oauthStep === 'idle' && !hasProviderPicker && (
+                  <Button className="w-full" onClick={() => void handleOAuthStart()}>
+                    Login with {agentName}
+                  </Button>
+                )}
+
+                {oauthStep === 'starting' && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <span className="inline-block h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                    Starting authentication
+                    {selectedProvider ? ` (${selectedProvider.label})` : ''}...
+                  </div>
+                )}
+
+                {/* Show OAuth URL when available */}
+                {oauthUrl && oauthStep !== 'success' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Open this URL to authenticate:</p>
+                    <a
+                      href={oauthUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block break-all text-xs text-primary underline-offset-2 hover:underline rounded bg-white/[0.04] p-2 border border-white/[0.08]"
                     >
-                      {p.label}
+                      {oauthUrl}
+                    </a>
+                  </div>
+                )}
+
+                {/* Input needed: CLI is waiting for auth code */}
+                {oauthStep === 'input_needed' && (
+                  <form onSubmit={(e) => void handleOAuthInputSubmit(e)} className="space-y-3">
+                    <p className="text-xs text-muted-foreground">{oauthInputPrompt}</p>
+                    <Input
+                      type="text"
+                      placeholder="Paste code here..."
+                      value={oauthInputValue}
+                      onChange={(e) => setOauthInputValue(e.target.value)}
+                      autoComplete="off"
+                      autoFocus
+                    />
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={oauthInputSending || !oauthInputValue.trim()}
+                    >
+                      {oauthInputSending ? 'Sending...' : 'Submit Code'}
                     </Button>
-                  ))}
-                </div>
-              )}
+                  </form>
+                )}
 
-              {/* Single-provider agents: simple login button */}
-              {oauthStep === 'idle' && !hasProviderPicker && (
-                <Button className="w-full" onClick={() => void handleOAuthStart()}>
-                  Login with {agentName}
-                </Button>
-              )}
-
-              {oauthStep === 'starting' && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span className="inline-block h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                  Starting authentication{selectedProvider ? ` (${selectedProvider.label})` : ''}...
-                </div>
-              )}
-
-              {(oauthStep === 'waiting' || oauthStep === 'starting') && oauthUrl && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Open this URL to authenticate:</p>
-                  <a
-                    href={oauthUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block break-all text-xs text-primary underline-offset-2 hover:underline rounded bg-white/[0.04] p-2 border border-white/[0.08]"
-                  >
-                    {oauthUrl}
-                  </a>
+                {/* Waiting spinner (when no input prompt) */}
+                {oauthStep === 'waiting' && (
                   <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                     <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                    Waiting for you to complete login...
+                    Waiting for authentication to complete...
                   </p>
-                </div>
-              )}
+                )}
 
-              {oauthStep === 'success' && (
-                <p className="text-sm text-emerald-400">Successfully authenticated!</p>
-              )}
+                {oauthStep === 'success' && (
+                  <p className="text-sm text-emerald-400">Successfully authenticated!</p>
+                )}
 
-              {oauthStep === 'error' && (
-                <div className="space-y-3">
-                  <p className="text-sm text-destructive">Authentication failed: {oauthError}</p>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => void handleOAuthStart(selectedProvider ?? undefined)}
-                  >
-                    Try again
-                  </Button>
-                </div>
-              )}
-            </div>
-          </TabsContent>
+                {oauthStep === 'error' && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-destructive">Authentication failed: {oauthError}</p>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => void handleOAuthStart(selectedProvider ?? undefined)}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
 
         {/* Fallback terminal command */}
         {status.authCommand && (
           <p className="text-xs text-muted-foreground border-t border-white/[0.06] pt-3">
-            Or run in terminal:{' '}
-            <code className="font-mono bg-white/10 px-1 rounded">{status.authCommand}</code>
+            {status.noCliAuth ? (
+              <>
+                This agent authenticates via browser on first run. Run{' '}
+                <code className="font-mono bg-white/10 px-1 rounded">{status.authCommand}</code> in
+                a terminal to start an interactive session.
+              </>
+            ) : (
+              <>
+                Or run in terminal:{' '}
+                <code className="font-mono bg-white/10 px-1 rounded">{status.authCommand}</code>
+              </>
+            )}
           </p>
         )}
       </DialogContent>

@@ -23,6 +23,8 @@ interface AuthConfig {
   displayName: string;
   /** If set, CLI Login tab shows a provider picker instead of a single button */
   oauthProviders?: OAuthProvider[];
+  /** If true, the CLI has no `auth login` subcommand — auth happens on first interactive run */
+  noCliAuth?: boolean;
 }
 
 export interface AuthStatusResult {
@@ -36,10 +38,32 @@ export interface AuthStatusResult {
   displayName: string;
   /** If set, CLI Login tab shows a provider picker (for multi-provider agents like OpenCode) */
   oauthProviders: OAuthProvider[];
+  /** If true, CLI Login tab is not available — agent authenticates on first interactive run */
+  noCliAuth: boolean;
 }
 
 export interface SpawnAuthResult {
   process: ChildProcess;
+}
+
+/**
+ * In-memory registry of running auth processes keyed by agentId.
+ * Used to pipe stdin input (e.g. authorization codes) back to the process.
+ */
+const runningAuthProcesses = new Map<string, ChildProcess>();
+
+export function getRunningAuthProcess(agentId: string): ChildProcess | undefined {
+  return runningAuthProcesses.get(agentId);
+}
+
+export function setRunningAuthProcess(agentId: string, proc: ChildProcess): void {
+  // Kill any existing process for this agent
+  const existing = runningAuthProcesses.get(agentId);
+  if (existing && !existing.killed) {
+    existing.kill();
+  }
+  runningAuthProcesses.set(agentId, proc);
+  proc.on('exit', () => runningAuthProcesses.delete(agentId));
 }
 
 const AUTH_REGISTRY: Record<string, AuthConfig> = {
@@ -66,9 +90,10 @@ const AUTH_REGISTRY: Record<string, AuthConfig> = {
       path.join(os.homedir(), '.gemini', 'oauth_creds.json'),
       path.join(os.homedir(), '.gemini', 'google_accounts.json'),
     ],
-    authCommand: 'gemini auth login',
+    authCommand: 'gemini',
     homepage: 'https://ai.google.dev',
     displayName: 'Gemini CLI',
+    noCliAuth: true, // Gemini has no `auth login` — it authenticates via browser on first interactive run
   },
   copilot: {
     envVars: ['GITHUB_TOKEN', 'COPILOT_GITHUB_TOKEN', 'GH_TOKEN'],
@@ -155,6 +180,7 @@ export function checkAuthStatus(binaryName: string): AuthStatusResult {
       homepage: '',
       displayName: binaryName,
       oauthProviders: [],
+      noCliAuth: false,
     };
   }
 
@@ -195,6 +221,7 @@ export function checkAuthStatus(binaryName: string): AuthStatusResult {
     homepage: config.homepage,
     displayName: config.displayName,
     oauthProviders: config.oauthProviders ?? [],
+    noCliAuth: config.noCliAuth ?? false,
   };
 }
 

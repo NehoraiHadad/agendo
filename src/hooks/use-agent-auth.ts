@@ -20,6 +20,8 @@ export interface AuthStatusResult {
   displayName: string;
   /** If set, CLI Login tab shows a provider picker (for multi-provider agents like OpenCode) */
   oauthProviders: OAuthProvider[];
+  /** If true, CLI Login tab is not available — agent authenticates on first interactive run */
+  noCliAuth: boolean;
 }
 
 interface UseAgentAuthReturn {
