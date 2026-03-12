@@ -29,14 +29,17 @@ async function main() {
     console.log(`✓ ${name} (${size}×${size})`);
   }
 
-  // badge-72.png — monochrome white on transparent, for Android status bar
+  // badge-192.png — monochrome white on transparent, for Android status bar
   // Android ignores color in badge icons and renders them as white silhouettes.
-  // A full-color icon appears as a white square; we must supply a proper mask.
-  const BADGE_SIZE = 96; // 96×96 recommended for Android up to 4x device pixel ratio
+  // 192×192 for crisp rendering on high-DPI screens (up to 4× device pixel ratio).
+  // blur(2) before threshold acts as morphological dilation — thickens thin logo lines.
+  const BADGE_SIZE = 192;
   const maskBuffer = await sharp(SRC)
+    .trim({ background: '#000000', threshold: 20 }) // strip black padding from source image
     .resize(BADGE_SIZE, BADGE_SIZE, { fit: 'cover' })
     .greyscale()
-    .threshold(20) // isolate logo shapes from the black background
+    .blur(2) // spread bright pixels to thicken thin lines before thresholding
+    .threshold(30) // isolate logo shapes from the black background
     .toBuffer();
 
   const whiteRgb = await sharp({
@@ -52,8 +55,8 @@ async function main() {
 
   await sharp(whiteRgb)
     .joinChannel(maskBuffer) // use grayscale mask as alpha channel → white shape on transparent
-    .toFile(join(OUT, 'badge-96.png'));
-  console.log(`✓ badge-96.png (${BADGE_SIZE}×${BADGE_SIZE}, monochrome)`);
+    .toFile(join(OUT, 'badge-192.png'));
+  console.log(`✓ badge-192.png (${BADGE_SIZE}×${BADGE_SIZE}, monochrome)`);
 
   console.log('\nIcons written to public/icons/');
 }
