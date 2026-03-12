@@ -63,7 +63,12 @@ module.exports = {
         DATABASE_URL: process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/agendo',
 
         // Auth — must match the Next.js app's JWT_SECRET
-        JWT_SECRET: process.env.JWT_SECRET || 'CHANGE_ME_JWT_SECRET',
+        // Generate a strong secret: openssl rand -hex 32
+        JWT_SECRET:
+          process.env.JWT_SECRET ||
+          (() => {
+            throw new Error('JWT_SECRET must be set in .env.local');
+          })(),
 
         // Worker identity & tuning
         WORKER_ID: process.env.WORKER_ID || 'worker-1',
@@ -113,7 +118,12 @@ module.exports = {
         NODE_OPTIONS: '--max-old-space-size=256',
         NODE_ENV: 'production',
         TERMINAL_PORT: process.env.TERMINAL_PORT || '4101',
-        JWT_SECRET: process.env.JWT_SECRET || 'CHANGE_ME_JWT_SECRET',
+        // Generate a strong secret: openssl rand -hex 32
+        JWT_SECRET:
+          process.env.JWT_SECRET ||
+          (() => {
+            throw new Error('JWT_SECRET must be set in .env.local');
+          })(),
         DATABASE_URL: process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/agendo',
         NEXT_PUBLIC_URL: process.env.NEXT_PUBLIC_URL || `http://localhost:${PORT}`,
       },

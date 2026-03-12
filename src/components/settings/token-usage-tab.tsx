@@ -15,8 +15,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-const CLAUDE_AGENT_ID = 'CLAUDE_AGENT_ID_PLACEHOLDER';
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CoachPattern {
@@ -501,11 +499,19 @@ export function TokenUsageTab() {
   const runFullAudit = useCallback(async () => {
     setAuditLaunching(true);
     try {
+      // Resolve the Claude agent ID dynamically by slug — avoids hardcoding
+      // an installation-specific UUID in source code.
+      const agentRes = await fetch('/api/agents?slug=claude-code-1');
+      if (!agentRes.ok) return;
+      const agentBody = (await agentRes.json()) as { data: { id: string }[] };
+      const claudeAgent = agentBody.data[0];
+      if (!claudeAgent) return;
+
       const res = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agentId: CLAUDE_AGENT_ID,
+          agentId: claudeAgent.id,
           initialPrompt: '/token-optimizer',
           permissionMode: 'bypassPermissions',
         }),
