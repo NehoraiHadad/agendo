@@ -397,6 +397,82 @@ export async function searchTasks(q: string, limit = 5): Promise<SearchTaskResul
   }));
 }
 
+// --- Search Progress Notes --------------------------------------------------
+
+/** Matches the constant in src/lib/mcp/tools/shared.ts (kept local to avoid cross-boundary import). */
+const AGENT_NOTE = 'agent_note';
+
+export interface SearchProgressNoteResult {
+  taskId: string;
+  taskTitle: string;
+  taskStatus: string;
+  projectName: string | null;
+  noteSnippet: string;
+}
+
+/**
+ * Search progress notes (task_events with eventType='agent_note') by note text.
+ * Uses JSONB text extraction (`payload->>'note'`) so it works for any query,
+ * including short commit hashes that are too small to warrant a full-text index.
+ *
+ * Results are deduplicated by taskId — only the most recent matching note per
+ * task is returned, so the caller always gets up to `limit` distinct tasks.
+ */
+export async function searchProgressNotes(
+  q: string,
+  limit = 5,
+): Promise<SearchProgressNoteResult[]> {
+  // Fetch more rows than needed so deduplication still yields `limit` unique tasks.
+  const rows = await db
+    .select({
+      taskId: tasks.id,
+      taskTitle: tasks.title,
+      taskStatus: tasks.status,
+      projectName: projects.name,
+      // Extract only the note text from the JSONB payload — avoids fetching the whole blob.
+      note: sql<string>`${taskEvents.payload}->>'note'`,
+    })
+    .from(taskEvents)
+    .innerJoin(tasks, eq(taskEvents.taskId, tasks.id))
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(taskEvents.eventType, AGENT_NOTE),
+        ilike(sql`${taskEvents.payload}->>'note'`, `%${q}%`),
+      ),
+    )
+    .orderBy(desc(taskEvents.createdAt))
+    .limit(limit * 3);
+
+  // Deduplicate: keep only the most-recent note per task (rows are already DESC).
+  const seen = new Set<string>();
+  const unique: typeof rows = [];
+  for (const row of rows) {
+    if (!seen.has(row.taskId)) {
+      seen.add(row.taskId);
+      unique.push(row);
+      if (unique.length === limit) break;
+    }
+  }
+
+  return unique.map((row) => {
+    const note = row.note ?? '';
+    // Surface a short snippet centred on the match position.
+    // If indexOf misses (shouldn't happen post-ILIKE), start defaults to 0 (show beginning).
+    const matchIdx = note.toLowerCase().indexOf(q.toLowerCase());
+    const start = Math.max(0, matchIdx - 30);
+    const raw = note.slice(start, start + 120);
+    const noteSnippet = start > 0 ? `…${raw}` : raw;
+    return {
+      taskId: row.taskId,
+      taskTitle: row.taskTitle,
+      taskStatus: row.taskStatus,
+      projectName: row.projectName ?? null,
+      noteSnippet,
+    };
+  });
+}
+
 // --- Execution Order / Sequencing ---
 
 export interface SetExecutionOrderInput {

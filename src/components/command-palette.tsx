@@ -10,7 +10,7 @@ import {
   useMemo,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, ListTodo, FolderOpen, MessageSquare, FileText } from 'lucide-react';
+import { Search, ListTodo, FolderOpen, MessageSquare, FileText, StickyNote } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 
@@ -28,6 +28,7 @@ interface SearchData {
   projects: SearchResult[];
   sessions: SearchResult[];
   plans: SearchResult[];
+  progressNotes: SearchResult[];
 }
 
 type GroupKey = keyof SearchData;
@@ -56,7 +57,12 @@ const GROUP_CONFIG: Record<
   projects: { label: 'PROJECTS', Icon: FolderOpen, href: (id) => `/projects/${id}` },
   sessions: { label: 'SESSIONS', Icon: MessageSquare, href: (id) => `/sessions/${id}` },
   plans: { label: 'PLANS', Icon: FileText, href: (id) => `/plans/${id}` },
+  // Progress notes navigate to /tasks and open the task drawer (id = taskId)
+  progressNotes: { label: 'PROGRESS NOTES', Icon: StickyNote, href: (_id) => `/tasks` },
 };
+
+/** Groups whose items open the task drawer on navigation (id = taskId). */
+const GROUPS_WITH_DRAWER = new Set<GroupKey>(['tasks', 'progressNotes']);
 
 const STATUS_STYLES: Record<string, string> = {
   todo: 'bg-amber-400/15 text-amber-400/70',
@@ -239,7 +245,7 @@ export function CommandPalette() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const item = flatItems[selectedIndex];
-        if (item) navigate(item.href, item.group === 'tasks' ? item.id : undefined);
+        if (item) navigate(item.href, GROUPS_WITH_DRAWER.has(item.group) ? item.id : undefined);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         setOpen(false);
@@ -329,7 +335,10 @@ export function CommandPalette() {
                         Icon={Icon}
                         query={query}
                         onClick={() =>
-                          navigate(href(item.id), group === 'tasks' ? item.id : undefined)
+                          navigate(
+                            href(item.id),
+                            GROUPS_WITH_DRAWER.has(group) ? item.id : undefined,
+                          )
                         }
                         onMouseEnter={() => setSelectedIndex(itemIdx)}
                       />
