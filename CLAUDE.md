@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex, Gemini). It provides agent discovery, task management (Kanban), execution orchestration with bidirectional communication, live log streaming, and an MCP server for agent-initiated tasks.
+agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex, Gemini, Copilot). It provides agent discovery, task management (Kanban), execution orchestration with bidirectional communication, live log streaming, and an MCP server for agent-initiated tasks.
 
 ## Source of Truth
 
@@ -173,9 +173,16 @@ PG NOTIFY payloads >7500 bytes are replaced with a `{type:'ref'}` stub (`src/lib
 
 Each AI CLI gets an adapter in `src/lib/worker/adapters/`:
 
-- `claude-adapter.ts` — Claude Code CLI (persistent session, no `-p` flag)
+- `claude-sdk-adapter.ts` — Claude Code (via `@anthropic-ai/claude-agent-sdk`, persistent session)
 - `codex-app-server-adapter.ts` — OpenAI Codex CLI (JSON-RPC via `codex app-server`)
-- `gemini-adapter.ts` — Gemini CLI (uses ACP protocol for tool approvals)
+- `gemini-adapter.ts` — Gemini CLI (ACP protocol via `@agentclientprotocol/sdk`)
+- `copilot-adapter.ts` — GitHub Copilot CLI (ACP protocol, shares `AcpTransport` with Gemini)
+
+Shared ACP infrastructure:
+
+- `gemini-acp-transport.ts` — `AcpTransport` class (generic, used by both Gemini and Copilot adapters)
+- `gemini-client-handler.ts` / `copilot-client-handler.ts` — ACP `Client` implementations per agent
+- `gemini-event-mapper.ts` / `copilot-event-mapper.ts` — map agent-specific NDJSON events to `AgendoEventPayload`
 
 Adapters expose a standard interface: they parse stdout into `AgendoEventPayload`s and handle permission prompts. `adapter-factory.ts` selects the right adapter based on `agent.binaryName`.
 

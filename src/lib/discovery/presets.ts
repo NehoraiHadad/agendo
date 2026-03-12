@@ -86,6 +86,29 @@ export const AI_TOOL_PRESETS: Record<string, AIToolPreset> = {
       homepage: 'https://gemini.google.com',
     },
   },
+
+  copilot: {
+    binaryName: 'copilot',
+    displayName: 'GitHub Copilot CLI',
+    kind: 'builtin',
+    toolType: 'ai-agent',
+    discoveryMethod: 'preset',
+    envAllowlist: ['GITHUB_TOKEN', 'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GH_HOST'],
+    maxConcurrent: 1,
+    mcpEnabled: true,
+    sessionConfig: {
+      sessionIdSource: 'acp',
+      resumeFlags: ['--resume={{sessionRef}}'],
+      continueFlags: ['--continue'],
+      bidirectionalProtocol: 'acp',
+    },
+    metadata: {
+      icon: 'github',
+      color: '#6B7280',
+      description: 'GitHub Copilot CLI — AI coding assistant with multi-provider model support',
+      homepage: 'https://docs.github.com/copilot/how-tos/copilot-cli',
+    },
+  },
 };
 
 /**

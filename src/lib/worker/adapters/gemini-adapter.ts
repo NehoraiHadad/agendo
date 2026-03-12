@@ -8,7 +8,7 @@ import { AsyncLock } from '@/lib/utils/async-lock';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import { extractMessage, GeminiClientHandler } from '@/lib/worker/adapters/gemini-client-handler';
-import { GeminiAcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
+import { AcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
 import type {
   AgentAdapter,
   ImageContent,
@@ -93,7 +93,7 @@ function loadGeminiCustomCommands(cwd: string): SlashCommand[] {
 
 export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
-  private transport = new GeminiAcpTransport();
+  private transport = new AcpTransport();
   private clientHandler: GeminiClientHandler | null = null;
   private sessionId: string | null = null;
   private currentTurn: Promise<void> = Promise.resolve();

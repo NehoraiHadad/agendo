@@ -9,7 +9,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
 
-const log = createLogger('gemini-acp-transport');
+const log = createLogger('acp-transport');
 
 /**
  * Extract a string message from any thrown value.
@@ -42,7 +42,7 @@ export interface SessionOpts {
  *  - loadOrCreateSession() — 3-path fallback (resume → load → new)
  *  - sendPrompt()       — text + optional image with timeout
  */
-export class GeminiAcpTransport {
+export class AcpTransport {
   private connection: ClientSideConnection | null = null;
 
   /** Create an ACP ClientSideConnection for the given child process stdio. */
@@ -213,5 +213,8 @@ export class GeminiAcpTransport {
     return (promptResponse as Record<string, unknown>) ?? {};
   }
 }
+
+/** @deprecated Use AcpTransport instead. */
+export { AcpTransport as GeminiAcpTransport };
 
 export { extractMessage };

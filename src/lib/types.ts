@@ -35,14 +35,14 @@ export type PlanStatus = (typeof schema.planStatusEnum.enumValues)[number];
 
 /** agents.session_config */
 export interface AgentSessionConfig {
-  sessionIdSource: 'json_field' | 'filesystem' | 'list_command' | 'none';
+  sessionIdSource: 'json_field' | 'filesystem' | 'list_command' | 'acp' | 'none';
   sessionIdField?: string;
   sessionFileGlob?: string;
   listSessionsCommand?: string[];
   listSessionsPattern?: string;
   resumeFlags?: string[];
   continueFlags?: string[];
-  bidirectionalProtocol?: 'stream-json' | 'app-server' | 'tmux';
+  bidirectionalProtocol?: 'stream-json' | 'app-server' | 'tmux' | 'acp';
 }
 
 /** agents.metadata */

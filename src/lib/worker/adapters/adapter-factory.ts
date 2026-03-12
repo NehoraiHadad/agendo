@@ -2,6 +2,7 @@ import type { AgentAdapter } from '@/lib/worker/adapters/types';
 import { ClaudeSdkAdapter } from '@/lib/worker/adapters/claude-sdk-adapter';
 import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
+import { CopilotAdapter } from '@/lib/worker/adapters/copilot-adapter';
 import type { Agent } from '@/lib/types';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 
@@ -10,6 +11,7 @@ const ADAPTER_MAP: Record<string, new () => AgentAdapter> = {
   claude: ClaudeSdkAdapter,
   codex: CodexAppServerAdapter,
   gemini: GeminiAdapter,
+  copilot: CopilotAdapter,
 };
 
 /**

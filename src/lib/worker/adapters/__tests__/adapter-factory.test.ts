@@ -3,6 +3,7 @@ import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { ClaudeSdkAdapter } from '@/lib/worker/adapters/claude-sdk-adapter';
 import { CodexAppServerAdapter } from '@/lib/worker/adapters/codex-app-server-adapter';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
+import { CopilotAdapter } from '@/lib/worker/adapters/copilot-adapter';
 import type { Agent } from '@/lib/types';
 
 function makeAgent(binaryPath: string): Agent {
@@ -48,6 +49,11 @@ describe('selectAdapter', () => {
   it('returns GeminiAdapter for gemini binary', () => {
     const adapter = selectAdapter(makeAgent('/usr/local/bin/gemini'));
     expect(adapter).toBeInstanceOf(GeminiAdapter);
+  });
+
+  it('returns CopilotAdapter for copilot binary', () => {
+    const adapter = selectAdapter(makeAgent('/usr/bin/copilot'));
+    expect(adapter).toBeInstanceOf(CopilotAdapter);
   });
 
   it('throws for unknown binary', () => {
