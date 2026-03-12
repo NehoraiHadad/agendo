@@ -1,15 +1,24 @@
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SpawnOpts } from './types';
 
 /**
- * Resolve the path to the Claude Agent SDK's cli.js.
- * Required because esbuild bundles the SDK into CJS where import.meta.url is undefined.
+ * Resolve the path to the Claude Code executable.
+ * Prefers the system-installed `claude` binary (so user-level skills, hooks, and commands
+ * from ~/.claude/ are available). Falls back to the SDK's bundled cli.js if not found.
+ *
+ * Override with CLAUDE_CLI_PATH env var if needed.
  */
 function resolveCliPath(): string {
-  // require.resolve gives us the SDK's entry point; cli.js is a sibling file.
-  const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
-  return join(sdkEntry, '..', 'cli.js');
+  if (process.env.CLAUDE_CLI_PATH) return process.env.CLAUDE_CLI_PATH;
+  try {
+    return execSync('which claude', { encoding: 'utf-8' }).trim();
+  } catch {
+    // Fallback: use the SDK's bundled cli.js
+    const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
+    return join(sdkEntry, '..', 'cli.js');
+  }
 }
 
 /**
@@ -51,6 +60,10 @@ export function buildSdkOptions(opts: SpawnOpts, canUseTool: CanUseTool): Option
       ? { type: 'preset', preset: 'claude_code', append: opts.appendSystemPrompt }
       : undefined,
     canUseTool,
+    // Load filesystem settings so user-level skills, hooks, and commands from
+    // ~/.claude/ are available. Without this, the SDK runs in isolation mode
+    // and no settings are loaded from disk.
+    settingSources: ['user', 'project', 'local'] as ('user' | 'project' | 'local')[],
     // SDK hook callbacks (TypeScript in-process hooks, not shell-based .claude/hooks/)
     ...(opts.sdkHooks ? { hooks: opts.sdkHooks } : {}),
     // Programmatically defined subagents
