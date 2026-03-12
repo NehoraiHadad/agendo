@@ -25,9 +25,9 @@ import type {
   SpawnOpts,
   ImageContent,
   PermissionDecision,
-  ToolApprovalFn,
   ActivityCallbacks,
 } from '@/lib/worker/adapters/types';
+import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 import { buildSdkOptions } from '@/lib/worker/adapters/build-sdk-options';
 import {
   mapSdkMessageToAgendoEvents,
@@ -99,15 +99,12 @@ class AsyncQueue<T> {
 // ClaudeSdkAdapter
 // ---------------------------------------------------------------------------
 
-export class ClaudeSdkAdapter implements AgentAdapter {
+export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
   private queryInstance: Query | null = null;
   private inputQueue = new AsyncQueue<SDKUserMessage>();
   private alive = false;
   private eventCallbacks: Array<(payloads: AgendoEventPayload[]) => void> = [];
   private exitCallbacks: Array<(code: number | null) => void> = [];
-  private thinkingCallback: ((thinking: boolean) => void) | null = null;
-  private approvalHandler: ToolApprovalFn | null = null;
-  private sessionRefCallback: ((ref: string) => void) | null = null;
   private activityCallbacks: ActivityCallbacks | null = null;
   /** Cached SdkEventMapperCallbacks — built once on first runQueryLoop call. */
   private sdkCallbacks: SdkEventMapperCallbacks | null = null;
@@ -200,18 +197,6 @@ export class ClaudeSdkAdapter implements AgentAdapter {
 
   isAlive(): boolean {
     return this.alive;
-  }
-
-  onThinkingChange(cb: (thinking: boolean) => void): void {
-    this.thinkingCallback = cb;
-  }
-
-  setApprovalHandler(handler: ToolApprovalFn): void {
-    this.approvalHandler = handler;
-  }
-
-  onSessionRef(cb: (ref: string) => void): void {
-    this.sessionRefCallback = cb;
   }
 
   setActivityCallbacks(callbacks: ActivityCallbacks): void {
