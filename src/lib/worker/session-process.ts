@@ -363,17 +363,10 @@ export class SessionProcess {
       // No user:message event is emitted here — the InitialPromptBanner in the UI already
       // displays session.initialPrompt (the clean edited message). Emitting it would create
       // a duplicate bubble that also includes the MCP context preamble.
-      //
-      // IMPORTANT: --resume-session-at only works in -p (print) mode.
-      // When resumeSessionAt is provided, force persistentSession=false so that
-      // -p is added to the CLI invocation. Claude will exit after one response,
-      // emit session:init (new fork sessionRef) + agent:result, and then the
-      // session transitions to awaiting_input for subsequent persistent turns.
       this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
         ...spawnOpts,
         forkSession: true,
         resumeSessionAt,
-        ...(resumeSessionAt ? { persistentSession: false } : {}),
       });
     } else if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the

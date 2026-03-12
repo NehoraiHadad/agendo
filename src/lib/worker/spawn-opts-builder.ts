@@ -34,7 +34,6 @@ export function buildSpawnOpts(
     executionId: session.id,
     timeoutSec: session.idleTimeoutSec,
     maxOutputBytes: 10 * 1024 * 1024,
-    persistentSession: true, // keep process alive after result for multi-turn
     permissionMode: session.permissionMode ?? 'default',
     allowedTools: session.allowedTools ?? [],
     ...(opts.mcpConfigPath ? { extraArgs: ['--mcp-config', opts.mcpConfigPath] } : {}),

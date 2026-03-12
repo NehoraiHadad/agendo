@@ -36,8 +36,6 @@ export interface SpawnOpts {
   timeoutSec: number;
   maxOutputBytes: number;
   extraArgs?: string[];
-  /** When true, omit -p (print mode) so the process stays alive for multi-turn sessions. */
-  persistentSession?: boolean;
   /** Controls per-tool-call gating within a running session. Default: 'default' (ask). */
   permissionMode?: PermissionMode;
   /** Tool name patterns already approved for this session (from session.allowedTools). */
