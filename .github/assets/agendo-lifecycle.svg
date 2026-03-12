@@ -1,0 +1,326 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="924" height="152" viewBox="0 0 924 152">
+<defs>
+  <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+    <circle cx="0.5" cy="0.5" r="0.6" fill="#21262d"/>
+  </pattern>
+  <filter id="glow-sm">
+    <feGaussianBlur stdDeviation="2.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<!-- Background -->
+<rect width="924" height="152" rx="12" fill="#0d1117"/>
+<rect width="924" height="152" rx="12" fill="url(#dots)" opacity=".28"/>
+
+<!-- Title -->
+<text x="462" y="21" text-anchor="middle"
+  font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+  font-size="10" font-weight="600" fill="#484f58" letter-spacing="0.13em">AGENDO LIFECYCLE</text>
+
+<!-- Base timeline (dark track) -->
+<line x1="72" y1="72" x2="852" y2="72" stroke="#21262d" stroke-width="1.5" stroke-linecap="round"/>
+
+<!-- Base node circles (dark) -->
+<circle cx="72"  cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+<circle cx="228" cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+<circle cx="384" cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+<circle cx="540" cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+<circle cx="696" cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+<circle cx="852" cy="72" r="7" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+
+<style>
+/* TOTAL CYCLE: 6.5s — timing baked into per-element keyframes */
+
+/* ── Pulse rings (scale — needs transform anchoring) ── */
+.p0,.p1,.p2,.p3,.p4,.p5 {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ── Step labels (translateY — needs transform anchoring) ── */
+.l0,.l1,.l2,.l3,.l4,.l5 {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ─────────── STEP 0: CREATE TASK (activates at 0%) ─────────── */
+.n0 { animation: n0_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n0_ {
+  0%       { opacity: 0 }
+  4%       { opacity: 1 }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p0 { animation: p0_ 6.5s ease-out infinite; }
+@keyframes p0_ {
+  0%       { opacity: 0; transform: scale(1) }
+  1%       { opacity: 0.55 }
+  9%       { opacity: 0; transform: scale(2.6) }
+  100%     { opacity: 0 }
+}
+.l0 { animation: l0_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l0_ {
+  0%       { opacity: 0; transform: translateY(6px) }
+  5%       { opacity: 1; transform: translateY(0) }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+/* Line 0→1 draw  (0% → 15%) */
+.t0 { stroke-dasharray: 142; stroke-dashoffset: 142; animation: t0_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes t0_ {
+  0%       { opacity: 0; stroke-dashoffset: 142 }
+  1%       { opacity: 1; stroke-dashoffset: 142 }
+  15%      { opacity: 1; stroke-dashoffset: 0 }
+  88%      { opacity: 1; stroke-dashoffset: 0 }
+  100%     { opacity: 0; stroke-dashoffset: 0 }
+}
+
+/* ─────────── STEP 1: ASSIGN AGENT (activates at 17%) ─────────── */
+.n1 { animation: n1_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n1_ {
+  0%,17%   { opacity: 0 }
+  21%      { opacity: 1 }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p1 { animation: p1_ 6.5s ease-out infinite; }
+@keyframes p1_ {
+  0%,17%   { opacity: 0; transform: scale(1) }
+  18%      { opacity: 0.55 }
+  26%      { opacity: 0; transform: scale(2.6) }
+  100%     { opacity: 0 }
+}
+.l1 { animation: l1_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l1_ {
+  0%,17%   { opacity: 0; transform: translateY(6px) }
+  22%      { opacity: 1; transform: translateY(0) }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+/* Line 1→2 draw  (18% → 32%) */
+.t1 { stroke-dasharray: 142; stroke-dashoffset: 142; animation: t1_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes t1_ {
+  0%,18%   { opacity: 0; stroke-dashoffset: 142 }
+  19%      { opacity: 1; stroke-dashoffset: 142 }
+  32%      { opacity: 1; stroke-dashoffset: 0 }
+  88%      { opacity: 1; stroke-dashoffset: 0 }
+  100%     { opacity: 0; stroke-dashoffset: 0 }
+}
+
+/* ─────────── STEP 2: OPEN SESSION (activates at 34%) ─────────── */
+.n2 { animation: n2_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n2_ {
+  0%,34%   { opacity: 0 }
+  38%      { opacity: 1 }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p2 { animation: p2_ 6.5s ease-out infinite; }
+@keyframes p2_ {
+  0%,34%   { opacity: 0; transform: scale(1) }
+  35%      { opacity: 0.55 }
+  43%      { opacity: 0; transform: scale(2.6) }
+  100%     { opacity: 0 }
+}
+.l2 { animation: l2_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l2_ {
+  0%,34%   { opacity: 0; transform: translateY(6px) }
+  39%      { opacity: 1; transform: translateY(0) }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+/* Line 2→3 draw  (35% → 49%) */
+.t2 { stroke-dasharray: 142; stroke-dashoffset: 142; animation: t2_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes t2_ {
+  0%,35%   { opacity: 0; stroke-dashoffset: 142 }
+  36%      { opacity: 1; stroke-dashoffset: 142 }
+  49%      { opacity: 1; stroke-dashoffset: 0 }
+  88%      { opacity: 1; stroke-dashoffset: 0 }
+  100%     { opacity: 0; stroke-dashoffset: 0 }
+}
+
+/* ─────────── STEP 3: CREATE SUBTASKS (activates at 51%) ─────────── */
+.n3 { animation: n3_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n3_ {
+  0%,51%   { opacity: 0 }
+  55%      { opacity: 1 }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p3 { animation: p3_ 6.5s ease-out infinite; }
+@keyframes p3_ {
+  0%,51%   { opacity: 0; transform: scale(1) }
+  52%      { opacity: 0.55 }
+  60%      { opacity: 0; transform: scale(2.6) }
+  100%     { opacity: 0 }
+}
+.l3 { animation: l3_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l3_ {
+  0%,51%   { opacity: 0; transform: translateY(6px) }
+  56%      { opacity: 1; transform: translateY(0) }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+/* Line 3→4 draw  (52% → 66%) */
+.t3 { stroke-dasharray: 142; stroke-dashoffset: 142; animation: t3_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes t3_ {
+  0%,52%   { opacity: 0; stroke-dashoffset: 142 }
+  53%      { opacity: 1; stroke-dashoffset: 142 }
+  66%      { opacity: 1; stroke-dashoffset: 0 }
+  88%      { opacity: 1; stroke-dashoffset: 0 }
+  100%     { opacity: 0; stroke-dashoffset: 0 }
+}
+
+/* ─────────── STEP 4: LIVE STREAM (activates at 68%) ─────────── */
+.n4 { animation: n4_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n4_ {
+  0%,68%   { opacity: 0 }
+  72%      { opacity: 1 }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p4 { animation: p4_ 6.5s ease-out infinite; }
+@keyframes p4_ {
+  0%,68%   { opacity: 0; transform: scale(1) }
+  69%      { opacity: 0.55 }
+  77%      { opacity: 0; transform: scale(2.6) }
+  100%     { opacity: 0 }
+}
+.l4 { animation: l4_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l4_ {
+  0%,68%   { opacity: 0; transform: translateY(6px) }
+  73%      { opacity: 1; transform: translateY(0) }
+  88%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+/* Line 4→5 draw  (69% → 83%) */
+.t4 { stroke-dasharray: 142; stroke-dashoffset: 142; animation: t4_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes t4_ {
+  0%,69%   { opacity: 0; stroke-dashoffset: 142 }
+  70%      { opacity: 1; stroke-dashoffset: 142 }
+  83%      { opacity: 1; stroke-dashoffset: 0 }
+  88%      { opacity: 1; stroke-dashoffset: 0 }
+  100%     { opacity: 0; stroke-dashoffset: 0 }
+}
+
+/* ─────────── STEP 5: DONE (activates at 85%) — GREEN ─────────── */
+.n5 { animation: n5_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes n5_ {
+  0%,85%   { opacity: 0 }
+  89%      { opacity: 1 }
+  93%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+.p5 { animation: p5_ 6.5s ease-out infinite; }
+@keyframes p5_ {
+  0%,85%   { opacity: 0; transform: scale(1) }
+  86%      { opacity: 0.6 }
+  95%      { opacity: 0; transform: scale(2.8) }
+  100%     { opacity: 0 }
+}
+.l5 { animation: l5_ 6.5s cubic-bezier(0.4,0,0.2,1) infinite; }
+@keyframes l5_ {
+  0%,85%   { opacity: 0; transform: translateY(6px) }
+  90%      { opacity: 1; transform: translateY(0) }
+  93%      { opacity: 1 }
+  100%     { opacity: 0 }
+}
+</style>
+
+<!-- ══════════════════════ NODE 0 — CREATE TASK ══════════════════════ -->
+<circle cx="72" cy="72" r="13" fill="none" stroke="#1f6feb" stroke-width="1.5" opacity="0" class="p0"/>
+<circle cx="72" cy="72" r="7" fill="#1f6feb" opacity="0" class="n0" filter="url(#glow-sm)"/>
+<line x1="79" y1="72" x2="221" y2="72" stroke="#1f6feb" stroke-width="1.5" stroke-linecap="round" class="t0"/>
+<g class="l0">
+  <text x="72" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#e6edf3" letter-spacing="0.07em">CREATE TASK</text>
+  <text x="72" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="72" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#8957e5">create_task</text>
+</g>
+
+<!-- ══════════════════════ NODE 1 — ASSIGN AGENT ══════════════════════ -->
+<circle cx="228" cy="72" r="13" fill="none" stroke="#1f6feb" stroke-width="1.5" opacity="0" class="p1"/>
+<circle cx="228" cy="72" r="7" fill="#1f6feb" opacity="0" class="n1" filter="url(#glow-sm)"/>
+<line x1="235" y1="72" x2="377" y2="72" stroke="#1f6feb" stroke-width="1.5" stroke-linecap="round" class="t1"/>
+<g class="l1">
+  <text x="228" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#e6edf3" letter-spacing="0.07em">ASSIGN AGENT</text>
+  <text x="228" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="228" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#8957e5">assign_task</text>
+</g>
+
+<!-- ══════════════════════ NODE 2 — OPEN SESSION ══════════════════════ -->
+<circle cx="384" cy="72" r="13" fill="none" stroke="#1f6feb" stroke-width="1.5" opacity="0" class="p2"/>
+<circle cx="384" cy="72" r="7" fill="#1f6feb" opacity="0" class="n2" filter="url(#glow-sm)"/>
+<line x1="391" y1="72" x2="533" y2="72" stroke="#1f6feb" stroke-width="1.5" stroke-linecap="round" class="t2"/>
+<g class="l2">
+  <text x="384" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#e6edf3" letter-spacing="0.07em">OPEN SESSION</text>
+  <text x="384" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="384" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#8957e5">start_agent_session</text>
+</g>
+
+<!-- ══════════════════════ NODE 3 — CREATE SUBTASKS ══════════════════════ -->
+<circle cx="540" cy="72" r="13" fill="none" stroke="#1f6feb" stroke-width="1.5" opacity="0" class="p3"/>
+<circle cx="540" cy="72" r="7" fill="#1f6feb" opacity="0" class="n3" filter="url(#glow-sm)"/>
+<line x1="547" y1="72" x2="689" y2="72" stroke="#1f6feb" stroke-width="1.5" stroke-linecap="round" class="t3"/>
+<g class="l3">
+  <text x="540" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#e6edf3" letter-spacing="0.07em">CREATE SUBTASKS</text>
+  <text x="540" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="540" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#8957e5">create_subtask</text>
+</g>
+
+<!-- ══════════════════════ NODE 4 — LIVE STREAM ══════════════════════ -->
+<circle cx="696" cy="72" r="13" fill="none" stroke="#1f6feb" stroke-width="1.5" opacity="0" class="p4"/>
+<circle cx="696" cy="72" r="7" fill="#1f6feb" opacity="0" class="n4" filter="url(#glow-sm)"/>
+<line x1="703" y1="72" x2="845" y2="72" stroke="#238636" stroke-width="1.5" stroke-linecap="round" class="t4"/>
+<g class="l4">
+  <text x="696" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#e6edf3" letter-spacing="0.07em">LIVE STREAM</text>
+  <text x="696" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="696" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#8957e5">add_progress_note</text>
+</g>
+
+<!-- ══════════════════════ NODE 5 — DONE (green) ══════════════════════ -->
+<circle cx="852" cy="72" r="14" fill="none" stroke="#238636" stroke-width="1.5" opacity="0" class="p5"/>
+<circle cx="852" cy="72" r="8" fill="#238636" opacity="0" class="n5" filter="url(#glow-sm)"/>
+<g class="l5">
+  <text x="852" y="51" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#238636" letter-spacing="0.12em">DONE</text>
+  <text x="852" y="91" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#484f58">mcp__agendo__</text>
+  <text x="852" y="104" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8.5" fill="#238636">update_task</text>
+</g>
+
+</svg>
