@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { AuthStatusResult } from '@/hooks/use-agent-auth';
+import type { AuthStatusResult, OAuthProvider } from '@/hooks/use-agent-auth';
 
 type OAuthStep = 'idle' | 'starting' | 'waiting' | 'success' | 'error';
 
@@ -52,7 +52,10 @@ export function AgentAuthModal({
   const [oauthStep, setOauthStep] = useState<OAuthStep>('idle');
   const [oauthUrl, setOauthUrl] = useState<string | null>(null);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<OAuthProvider | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const hasProviderPicker = status.oauthProviders.length > 0;
 
   function resetState() {
     setApiKeyValue('');
@@ -62,6 +65,7 @@ export function AgentAuthModal({
     setOauthStep('idle');
     setOauthUrl(null);
     setOauthError(null);
+    setSelectedProvider(null);
     abortRef.current?.abort();
   }
 
@@ -99,18 +103,24 @@ export function AgentAuthModal({
     }
   }
 
-  async function handleOAuthStart() {
+  async function handleOAuthStart(provider?: OAuthProvider) {
     setOauthStep('starting');
     setOauthUrl(null);
     setOauthError(null);
+    if (provider) setSelectedProvider(provider);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
+      const body = provider
+        ? JSON.stringify({ provider: provider.provider, method: provider.method })
+        : undefined;
       const res = await fetch(`/api/agents/${agentId}/auth-start`, {
         method: 'POST',
         signal: controller.signal,
+        headers: body ? { 'content-type': 'application/json' } : undefined,
+        body,
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -247,71 +257,70 @@ export function AgentAuthModal({
           {/* OAuth tab */}
           <TabsContent value="oauth" className="mt-4">
             <div className="space-y-4">
-              {status.interactive ? (
-                /* Interactive TUI agents (e.g. OpenCode) can't run headlessly */
-                <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    {agentName} requires an interactive terminal for CLI login.
-                  </p>
-                  <div className="rounded bg-white/[0.04] p-3 border border-white/[0.08]">
-                    <p className="text-xs text-muted-foreground mb-1">Run this in your terminal:</p>
-                    <code className="text-sm font-mono text-foreground">{status.authCommand}</code>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {oauthStep === 'idle' && (
-                    <Button className="w-full" onClick={() => void handleOAuthStart()}>
-                      Login with {agentName}
+              {/* Provider picker for multi-provider agents (e.g. OpenCode) */}
+              {oauthStep === 'idle' && hasProviderPicker && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Select a provider:</p>
+                  {status.oauthProviders.map((p) => (
+                    <Button
+                      key={p.provider}
+                      variant="outline"
+                      className="w-full justify-start text-sm"
+                      onClick={() => void handleOAuthStart(p)}
+                    >
+                      {p.label}
                     </Button>
-                  )}
+                  ))}
+                </div>
+              )}
 
-                  {oauthStep === 'starting' && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span className="inline-block h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                      Starting authentication...
-                    </div>
-                  )}
+              {/* Single-provider agents: simple login button */}
+              {oauthStep === 'idle' && !hasProviderPicker && (
+                <Button className="w-full" onClick={() => void handleOAuthStart()}>
+                  Login with {agentName}
+                </Button>
+              )}
 
-                  {(oauthStep === 'waiting' || oauthStep === 'starting') && oauthUrl && (
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        Open this URL to authenticate:
-                      </p>
-                      <a
-                        href={oauthUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block break-all text-xs text-primary underline-offset-2 hover:underline rounded bg-white/[0.04] p-2 border border-white/[0.08]"
-                      >
-                        {oauthUrl}
-                      </a>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                        <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                        Waiting for you to complete login...
-                      </p>
-                    </div>
-                  )}
+              {oauthStep === 'starting' && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span className="inline-block h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  Starting authentication{selectedProvider ? ` (${selectedProvider.label})` : ''}...
+                </div>
+              )}
 
-                  {oauthStep === 'success' && (
-                    <p className="text-sm text-emerald-400">Successfully authenticated!</p>
-                  )}
+              {(oauthStep === 'waiting' || oauthStep === 'starting') && oauthUrl && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Open this URL to authenticate:</p>
+                  <a
+                    href={oauthUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block break-all text-xs text-primary underline-offset-2 hover:underline rounded bg-white/[0.04] p-2 border border-white/[0.08]"
+                  >
+                    {oauthUrl}
+                  </a>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                    Waiting for you to complete login...
+                  </p>
+                </div>
+              )}
 
-                  {oauthStep === 'error' && (
-                    <div className="space-y-3">
-                      <p className="text-sm text-destructive">
-                        Authentication failed: {oauthError}
-                      </p>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => void handleOAuthStart()}
-                      >
-                        Try again
-                      </Button>
-                    </div>
-                  )}
-                </>
+              {oauthStep === 'success' && (
+                <p className="text-sm text-emerald-400">Successfully authenticated!</p>
+              )}
+
+              {oauthStep === 'error' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-destructive">Authentication failed: {oauthError}</p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void handleOAuthStart(selectedProvider ?? undefined)}
+                  >
+                    Try again
+                  </Button>
+                </div>
               )}
             </div>
           </TabsContent>

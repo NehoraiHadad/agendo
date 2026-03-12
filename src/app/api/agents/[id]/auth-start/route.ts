@@ -19,7 +19,7 @@ function sseEvent(data: Record<string, unknown>): Uint8Array {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<Record<string, string>> },
 ): Promise<NextResponse | Response> {
   // Pre-flight: validate agent and auth config before opening the stream
@@ -37,8 +37,20 @@ export async function POST(
       throw new BadRequestError('No auth config for this agent', { binaryName });
     }
 
+    // Support optional provider/method for multi-provider agents (e.g. OpenCode)
+    const body = (await req.json().catch(() => ({}))) as {
+      provider?: string;
+      method?: string;
+    };
+
     credentialPaths = config.credentialPaths;
-    authCommand = config.authCommand;
+
+    if (body.provider && body.method) {
+      // Build command with -p and -m flags to skip interactive TUI picker
+      authCommand = `${config.authCommand} -p "${body.provider}" -m "${body.method}"`;
+    } else {
+      authCommand = config.authCommand;
+    }
   } catch (err) {
     if (err instanceof AppError) {
       return NextResponse.json(err.toJSON(), { status: err.statusCode });

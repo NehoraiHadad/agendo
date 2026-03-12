@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+export interface OAuthProvider {
+  provider: string;
+  label: string;
+  method: string;
+  type: 'oauth' | 'api-key';
+}
+
 export interface AuthStatusResult {
   hasEnvKey: boolean;
   hasCredentialFile: boolean;
@@ -11,8 +18,8 @@ export interface AuthStatusResult {
   authCommand: string;
   homepage: string;
   displayName: string;
-  /** If true, CLI auth requires interactive TUI — headless OAuth flow is unavailable */
-  interactive: boolean;
+  /** If set, CLI Login tab shows a provider picker (for multi-provider agents like OpenCode) */
+  oauthProviders: OAuthProvider[];
 }
 
 interface UseAgentAuthReturn {

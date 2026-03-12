@@ -4,14 +4,25 @@ import * as path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 
+export interface OAuthProvider {
+  /** Provider id passed to `-p` flag */
+  provider: string;
+  /** Display label in the UI */
+  label: string;
+  /** Login method passed to `-m` flag (skips method picker) */
+  method: string;
+  /** 'oauth' = URL flow, 'api-key' = piped stdin key entry */
+  type: 'oauth' | 'api-key';
+}
+
 interface AuthConfig {
   envVars: string[];
   credentialPaths: string[];
   authCommand: string;
   homepage: string;
   displayName: string;
-  /** If true, the auth CLI requires interactive TUI input and can't run headlessly */
-  interactive?: boolean;
+  /** If set, CLI Login tab shows a provider picker instead of a single button */
+  oauthProviders?: OAuthProvider[];
 }
 
 export interface AuthStatusResult {
@@ -23,8 +34,8 @@ export interface AuthStatusResult {
   authCommand: string;
   homepage: string;
   displayName: string;
-  /** If true, CLI auth requires interactive TUI — headless OAuth flow is unavailable */
-  interactive: boolean;
+  /** If set, CLI Login tab shows a provider picker (for multi-provider agents like OpenCode) */
+  oauthProviders: OAuthProvider[];
 }
 
 export interface SpawnAuthResult {
@@ -77,7 +88,26 @@ const AUTH_REGISTRY: Record<string, AuthConfig> = {
     authCommand: 'opencode auth login',
     homepage: 'https://opencode.ai',
     displayName: 'OpenCode',
-    interactive: true, // TUI provider picker — can't run headlessly
+    oauthProviders: [
+      {
+        provider: 'anthropic',
+        label: 'Anthropic (Claude Pro/Max)',
+        method: 'Claude Pro/Max',
+        type: 'oauth',
+      },
+      {
+        provider: 'openai',
+        label: 'OpenAI (ChatGPT Pro/Plus)',
+        method: 'ChatGPT Pro/Plus (headless)',
+        type: 'oauth',
+      },
+      {
+        provider: 'OpenCode Zen',
+        label: 'OpenCode Zen',
+        method: 'Create an api key',
+        type: 'oauth',
+      },
+    ],
   },
 };
 
@@ -124,7 +154,7 @@ export function checkAuthStatus(binaryName: string): AuthStatusResult {
       authCommand: '',
       homepage: '',
       displayName: binaryName,
-      interactive: false,
+      oauthProviders: [],
     };
   }
 
@@ -164,7 +194,7 @@ export function checkAuthStatus(binaryName: string): AuthStatusResult {
     authCommand: config.authCommand,
     homepage: config.homepage,
     displayName: config.displayName,
-    interactive: config.interactive ?? false,
+    oauthProviders: config.oauthProviders ?? [],
   };
 }
 
