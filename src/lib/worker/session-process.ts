@@ -94,6 +94,12 @@ export class SessionProcess {
   private eventSeq = 0;
   private status: SessionStatus = 'active';
   private sessionRef: string | null = null;
+  /**
+   * True when Claude failed with "No conversation found" during a resume attempt.
+   * The JSONL had no actual conversation history — only queue-operations written
+   * before the worker crashed mid-first-turn. Triggers a fresh spawn in onExit.
+   */
+  private conversationNotFound = false;
   /** Handles NDJSON line buffering, parsing, event mapping, suppression, and enrichment. */
   private dataPipeline!: SessionDataPipeline;
   private exitFuture = new Future<number | null>();
@@ -444,6 +450,25 @@ export class SessionProcess {
       this.sessionRef = event.sessionRef;
     }
 
+    // Detect Claude SDK "No conversation found" resume failure.
+    // This happens when a worker crashed mid-first-turn: the JSONL exists but
+    // contains only queue-operations with no actual conversation history.
+    // Clear the invalid sessionRef immediately so onExit can restart fresh.
+    if (
+      event.type === 'agent:result' &&
+      event.isError &&
+      event.errors?.some((e) => e.includes('No conversation found'))
+    ) {
+      this.conversationNotFound = true;
+      this.sessionRef = null;
+      db.update(sessions)
+        .set({ sessionRef: null })
+        .where(eq(sessions.id, this.session.id))
+        .catch((err: unknown) => {
+          log.error({ err, sessionId: this.session.id }, 'Failed to clear invalid sessionRef');
+        });
+    }
+
     // Persist DB side-effects (sessionRef, model, web tool usage counters).
     await this.dataPipeline.persistEventSideEffects(event);
 
@@ -721,6 +746,8 @@ export class SessionProcess {
         sessionRef: this.sessionRef,
         dbSessionRef: this.session.sessionRef ?? null,
         exitContext: this.exitCtx,
+        conversationNotFound: this.conversationNotFound,
+        initialPrompt: this.session.initialPrompt,
       },
       wasInterruptedMidTurn,
     );

@@ -209,12 +209,13 @@ export async function runSession(
     }
   }
 
-  // Phase F: On cold resume, prepend a summary of recent task progress notes so
-  // the agent has context about what was accomplished before the session ended.
+  // Phase F: On cold resume, prepend context so the agent can verify what was
+  // already done before taking action. Prevents repeating completed steps.
   // Save the user's display text BEFORE prepending the context so the chat view
   // shows only what the user actually typed (not the system preamble).
   const userResumeText = resumeRef ? prompt : undefined;
   if (resumeRef && session.taskId && task) {
+    // Task sessions: prepend progress notes + verification instruction.
     const recentEvents = await listTaskEvents(session.taskId, 10);
     const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
 
@@ -227,6 +228,16 @@ export async function runSession(
       const resumeCtx = generateResumeContext(task.title, progressNotes, wasInterrupted);
       prompt = resumeCtx + prompt;
     }
+  } else if (resumeRef) {
+    // Planning/conversation sessions (no taskId, no progress notes):
+    // Inject a brief verification instruction so the agent checks what was
+    // already done before acting — prevents repeating completed steps.
+    const planningResumeCtx =
+      `[Resume Context]\n` +
+      `Your session was interrupted mid-turn. Review your conversation history to verify ` +
+      `what was already completed before taking further action.\n` +
+      `---\n`;
+    prompt = planningResumeCtx + prompt;
   }
 
   // Check for a pending resume image saved by the message API (cold resume with attachment).

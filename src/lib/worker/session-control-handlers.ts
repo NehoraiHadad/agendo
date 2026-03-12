@@ -383,6 +383,14 @@ export interface ReEnqueueContext {
   /** Persisted session ref from DB (fallback). */
   dbSessionRef: string | null;
   exitContext: ExitContext;
+  /**
+   * True when Claude failed with "No conversation found" — the session has a
+   * sessionRef but the JSONL contains no actual history (only queue-operations).
+   * Triggers a fresh spawn instead of a resume attempt, using initialPrompt.
+   */
+  conversationNotFound?: boolean;
+  /** Original first-message prompt for fresh-start fallback. */
+  initialPrompt?: string | null;
 }
 
 /**
@@ -390,6 +398,37 @@ export interface ReEnqueueContext {
  * Fire-and-forget: logs errors but does not throw.
  */
 export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: boolean): void {
+  // "No conversation found" fallback: the sessionRef existed in the DB but
+  // Claude's JSONL had no actual conversation history (only queue-operations).
+  // The sessionRef was already cleared by session-process before calling here.
+  // Re-enqueue as a completely fresh spawn using the original initialPrompt so
+  // the user's intent is preserved without any "please continue" framing.
+  if (ctx.conversationNotFound) {
+    if (ctx.initialPrompt) {
+      enqueueSession({
+        sessionId: ctx.sessionId,
+        // No resumeRef — fresh spawn. DB sessionRef already cleared to null.
+        resumePrompt: ctx.initialPrompt,
+      }).catch((err: unknown) => {
+        log.error(
+          { err, sessionId: ctx.sessionId },
+          'Failed to re-enqueue session after conversation-not-found fallback',
+        );
+      });
+      log.info(
+        { sessionId: ctx.sessionId },
+        'Session auto-restarted fresh: "No conversation found" with empty JSONL',
+      );
+    } else {
+      log.info(
+        { sessionId: ctx.sessionId },
+        'Session went idle after "No conversation found": no initialPrompt to restart with',
+      );
+    }
+    // Skip all other re-enqueue paths — this case supersedes them.
+    return;
+  }
+
   // Mode-change restart: re-enqueue immediately so the session cold-resumes
   // with the updated permissionMode (already written to DB by the PATCH endpoint).
   // The session status is now 'idle', so the next session-runner job can claim it.
