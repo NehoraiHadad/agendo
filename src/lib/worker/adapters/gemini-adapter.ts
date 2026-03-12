@@ -380,7 +380,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     });
 
     return {
-      pid: cp.pid ?? 0,
+      pid: cp.pid ?? null,
       tmuxSession: '',
       stdin: null,
       kill: BaseAgentAdapter.buildKill(() => this.childProcess),

@@ -390,7 +390,7 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     });
 
     return {
-      pid: 0, // SDK doesn't use OS PIDs — ActivityTracker has `if (pid)` guard
+      pid: null, // No OS child process — SDK runs in-process.
       kill: (_signal: NodeJS.Signals) => {
         this.queryInstance?.close();
       },

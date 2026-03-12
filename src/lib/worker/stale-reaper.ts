@@ -8,6 +8,7 @@ import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
 const log = createLogger('stale-reaper');
 
 function killPid(pid: number): void {
+  if (pid === 0) return; // pid=0 is not a real OS process (SDK adapters)
   try {
     // Kill entire process group (handles detached children like Gemini CLI)
     process.kill(-pid, 'SIGTERM');
@@ -83,7 +84,7 @@ export class StaleReaper {
         const row = staleSessions[i];
         const wasReaped = reaped[i].length > 0;
         if (wasReaped) {
-          if (row.pid != null) {
+          if (row.pid != null && row.pid !== 0) {
             log.info({ pid: row.pid, sessionId: row.id }, 'Killing orphaned PID for session');
             killPid(row.pid);
           }

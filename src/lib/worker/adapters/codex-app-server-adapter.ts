@@ -812,7 +812,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
   private buildVirtualProcess(): ManagedProcess {
     return {
-      pid: this.childProcess?.pid ?? 0,
+      pid: this.childProcess?.pid ?? null,
       tmuxSession: this.tmuxSessionName,
       stdin: null, // We use JSON-RPC, not raw stdin
       kill: BaseAgentAdapter.buildKill(() => this.childProcess),

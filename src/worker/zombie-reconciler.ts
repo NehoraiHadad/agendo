@@ -63,7 +63,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     // active sessions: the agent is producing output that nobody is reading.
     // Kill the process and optionally re-enqueue for auto-recovery.
     // -----------------------------------------------------------------------
-    if (session.pid != null && isPidAlive(session.pid)) {
+    if (session.pid != null && session.pid !== 0 && isPidAlive(session.pid)) {
       log.info(
         { sessionId: session.id, pid: session.pid },
         'Session PID still alive but orphaned, killing',
@@ -138,6 +138,7 @@ export function resetRecoveryCount(sessionId: string): void {
 }
 
 function isPidAlive(pid: number): boolean {
+  if (pid === 0) return false; // pid=0 is not a real OS process (SDK adapters)
   try {
     process.kill(pid, 0); // signal 0 = check existence, don't send signal
     return true;

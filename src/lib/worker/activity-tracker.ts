@@ -63,8 +63,8 @@ export class ActivityTracker {
     private readonly emitEvent: (payload: AgendoEventPayload) => Promise<AgendoEvent>,
     /** Kills the managed process (SIGTERM + schedules SIGKILL). */
     private readonly onIdleKill: () => void,
-    /** Returns the current managed-process PID for liveness checks. */
-    private readonly getPid: () => number | undefined,
+    /** Returns the current managed-process PID for liveness checks. null/undefined = no OS process. */
+    private readonly getPid: () => number | null | undefined,
     /** Called when the heartbeat detects a silent process crash. */
     private readonly onSilentCrash: () => void,
     /** Adapter method for MCP server status; undefined if the adapter doesn't support it. */

@@ -152,6 +152,20 @@ describe('reconcileZombies', () => {
     expect(mockDb.update).toHaveBeenCalledTimes(2);
   });
 
+  it('does NOT kill when pid=0 (SDK adapter — no real OS process)', async () => {
+    mockSessionsResult([{ id: 'sess-sdk', pid: 0, status: 'active', sessionRef: null }]);
+    mockUpdateChain();
+
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    await reconcileZombies('worker-1');
+
+    // pid=0 must never reach process.kill — would SIGTERM the whole process group
+    expect(killSpy).not.toHaveBeenCalled();
+
+    killSpy.mockRestore();
+  });
+
   it('catches gracefully when SIGTERM throws', async () => {
     mockSessionsResult([{ id: 'sess-5', pid: 55555, status: 'active', sessionRef: null }]);
     mockUpdateChain();

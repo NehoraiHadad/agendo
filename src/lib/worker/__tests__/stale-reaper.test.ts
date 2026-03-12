@@ -74,6 +74,22 @@ describe('StaleReaper', () => {
     killSpy.mockRestore();
   });
 
+  it('does NOT kill when pid=0 (SDK adapter — no real OS process)', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    mockWhere.mockResolvedValueOnce([{ id: 'sdk-session', pid: 0 }]);
+    // Session was truly stale (UPDATE returned a row)
+    mockReturning.mockResolvedValueOnce([{ id: 'sdk-session' }]);
+
+    const reaper = new StaleReaper();
+    await reaper.reap();
+
+    // pid=0 must never reach process.kill — would SIGTERM the whole process group
+    expect(killSpy).not.toHaveBeenCalled();
+
+    killSpy.mockRestore();
+  });
+
   it('start() and stop() manage the timer', () => {
     vi.useFakeTimers();
     const reaper = new StaleReaper();

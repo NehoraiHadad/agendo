@@ -126,7 +126,8 @@ export interface SpawnOpts {
 }
 
 export interface ManagedProcess {
-  pid: number;
+  /** Real OS PID, or null for in-process adapters (e.g. ClaudeSdkAdapter) that have no child process. */
+  pid: number | null;
   tmuxSession?: string; // Optional: SDK adapter doesn't use tmux
   stdin?: NodeJS.WritableStream | null; // Optional: SDK adapter doesn't expose raw stdin
   kill: (signal: NodeJS.Signals) => void;

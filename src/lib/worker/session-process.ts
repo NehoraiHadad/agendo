@@ -380,6 +380,7 @@ export class SessionProcess {
     }
 
     // Persist PID for SIGTERM/SIGKILL from other paths (e.g. API cancel endpoint).
+    // ManagedProcess.pid is null for in-process adapters (e.g. ClaudeSdkAdapter).
     await db
       .update(sessions)
       .set({ pid: this.managedProcess.pid })
