@@ -704,14 +704,22 @@ export class BrainstormOrchestrator {
   private handleSessionEvent(participant: ParticipantState, event: AgendoEvent): void {
     switch (event.type) {
       case 'agent:text':
-        // Collect complete text chunks into the response buffer
+        // Complete text from the agent. If we already accumulated content
+        // from text-delta events, replace it with the authoritative complete
+        // text (deltas may have gaps or ordering issues). If no deltas
+        // arrived (adapter doesn't stream), use this as the sole source.
+        participant.responseBuffer.length = 0;
         participant.responseBuffer.push(event.text);
         break;
 
       case 'agent:text-delta':
-        // Forward as a real-time streaming delta to the frontend
+        // Accumulate streaming deltas into the response buffer.
+        // ACP-based agents (Copilot, Gemini) only emit text-delta,
+        // never agent:text — without this their responseBuffer stays
+        // empty and the wave records a blank message.
         if (!event.fromDelta) {
-          // Only forward actual deltas, not reconstructed-from-complete events
+          participant.responseBuffer.push(event.text);
+          // Also forward as a real-time streaming delta to the frontend
           void this.emitEvent({
             type: 'message:delta',
             agentId: participant.agentId,
