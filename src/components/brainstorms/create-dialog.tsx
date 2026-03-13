@@ -6,6 +6,7 @@ import { Loader2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -24,7 +25,6 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 // ============================================================================
 // Types
@@ -209,164 +209,162 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+      <DialogContent className="gap-0 p-0">
         <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
           <DialogTitle className="text-base">New Brainstorm Room</DialogTitle>
         </DialogHeader>
 
         <Separator className="shrink-0" />
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="px-6 py-4 space-y-5">
-            {/* Title */}
+        <DialogBody className="px-6 py-4 space-y-5">
+          {/* Title */}
+          <div className="space-y-1.5">
+            <Label htmlFor="brainstorm-title" className="text-xs font-medium text-foreground/70">
+              Title
+            </Label>
+            <Input
+              id="brainstorm-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Brainstorm room title..."
+              className="text-sm"
+            />
+          </div>
+
+          {/* Topic */}
+          <div className="space-y-1.5">
+            <Label htmlFor="brainstorm-topic" className="text-xs font-medium text-foreground/70">
+              Topic
+            </Label>
+            <Textarea
+              id="brainstorm-topic"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="Describe the topic or question for the agents to discuss..."
+              rows={3}
+              className="text-sm resize-none"
+            />
+          </div>
+
+          {/* Project selector (only when not pre-selected) */}
+          {!projectId && (
             <div className="space-y-1.5">
-              <Label htmlFor="brainstorm-title" className="text-xs font-medium text-foreground/70">
-                Title
-              </Label>
-              <Input
-                id="brainstorm-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Brainstorm room title..."
-                className="text-sm"
-              />
-            </div>
-
-            {/* Topic */}
-            <div className="space-y-1.5">
-              <Label htmlFor="brainstorm-topic" className="text-xs font-medium text-foreground/70">
-                Topic
-              </Label>
-              <Textarea
-                id="brainstorm-topic"
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="Describe the topic or question for the agents to discuss..."
-                rows={3}
-                className="text-sm resize-none"
-              />
-            </div>
-
-            {/* Project selector (only when not pre-selected) */}
-            {!projectId && (
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-foreground/70">Project</Label>
-                {isLoadingProjects ? (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground/50">
-                    <Loader2 className="size-3 animate-spin" />
-                    Loading projects...
-                  </div>
-                ) : (
-                  <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                    <SelectTrigger className="text-sm">
-                      <SelectValue placeholder="Select a project..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projects.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            )}
-
-            {/* Max waves */}
-            <div className="space-y-1.5">
-              <Label htmlFor="max-waves" className="text-xs font-medium text-foreground/70">
-                Max Waves
-              </Label>
-              <Input
-                id="max-waves"
-                type="number"
-                min={1}
-                max={50}
-                value={maxWaves}
-                onChange={(e) => setMaxWaves(Math.max(1, parseInt(e.target.value) || 10))}
-                className="text-sm w-24"
-              />
-              <p className="text-[10px] text-muted-foreground/40">
-                Maximum rounds of responses (default: 10)
-              </p>
-            </div>
-
-            <Separator />
-
-            {/* Participants */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium text-foreground/70">Participants</Label>
-                <span className="text-[10px] text-muted-foreground/40">
-                  {participants.length} selected · min 2
-                </span>
-              </div>
-
-              {isLoadingAgents ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground/50 py-4 justify-center">
+              <Label className="text-xs font-medium text-foreground/70">Project</Label>
+              {isLoadingProjects ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground/50">
                   <Loader2 className="size-3 animate-spin" />
-                  Loading agents...
+                  Loading projects...
                 </div>
-              ) : agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/40 py-4 text-center">
-                  No agents found. Add agents first.
-                </p>
               ) : (
-                <div className="space-y-2">
-                  {agents.map((agent) => {
-                    const selected = isAgentSelected(agent.id);
-                    const participant = participants.find((p) => p.agentId === agent.id);
-                    return (
-                      <div
-                        key={agent.id}
-                        className={`rounded-lg border transition-colors ${
-                          selected
-                            ? 'border-primary/30 bg-primary/[0.04]'
-                            : 'border-white/[0.06] bg-white/[0.01]'
-                        }`}
-                      >
-                        {/* Agent row */}
-                        <div
-                          className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
-                          onClick={() => toggleAgent(agent)}
-                        >
-                          <Checkbox
-                            checked={selected}
-                            onCheckedChange={() => toggleAgent(agent)}
-                            className="shrink-0"
-                          />
-                          <span className="text-sm text-foreground/80 flex-1">{agent.name}</span>
-                          <span className="text-[10px] text-muted-foreground/35 font-mono">
-                            {agent.slug}
-                          </span>
-                        </div>
-
-                        {/* Model override (when selected) */}
-                        {selected && participant && (
-                          <div
-                            className="px-3 pb-2.5 flex items-center gap-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <span className="text-[10px] text-muted-foreground/40 shrink-0">
-                              Model override:
-                            </span>
-                            <Input
-                              value={participant.model}
-                              onChange={(e) => setParticipantModel(agent.id, e.target.value)}
-                              placeholder="default"
-                              className="h-6 text-[11px] border-white/[0.08] bg-transparent"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Select a project..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
+          )}
+
+          {/* Max waves */}
+          <div className="space-y-1.5">
+            <Label htmlFor="max-waves" className="text-xs font-medium text-foreground/70">
+              Max Waves
+            </Label>
+            <Input
+              id="max-waves"
+              type="number"
+              min={1}
+              max={50}
+              value={maxWaves}
+              onChange={(e) => setMaxWaves(Math.max(1, parseInt(e.target.value) || 10))}
+              className="text-sm w-24"
+            />
+            <p className="text-[10px] text-muted-foreground/40">
+              Maximum rounds of responses (default: 10)
+            </p>
           </div>
-        </ScrollArea>
+
+          <Separator />
+
+          {/* Participants */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium text-foreground/70">Participants</Label>
+              <span className="text-[10px] text-muted-foreground/40">
+                {participants.length} selected · min 2
+              </span>
+            </div>
+
+            {isLoadingAgents ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground/50 py-4 justify-center">
+                <Loader2 className="size-3 animate-spin" />
+                Loading agents...
+              </div>
+            ) : agents.length === 0 ? (
+              <p className="text-xs text-muted-foreground/40 py-4 text-center">
+                No agents found. Add agents first.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {agents.map((agent) => {
+                  const selected = isAgentSelected(agent.id);
+                  const participant = participants.find((p) => p.agentId === agent.id);
+                  return (
+                    <div
+                      key={agent.id}
+                      className={`rounded-lg border transition-colors ${
+                        selected
+                          ? 'border-primary/30 bg-primary/[0.04]'
+                          : 'border-white/[0.06] bg-white/[0.01]'
+                      }`}
+                    >
+                      {/* Agent row */}
+                      <div
+                        className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
+                        onClick={() => toggleAgent(agent)}
+                      >
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={() => toggleAgent(agent)}
+                          className="shrink-0"
+                        />
+                        <span className="text-sm text-foreground/80 flex-1">{agent.name}</span>
+                        <span className="text-[10px] text-muted-foreground/35 font-mono">
+                          {agent.slug}
+                        </span>
+                      </div>
+
+                      {/* Model override (when selected) */}
+                      {selected && participant && (
+                        <div
+                          className="px-3 pb-2.5 flex items-center gap-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[10px] text-muted-foreground/40 shrink-0">
+                            Model override:
+                          </span>
+                          <Input
+                            value={participant.model}
+                            onChange={(e) => setParticipantModel(agent.id, e.target.value)}
+                            placeholder="default"
+                            className="h-6 text-[11px] border-white/[0.08] bg-transparent"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </DialogBody>
 
         <Separator className="shrink-0" />
 
