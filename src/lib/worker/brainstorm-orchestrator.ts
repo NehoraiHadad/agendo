@@ -72,7 +72,7 @@ interface BrainstormControlMessage {
  * well above the per-wave timeout so participants aren't evicted before
  * they've had a chance to start.
  */
-const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 300; // 5 minutes
+const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 600; // 10 minutes — Claude/Copilot ACP+SDK startup can take 4-5 min under load
 
 export class BrainstormOrchestrator {
   private readonly roomId: string;
@@ -90,7 +90,8 @@ export class BrainstormOrchestrator {
   private participantReadyTimeoutSec: number;
   private stopped = false;
   private paused = false;
-  private pendingSteer: string | null = null;
+  /** Steer messages received mid-wave, applied at the start of the next wave. */
+  private pendingSteer: string[] = [];
   private unsubscribers: Array<() => void> = [];
   private waveCompleteResolve: (() => void) | null = null;
   private controlResolve: ((msg: BrainstormControlMessage) => void) | null = null;
@@ -165,8 +166,10 @@ export class BrainstormOrchestrator {
         type: 'room:error',
         message: err instanceof Error ? err.message : String(err),
       }).catch(() => {});
-      await updateBrainstormStatus(this.roomId, 'ended').catch(() => {});
-      await this.emitEvent({ type: 'room:state', status: 'ended' }).catch(() => {});
+      // Use 'paused' so the steer route can re-enqueue and recover the room.
+      // 'ended' is reserved for intentional user-initiated stops.
+      await updateBrainstormStatus(this.roomId, 'paused').catch(() => {});
+      await this.emitEvent({ type: 'room:state', status: 'paused' }).catch(() => {});
     } finally {
       this.cleanup();
       log.info({ roomId: this.roomId }, 'Brainstorm orchestrator finished');
@@ -180,77 +183,82 @@ export class BrainstormOrchestrator {
   private async createParticipantSessions(room: BrainstormWithDetails): Promise<void> {
     const allNames = room.participants.map((p) => p.agentName);
 
-    for (const participant of this.participants) {
-      // Skip if a session was already assigned (e.g. resuming after extension)
-      if (participant.sessionId) {
-        const sessionId = participant.sessionId;
-        const sessionInfo = await getSessionStatus(sessionId);
-        const sessionStatus = sessionInfo?.status ?? 'idle';
+    // Create/resume all participant sessions in parallel — each is independent.
+    // Parallelizing means Codex, Claude, and Copilot all start their ACP/SDK
+    // handshakes at the same time instead of waiting for each other.
+    await Promise.all(
+      this.participants.map(async (participant) => {
+        // Skip if a session was already assigned (e.g. resuming after extension)
+        if (participant.sessionId) {
+          const sessionId = participant.sessionId;
+          const sessionInfo = await getSessionStatus(sessionId);
+          const sessionStatus = sessionInfo?.status ?? 'idle';
 
-        // Subscribe before potentially triggering the session to avoid missing events
+          // Subscribe before potentially triggering the session to avoid missing events
+          await this.subscribeToSession(participant);
+
+          if (sessionStatus === 'awaiting_input') {
+            // Session is still alive and ready — mark it done immediately so
+            // waitForAllParticipantsReady() doesn't time out waiting for an event
+            // that already fired before we subscribed.
+            participant.waveStatus = 'done';
+            log.info(
+              { roomId: this.roomId, sessionId, sessionStatus },
+              'Participant session already awaiting_input — marked ready directly',
+            );
+          } else {
+            // Session is idle / ended — re-enqueue it.
+            // session-runner uses session.sessionRef from DB to --resume the conversation.
+            // singletonKey prevents duplicate jobs if somehow already queued.
+            await enqueueSession({ sessionId });
+            log.info(
+              { roomId: this.roomId, sessionId, sessionStatus },
+              'Re-enqueued participant session for room extension',
+            );
+          }
+          return;
+        }
+
+        const otherNames = allNames.filter((n) => n !== participant.agentName);
+        const preamble = this.buildPreamble(room, otherNames);
+
+        log.info(
+          { roomId: this.roomId, agentId: participant.agentId, agentName: participant.agentName },
+          'Creating participant session',
+        );
+
+        const session = await createSession({
+          agentId: participant.agentId,
+          projectId: room.projectId,
+          taskId: room.taskId ?? undefined,
+          initialPrompt: preamble,
+          permissionMode: 'bypassPermissions',
+          kind: 'conversation',
+        });
+
+        participant.sessionId = session.id;
+        await updateParticipantSession(participant.participantId, session.id);
+        await updateParticipantStatus(participant.participantId, 'active');
+
+        // Subscribe before enqueuing to avoid missing the first awaiting_input event
         await this.subscribeToSession(participant);
 
-        if (sessionStatus === 'awaiting_input') {
-          // Session is still alive and ready — mark it done immediately so
-          // waitForAllParticipantsReady() doesn't time out waiting for an event
-          // that already fired before we subscribed.
-          participant.waveStatus = 'done';
-          log.info(
-            { roomId: this.roomId, sessionId, sessionStatus },
-            'Participant session already awaiting_input — marked ready directly',
-          );
-        } else {
-          // Session is idle / ended — re-enqueue it.
-          // session-runner uses session.sessionRef from DB to --resume the conversation.
-          // singletonKey prevents duplicate jobs if somehow already queued.
-          await enqueueSession({ sessionId });
-          log.info(
-            { roomId: this.roomId, sessionId, sessionStatus },
-            'Re-enqueued participant session for room extension',
-          );
-        }
-        continue;
-      }
+        // Enqueue the session into pg-boss — the worker will start it
+        await enqueueSession({ sessionId: session.id });
 
-      const otherNames = allNames.filter((n) => n !== participant.agentName);
-      const preamble = this.buildPreamble(room, otherNames);
+        // Emit joined event
+        await this.emitEvent({
+          type: 'participant:joined',
+          agentId: participant.agentId,
+          agentName: participant.agentName,
+        });
 
-      log.info(
-        { roomId: this.roomId, agentId: participant.agentId, agentName: participant.agentName },
-        'Creating participant session',
-      );
-
-      const session = await createSession({
-        agentId: participant.agentId,
-        projectId: room.projectId,
-        taskId: room.taskId ?? undefined,
-        initialPrompt: preamble,
-        permissionMode: 'bypassPermissions',
-        kind: 'conversation',
-      });
-
-      participant.sessionId = session.id;
-      await updateParticipantSession(participant.participantId, session.id);
-      await updateParticipantStatus(participant.participantId, 'active');
-
-      // Subscribe before enqueuing to avoid missing the first awaiting_input event
-      await this.subscribeToSession(participant);
-
-      // Enqueue the session into pg-boss — the worker will start it
-      await enqueueSession({ sessionId: session.id });
-
-      // Emit joined event
-      await this.emitEvent({
-        type: 'participant:joined',
-        agentId: participant.agentId,
-        agentName: participant.agentName,
-      });
-
-      log.info(
-        { roomId: this.roomId, sessionId: session.id, agentName: participant.agentName },
-        'Participant session created',
-      );
-    }
+        log.info(
+          { roomId: this.roomId, sessionId: session.id, agentName: participant.agentName },
+          'Participant session created',
+        );
+      }),
+    );
 
     // Wait for all participants to reach awaiting_input (session is ready for messages)
     await this.waitForAllParticipantsReady();
@@ -528,10 +536,10 @@ export class BrainstormOrchestrator {
         break; // 'end' or stopped
       }
 
-      // Check for a pending steer from mid-wave injection
-      if (this.pendingSteer !== null) {
-        const steerText = this.pendingSteer;
-        this.pendingSteer = null;
+      // Check for pending steers from mid-wave injection (may be multiple)
+      if (this.pendingSteer.length > 0) {
+        const steerText = this.pendingSteer.join('\n\n');
+        this.pendingSteer = [];
         await addMessage({
           roomId: this.roomId,
           wave: wave + 1,
@@ -756,8 +764,9 @@ export class BrainstormOrchestrator {
           this.controlResolve = null;
           resolve?.(msg);
         } else {
-          // Mid-wave steer — queue for injection at start of next wave
-          this.pendingSteer = msg.text;
+          // Mid-wave steer — queue for injection at start of next wave.
+          // Multiple steers are joined; none are silently dropped.
+          this.pendingSteer.push(msg.text);
           log.info({ roomId: this.roomId }, 'Steer queued for next wave');
         }
         break;
@@ -923,7 +932,9 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
           rejectFn(new Error(`Synthesis session ${sessionId} timed out`));
         }
       },
-      this.waveTimeoutSec * 2 * 1000,
+      // Synthesis session needs the same startup budget as a participant (ACP/SDK
+      // handshake) PLUS time to generate the response — so participant ready timeout + wave timeout.
+      (this.participantReadyTimeoutSec + this.waveTimeoutSec) * 1000,
     );
 
     try {
