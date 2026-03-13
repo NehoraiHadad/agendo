@@ -3,7 +3,7 @@
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsRight } from 'lucide-react';
 import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
 import type { BrainstormMessageItem } from '@/stores/brainstorm-store';
 
@@ -78,15 +78,18 @@ interface PassMessageProps {
 function PassMessage({ agentName, agentSlug, agentIndex }: PassMessageProps) {
   const colors = getAgentColor(agentSlug, agentIndex);
   return (
-    <div className="flex items-center gap-2.5 py-1">
+    <div
+      className="flex items-center gap-2 py-0.5"
+      aria-label={`${agentName} skipped this wave`}
+      title={`${agentName} passed`}
+    >
       <div
-        className={`shrink-0 size-5 rounded-full flex items-center justify-center text-[8px] font-bold border ${colors.border.replace('border-l-', 'border-')} opacity-30`}
+        className={`shrink-0 size-5 rounded-full flex items-center justify-center text-[8px] font-bold border ${colors.border.replace('border-l-', 'border-')} opacity-20`}
       >
-        {getInitials(agentName)}
+        <span className={`${colors.dot} opacity-70`}>{getInitials(agentName)}</span>
       </div>
-      <span className="text-[10px] text-muted-foreground/30 italic">
-        {agentName} passed this wave
-      </span>
+      <span className={`text-[10px] font-medium ${colors.dot} opacity-25`}>{agentName}</span>
+      <ChevronsRight className="size-3 text-muted-foreground/20 shrink-0" />
     </div>
   );
 }
@@ -156,6 +159,64 @@ export function StreamingCard({
             />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Thinking Card (agent has been dispatched but hasn't started writing yet)
+// ============================================================================
+
+export function ThinkingCard({
+  agentName,
+  agentSlug,
+  agentIndex,
+  wave,
+}: {
+  agentName: string;
+  agentSlug: string;
+  agentIndex: number;
+  wave: number;
+}) {
+  const colors = getAgentColor(agentSlug, agentIndex);
+  const initials = getInitials(agentName);
+
+  return (
+    <div
+      className={`flex gap-3 items-center ${colors.bg} rounded-xl px-3 py-2.5 border-l-2 ${colors.border} opacity-50`}
+      role="status"
+      aria-label={`${agentName} is thinking`}
+    >
+      {/* Avatar — pulsing to signal activity */}
+      <div
+        className={`shrink-0 size-7 rounded-full flex items-center justify-center text-[10px] font-bold animate-pulse border ${colors.border.replace('border-l-', 'border-')} bg-white/[0.03]`}
+        aria-hidden="true"
+      >
+        <span className={colors.dot}>{initials}</span>
+      </div>
+
+      <div className="flex flex-1 min-w-0 items-center gap-2">
+        <span className="text-xs font-medium text-foreground/60 truncate">{agentName}</span>
+        <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06] shrink-0">
+          Wave {wave}
+        </span>
+
+        {/* Bouncing dots */}
+        <span className="ml-auto flex items-center gap-0.5 shrink-0" aria-hidden="true">
+          <span
+            className={`size-1 rounded-full ${colors.pulse} animate-bounce`}
+            style={{ animationDelay: '0ms' }}
+          />
+          <span
+            className={`size-1 rounded-full ${colors.pulse} animate-bounce`}
+            style={{ animationDelay: '150ms' }}
+          />
+          <span
+            className={`size-1 rounded-full ${colors.pulse} animate-bounce`}
+            style={{ animationDelay: '300ms' }}
+          />
+        </span>
       </div>
     </div>
   );

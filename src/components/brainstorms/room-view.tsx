@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { MessageCard, StreamingCard } from './message-card';
+import { MessageCard, StreamingCard, ThinkingCard } from './message-card';
 import { ComposeBar } from './compose-bar';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import type { BrainstormMessageItem, ParticipantState } from '@/stores/brainstorm-store';
@@ -233,26 +233,48 @@ const MessageList = memo(function MessageList({
         </div>
       ))}
 
-      {/* Streaming text indicators */}
-      {streamingEntries.length > 0 && (
-        <div className="px-4 space-y-3 mt-3">
-          {streamingEntries.map(([agentId, text]) => {
-            const participant = participants.get(agentId);
-            const agentInfo = slugMap[agentId];
-            if (!participant) return null;
-            return (
-              <StreamingCard
-                key={agentId}
-                agentName={participant.agentName}
-                agentSlug={agentInfo?.slug ?? ''}
-                agentIndex={agentInfo?.index ?? 0}
-                text={text}
-                wave={currentWave}
-              />
-            );
-          })}
-        </div>
-      )}
+      {/* Thinking + streaming indicators for the current wave */}
+      {(() => {
+        // Agents thinking (dispatched but no streaming text yet)
+        const thinkingAgents = Array.from(participants.values()).filter(
+          (p) => p.status === 'thinking' && !streamingText.has(p.agentId),
+        );
+        // Agents actively writing (have streaming text)
+        const hasThinking = thinkingAgents.length > 0;
+        const hasStreaming = streamingEntries.length > 0;
+        if (!hasThinking && !hasStreaming) return null;
+        return (
+          <div className="px-4 space-y-2 mt-3">
+            {thinkingAgents.map((p) => {
+              const agentInfo = slugMap[p.agentId];
+              return (
+                <ThinkingCard
+                  key={p.agentId}
+                  agentName={p.agentName}
+                  agentSlug={agentInfo?.slug ?? ''}
+                  agentIndex={agentInfo?.index ?? 0}
+                  wave={currentWave}
+                />
+              );
+            })}
+            {streamingEntries.map(([agentId, text]) => {
+              const participant = participants.get(agentId);
+              const agentInfo = slugMap[agentId];
+              if (!participant) return null;
+              return (
+                <StreamingCard
+                  key={agentId}
+                  agentName={participant.agentName}
+                  agentSlug={agentInfo?.slug ?? ''}
+                  agentIndex={agentInfo?.index ?? 0}
+                  text={text}
+                  wave={currentWave}
+                />
+              );
+            })}
+          </div>
+        );
+      })()}
     </>
   );
 });
