@@ -13,19 +13,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { getAgentColor } from '@/lib/utils/brainstorm-colors';
+import {
+  getAgentColor,
+  getInitials,
+  BRAINSTORM_STATUS_CONFIG,
+} from '@/lib/utils/brainstorm-colors';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import type { ParticipantState } from '@/stores/brainstorm-store';
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function getInitials(name: string): string {
-  const words = name.trim().split(/[\s-_]+/);
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
-}
 
 // ============================================================================
 // Status indicators per participant
@@ -78,46 +72,11 @@ function StatusLabel({ status }: { status: ParticipantState['status'] }) {
 }
 
 // ============================================================================
-// Room status badge
+// Room status badge (uses shared config — single source of truth)
 // ============================================================================
 
 function RoomStatusBadge({ status }: { status: string }) {
-  const config: Record<
-    string,
-    { label: string; className: string; dotClassName: string; animated: boolean }
-  > = {
-    waiting: {
-      label: 'Waiting',
-      className: 'bg-zinc-500/10 text-zinc-400 border-zinc-600/15',
-      dotClassName: 'bg-zinc-500',
-      animated: false,
-    },
-    active: {
-      label: 'Active',
-      className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-      dotClassName: 'bg-emerald-400',
-      animated: true,
-    },
-    paused: {
-      label: 'Paused',
-      className: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-      dotClassName: 'bg-amber-400',
-      animated: false,
-    },
-    synthesizing: {
-      label: 'Synthesizing',
-      className: 'bg-violet-500/10 text-violet-400 border-violet-500/20',
-      dotClassName: 'bg-violet-400',
-      animated: true,
-    },
-    ended: {
-      label: 'Ended',
-      className: 'bg-zinc-500/10 text-zinc-500 border-zinc-600/20',
-      dotClassName: 'bg-zinc-500',
-      animated: false,
-    },
-  };
-  const c = config[status] ?? config.waiting;
+  const c = BRAINSTORM_STATUS_CONFIG[status] ?? BRAINSTORM_STATUS_CONFIG.waiting;
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full border ${c.className}`}
@@ -300,14 +259,13 @@ interface ParticipantSidebarProps {
 }
 
 export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
-  const { title, topic, status, currentWave, maxWaves, participants } = useBrainstormStore((s) => ({
-    title: s.title,
-    topic: s.topic,
-    status: s.status,
-    currentWave: s.currentWave,
-    maxWaves: s.maxWaves,
-    participants: s.participants,
-  }));
+  // Individual selectors — avoids useSyncExternalStore infinite loop in Zustand 5.
+  const title = useBrainstormStore((s) => s.title);
+  const topic = useBrainstormStore((s) => s.topic);
+  const status = useBrainstormStore((s) => s.status);
+  const currentWave = useBrainstormStore((s) => s.currentWave);
+  const maxWaves = useBrainstormStore((s) => s.maxWaves);
+  const participants = useBrainstormStore((s) => s.participants);
 
   const [isEnding, setIsEnding] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -358,7 +316,9 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   }, [isSynthesizing, roomId]);
 
   const canEnd = status === 'active' || status === 'paused';
-  const canSynthesize = status === 'paused' || status === 'ended';
+  // Synthesis requires the orchestrator to still be running — only possible when paused.
+  // An ended room has no orchestrator listening; the synthesis button would silently fail.
+  const canSynthesize = status === 'paused';
   const canAddParticipant = status === 'waiting';
 
   // Wave progress percentage

@@ -4,18 +4,8 @@ import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { getAgentColor } from '@/lib/utils/brainstorm-colors';
+import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
 import type { BrainstormMessageItem } from '@/stores/brainstorm-store';
-
-// ============================================================================
-// Agent avatar initials
-// ============================================================================
-
-function getInitials(name: string): string {
-  const words = name.trim().split(/[\s-_]+/);
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
-}
 
 // ============================================================================
 // Markdown components (shared)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, memo } from 'react';
+import { useRef, useEffect, useState, useMemo, memo } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Waves,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -282,37 +283,40 @@ function EmptyState({ status }: { status: string }) {
 // Main RoomView
 // ============================================================================
 
-export function RoomView({ roomId }: { roomId: string }) {
-  const {
-    messages,
-    streamingText,
-    participants,
-    status,
-    synthesis,
-    converged,
-    maxWavesReached,
-    currentWave,
-  } = useBrainstormStore((s) => ({
-    messages: s.messages,
-    streamingText: s.streamingText,
-    participants: s.participants,
-    status: s.status,
-    synthesis: s.synthesis,
-    converged: s.converged,
-    maxWavesReached: s.maxWavesReached,
-    currentWave: s.currentWave,
-  }));
+export function RoomView({
+  roomId,
+  onOpenMobileSidebar,
+}: {
+  roomId: string;
+  /** Called when the user taps the participants button on mobile. */
+  onOpenMobileSidebar?: () => void;
+}) {
+  // Individual selectors — each returns a stable primitive or reference.
+  // Zustand 5 requires `getSnapshot` to be cached; object selectors `(s) => ({...})`
+  // always return new references and cause an infinite useSyncExternalStore loop.
+  const messages = useBrainstormStore((s) => s.messages);
+  const streamingText = useBrainstormStore((s) => s.streamingText);
+  const participants = useBrainstormStore((s) => s.participants);
+  const status = useBrainstormStore((s) => s.status);
+  const synthesis = useBrainstormStore((s) => s.synthesis);
+  const converged = useBrainstormStore((s) => s.converged);
+  const maxWavesReached = useBrainstormStore((s) => s.maxWavesReached);
+  const currentWave = useBrainstormStore((s) => s.currentWave);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
-  // Build slug map from participants for stable color assignment
-  const slugMap: SlugMap = {};
-  let index = 0;
-  for (const [agentId, p] of participants) {
-    slugMap[agentId] = { slug: p.agentSlug, index: index++ };
-  }
+  // Build slug map from participants for stable color assignment.
+  // Memoized so re-renders triggered by streaming text don't rebuild it unnecessarily.
+  const slugMap = useMemo(() => {
+    const map: SlugMap = {};
+    let index = 0;
+    for (const [agentId, p] of participants) {
+      map[agentId] = { slug: p.agentSlug, index: index++ };
+    }
+    return map;
+  }, [participants]);
 
   // Auto-scroll to bottom when new messages arrive (only if already at bottom)
   useEffect(() => {
@@ -366,9 +370,22 @@ export function RoomView({ roomId }: { roomId: string }) {
         <div ref={bottomRef} className="h-4" />
       </div>
 
-      {/* Scroll to bottom button */}
-      {!isAtBottom && (
-        <div className="absolute bottom-20 right-4 z-10">
+      {/* Floating action buttons (bottom-right) */}
+      <div className="absolute bottom-20 right-4 z-10 flex flex-col gap-2 items-end">
+        {/* Participants panel — mobile only */}
+        {onOpenMobileSidebar && (
+          <button
+            type="button"
+            onClick={onOpenMobileSidebar}
+            className="md:hidden flex items-center justify-center size-8 rounded-full bg-zinc-900 border border-white/[0.10] text-muted-foreground/60 hover:text-foreground/80 shadow-xl transition-all hover:bg-zinc-800 hover:scale-105"
+            aria-label="Open participants panel"
+          >
+            <Users className="size-4" />
+          </button>
+        )}
+
+        {/* Scroll to bottom */}
+        {!isAtBottom && (
           <button
             type="button"
             onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
@@ -377,8 +394,8 @@ export function RoomView({ roomId }: { roomId: string }) {
           >
             <ChevronDown className="size-4" />
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Compose bar */}
       <ComposeBar roomId={roomId} status={status} />

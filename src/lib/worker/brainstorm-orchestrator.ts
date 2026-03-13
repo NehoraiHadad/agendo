@@ -76,6 +76,8 @@ export class BrainstormOrchestrator {
   private unsubscribers: Array<() => void> = [];
   private waveCompleteResolve: (() => void) | null = null;
   private controlResolve: ((msg: BrainstormControlMessage) => void) | null = null;
+  /** Set by the 'end' control message when synthesis was requested. */
+  private synthesisPending = false;
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120) {
     this.roomId = roomId;
@@ -685,9 +687,6 @@ export class BrainstormOrchestrator {
       }
     }
   }
-
-  /** Whether synthesis was requested via the 'end' control message. */
-  private synthesisPending = false;
 
   // ============================================================================
   // Synthesis

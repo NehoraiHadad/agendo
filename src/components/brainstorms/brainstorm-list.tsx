@@ -6,54 +6,16 @@ import { formatDistanceToNow } from 'date-fns';
 import { Plus, Lightbulb, Users, Waves, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CreateBrainstormDialog } from './create-dialog';
-import type { BrainstormRoom, BrainstormStatus } from '@/lib/types';
+import { BRAINSTORM_STATUS_CONFIG } from '@/lib/utils/brainstorm-colors';
+import type { BrainstormRoomSummary } from '@/lib/services/brainstorm-service';
+import type { BrainstormStatus } from '@/lib/types';
 
 // ============================================================================
-// Helpers
+// Status badge (uses shared config — single source of truth)
 // ============================================================================
-
-interface StatusConfig {
-  label: string;
-  className: string;
-  dotClassName: string;
-  animated: boolean;
-}
-
-const STATUS_CONFIG: Record<BrainstormStatus, StatusConfig> = {
-  active: {
-    label: 'Active',
-    className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    dotClassName: 'bg-emerald-400',
-    animated: true,
-  },
-  ended: {
-    label: 'Ended',
-    className: 'bg-zinc-500/10 text-zinc-500 border-zinc-600/20',
-    dotClassName: 'bg-zinc-500',
-    animated: false,
-  },
-  synthesizing: {
-    label: 'Synthesizing',
-    className: 'bg-violet-500/10 text-violet-400 border-violet-500/20',
-    dotClassName: 'bg-violet-400',
-    animated: true,
-  },
-  waiting: {
-    label: 'Waiting',
-    className: 'bg-zinc-500/10 text-zinc-400 border-zinc-600/15',
-    dotClassName: 'bg-zinc-500',
-    animated: false,
-  },
-  paused: {
-    label: 'Paused',
-    className: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    dotClassName: 'bg-amber-400',
-    animated: false,
-  },
-};
 
 function StatusBadge({ status }: { status: BrainstormStatus }) {
-  const config = STATUS_CONFIG[status];
+  const config = BRAINSTORM_STATUS_CONFIG[status] ?? BRAINSTORM_STATUS_CONFIG.waiting;
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full border ${config.className}`}
@@ -79,7 +41,7 @@ function formatRelative(date: Date | string): string {
 // ============================================================================
 
 interface RoomCardProps {
-  room: BrainstormRoom;
+  room: BrainstormRoomSummary;
 }
 
 function RoomCard({ room }: RoomCardProps) {
@@ -121,7 +83,7 @@ function RoomCard({ room }: RoomCardProps) {
         <div className="flex items-center gap-3 mt-2.5">
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground/35">
             <Users className="size-3" />
-            agents
+            {room.participantCount} {room.participantCount === 1 ? 'agent' : 'agents'}
           </span>
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground/35">
             <Waves className="size-3" />
@@ -184,7 +146,7 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count: n
 // ============================================================================
 
 interface BrainstormListProps {
-  initialRooms: BrainstormRoom[];
+  initialRooms: BrainstormRoomSummary[];
 }
 
 export function BrainstormList({ initialRooms }: BrainstormListProps) {

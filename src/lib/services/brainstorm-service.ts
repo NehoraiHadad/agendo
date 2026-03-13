@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, asc, getTableColumns, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
   brainstormRooms,
@@ -136,20 +136,41 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
   };
 }
 
+// ============================================================================
+// List result type (includes aggregate counts)
+// ============================================================================
+
+export interface BrainstormRoomSummary extends BrainstormRoom {
+  /** Number of non-left participants in this room. */
+  participantCount: number;
+}
+
 /**
  * List brainstorm rooms with optional filters, newest first.
+ * Includes participant count via a correlated subquery.
  */
 export async function listBrainstorms(filters?: {
   projectId?: string;
   status?: BrainstormStatus;
-}): Promise<BrainstormRoom[]> {
+}): Promise<BrainstormRoomSummary[]> {
   const conditions = [];
   if (filters?.projectId) conditions.push(eq(brainstormRooms.projectId, filters.projectId));
   if (filters?.status) conditions.push(eq(brainstormRooms.status, filters.status));
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  return db.select().from(brainstormRooms).where(where).orderBy(desc(brainstormRooms.createdAt));
+  const rows = await db
+    .select({
+      ...getTableColumns(brainstormRooms),
+      participantCount: count(brainstormParticipants.id),
+    })
+    .from(brainstormRooms)
+    .leftJoin(brainstormParticipants, eq(brainstormParticipants.roomId, brainstormRooms.id))
+    .where(where)
+    .groupBy(brainstormRooms.id)
+    .orderBy(desc(brainstormRooms.createdAt));
+
+  return rows.map((r) => ({ ...r, participantCount: Number(r.participantCount) }));
 }
 
 /**

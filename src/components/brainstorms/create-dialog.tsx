@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus, X } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import { useDraft } from '@/hooks/use-draft';
 import { toast } from 'sonner';
 import {
@@ -13,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -69,32 +68,7 @@ interface DraftState {
 }
 
 // ============================================================================
-// Mobile detection hook
-// ============================================================================
-
-function useIsMobile(breakpoint = 640): boolean {
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => {
-      const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
-      mq.addEventListener('change', onStoreChange);
-      return () => mq.removeEventListener('change', onStoreChange);
-    },
-    [breakpoint],
-  );
-
-  const getSnapshot = useCallback(
-    () => window.matchMedia(`(max-width: ${breakpoint - 1}px)`).matches,
-    [breakpoint],
-  );
-
-  // SSR: assume desktop (dialog is the safe default)
-  const getServerSnapshot = useCallback(() => false, []);
-
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-}
-
-// ============================================================================
-// Form content (shared between Dialog and Sheet)
+// Form content
 // ============================================================================
 
 interface FormContentProps {
@@ -342,7 +316,6 @@ function FooterContent({
 
 export function CreateBrainstormDialog({ open, onOpenChange, projectId }: CreateDialogProps) {
   const router = useRouter();
-  const isMobile = useIsMobile();
 
   // Form state — initialized from draft on first open
   const [title, setTitle] = useState('');
@@ -555,61 +528,25 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     onSubmit: () => void handleSubmit(),
   };
 
-  // ── Mobile: bottom sheet (full height, slide up) ──────────────────────
-  if (isMobile) {
-    return (
-      <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent
-          side="bottom"
-          showCloseButton={false}
-          className="h-[95dvh] rounded-t-xl flex flex-col p-0 gap-0"
-        >
-          {/* Header with close button */}
-          <SheetHeader className="px-4 pt-4 pb-3 shrink-0 flex-row items-center justify-between">
-            <SheetTitle className="text-base">New Brainstorm</SheetTitle>
-            <button
-              onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-white/[0.06] transition-colors -mr-1"
-            >
-              <X className="size-4 text-muted-foreground" />
-            </button>
-          </SheetHeader>
-
-          <Separator className="shrink-0" />
-
-          {/* Scrollable body */}
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-            <FormContent {...formProps} />
-          </div>
-
-          <Separator className="shrink-0" />
-
-          {/* Sticky footer */}
-          <div className="px-4 py-3 shrink-0 flex flex-row items-center gap-3 safe-area-bottom">
-            <FooterContent {...footerProps} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
-  }
-
-  // ── Desktop: centered dialog ──────────────────────────────────────────
+  // Responsive Dialog — uses default centered positioning from DialogContent.
+  // On mobile, max-h-[90dvh] from DialogContent + flex-col + overflow-y-auto
+  // on DialogBody ensures the form is scrollable without fighting transforms.
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="gap-0 p-0">
-        <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
+      <DialogContent className="gap-0 p-0 overflow-hidden max-sm:max-w-[calc(100%-1rem)] sm:max-w-lg">
+        <DialogHeader className="px-5 pt-5 pb-4 shrink-0">
           <DialogTitle className="text-base">New Brainstorm Room</DialogTitle>
         </DialogHeader>
 
         <Separator className="shrink-0" />
 
-        <DialogBody className="px-6 py-4">
+        <DialogBody className="px-5 py-4">
           <FormContent {...formProps} />
         </DialogBody>
 
         <Separator className="shrink-0" />
 
-        <DialogFooter className="px-6 py-4 shrink-0 flex-row items-center justify-between gap-3">
+        <DialogFooter className="px-5 py-4 shrink-0 flex-row items-center justify-between gap-3">
           <FooterContent {...footerProps} />
         </DialogFooter>
       </DialogContent>
