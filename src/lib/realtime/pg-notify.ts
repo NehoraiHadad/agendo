@@ -8,7 +8,12 @@ let listenerPool: Pool | null = null;
 
 function getListenerPool(): Pool {
   if (!listenerPool) {
-    listenerPool = new Pool({ connectionString: config.DATABASE_URL, max: 5 });
+    // Each subscribe() call holds one connection for the LISTEN lifetime.
+    // Brainstorm sizing (6 participants): 6 session control + 6 orchestrator event +
+    // 1 orchestrator control = 13 connections. Plus standalone user sessions (~6 concurrent
+    // with WORKER_MAX_CONCURRENT_JOBS=6) = ~6 more. Buffer for SSE and misc = 21+.
+    // Set max=40 to comfortably handle concurrent brainstorms + regular sessions.
+    listenerPool = new Pool({ connectionString: config.DATABASE_URL, max: 40 });
   }
   return listenerPool;
 }

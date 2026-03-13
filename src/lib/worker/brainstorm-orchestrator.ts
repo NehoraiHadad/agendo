@@ -152,11 +152,13 @@ export class BrainstormOrchestrator {
       await updateBrainstormStatus(this.roomId, 'active');
       await this.emitEvent({ type: 'room:state', status: 'active' });
 
+      // Subscribe to the room control channel BEFORE creating sessions so that
+      // any steer sent by the user during the (potentially 10+ min) startup
+      // window is queued in this.pendingSteer rather than silently dropped.
+      await this.subscribeToControl();
+
       // Create sessions for all participants
       await this.createParticipantSessions(room);
-
-      // Subscribe to the room control channel
-      await this.subscribeToControl();
 
       // Run the wave loop
       await this.runWaveLoop(room);
@@ -280,6 +282,7 @@ export class BrainstormOrchestrator {
   private async waitForAllParticipantsReady(): Promise<void> {
     const timeoutMs = this.participantReadyTimeoutSec * 1000;
     let cancelled = false;
+    let pollCount = 0;
 
     log.info(
       {
@@ -292,18 +295,41 @@ export class BrainstormOrchestrator {
 
     await Promise.race([
       new Promise<void>((resolve) => {
-        const check = () => {
+        const check = async () => {
           if (cancelled) return;
           const allReady = this.participants.every(
             (p) => p.waveStatus === 'done' || p.waveStatus === 'passed',
           );
           if (allReady) {
             resolve();
-          } else {
-            setTimeout(check, 500);
+            return;
           }
+
+          // Every 10 iterations (~5 seconds), poll DB for participants that may
+          // have reached awaiting_input without us receiving the PG NOTIFY event
+          // (e.g., event fired before subscription was established, or notification dropped).
+          pollCount++;
+          if (pollCount % 10 === 0) {
+            for (const p of this.participants) {
+              if (p.waveStatus === 'done' || p.waveStatus === 'passed' || !p.sessionId) continue;
+              try {
+                const info = await getSessionStatus(p.sessionId);
+                if (info?.status === 'awaiting_input') {
+                  log.info(
+                    { roomId: this.roomId, sessionId: p.sessionId, agentName: p.agentName },
+                    'Participant detected as ready via DB poll (PG NOTIFY may have been missed)',
+                  );
+                  p.waveStatus = 'done';
+                }
+              } catch {
+                // Ignore DB errors during polling
+              }
+            }
+          }
+
+          setTimeout(check, 500);
         };
-        check();
+        void check();
       }),
       new Promise<void>((_, reject) =>
         setTimeout(() => {
@@ -438,18 +464,6 @@ export class BrainstormOrchestrator {
           content: p.responseBuffer.join('').trim(),
           isPass: p.waveStatus === 'passed',
         }));
-
-      // Persist all messages from this wave
-      for (const r of responses) {
-        await addMessage({
-          roomId: this.roomId,
-          wave,
-          senderType: 'agent',
-          senderAgentId: r.agentId,
-          content: r.content,
-          isPass: r.isPass,
-        });
-      }
 
       // Update hasPassed for participants who passed this wave
       for (const p of this.participants) {
@@ -709,6 +723,29 @@ export class BrainstormOrchestrator {
         if (event.status === 'awaiting_input') {
           // Turn complete — process the response
           this.onParticipantTurnComplete(participant);
+        } else if (event.status === 'idle' || event.status === 'ended') {
+          // Session was killed (stale reaper, OOM, crash) — auto-resume it.
+          // This commonly happens when the Claude SDK adapter silently fails
+          // to spawn, causing the heartbeat to stall and the stale reaper to
+          // transition the session to idle.
+          if (participant.sessionId && !this.stopped && !this.paused) {
+            log.warn(
+              {
+                roomId: this.roomId,
+                sessionId: participant.sessionId,
+                agentName: participant.agentName,
+                status: event.status,
+                waveStatus: participant.waveStatus,
+              },
+              'Participant session went idle/ended — auto-resuming',
+            );
+            void enqueueSession({ sessionId: participant.sessionId }).catch((err: unknown) => {
+              log.error(
+                { err, roomId: this.roomId, sessionId: participant.sessionId },
+                'Failed to re-enqueue idle participant session',
+              );
+            });
+          }
         }
         break;
 
@@ -733,6 +770,17 @@ export class BrainstormOrchestrator {
           senderType: 'agent',
           agentId: participant.agentId,
           agentName: participant.agentName,
+          content: rawResponse,
+          isPass,
+        });
+
+        // Persist immediately so DB is in sync with what was already streamed
+        // to the frontend. Without this, a page refresh mid-wave loses messages.
+        await addMessage({
+          roomId: this.roomId,
+          wave: this.currentWave,
+          senderType: 'agent',
+          senderAgentId: participant.agentId,
           content: rawResponse,
           isPass,
         });

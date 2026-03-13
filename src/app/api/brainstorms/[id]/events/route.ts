@@ -54,6 +54,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // Phase 1: emit current room state immediately
       send(makeRoomStateEvent(room));
 
+      // Phase 1.5: emit synthetic participant:status events so reconnecting clients
+      // see accurate participant states rather than defaulting to 'active'.
+      // DB status ('pending'|'active'|'passed'|'left') maps to event status:
+      //   active  → 'thinking' (participant is live / mid-wave)
+      //   passed  → 'passed'   (participant has passed their turn)
+      //   pending / left — no meaningful wave status; skip
+      for (const p of room.participants) {
+        let eventStatus: 'thinking' | 'done' | 'passed' | 'timeout' | null = null;
+        if (p.status === 'active') eventStatus = 'thinking';
+        else if (p.status === 'passed') eventStatus = 'passed';
+
+        if (eventStatus !== null) {
+          send({
+            id: 0,
+            roomId: id,
+            ts: Date.now(),
+            type: 'participant:status',
+            agentId: p.agentId,
+            agentName: p.agentName,
+            status: eventStatus,
+          });
+        }
+      }
+
       // Phase 2: replay ALL stored messages on every connection.
       // PG NOTIFY has no replay buffer — events published while the client was
       // disconnected are permanently lost. We always replay from the DB so

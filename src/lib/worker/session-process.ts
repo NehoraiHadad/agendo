@@ -241,6 +241,16 @@ export class SessionProcess {
     // Persist the log file path so the frontend can fetch it later.
     await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
 
+    // Start the heartbeat as early as possible — right after claim succeeds.
+    // subscribe() below acquires a PG NOTIFY connection from the listener pool.
+    // When the pool is near capacity (e.g. during a brainstorm with many participants),
+    // subscribe() can block waiting for a free slot. Without a running heartbeat,
+    // heartbeatAt stays at the claim timestamp, the stale-reaper threshold fires
+    // after 120s, and the session is killed before it even starts. ActivityTracker
+    // skips the PID liveness check when getPid() returns null, so starting the
+    // heartbeat before the process exists is safe.
+    this.activityTracker.startHeartbeat();
+
     // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
     this.unsubscribeControl = await subscribe(
       channelName('agendo_control', this.session.id),
@@ -357,16 +367,6 @@ export class SessionProcess {
       }
     });
 
-    // Start the heartbeat BEFORE spawning the adapter process.
-    // Codex (app-server) and Copilot (ACP) adapters block inside spawn()/resume()
-    // while doing their protocol handshake (JSON-RPC initialize + thread/start, or
-    // ACP initialize + session/new). This can take 3+ minutes. Without an early
-    // heartbeat, heartbeatAt stays at the claim timestamp, the stale-reaper
-    // threshold fires after 2 minutes, and the session is killed mid-startup.
-    // ActivityTracker.startHeartbeat() already skips the PID liveness check when
-    // getPid() returns null, so starting it before the process exists is safe.
-    this.activityTracker.startHeartbeat();
-
     // Determine how to start: fork (--resume --fork-session), resume (--resume), or spawn.
     // Fork path: the session has a forkSourceRef from a parent but no sessionRef yet,
     // meaning this is the very first start of a forked session.
@@ -410,7 +410,7 @@ export class SessionProcess {
     this.managedProcess.onEvents?.((payloads) => void this.dataPipeline.processEvents(payloads));
     this.managedProcess.onExit((code) => void this.onExit(code));
 
-    // Heartbeat was already started before spawn() — don't call it again.
+    // Heartbeat was already started before subscribe() — don't call it again.
     // Start MCP health check now that the process is alive and MCP servers are connected.
     this.activityTracker.startMcpHealthCheck();
 

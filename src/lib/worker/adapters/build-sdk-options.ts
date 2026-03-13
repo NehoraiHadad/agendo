@@ -9,15 +9,27 @@ import type { SpawnOpts } from './types';
  * from ~/.claude/ are available). Falls back to the SDK's bundled cli.js if not found.
  *
  * Override with CLAUDE_CLI_PATH env var if needed.
+ *
+ * Cached after first call — `execSync('which claude')` blocks the event loop and under
+ * memory pressure (swap exhausted) can stall for 30+ seconds, preventing heartbeat
+ * timers from firing and causing the stale-reaper to kill the session mid-startup.
  */
+let cachedCliPath: string | null = null;
 function resolveCliPath(): string {
-  if (process.env.CLAUDE_CLI_PATH) return process.env.CLAUDE_CLI_PATH;
+  if (cachedCliPath) return cachedCliPath;
+  if (process.env.CLAUDE_CLI_PATH) {
+    cachedCliPath = process.env.CLAUDE_CLI_PATH;
+    return cachedCliPath;
+  }
   try {
-    return execSync('which claude', { encoding: 'utf-8' }).trim();
+    // execSync blocks the event loop — use a 5s timeout to prevent indefinite stalls
+    cachedCliPath = execSync('which claude', { encoding: 'utf-8', timeout: 5000 }).trim();
+    return cachedCliPath;
   } catch {
     // Fallback: use the SDK's bundled cli.js
     const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
-    return join(sdkEntry, '..', 'cli.js');
+    cachedCliPath = join(sdkEntry, '..', 'cli.js');
+    return cachedCliPath;
   }
 }
 

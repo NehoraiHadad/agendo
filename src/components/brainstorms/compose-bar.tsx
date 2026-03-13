@@ -22,31 +22,23 @@ function autoGrow(el: HTMLTextAreaElement) {
 function getPlaceholder(status: BrainstormRoomStatus): string {
   switch (status) {
     case 'active':
-      return 'Steer the conversation... (Enter to send, Shift+Enter for newline)';
+      return 'Steer the conversation... (Enter to send)';
     case 'paused':
-      return 'Continue the discussion...';
+      return 'Continue the discussion... (sends + resumes)';
     case 'waiting':
-      return 'Waiting for brainstorm to start...';
+      return 'Type to start the brainstorm... (Enter to send + start)';
+    case 'ended':
+      return 'Type to restart... (Enter to send + restart)';
     case 'synthesizing':
       return 'Synthesis in progress...';
-    case 'ended':
-      return 'This brainstorm has ended';
   }
-}
-
-function getDisabledReason(status: BrainstormRoomStatus): string | null {
-  if (status === 'synthesizing') return 'Synthesis in progress';
-  if (status === 'waiting') return 'Start the brainstorm to send messages';
-  if (status === 'ended') return null; // No helper text for ended state
-  return null;
 }
 
 export function ComposeBar({ roomId, status }: ComposeBarProps) {
   const [text, setText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const isDisabled = status === 'ended' || status === 'synthesizing' || status === 'waiting';
-  const disabledReason = getDisabledReason(status);
+  const isDisabled = status === 'synthesizing';
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
@@ -54,6 +46,19 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
 
     setIsSending(true);
     try {
+      // For non-active rooms, start/restart first, then steer
+      if (status === 'waiting' || status === 'ended' || status === 'paused') {
+        // Start the brainstorm (works for waiting, ended, paused)
+        const startRes = await fetch(`/api/brainstorms/${roomId}/start`, {
+          method: 'POST',
+        });
+        if (!startRes.ok) {
+          const body = (await startRes.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `Failed to start brainstorm (HTTP ${startRes.status})`);
+        }
+      }
+
+      // Send the steer message
       const res = await fetch(`/api/brainstorms/${roomId}/steer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -72,7 +77,7 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
     } finally {
       setIsSending(false);
     }
-  }, [text, isSending, isDisabled, roomId]);
+  }, [text, isSending, isDisabled, roomId, status]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -97,9 +102,11 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
       role="region"
       aria-label="Message composer"
     >
-      {/* Disabled state helper */}
-      {isDisabled && disabledReason && (
-        <p className="text-[10px] text-muted-foreground/30 text-center mb-2">{disabledReason}</p>
+      {/* Synthesis state helper */}
+      {status === 'synthesizing' && (
+        <p className="text-[10px] text-muted-foreground/30 text-center mb-2">
+          Synthesis in progress
+        </p>
       )}
 
       <div className="flex items-end gap-2">

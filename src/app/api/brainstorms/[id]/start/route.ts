@@ -11,9 +11,10 @@ export const POST = withErrorBoundary(
 
     const room = await getBrainstorm(id);
 
-    if (room.status !== 'waiting') {
+    const startableStatuses = ['waiting', 'ended', 'paused'];
+    if (!startableStatuses.includes(room.status)) {
       throw new ConflictError(
-        `Cannot start a brainstorm room with status '${room.status}'. Only 'waiting' rooms can be started.`,
+        `Cannot start a brainstorm room with status '${room.status}'. Only ${startableStatuses.join(', ')} rooms can be started.`,
       );
     }
 
