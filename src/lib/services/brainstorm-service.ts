@@ -9,7 +9,7 @@ import {
   tasks,
 } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { NotFoundError } from '@/lib/errors';
+import { NotFoundError, ConflictError } from '@/lib/errors';
 import type {
   BrainstormRoom,
   BrainstormParticipant,
@@ -311,4 +311,32 @@ export async function getMessages(roomId: string, wave?: number): Promise<Brains
     .from(brainstormMessages)
     .where(and(...conditions))
     .orderBy(asc(brainstormMessages.createdAt));
+}
+
+/**
+ * Extend an ended brainstorm room by adding more waves and re-queueing it.
+ * The orchestrator will resume from the last completed wave.
+ */
+export async function extendBrainstorm(
+  id: string,
+  additionalWaves: number,
+): Promise<BrainstormRoom> {
+  const [room] = await db.select().from(brainstormRooms).where(eq(brainstormRooms.id, id)).limit(1);
+
+  requireFound(room, 'BrainstormRoom', id);
+
+  if (room.status !== 'ended') {
+    throw new ConflictError(
+      `Cannot extend a brainstorm room with status '${room.status}'. Only 'ended' rooms can be extended.`,
+    );
+  }
+
+  const [updated] = await db
+    .update(brainstormRooms)
+    .set({ maxWaves: room.maxWaves + additionalWaves, status: 'waiting', updatedAt: new Date() })
+    .where(eq(brainstormRooms.id, id))
+    .returning();
+
+  if (!updated) throw new NotFoundError('BrainstormRoom', id);
+  return updated;
 }

@@ -1,7 +1,17 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Loader2, Check, Clock, X, UserPlus, Square, Sparkles, Waves } from 'lucide-react';
+import {
+  Loader2,
+  Check,
+  Clock,
+  X,
+  UserPlus,
+  Square,
+  Sparkles,
+  Waves,
+  RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -269,6 +279,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
 
   const [isEnding, setIsEnding] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [isContinuing, setIsContinuing] = useState(false);
 
   const participantList = Array.from(participants.values());
   const existingAgentIds = new Set(participantList.map((p) => p.agentId));
@@ -315,11 +326,33 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
     }
   }, [isSynthesizing, roomId]);
 
+  const handleContinue = useCallback(async () => {
+    if (isContinuing) return;
+    setIsContinuing(true);
+    try {
+      const res = await fetch(`/api/brainstorms/${roomId}/extend`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ additionalWaves: 5 }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      toast.success('Brainstorm continuing — 5 more rounds');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to continue brainstorm');
+    } finally {
+      setIsContinuing(false);
+    }
+  }, [isContinuing, roomId]);
+
   const canEnd = status === 'active' || status === 'paused';
   // Synthesis requires the orchestrator to still be running — only possible when paused.
   // An ended room has no orchestrator listening; the synthesis button would silently fail.
   const canSynthesize = status === 'paused';
   const canAddParticipant = status === 'waiting';
+  const canContinue = status === 'ended';
 
   // Wave progress percentage
   const waveProgress = maxWaves > 0 ? Math.min((currentWave / maxWaves) * 100, 100) : 0;
@@ -408,7 +441,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       </div>
 
       {/* Actions */}
-      {(canAddParticipant || canSynthesize || canEnd) && (
+      {(canAddParticipant || canSynthesize || canEnd || canContinue) && (
         <div className="shrink-0 border-t border-white/[0.04] p-3 space-y-2">
           {canAddParticipant && (
             <AddParticipantRow roomId={roomId} existingAgentIds={existingAgentIds} />
@@ -445,6 +478,23 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
                 <Square className="size-3 fill-current" />
               )}
               End Brainstorm
+            </Button>
+          )}
+
+          {canContinue && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleContinue()}
+              disabled={isContinuing}
+              className="w-full h-8 text-xs border-emerald-500/20 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08] text-emerald-400/80 hover:text-emerald-300 hover:border-emerald-500/30 gap-1.5 transition-colors"
+            >
+              {isContinuing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3" />
+              )}
+              Continue (+5 rounds)
             </Button>
           )}
         </div>

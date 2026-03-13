@@ -8,7 +8,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { subscribe, publish, channelName } from '@/lib/realtime/pg-notify';
-import { createSession } from '@/lib/services/session-service';
+import { createSession, getSessionStatus } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import {
   getBrainstorm,
@@ -145,17 +145,34 @@ export class BrainstormOrchestrator {
     const allNames = room.participants.map((p) => p.agentName);
 
     for (const participant of this.participants) {
-      // Skip if a session was already assigned (e.g. resuming a room)
+      // Skip if a session was already assigned (e.g. resuming after extension)
       if (participant.sessionId) {
-        log.info(
-          {
-            roomId: this.roomId,
-            participantId: participant.participantId,
-            sessionId: participant.sessionId,
-          },
-          'Participant already has a session — reusing',
-        );
+        const sessionId = participant.sessionId;
+        const sessionInfo = await getSessionStatus(sessionId);
+        const sessionStatus = sessionInfo?.status ?? 'idle';
+
+        // Subscribe before potentially triggering the session to avoid missing events
         await this.subscribeToSession(participant);
+
+        if (sessionStatus === 'awaiting_input') {
+          // Session is still alive and ready — mark it done immediately so
+          // waitForAllParticipantsReady() doesn't time out waiting for an event
+          // that already fired before we subscribed.
+          participant.waveStatus = 'done';
+          log.info(
+            { roomId: this.roomId, sessionId, sessionStatus },
+            'Participant session already awaiting_input — marked ready directly',
+          );
+        } else {
+          // Session is idle / ended — re-enqueue it.
+          // session-runner uses session.sessionRef from DB to --resume the conversation.
+          // singletonKey prevents duplicate jobs if somehow already queued.
+          await enqueueSession({ sessionId });
+          log.info(
+            { roomId: this.roomId, sessionId, sessionStatus },
+            'Re-enqueued participant session for room extension',
+          );
+        }
         continue;
       }
 
@@ -289,9 +306,30 @@ export class BrainstormOrchestrator {
   // ============================================================================
 
   private async runWaveLoop(room: BrainstormWithDetails): Promise<void> {
-    // Wave 0 starts with the topic injected into all participants
-    let waveContent = room.topic;
-    let wave = 0;
+    // For fresh rooms: start from wave 0 with the topic.
+    // For extended rooms (currentWave > 0): resume from the next wave,
+    // seeding it with the last wave's collected responses from the DB.
+    let wave = room.currentWave > 0 ? room.currentWave + 1 : 0;
+    let waveContent: string;
+
+    if (wave === 0) {
+      waveContent = room.topic;
+    } else {
+      // Fetch the last completed wave's agent messages to use as seed content
+      const lastMessages = await getMessages(room.id, room.currentWave);
+      const agentMap = new Map(this.participants.map((p) => [p.agentId, p.agentName]));
+      const agentMessages = lastMessages
+        .filter((m) => m.senderType === 'agent' && !m.isPass)
+        .map((m) => ({
+          agentName: agentMap.get(m.senderAgentId ?? '') ?? 'Agent',
+          content: m.content,
+          isPass: false,
+        }));
+      waveContent =
+        agentMessages.length > 0
+          ? this.formatWaveBroadcast(agentMessages)
+          : `[Continuing from wave ${room.currentWave}. Please share your next thoughts on the topic.]`;
+    }
 
     while (!this.stopped) {
       // Start the wave
