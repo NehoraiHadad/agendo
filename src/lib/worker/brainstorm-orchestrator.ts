@@ -1085,8 +1085,7 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
   ): string {
     const nonPass = messages.filter((m) => !m.isPass);
     if (nonPass.length === 0) return '';
-    const body = nonPass.map((m) => `[${m.agentName}]:\n${m.content}`).join('\n\n---\n\n');
-    return `${body}\n\n---\nReminder: Keep your response concise (150-300 words). Focus on NEW ideas only. If nothing new to add, reply [PASS].`;
+    return nonPass.map((m) => `[${m.agentName}]:\n${m.content}`).join('\n\n---\n\n');
   }
 
   /**
@@ -1128,7 +1127,7 @@ RULES:
 - If you agree with everything said and have NOTHING new to add — no
   disagreement, no new angle, no important nuance — respond with exactly:
   [PASS]
-- Keep responses focused and SHORT. 150-300 words max. 2-4 paragraphs max.
+- Keep responses focused. 2-4 paragraphs max unless the topic demands more.
 - You have access to MCP tools if you need to look up code, tasks, or
   project context. Use them sparingly — this is primarily a thinking session.
 - Do NOT write code unless specifically asked. Focus on ideas and reasoning.
