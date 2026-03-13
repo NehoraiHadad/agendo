@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import { useState, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus, X } from 'lucide-react';
+import { useDraft } from '@/hooks/use-draft';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -57,58 +58,14 @@ interface CreateDialogProps {
 }
 
 // ============================================================================
-// Draft persistence (localStorage)
+// Draft shape (serialized to JSON in useDraft)
 // ============================================================================
 
-const DRAFT_KEY = 'agendo:brainstorm-draft';
-
 interface DraftState {
-  title: string;
-  topic: string;
-  selectedProjectId: string;
-  maxWaves: number;
-  participants: ParticipantSelection[];
-  savedAt: number;
-}
-
-/** Max age of a draft before it's considered stale (24 hours) */
-const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-function loadDraft(projectId?: string): Partial<DraftState> | null {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    const draft = JSON.parse(raw) as DraftState;
-    // Discard stale drafts
-    if (Date.now() - draft.savedAt > DRAFT_MAX_AGE_MS) {
-      localStorage.removeItem(DRAFT_KEY);
-      return null;
-    }
-    // If projectId is pre-set and differs from draft, ignore project-specific fields
-    if (projectId && draft.selectedProjectId && draft.selectedProjectId !== projectId) {
-      return { title: draft.title, topic: draft.topic, maxWaves: draft.maxWaves };
-    }
-    return draft;
-  } catch {
-    return null;
-  }
-}
-
-function saveDraft(state: Omit<DraftState, 'savedAt'>): void {
-  try {
-    const draft: DraftState = { ...state, savedAt: Date.now() };
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  } catch {
-    // localStorage full or unavailable — silently ignore
-  }
-}
-
-function clearDraft(): void {
-  try {
-    localStorage.removeItem(DRAFT_KEY);
-  } catch {
-    // ignore
-  }
+  title?: string;
+  topic?: string;
+  selectedProjectId?: string;
+  maxWaves?: number;
 }
 
 // ============================================================================
@@ -401,30 +358,41 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Track whether we've hydrated from draft for this open cycle
-  const hydratedRef = useRef(false);
+  // Draft persistence via existing useDraft hook (debounced localStorage)
+  const { saveDraft, getDraft, clearDraft } = useDraft('draft:brainstorm:new');
 
-  // Load draft + data when dialog opens
+  /** Save current form state as draft (called on every field change) */
+  const persistDraft = useCallback(() => {
+    if (!title && !topic) return;
+    const draft: DraftState = { title, topic, selectedProjectId, maxWaves };
+    saveDraft(JSON.stringify(draft));
+  }, [title, topic, selectedProjectId, maxWaves, saveDraft]);
+
+  // Auto-save draft whenever form fields change
   useEffect(() => {
-    if (!open) {
-      hydratedRef.current = false;
-      return;
-    }
+    if (!open) return;
+    persistDraft();
+  }, [open, persistDraft]);
 
-    // Hydrate from draft (only once per open cycle)
-    if (!hydratedRef.current) {
-      hydratedRef.current = true;
-      const draft = loadDraft(projectId);
-      if (draft) {
-        if (draft.title) setTitle(draft.title);
-        if (draft.topic) setTopic(draft.topic);
-        if (draft.selectedProjectId && !projectId) setSelectedProjectId(draft.selectedProjectId);
-        if (draft.maxWaves) setMaxWaves(draft.maxWaves);
-        // Don't restore participants — agent IDs might be stale
-      }
+  /** Restore draft into form state — called from onOpenChange (event handler, not effect) */
+  const restoreDraft = useCallback(() => {
+    const raw = getDraft();
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw) as DraftState;
+      if (draft.title) setTitle(draft.title);
+      if (draft.topic) setTopic(draft.topic);
+      if (draft.selectedProjectId && !projectId) setSelectedProjectId(draft.selectedProjectId);
+      if (draft.maxWaves) setMaxWaves(draft.maxWaves);
+    } catch {
+      // malformed draft — ignore
     }
+  }, [getDraft, projectId]);
 
-    // Fetch agents
+  // Fetch agents and projects when dialog opens
+  useEffect(() => {
+    if (!open) return;
+
     setIsLoadingAgents(true);
     fetch('/api/agents')
       .then((r) => r.json())
@@ -432,7 +400,6 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       .catch(() => toast.error('Failed to load agents'))
       .finally(() => setIsLoadingAgents(false));
 
-    // Fetch projects (if not pre-set)
     if (!projectId) {
       setIsLoadingProjects(true);
       fetch('/api/projects')
@@ -442,14 +409,6 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
         .finally(() => setIsLoadingProjects(false));
     }
   }, [open, projectId]);
-
-  // Save draft on every change (debounced naturally by React batching)
-  useEffect(() => {
-    if (!open) return;
-    // Only save if the user has typed something
-    if (!title && !topic) return;
-    saveDraft({ title, topic, selectedProjectId, maxWaves, participants });
-  }, [open, title, topic, selectedProjectId, maxWaves, participants]);
 
   const isAgentSelected = useCallback(
     (agentId: string) => participants.some((p) => p.agentId === agentId),
@@ -479,9 +438,19 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     participants.length >= 2 &&
     !isSubmitting;
 
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (nextOpen) {
+        restoreDraft();
+      }
+      onOpenChange(nextOpen);
+    },
+    [onOpenChange, restoreDraft],
+  );
+
   const handleClose = useCallback(() => {
-    onOpenChange(false);
-  }, [onOpenChange]);
+    handleOpenChange(false);
+  }, [handleOpenChange]);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -547,6 +516,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     }
   }, [
     canSubmit,
+    clearDraft,
     projectId,
     selectedProjectId,
     title,
@@ -588,7 +558,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   // ── Mobile: bottom sheet (full height, slide up) ──────────────────────
   if (isMobile) {
     return (
-      <Sheet open={open} onOpenChange={onOpenChange}>
+      <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetContent
           side="bottom"
           showCloseButton={false}
@@ -625,7 +595,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
 
   // ── Desktop: centered dialog ──────────────────────────────────────────
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="gap-0 p-0">
         <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
           <DialogTitle className="text-base">New Brainstorm Room</DialogTitle>
