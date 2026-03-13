@@ -234,6 +234,11 @@ export class BrainstormOrchestrator {
           initialPrompt: preamble,
           permissionMode: 'bypassPermissions',
           kind: 'conversation',
+          // Brainstorm sessions must stay alive while the orchestrator waits for
+          // ALL participants to start. Slow agents (Copilot ACP, Codex app-server)
+          // can take 5-8 minutes to initialize. With the default 10-min idle timeout,
+          // fast agents would idle-timeout before slow ones even start.
+          idleTimeoutSec: 3600, // 1 hour
         });
 
         participant.sessionId = session.id;
@@ -861,6 +866,7 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
         initialPrompt: synthesisPrompt,
         permissionMode: 'bypassPermissions',
         kind: 'conversation',
+        idleTimeoutSec: 3600,
       });
 
       // Subscribe BEFORE enqueue to avoid race where session completes before
@@ -965,8 +971,20 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     }
   }
 
-  /** Inject a message into a session via the session control channel */
+  /** Inject a message into a session via the session control channel.
+   * If the session has gone idle (e.g. idle-timeout during a long wait), cold-resume
+   * it with the message as resumePrompt so it doesn't silently drop the message.
+   */
   private async injectMessage(sessionId: string, text: string): Promise<void> {
+    const info = await getSessionStatus(sessionId);
+    if (info?.status === 'idle' || info?.status === 'ended') {
+      log.info(
+        { roomId: this.roomId, sessionId, status: info.status },
+        'Participant session is idle — cold-resuming with wave message',
+      );
+      await enqueueSession({ sessionId, resumePrompt: text });
+      return;
+    }
     await publish(channelName('agendo_control', sessionId), {
       type: 'message' as const,
       text,
