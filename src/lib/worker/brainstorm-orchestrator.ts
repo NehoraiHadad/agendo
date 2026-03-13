@@ -160,6 +160,10 @@ export class BrainstormOrchestrator {
 
       // Run the wave loop
       await this.runWaveLoop(room);
+
+      // Room ended cleanly — cancel participant sessions to free worker slots
+      // immediately instead of waiting out the 1-hour idle timeout.
+      await this.terminateParticipantSessions();
     } catch (err) {
       log.error({ err, roomId: this.roomId }, 'Brainstorm orchestrator error');
       await this.emitEvent({
@@ -1059,6 +1063,30 @@ TOPIC: ${room.topic}`;
       ...payload,
     } as BrainstormEvent;
     await publish(channelName('brainstorm_events', this.roomId), event);
+  }
+
+  /**
+   * Send a `cancel` control signal to every participant session so they exit
+   * immediately instead of sitting idle for up to idleTimeoutSec (1 hour).
+   * Only called on clean exit (not on crash — those rooms are `paused` and recoverable).
+   */
+  private async terminateParticipantSessions(): Promise<void> {
+    const sessionIds = this.participants
+      .map((p) => p.sessionId)
+      .filter((id): id is string => id != null);
+
+    if (sessionIds.length === 0) return;
+
+    log.info(
+      { roomId: this.roomId, sessionCount: sessionIds.length },
+      'Cancelling participant sessions after brainstorm end',
+    );
+
+    await Promise.allSettled(
+      sessionIds.map((sessionId) =>
+        publish(channelName('agendo_control', sessionId), { type: 'cancel' }),
+      ),
+    );
   }
 
   /** Clean up all PG NOTIFY subscriptions */
