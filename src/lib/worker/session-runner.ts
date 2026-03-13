@@ -53,6 +53,21 @@ export const liveSessionProcs = new Map<string, SessionProcess>();
  */
 export const allSessionProcs = new Map<string, SessionProcess>();
 
+/**
+ * Look up a live SessionProcess by sessionId.
+ *
+ * Returns the SessionProcess if this worker has an active or awaiting-input
+ * process for the given session, or undefined if the session is not running
+ * in this worker (e.g. different worker, or the process has already exited).
+ *
+ * Checks allSessionProcs (covers both pre-slot-release active sessions and
+ * post-slot-release awaiting-input sessions) so callers can deliver messages
+ * at any point in the session lifecycle without going through PG NOTIFY.
+ */
+export function getSessionProc(sessionId: string): SessionProcess | undefined {
+  return allSessionProcs.get(sessionId);
+}
+
 export async function runSession(
   sessionId: string,
   workerId: string,

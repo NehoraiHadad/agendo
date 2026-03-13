@@ -515,6 +515,11 @@ export class SessionProcess {
       return;
     }
 
+    log.debug(
+      { sessionId: this.session.id, type: control.type, status: this.status },
+      'Control message received',
+    );
+
     const ctrl = this.makeCtrl();
 
     if (control.type === 'cancel') {

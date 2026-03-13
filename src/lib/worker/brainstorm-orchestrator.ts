@@ -8,6 +8,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { subscribe, publish, channelName } from '@/lib/realtime/pg-notify';
+import { getSessionProc } from '@/lib/worker/session-runner';
 import { createSession, getSessionStatus } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
 import {
@@ -1032,11 +1033,28 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     }
   }
 
-  /** Inject a message into a session via the session control channel.
-   * If the session has gone idle (e.g. idle-timeout during a long wait), cold-resume
-   * it with the message as resumePrompt so it doesn't silently drop the message.
+  /** Inject a message into a session via direct in-process delivery or PG NOTIFY fallback.
+   *
+   * Delivery priority:
+   * 1. Direct `pushMessage()` on the live SessionProcess (same worker, no PG NOTIFY
+   *    round-trip, guaranteed delivery even if the LISTEN connection is dead).
+   * 2. Cold-resume via enqueueSession() if the session is idle/ended.
+   * 3. PG NOTIFY fallback for sessions running in a different worker (future
+   *    multi-worker deployments) or for sessions not yet registered in allSessionProcs.
    */
   private async injectMessage(sessionId: string, text: string): Promise<void> {
+    // Fast path: session is alive in this worker — deliver directly, bypassing PG NOTIFY.
+    const proc = getSessionProc(sessionId);
+    if (proc) {
+      log.info(
+        { roomId: this.roomId, sessionId },
+        'injectMessage: direct delivery via SessionProcess.pushMessage()',
+      );
+      await proc.pushMessage(text);
+      return;
+    }
+
+    // Session not in this worker — check DB status before deciding how to deliver.
     const info = await getSessionStatus(sessionId);
     if (info?.status === 'idle' || info?.status === 'ended') {
       log.info(
@@ -1046,6 +1064,13 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
       await enqueueSession({ sessionId, resumePrompt: text });
       return;
     }
+
+    // Fallback: session is active but running in another worker (or not yet in map).
+    // Use PG NOTIFY as the cross-worker delivery channel.
+    log.info(
+      { roomId: this.roomId, sessionId, status: info?.status },
+      'injectMessage: fallback to PG NOTIFY delivery',
+    );
     await publish(channelName('agendo_control', sessionId), {
       type: 'message' as const,
       text,
