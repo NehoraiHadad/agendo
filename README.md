@@ -140,17 +140,9 @@ Run `pnpm db:seed` after installing new CLIs to register them.
 
 ## Architecture
 
-```
-Next.js App (:4100)          Web UI, API, SSE, MCP host
-       |
-       |  pg-boss + PG NOTIFY
-       v
-Worker                       Spawns AI CLI processes, streams events
-       |
-       |  stdio
-       v
-MCP Server                   Injected into agent sessions
-```
+<p align="center">
+  <img src=".github/assets/agendo-architecture.svg" alt="Agendo Architecture" width="900"/>
+</p>
 
 | Service  | Default Port | Description                                   |
 | -------- | ------------ | --------------------------------------------- |

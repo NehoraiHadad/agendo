@@ -1,0 +1,314 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="924" height="268" viewBox="0 0 924 268">
+<defs>
+  <pattern id="a-dots" width="24" height="24" patternUnits="userSpaceOnUse">
+    <circle cx="0.5" cy="0.5" r="0.6" fill="#21262d"/>
+  </pattern>
+  <filter id="a-glow">
+    <feGaussianBlur stdDeviation="2.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<rect width="924" height="268" rx="12" fill="#0d1117"/>
+<rect width="924" height="268" rx="12" fill="url(#a-dots)" opacity=".28"/>
+
+<style>
+/* TOTAL CYCLE: 7s — all timing as keyframe percentages */
+.sig { transform-box: fill-box; transform-origin: center; }
+
+/* ── Box reveals ── */
+.b1  { animation: b1_  7s cubic-bezier(.4,0,.2,1) infinite; }
+.b2  { animation: b2_  7s cubic-bezier(.4,0,.2,1) infinite; }
+.b3  { animation: b3_  7s cubic-bezier(.4,0,.2,1) infinite; }
+@keyframes b1_ {
+  0%   { opacity: 0 }  7%   { opacity: 1 }
+  82%  { opacity: 1 }  100% { opacity: 0 }
+}
+@keyframes b2_ {
+  0%,18% { opacity: 0 }  26% { opacity: 1 }
+  82%    { opacity: 1 }  100%{ opacity: 0 }
+}
+@keyframes b3_ {
+  0%,35% { opacity: 0 }  43% { opacity: 1 }
+  82%    { opacity: 1 }  100%{ opacity: 0 }
+}
+
+/* ── Side panels (Browser + AI CLI) ── */
+.sp1 { animation: sp1_ 7s cubic-bezier(.4,0,.2,1) infinite; }
+.sp2 { animation: sp2_ 7s cubic-bezier(.4,0,.2,1) infinite; }
+@keyframes sp1_ {
+  0%   { opacity: 0 }  9%  { opacity: 1 }
+  82%  { opacity: 1 }  100%{ opacity: 0 }
+}
+@keyframes sp2_ {
+  0%,20% { opacity: 0 }  28% { opacity: 1 }
+  82%    { opacity: 1 }  100%{ opacity: 0 }
+}
+
+/* ── Arrow channel labels ── */
+.ar1 { animation: ar1_ 7s ease infinite; }
+.ar2 { animation: ar2_ 7s ease infinite; }
+@keyframes ar1_ {
+  0%,13%  { opacity: 0 }  21% { opacity: 1 }
+  82%     { opacity: 1 }  100%{ opacity: 0 }
+}
+@keyframes ar2_ {
+  0%,31%  { opacity: 0 }  39% { opacity: 1 }
+  82%     { opacity: 1 }  100%{ opacity: 0 }
+}
+
+/* ─────────────────────────────────────────
+   SIGNAL DOTS
+   Arrow 1 vertical: y=68 → y=108  (40px)
+   Arrow 2 vertical: y=160 → y=200 (40px)
+   Browser horiz:    x=130 → x=222 (92px)
+   AI CLI horiz:     x=702 → x=794 (92px)
+   ───────────────────────────────────────── */
+
+/* pg-boss job DOWN (blue): cx=457, cy=68, +40px Y */
+.sd1d { animation: sd1d_ 7s ease infinite; }
+@keyframes sd1d_ {
+  0%,13%  { opacity: 0; transform: translateY(0) }
+  14%     { opacity: 1; transform: translateY(0) }
+  24%     { opacity: 1; transform: translateY(40px) }
+  25%     { opacity: 0; transform: translateY(40px) }
+  43%     { opacity: 0; transform: translateY(0) }
+  44%     { opacity: 1; transform: translateY(0) }
+  54%     { opacity: 1; transform: translateY(40px) }
+  55%     { opacity: 0 }
+  64%     { opacity: 0; transform: translateY(0) }
+  65%     { opacity: 1; transform: translateY(0) }
+  75%     { opacity: 1; transform: translateY(40px) }
+  76%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* PG NOTIFY event UP (purple): cx=467, cy=108, -40px Y */
+.sd1u { animation: sd1u_ 7s ease infinite; }
+@keyframes sd1u_ {
+  0%,19%  { opacity: 0; transform: translateY(0) }
+  20%     { opacity: 1; transform: translateY(0) }
+  30%     { opacity: 1; transform: translateY(-40px) }
+  31%     { opacity: 0 }
+  49%     { opacity: 0; transform: translateY(0) }
+  50%     { opacity: 1; transform: translateY(0) }
+  60%     { opacity: 1; transform: translateY(-40px) }
+  61%     { opacity: 0 }
+  70%     { opacity: 0; transform: translateY(0) }
+  71%     { opacity: 1; transform: translateY(0) }
+  79%     { opacity: 1; transform: translateY(-40px) }
+  80%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* stdio cmd DOWN (green): cx=457, cy=160, +40px Y */
+.sd2d { animation: sd2d_ 7s ease infinite; }
+@keyframes sd2d_ {
+  0%,34%  { opacity: 0; transform: translateY(0) }
+  35%     { opacity: 1; transform: translateY(0) }
+  45%     { opacity: 1; transform: translateY(40px) }
+  46%     { opacity: 0 }
+  56%     { opacity: 0; transform: translateY(0) }
+  57%     { opacity: 1; transform: translateY(0) }
+  67%     { opacity: 1; transform: translateY(40px) }
+  68%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* stdio resp UP (green-light): cx=467, cy=200, -40px Y */
+.sd2u { animation: sd2u_ 7s ease infinite; }
+@keyframes sd2u_ {
+  0%,40%  { opacity: 0; transform: translateY(0) }
+  41%     { opacity: 1; transform: translateY(0) }
+  51%     { opacity: 1; transform: translateY(-40px) }
+  52%     { opacity: 0 }
+  62%     { opacity: 0; transform: translateY(0) }
+  63%     { opacity: 1; transform: translateY(0) }
+  73%     { opacity: 1; transform: translateY(-40px) }
+  74%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* SSE → Next.js (right): cx=130, cy=42, +92px X */
+.sdb1 { animation: sdb1_ 7s ease infinite; }
+@keyframes sdb1_ {
+  0%,9%   { opacity: 0; transform: translateX(0) }
+  10%     { opacity: 1; transform: translateX(0) }
+  20%     { opacity: 1; transform: translateX(92px) }
+  21%     { opacity: 0; transform: translateX(92px) }
+  37%     { opacity: 0; transform: translateX(0) }
+  38%     { opacity: 1; transform: translateX(0) }
+  48%     { opacity: 1; transform: translateX(92px) }
+  49%     { opacity: 0 }
+  60%     { opacity: 0; transform: translateX(0) }
+  61%     { opacity: 1; transform: translateX(0) }
+  71%     { opacity: 1; transform: translateX(92px) }
+  72%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* SSE ← Next.js (left): cx=222, cy=42, -92px X */
+.sdb2 { animation: sdb2_ 7s ease infinite; }
+@keyframes sdb2_ {
+  0%,15%  { opacity: 0; transform: translateX(0) }
+  16%     { opacity: 1; transform: translateX(0) }
+  26%     { opacity: 1; transform: translateX(-92px) }
+  27%     { opacity: 0 }
+  43%     { opacity: 0; transform: translateX(0) }
+  44%     { opacity: 1; transform: translateX(0) }
+  54%     { opacity: 1; transform: translateX(-92px) }
+  55%     { opacity: 0 }
+  66%     { opacity: 0; transform: translateX(0) }
+  67%     { opacity: 1; transform: translateX(0) }
+  77%     { opacity: 1; transform: translateX(-92px) }
+  78%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+
+/* spawn → AI CLI (right): cx=702, cy=134, +92px X */
+.sdc1 { animation: sdc1_ 7s ease infinite; }
+@keyframes sdc1_ {
+  0%,28%  { opacity: 0; transform: translateX(0) }
+  29%     { opacity: 1; transform: translateX(0) }
+  39%     { opacity: 1; transform: translateX(92px) }
+  40%     { opacity: 0 }
+  53%     { opacity: 0; transform: translateX(0) }
+  54%     { opacity: 1; transform: translateX(0) }
+  64%     { opacity: 1; transform: translateX(92px) }
+  65%     { opacity: 0 }
+  100%    { opacity: 0 }
+}
+</style>
+
+<!-- ══════════════════════════════════════
+     STATIC TRACK LINES (always visible)
+     ══════════════════════════════════════ -->
+<line x1="462" y1="68"  x2="462" y2="108" stroke="#21262d" stroke-width="1" stroke-linecap="round"/>
+<line x1="462" y1="160" x2="462" y2="200" stroke="#21262d" stroke-width="1" stroke-linecap="round"/>
+<line x1="130" y1="42"  x2="222" y2="42"  stroke="#21262d" stroke-width="1" stroke-linecap="round"/>
+<line x1="702" y1="134" x2="794" y2="134" stroke="#21262d" stroke-width="1" stroke-linecap="round"/>
+
+<!-- ══════════════════════════════════════
+     ARROW 1 LABELS  (fade in at 13%)
+     ══════════════════════════════════════ -->
+<g class="ar1">
+  <text x="451" y="84" text-anchor="end"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#8b949e">pg-boss</text>
+  <text x="451" y="94" text-anchor="end"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#1f6feb">jobs ↓</text>
+  <text x="473" y="84" text-anchor="start"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#8957e5">↑ events</text>
+  <text x="473" y="94" text-anchor="start"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#8b949e">PG NOTIFY</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     ARROW 2 LABELS  (fade in at 31%)
+     ══════════════════════════════════════ -->
+<g class="ar2">
+  <text x="451" y="177" text-anchor="end"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#8b949e">stdio</text>
+  <text x="451" y="187" text-anchor="end"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#238636">↕</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     SIGNAL DOTS — vertical channels
+     ══════════════════════════════════════ -->
+<circle cx="457" cy="68"  r="3.5" fill="#1f6feb" class="sig sd1d" filter="url(#a-glow)"/>
+<circle cx="467" cy="108" r="3.5" fill="#8957e5" class="sig sd1u" filter="url(#a-glow)"/>
+<circle cx="457" cy="160" r="3.5" fill="#238636" class="sig sd2d" filter="url(#a-glow)"/>
+<circle cx="467" cy="200" r="3.5" fill="#3fb950" class="sig sd2u" filter="url(#a-glow)"/>
+
+<!-- ══════════════════════════════════════
+     SIGNAL DOTS — horizontal channels
+     ══════════════════════════════════════ -->
+<circle cx="130" cy="42" r="3" fill="#58a6ff" class="sig sdb1" filter="url(#a-glow)"/>
+<circle cx="222" cy="42" r="3" fill="#58a6ff" class="sig sdb2" filter="url(#a-glow)"/>
+<circle cx="702" cy="134" r="3" fill="#e3b341" class="sig sdc1" filter="url(#a-glow)"/>
+
+<!-- ══════════════════════════════════════
+     BROWSER SIDE PANEL  (left)
+     ══════════════════════════════════════ -->
+<g class="sp1">
+  <rect x="20" y="26" width="110" height="32" rx="6"
+    fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+  <text x="75" y="41" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#8b949e" letter-spacing="0.06em">BROWSER</text>
+  <text x="75" y="52" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#484f58">PWA · mobile</text>
+  <!-- SSE label on connecting line -->
+  <text x="176" y="36" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#58a6ff">SSE ↔</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     AI CLI SIDE PANEL  (right)
+     ══════════════════════════════════════ -->
+<g class="sp2">
+  <rect x="794" y="118" width="110" height="32" rx="6"
+    fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+  <text x="849" y="133" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" font-weight="600" fill="#8b949e" letter-spacing="0.06em">AI CLI</text>
+  <text x="849" y="144" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#484f58">Claude · Codex</text>
+  <!-- spawn label on connecting line -->
+  <text x="748" y="128" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="8" fill="#e3b341">spawn →</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     BOX 1 — Next.js App  (blue border)
+     ══════════════════════════════════════ -->
+<g class="b1">
+  <rect x="222" y="16" width="480" height="52" rx="8"
+    fill="#161b22" stroke="#1f6feb" stroke-width="1.5"/>
+  <text x="462" y="38" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="13" font-weight="600" fill="#e6edf3" letter-spacing="0.08em">NEXT.JS APP  :4100</text>
+  <text x="462" y="56" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" fill="#8b949e">Web UI · API routes · SSE endpoints · MCP host</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     BOX 2 — Worker  (amber border)
+     ══════════════════════════════════════ -->
+<g class="b2">
+  <rect x="222" y="108" width="480" height="52" rx="8"
+    fill="#161b22" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="462" y="130" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="13" font-weight="600" fill="#e6edf3" letter-spacing="0.08em">WORKER</text>
+  <text x="462" y="148" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" fill="#8b949e">Queue processor · Agent subprocess manager · Event emitter</text>
+</g>
+
+<!-- ══════════════════════════════════════
+     BOX 3 — MCP Server  (green border)
+     ══════════════════════════════════════ -->
+<g class="b3">
+  <rect x="222" y="200" width="480" height="52" rx="8"
+    fill="#161b22" stroke="#238636" stroke-width="1.5"/>
+  <text x="462" y="222" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="13" font-weight="600" fill="#e6edf3" letter-spacing="0.08em">MCP SERVER</text>
+  <text x="462" y="240" text-anchor="middle"
+    font-family="'SF Mono','Consolas','Liberation Mono',monospace"
+    font-size="10" fill="#8b949e">Injected into agent sessions · Exposes task management tools</text>
+</g>
+
+</svg>
