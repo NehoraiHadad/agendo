@@ -63,6 +63,17 @@ interface BrainstormControlMessage {
 // BrainstormOrchestrator
 // ============================================================================
 
+/**
+ * Minimum startup timeout for participant sessions (seconds).
+ * Participant session initialization involves: MCP resolution, model
+ * resolution, SDK handshake (Claude), ACP initialize + session/new
+ * (Copilot/Gemini), and the first-turn API round-trip. Under load with
+ * multiple concurrent sessions this can exceed 4 minutes. Keep this
+ * well above the per-wave timeout so participants aren't evicted before
+ * they've had a chance to start.
+ */
+const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 300; // 5 minutes
+
 export class BrainstormOrchestrator {
   private readonly roomId: string;
   private eventSeq = 0;
@@ -70,6 +81,13 @@ export class BrainstormOrchestrator {
   private currentWave = 0;
   private readonly maxWaves: number;
   private waveTimeoutSec: number;
+  /**
+   * How long to wait for all participant sessions to reach awaiting_input
+   * before the orchestrator gives up. Defaults to 5 minutes (independent
+   * of waveTimeoutSec — startup latency is separate from per-wave latency).
+   * Can be overridden via room.config.participantReadyTimeoutSec.
+   */
+  private participantReadyTimeoutSec: number;
   private stopped = false;
   private paused = false;
   private pendingSteer: string | null = null;
@@ -83,6 +101,12 @@ export class BrainstormOrchestrator {
     this.roomId = roomId;
     this.maxWaves = maxWaves;
     this.waveTimeoutSec = waveTimeoutSec;
+    // Default startup timeout: at least 5 minutes. Never less than the wave
+    // timeout itself (e.g. if waveTimeoutSec was increased significantly).
+    this.participantReadyTimeoutSec = Math.max(
+      MIN_PARTICIPANT_READY_TIMEOUT_SEC,
+      waveTimeoutSec * 2,
+    );
   }
 
   /** Main entry point — called by the worker job handler */
@@ -92,9 +116,21 @@ export class BrainstormOrchestrator {
       const room = await getBrainstorm(this.roomId);
 
       // Use config-level wave timeout if specified (overrides constructor arg)
-      const configuredTimeout = (room.config as { waveTimeoutSec?: number } | null)?.waveTimeoutSec;
-      if (configuredTimeout !== undefined) {
-        this.waveTimeoutSec = configuredTimeout;
+      const roomConfig = room.config as {
+        waveTimeoutSec?: number;
+        participantReadyTimeoutSec?: number;
+      } | null;
+      if (roomConfig?.waveTimeoutSec !== undefined) {
+        this.waveTimeoutSec = roomConfig.waveTimeoutSec;
+        // Re-compute the default ready timeout based on the (potentially updated) wave timeout.
+        this.participantReadyTimeoutSec = Math.max(
+          MIN_PARTICIPANT_READY_TIMEOUT_SEC,
+          this.waveTimeoutSec * 2,
+        );
+      }
+      // Explicit override wins over the derived default.
+      if (roomConfig?.participantReadyTimeoutSec !== undefined) {
+        this.participantReadyTimeoutSec = roomConfig.participantReadyTimeoutSec;
       }
 
       // Build participant state from DB records
@@ -225,8 +261,17 @@ export class BrainstormOrchestrator {
    * Relies on subscribeToSession() setting waveStatus='done' on first awaiting_input.
    */
   private async waitForAllParticipantsReady(): Promise<void> {
-    const timeoutMs = this.waveTimeoutSec * 1000 * 2; // double the wave timeout for startup
+    const timeoutMs = this.participantReadyTimeoutSec * 1000;
     let cancelled = false;
+
+    log.info(
+      {
+        roomId: this.roomId,
+        timeoutSec: this.participantReadyTimeoutSec,
+        count: this.participants.length,
+      },
+      'Waiting for participant sessions to reach awaiting_input',
+    );
 
     await Promise.race([
       new Promise<void>((resolve) => {
@@ -246,7 +291,15 @@ export class BrainstormOrchestrator {
       new Promise<void>((_, reject) =>
         setTimeout(() => {
           cancelled = true;
-          reject(new Error(`Participants did not reach ready state within ${timeoutMs}ms`));
+          const notReady = this.participants
+            .filter((p) => p.waveStatus !== 'done' && p.waveStatus !== 'passed')
+            .map((p) => p.agentName);
+          reject(
+            new Error(
+              `Participants did not reach ready state within ${timeoutMs}ms. ` +
+                `Still pending: ${notReady.join(', ')}`,
+            ),
+          );
         }, timeoutMs),
       ),
     ]);
