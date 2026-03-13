@@ -214,8 +214,8 @@ const MessageList = memo(function MessageList({
 
   return (
     <>
-      {groups.map((group) => (
-        <div key={group.wave}>
+      {groups.map((group, idx) => (
+        <div key={`wave-${group.wave}-${idx}`}>
           {group.wave > 0 && <WaveDivider wave={group.wave} />}
           <div className="px-4 space-y-3">
             {group.messages.map((msg) => {
