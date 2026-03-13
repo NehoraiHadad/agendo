@@ -60,6 +60,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // reconnecting clients get full history. The Zustand store deduplicates
       // by event id on the client side.
       try {
+        // Build agentId → agentName lookup from participants
+        const agentNameMap = new Map<string, string>();
+        for (const p of room.participants) {
+          agentNameMap.set(p.agentId, p.agentName);
+        }
+
         const historicalMessages = await getMessages(id);
         for (let i = 0; i < historicalMessages.length; i++) {
           const msg = historicalMessages[i];
@@ -71,6 +77,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             wave: msg.wave,
             senderType: msg.senderType as 'agent' | 'user',
             agentId: msg.senderAgentId ?? undefined,
+            agentName: msg.senderAgentId ? agentNameMap.get(msg.senderAgentId) : undefined,
             content: msg.content,
             isPass: msg.isPass,
           };
