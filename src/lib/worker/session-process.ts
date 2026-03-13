@@ -357,6 +357,16 @@ export class SessionProcess {
       }
     });
 
+    // Start the heartbeat BEFORE spawning the adapter process.
+    // Codex (app-server) and Copilot (ACP) adapters block inside spawn()/resume()
+    // while doing their protocol handshake (JSON-RPC initialize + thread/start, or
+    // ACP initialize + session/new). This can take 3+ minutes. Without an early
+    // heartbeat, heartbeatAt stays at the claim timestamp, the stale-reaper
+    // threshold fires after 2 minutes, and the session is killed mid-startup.
+    // ActivityTracker.startHeartbeat() already skips the PID liveness check when
+    // getPid() returns null, so starting it before the process exists is safe.
+    this.activityTracker.startHeartbeat();
+
     // Determine how to start: fork (--resume --fork-session), resume (--resume), or spawn.
     // Fork path: the session has a forkSourceRef from a parent but no sessionRef yet,
     // meaning this is the very first start of a forked session.
@@ -400,7 +410,8 @@ export class SessionProcess {
     this.managedProcess.onEvents?.((payloads) => void this.dataPipeline.processEvents(payloads));
     this.managedProcess.onExit((code) => void this.onExit(code));
 
-    this.activityTracker.startHeartbeat();
+    // Heartbeat was already started before spawn() — don't call it again.
+    // Start MCP health check now that the process is alive and MCP servers are connected.
     this.activityTracker.startMcpHealthCheck();
 
     // Attach team monitor immediately if a team exists on disk (cold-resume),
