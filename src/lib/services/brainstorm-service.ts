@@ -315,7 +315,7 @@ export async function getMessages(roomId: string, wave?: number): Promise<Brains
 
 /**
  * Extend an ended brainstorm room by adding more waves and re-queueing it.
- * The orchestrator will resume from the last completed wave.
+ * The orchestrator resumes from the last completed wave (room.currentWave + 1).
  */
 export async function extendBrainstorm(
   id: string,

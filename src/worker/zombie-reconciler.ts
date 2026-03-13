@@ -1,7 +1,7 @@
 import { db } from '../lib/db/index';
 import { sessions, brainstormRooms } from '../lib/db/schema';
 import { eq, and, inArray, lt, sql } from 'drizzle-orm';
-import { enqueueSession } from '../lib/worker/queue';
+import { enqueueSession, SESSION_QUEUE_NAME } from '../lib/worker/queue';
 import { enqueueBrainstorm, BRAINSTORM_QUEUE_NAME } from '../lib/worker/brainstorm-queue';
 import { createLogger } from '@/lib/logger';
 import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
@@ -75,6 +75,9 @@ export function resetRecoveryCount(sessionId: string): void {
 // ============================================================================
 
 async function reconcileOrphanedSessions(workerId: string): Promise<void> {
+  // Expire stale active pg-boss session jobs from crashed workers
+  await expireStalePgBossJobs(SESSION_QUEUE_NAME, 30 * 60 * 1000); // 30 min
+
   const orphaned = await db
     .select({
       id: sessions.id,
@@ -183,6 +186,11 @@ const BRAINSTORM_IN_FLIGHT_STATUSES = ['active', 'synthesizing'] as const;
 const STALE_WAITING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 async function reconcileOrphanedBrainstorms(): Promise<void> {
+  // First, expire any stale `active` pg-boss brainstorm jobs from crashed workers.
+  // pg-boss marks jobs 'active' when a worker picks them up, but if the worker
+  // dies mid-run the job stays 'active' forever — blocking the singletonKey.
+  await expireStalePgBossJobs(BRAINSTORM_QUEUE_NAME, 30 * 60 * 1000); // 30 min
+
   // Rooms that should currently have a running orchestrator job
   const inFlightRooms = await db
     .select({ id: brainstormRooms.id, status: brainstormRooms.status })
@@ -248,6 +256,28 @@ async function hasPgBossJob(queueName: string, singletonKey: string): Promise<bo
     LIMIT 1
   `);
   return (result.rows?.length ?? 0) > 0;
+}
+
+/**
+ * Expire stale `active` pg-boss jobs that have been running longer than
+ * the threshold. This happens when the worker crashes mid-job — pg-boss
+ * marks the job `active` but nobody is processing it anymore. Without
+ * cleanup, the singletonKey blocks new jobs for the same entity.
+ */
+async function expireStalePgBossJobs(queueName: string, thresholdMs: number): Promise<void> {
+  const result = await db.execute(sql`
+    UPDATE pgboss.job
+    SET state = 'failed',
+        output = '{"error": "zombie-reconciler: stale active job expired"}'::jsonb
+    WHERE name = ${queueName}
+      AND state = 'active'
+      AND started_on < now() - make_interval(secs => ${Math.floor(thresholdMs / 1000)})
+    RETURNING id, singleton_key
+  `);
+  const count = result.rows?.length ?? 0;
+  if (count > 0) {
+    log.info({ queueName, count, jobs: result.rows }, 'Expired stale active pg-boss jobs');
+  }
 }
 
 function isPidAlive(pid: number): boolean {

@@ -315,6 +315,12 @@ export class BrainstormOrchestrator {
     if (wave === 0) {
       waveContent = room.topic;
     } else {
+      // Resuming after convergence/pause. Check for a pending user steer
+      // message that was persisted by the steer API route (when the
+      // orchestrator wasn't running to receive the PG NOTIFY signal).
+      const pendingSteerMessages = await getMessages(room.id, wave);
+      const userSteer = pendingSteerMessages.find((m) => m.senderType === 'user');
+
       // Fetch the last completed wave's agent messages to use as seed content
       const lastMessages = await getMessages(room.id, room.currentWave);
       const agentMap = new Map(this.participants.map((p) => [p.agentId, p.agentName]));
@@ -325,10 +331,25 @@ export class BrainstormOrchestrator {
           content: m.content,
           isPass: false,
         }));
-      waveContent =
-        agentMessages.length > 0
-          ? this.formatWaveBroadcast(agentMessages)
-          : `[Continuing from wave ${room.currentWave}. Please share your next thoughts on the topic.]`;
+
+      if (userSteer) {
+        // User sent a steer while paused — resume with their message
+        log.info({ roomId: this.roomId, wave }, 'Found pending user steer from DB, resuming');
+        await this.resetPassedParticipants();
+        await this.emitEvent({
+          type: 'message',
+          wave,
+          senderType: 'user',
+          content: userSteer.content,
+          isPass: false,
+        });
+        waveContent = this.formatUserSteer(userSteer.content, agentMessages);
+      } else {
+        waveContent =
+          agentMessages.length > 0
+            ? this.formatWaveBroadcast(agentMessages)
+            : `[Continuing from wave ${room.currentWave}. Please share your next thoughts on the topic.]`;
+      }
     }
 
     while (!this.stopped) {

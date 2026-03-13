@@ -38,6 +38,7 @@ vi.mock('../../lib/db/schema', () => ({
 // Mock session queue
 vi.mock('../../lib/worker/queue', () => ({
   enqueueSession: vi.fn().mockResolvedValue(null),
+  SESSION_QUEUE_NAME: 'run-session',
 }));
 
 // Mock brainstorm queue
@@ -288,11 +289,12 @@ describe('reconcileZombies — brainstorm rooms', () => {
   it('skips paused rooms entirely', async () => {
     // paused rooms are not queried (status filter excludes them)
     mockAllSelects([], [], []);
+    // expireStalePgBossJobs calls db.execute even when no rooms found
+    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
     expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
-    expect(mockDb.execute).not.toHaveBeenCalled();
   });
 
   it('handles multiple orphaned brainstorm rooms', async () => {

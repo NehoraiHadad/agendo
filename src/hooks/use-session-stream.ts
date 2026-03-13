@@ -103,11 +103,19 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       };
 
       es.onmessage = (event) => {
-        // Track last-event-id for reconnect
+        // Track last-event-id for reconnect.
+        // Handle ID resets after session restarts: if the new ID drops
+        // significantly below our tracked max, a restart happened and
+        // we should reset to the new (lower) counter.
         if (event.lastEventId) {
           const id = parseInt(event.lastEventId, 10);
-          if (!isNaN(id) && id > lastEventIdRef.current) {
-            lastEventIdRef.current = id;
+          if (!isNaN(id)) {
+            if (id < lastEventIdRef.current - 100) {
+              // Session restarted — ID counter reset
+              lastEventIdRef.current = id;
+            } else if (id > lastEventIdRef.current) {
+              lastEventIdRef.current = id;
+            }
           }
         }
 

@@ -15,7 +15,7 @@ export interface RunSessionJobData {
   resumePrompt?: string;
 }
 
-const SESSION_QUEUE_NAME = 'run-session';
+export const SESSION_QUEUE_NAME = 'run-session';
 
 let bossInstance: PgBoss | null = null;
 
