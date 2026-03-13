@@ -162,10 +162,6 @@ export class BrainstormOrchestrator {
 
       // Run the wave loop
       await this.runWaveLoop(room);
-
-      // Room ended cleanly — cancel participant sessions to free worker slots
-      // immediately instead of waiting out the 1-hour idle timeout.
-      await this.terminateParticipantSessions();
     } catch (err) {
       log.error({ err, roomId: this.roomId }, 'Brainstorm orchestrator error');
       await this.emitEvent({
@@ -177,6 +173,11 @@ export class BrainstormOrchestrator {
       await updateBrainstormStatus(this.roomId, 'paused').catch(() => {});
       await this.emitEvent({ type: 'room:state', status: 'paused' }).catch(() => {});
     } finally {
+      // Always cancel participant sessions — whether clean exit or crash.
+      // Leaving them in awaiting_input wastes worker slots for up to 1 hour
+      // (idle timeout). When the room resumes, createParticipantSessions()
+      // will re-enqueue them fresh.
+      await this.terminateParticipantSessions().catch(() => {});
       this.cleanup();
       log.info({ roomId: this.roomId }, 'Brainstorm orchestrator finished');
     }
@@ -1116,7 +1117,7 @@ TOPIC: ${room.topic}`;
   /**
    * Send a `cancel` control signal to every participant session so they exit
    * immediately instead of sitting idle for up to idleTimeoutSec (1 hour).
-   * Only called on clean exit (not on crash — those rooms are `paused` and recoverable).
+   * Called from `finally` — runs on both clean exit and crash.
    */
   private async terminateParticipantSessions(): Promise<void> {
     const sessionIds = this.participants
