@@ -7,11 +7,13 @@ vi.mock('../../lib/db/index', () => {
   const mockUpdate = vi.fn().mockReturnValue({ set: mockSet });
   const mockFrom = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) });
   const mockSelect = vi.fn().mockReturnValue({ from: mockFrom });
+  const mockExecute = vi.fn().mockResolvedValue({ rows: [] });
 
   return {
     db: {
       select: mockSelect,
       update: mockUpdate,
+      execute: mockExecute,
     },
   };
 });
@@ -26,14 +28,25 @@ vi.mock('../../lib/db/schema', () => ({
     lastActiveAt: 'last_active_at',
     initialPrompt: 'initial_prompt',
   },
+  brainstormRooms: {
+    id: 'id',
+    status: 'status',
+    createdAt: 'created_at',
+  },
 }));
 
-// Mock queue to prevent config/DATABASE_URL loading in tests
+// Mock session queue
 vi.mock('../../lib/worker/queue', () => ({
   enqueueSession: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock pg-notify to prevent real PG NOTIFY calls
+// Mock brainstorm queue
+vi.mock('../../lib/worker/brainstorm-queue', () => ({
+  enqueueBrainstorm: vi.fn().mockResolvedValue(null),
+  BRAINSTORM_QUEUE_NAME: 'run-brainstorm',
+}));
+
+// Mock pg-notify
 vi.mock('../../lib/realtime/pg-notify', () => ({
   broadcastSessionStatus: vi.fn().mockResolvedValue(undefined),
 }));
@@ -43,30 +56,69 @@ vi.mock('drizzle-orm', () => ({
   eq: vi.fn((_col, val) => ({ type: 'eq', val })),
   and: vi.fn((...args) => ({ type: 'and', args })),
   inArray: vi.fn((_col, vals) => ({ type: 'inArray', vals })),
+  lt: vi.fn((_col, val) => ({ type: 'lt', val })),
+  sql: vi.fn((strings, ...values) => ({ type: 'sql', strings, values })),
 }));
 
 import { db } from '../../lib/db/index';
 import { reconcileZombies } from '../zombie-reconciler';
 import { enqueueSession } from '../../lib/worker/queue';
+import { enqueueBrainstorm } from '../../lib/worker/brainstorm-queue';
 
 const mockDb = vi.mocked(db);
 const mockEnqueue = vi.mocked(enqueueSession);
+const mockEnqueueBrainstorm = vi.mocked(enqueueBrainstorm);
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
-// Helper to set up session query result
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Mock the select chain so the FIRST call returns `sessionRows` and all
+ * subsequent calls (brainstorm inFlight, brainstorm staleWaiting) return [].
+ */
 function mockSessionsResult(
-  rows: Array<{ id: string; pid: number | null; status: string; sessionRef?: string | null }>,
+  sessionRows: Array<{
+    id: string;
+    pid: number | null;
+    status: string;
+    sessionRef?: string | null;
+  }>,
 ) {
-  const mockWhere = vi.fn().mockResolvedValue(rows);
-  const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
-  mockDb.select.mockReturnValue({ from: mockFrom } as never);
+  let firstCall = true;
+  mockDb.select.mockImplementation(() => {
+    const rows = firstCall ? sessionRows : [];
+    firstCall = false;
+    const mockWhere = vi.fn().mockResolvedValue(rows);
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+    return { from: mockFrom } as never;
+  });
 }
 
-// Helper to set up update chain
+/**
+ * Mock select to return sessionRows on call 1, inFlightRows on call 2,
+ * staleWaitingRows on call 3.
+ */
+function mockAllSelects(
+  sessionRows: unknown[],
+  inFlightRows: unknown[],
+  staleWaitingRows: unknown[],
+) {
+  const results = [sessionRows, inFlightRows, staleWaitingRows];
+  let callIndex = 0;
+  mockDb.select.mockImplementation(() => {
+    const rows = results[callIndex++] ?? [];
+    const mockWhere = vi.fn().mockResolvedValue(rows);
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+    return { from: mockFrom } as never;
+  });
+}
+
 function mockUpdateChain() {
   const mockUpdateWhere = vi.fn().mockResolvedValue(undefined);
   const mockSetFn = vi.fn().mockReturnValue({ where: mockUpdateWhere });
@@ -74,7 +126,11 @@ function mockUpdateChain() {
   return { mockSetFn, mockUpdateWhere };
 }
 
-describe('reconcileZombies', () => {
+// ---------------------------------------------------------------------------
+// Session reconciliation
+// ---------------------------------------------------------------------------
+
+describe('reconcileZombies — sessions', () => {
   it('returns early when no orphaned sessions found', async () => {
     mockSessionsResult([]);
 
@@ -91,7 +147,6 @@ describe('reconcileZombies', () => {
 
     await reconcileZombies('worker-1');
 
-    // should NOT kill the PID for awaiting_input
     expect(killSpy).not.toHaveBeenCalled();
     expect(mockSetFn).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'idle', workerId: null }),
@@ -108,7 +163,6 @@ describe('reconcileZombies', () => {
 
     await reconcileZombies('worker-1');
 
-    // Should check liveness with signal 0 then kill the process group
     expect(killSpy).toHaveBeenCalledWith(12345, 0);
     expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM');
 
@@ -128,7 +182,6 @@ describe('reconcileZombies', () => {
 
   it('re-enqueues active session that has sessionRef', async () => {
     mockSessionsResult([{ id: 'sess-4', pid: null, status: 'active', sessionRef: 'some-ref' }]);
-    // Need 2 update calls: set idle + set initialPrompt
     const mockWhere = vi.fn().mockResolvedValue(undefined);
     const mockSetFn = vi.fn().mockReturnValue({ where: mockWhere });
     mockDb.update.mockReturnValue({ set: mockSetFn } as never);
@@ -160,7 +213,6 @@ describe('reconcileZombies', () => {
 
     await reconcileZombies('worker-1');
 
-    // pid=0 must never reach process.kill — would SIGTERM the whole process group
     expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
@@ -171,11 +223,10 @@ describe('reconcileZombies', () => {
     mockUpdateChain();
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
-      if (signal === 0) return true; // alive check succeeds
-      throw new Error('EPERM'); // SIGTERM fails
+      if (signal === 0) return true;
+      throw new Error('EPERM');
     });
 
-    // Should not throw
     await expect(reconcileZombies('worker-1')).resolves.toBeUndefined();
 
     killSpy.mockRestore();
@@ -187,5 +238,78 @@ describe('reconcileZombies', () => {
     await reconcileZombies('worker-1');
 
     expect(mockDb.select).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Brainstorm reconciliation
+// ---------------------------------------------------------------------------
+
+describe('reconcileZombies — brainstorm rooms', () => {
+  it('skips brainstorm rooms that already have a live pg-boss job', async () => {
+    // sessions: none, inFlight: one active room, staleWaiting: none
+    mockAllSelects([], [{ id: 'room-1', status: 'active' }], []);
+    // hasPgBossJob returns true → job is alive, skip
+    mockDb.execute.mockResolvedValue({ rows: [{ '?column?': 1 }] } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
+  });
+
+  it('re-enqueues active room with no live pg-boss job', async () => {
+    mockAllSelects([], [{ id: 'room-2', status: 'active' }], []);
+    // hasPgBossJob returns false → orphaned
+    mockDb.execute.mockResolvedValue({ rows: [] } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-2' });
+  });
+
+  it('re-enqueues synthesizing room with no live pg-boss job', async () => {
+    mockAllSelects([], [{ id: 'room-3', status: 'synthesizing' }], []);
+    mockDb.execute.mockResolvedValue({ rows: [] } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-3' });
+  });
+
+  it('re-enqueues stale waiting room', async () => {
+    mockAllSelects([], [], [{ id: 'room-4', status: 'waiting' }]);
+    mockDb.execute.mockResolvedValue({ rows: [] } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-4' });
+  });
+
+  it('skips paused rooms entirely', async () => {
+    // paused rooms are not queried (status filter excludes them)
+    mockAllSelects([], [], []);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
+    expect(mockDb.execute).not.toHaveBeenCalled();
+  });
+
+  it('handles multiple orphaned brainstorm rooms', async () => {
+    mockAllSelects(
+      [],
+      [
+        { id: 'room-a', status: 'active' },
+        { id: 'room-b', status: 'synthesizing' },
+      ],
+      [],
+    );
+    mockDb.execute.mockResolvedValue({ rows: [] } as never);
+
+    await reconcileZombies('worker-1');
+
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-a' });
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-b' });
   });
 });
