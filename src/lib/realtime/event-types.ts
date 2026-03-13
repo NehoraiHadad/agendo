@@ -222,6 +222,68 @@ export type AgendoEvent =
 export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';
 
 // ============================================================================
+// BrainstormEvent — emitted by the orchestrator, consumed by the frontend via SSE
+// ============================================================================
+
+/** Base fields present on every brainstorm event */
+interface BrainstormEventBase {
+  /** Monotonic sequence number within a room */
+  id: number;
+  /** UUID of the brainstorm room */
+  roomId: string;
+  /** Unix timestamp ms */
+  ts: number;
+}
+
+export type BrainstormEvent =
+  | (BrainstormEventBase & { type: 'room:state'; status: BrainstormRoomStatus })
+  | (BrainstormEventBase & { type: 'wave:start'; wave: number })
+  | (BrainstormEventBase & { type: 'wave:complete'; wave: number })
+  | (BrainstormEventBase & {
+      type: 'participant:status';
+      agentId: string;
+      agentName: string;
+      status: 'thinking' | 'done' | 'passed' | 'timeout';
+    })
+  | (BrainstormEventBase & {
+      type: 'message';
+      wave: number;
+      senderType: 'agent' | 'user';
+      agentId?: string;
+      agentName?: string;
+      content: string;
+      isPass: boolean;
+    })
+  | (BrainstormEventBase & {
+      type: 'message:delta';
+      agentId: string;
+      text: string;
+    })
+  | (BrainstormEventBase & { type: 'room:converged'; wave: number })
+  | (BrainstormEventBase & { type: 'room:max-waves'; wave: number })
+  | (BrainstormEventBase & { type: 'room:synthesis'; synthesis: string })
+  | (BrainstormEventBase & {
+      type: 'participant:joined';
+      agentId: string;
+      agentName: string;
+    })
+  | (BrainstormEventBase & {
+      type: 'participant:left';
+      agentId: string;
+      agentName: string;
+    })
+  | (BrainstormEventBase & { type: 'room:error'; message: string });
+
+export type BrainstormRoomStatus = 'waiting' | 'active' | 'paused' | 'synthesizing' | 'ended';
+
+/** Payload without base fields (for constructing events in the orchestrator) */
+export type BrainstormEventPayload = BrainstormEvent extends infer E
+  ? E extends BrainstormEvent
+    ? Omit<E, 'id' | 'roomId' | 'ts'>
+    : never
+  : never;
+
+// ============================================================================
 // AgendoControl — sent by the frontend to the worker via PG NOTIFY
 // ============================================================================
 

@@ -3,9 +3,14 @@ import { db, pool } from '../lib/db/index';
 import { workerHeartbeats } from '../lib/db/schema';
 import { config } from '../lib/config';
 import { type RunSessionJobData, registerSessionWorker, stopBoss } from '../lib/worker/queue';
+import {
+  type RunBrainstormJobData,
+  registerBrainstormWorker,
+} from '../lib/worker/brainstorm-queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
+import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { createLogger } from '@/lib/logger';
 
@@ -15,6 +20,9 @@ const WORKER_ID = config.WORKER_ID;
 
 /** Track in-flight session promises so graceful shutdown can wait for them. */
 const inFlightJobs = new Set<Promise<void>>();
+
+/** Track in-flight brainstorm orchestration promises for graceful shutdown. */
+const inFlightBrainstormJobs = new Set<Promise<void>>();
 
 async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
   const { sessionId, resumeRef, resumeSessionAt, resumePrompt } = job.data;
@@ -35,6 +43,28 @@ async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
     await promise;
   } finally {
     inFlightJobs.delete(promise);
+  }
+}
+
+async function handleBrainstormJob(job: Job<RunBrainstormJobData>): Promise<void> {
+  const { roomId } = job.data;
+  log.info({ roomId }, 'Brainstorm job claimed');
+
+  const promise = (async () => {
+    try {
+      await runBrainstorm(roomId);
+      log.info({ roomId }, 'Brainstorm job complete');
+    } catch (err) {
+      log.error({ err, roomId }, 'Brainstorm job failed');
+      throw err;
+    }
+  })();
+
+  inFlightBrainstormJobs.add(promise);
+  try {
+    await promise;
+  } finally {
+    inFlightBrainstormJobs.delete(promise);
   }
 }
 
@@ -70,6 +100,10 @@ async function main(): Promise<void> {
   await registerSessionWorker(handleSessionJob);
   log.info('Listening for session jobs');
 
+  // Register brainstorm orchestration job handler
+  await registerBrainstormWorker(handleBrainstormJob);
+  log.info('Listening for brainstorm jobs');
+
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);
   await updateHeartbeat(); // initial beat
@@ -98,6 +132,14 @@ async function main(): Promise<void> {
     }
     // Stop pg-boss from delivering new jobs (short timeout since we manage our own wait below)
     await stopBoss();
+    // Wait for in-flight brainstorm orchestrations to reach a safe stopping point
+    if (inFlightBrainstormJobs.size > 0) {
+      log.info({ count: inFlightBrainstormJobs.size }, 'Waiting for in-flight brainstorm jobs');
+      await Promise.race([
+        Promise.allSettled([...inFlightBrainstormJobs]),
+        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
+      ]);
+    }
     // Wait for in-flight slot-holding jobs (sessions not yet at awaiting_input)
     if (inFlightJobs.size > 0) {
       log.info({ count: inFlightJobs.size }, 'Waiting for in-flight jobs to release slots');

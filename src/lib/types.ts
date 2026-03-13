@@ -23,6 +23,12 @@ export type NewAgentWorkspace = InferInsertModel<typeof schema.agentWorkspaces>;
 export type McpServer = InferSelectModel<typeof schema.mcpServers>;
 export type NewMcpServer = InferInsertModel<typeof schema.mcpServers>;
 export type ProjectMcpServer = InferSelectModel<typeof schema.projectMcpServers>;
+export type BrainstormRoom = InferSelectModel<typeof schema.brainstormRooms>;
+export type NewBrainstormRoom = InferInsertModel<typeof schema.brainstormRooms>;
+export type BrainstormParticipant = InferSelectModel<typeof schema.brainstormParticipants>;
+export type NewBrainstormParticipant = InferInsertModel<typeof schema.brainstormParticipants>;
+export type BrainstormMessage = InferSelectModel<typeof schema.brainstormMessages>;
+export type NewBrainstormMessage = InferInsertModel<typeof schema.brainstormMessages>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];
@@ -30,6 +36,9 @@ export type AgentKind = (typeof schema.agentKindEnum.enumValues)[number];
 export type DiscoveryMethod = (typeof schema.discoveryMethodEnum.enumValues)[number];
 export type SessionStatus = (typeof schema.sessionStatusEnum.enumValues)[number];
 export type PlanStatus = (typeof schema.planStatusEnum.enumValues)[number];
+export type BrainstormStatus = (typeof schema.brainstormStatusEnum.enumValues)[number];
+export type BrainstormParticipantStatus =
+  (typeof schema.brainstormParticipantStatusEnum.enumValues)[number];
 
 // ---- Domain types ----
 

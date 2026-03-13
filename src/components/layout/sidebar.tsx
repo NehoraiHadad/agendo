@@ -15,6 +15,7 @@ import {
   PanelTop,
   Settings,
   Search,
+  Lightbulb,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
@@ -67,6 +68,7 @@ const navItems = [
     icon: MessageSquare,
     badgeKey: 'activeSessions' as const,
   },
+  { href: '/brainstorms', label: 'Brainstorms', icon: Lightbulb, badgeKey: null },
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
   { href: '/settings', label: 'Settings', icon: Settings, badgeKey: null },

@@ -40,6 +40,21 @@ export interface ParsedFlag {
 // Enums
 // ============================================================================
 
+export const brainstormStatusEnum = pgEnum('brainstorm_status', [
+  'waiting', // Created, not yet started
+  'active', // Orchestrator running, waves in progress
+  'paused', // All agents converged or user paused
+  'synthesizing', // Generating synthesis
+  'ended', // Completed
+]);
+
+export const brainstormParticipantStatusEnum = pgEnum('brainstorm_participant_status', [
+  'pending', // Session not yet created
+  'active', // Session running, agent participating
+  'passed', // Agent passed this wave
+  'left', // Removed mid-brainstorm
+]);
+
 export const taskStatusEnum = pgEnum('task_status', [
   'todo',
   'in_progress',
@@ -440,6 +455,96 @@ export const mcpServers = pgTable('mcp_servers', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ============================================================================
+// Brainstorm Rooms
+// ============================================================================
+
+// --- Brainstorm Rooms -------------------------------------------------------
+// A brainstorm room orchestrates a multi-model conversation. The orchestrator
+// worker job manages waves, PASS detection, and message routing between
+// participant agent sessions.
+
+export const brainstormRooms = pgTable(
+  'brainstorm_rooms',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    topic: text('topic').notNull(),
+    status: brainstormStatusEnum('status').notNull().default('waiting'),
+    currentWave: integer('current_wave').notNull().default(0),
+    maxWaves: integer('max_waves').notNull().default(10),
+    config: jsonb('config').notNull().$type<BrainstormConfig>().default({}),
+    synthesis: text('synthesis'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_brainstorm_rooms_project').on(table.projectId, table.status, table.createdAt),
+  ],
+);
+
+// --- Brainstorm Participants ------------------------------------------------
+// Each participant maps to one agent session in the room.
+
+export const brainstormParticipants = pgTable(
+  'brainstorm_participants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: uuid('room_id')
+      .notNull()
+      .references(() => brainstormRooms.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+    model: text('model'),
+    status: brainstormParticipantStatusEnum('status').notNull().default('pending'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_brainstorm_participants_room').on(table.roomId, table.status),
+    uniqueIndex('idx_brainstorm_participants_room_agent').on(table.roomId, table.agentId),
+  ],
+);
+
+// --- Brainstorm Messages ----------------------------------------------------
+// Every message in the room (agent responses, user steering, PASSes).
+
+export const brainstormMessages = pgTable(
+  'brainstorm_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: uuid('room_id')
+      .notNull()
+      .references(() => brainstormRooms.id, { onDelete: 'cascade' }),
+    wave: integer('wave').notNull(),
+    senderType: text('sender_type', { enum: ['agent', 'user'] }).notNull(),
+    senderAgentId: uuid('sender_agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    isPass: boolean('is_pass').notNull().default(false),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_brainstorm_messages_room_wave').on(table.roomId, table.wave, table.createdAt),
+  ],
+);
+
+/** brainstorm_rooms.config */
+export interface BrainstormConfig {
+  /** Per-agent wave timeout in seconds (default 120) */
+  waveTimeoutSec?: number;
+  /** Agent ID to use for synthesis (default: first participant) */
+  synthesisAgentId?: string;
+}
+
+// ============================================================================
+// MCP Server Registry
+// ============================================================================
 
 // --- Project MCP Servers ----------------------------------------------------
 // Per-project MCP server enablement and env overrides.

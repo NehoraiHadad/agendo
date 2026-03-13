@@ -14,8 +14,11 @@ function getListenerPool(): Pool {
 }
 
 /** Sanitise UUID for use as a PG channel name (remove hyphens). */
-export function channelName(prefix: 'agendo_events' | 'agendo_control', sessionId: string): string {
-  return `${prefix}_${sessionId.replace(/-/g, '')}`;
+export function channelName(
+  prefix: 'agendo_events' | 'agendo_control' | 'brainstorm_events' | 'brainstorm_control',
+  id: string,
+): string {
+  return `${prefix}_${id.replace(/-/g, '')}`;
 }
 
 /**
