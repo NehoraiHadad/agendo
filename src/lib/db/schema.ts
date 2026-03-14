@@ -480,7 +480,6 @@ export const brainstormRooms = pgTable(
     maxWaves: integer('max_waves').notNull().default(10),
     config: jsonb('config').notNull().$type<BrainstormConfig>().default({}),
     synthesis: text('synthesis'),
-    diagnosis: text('diagnosis'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

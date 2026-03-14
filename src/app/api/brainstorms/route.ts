@@ -12,7 +12,6 @@ const createBrainstormSchema = z.object({
   title: z.string().min(1),
   topic: z.string().min(1),
   maxWaves: z.number().int().min(1).max(100).optional(),
-  diagnosis: z.string().optional(),
   participants: z
     .array(
       z.object({
@@ -45,7 +44,6 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     title: body.title,
     topic: body.topic,
     maxWaves: body.maxWaves,
-    diagnosis: body.diagnosis,
     participants: body.participants,
   });
 

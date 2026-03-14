@@ -29,7 +29,6 @@ export interface CreateBrainstormInput {
   topic: string;
   maxWaves?: number;
   config?: Record<string, unknown>;
-  diagnosis?: string;
   participants: Array<{
     agentId: string;
     model?: string;
@@ -61,7 +60,6 @@ export async function createBrainstorm(input: CreateBrainstormInput): Promise<Br
         topic: input.topic,
         maxWaves: input.maxWaves ?? 10,
         config: input.config ?? {},
-        diagnosis: input.diagnosis,
       })
       .returning();
 
@@ -144,7 +142,7 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
 
 /**
  * Lightweight projection for brainstorm list views.
- * Omits large text columns (`synthesis`, `diagnosis`) and `config` jsonb
+ * Omits large text columns (`synthesis`) and `config` jsonb
  * that are only needed in the detail view.
  */
 export interface BrainstormRoomSummary {
