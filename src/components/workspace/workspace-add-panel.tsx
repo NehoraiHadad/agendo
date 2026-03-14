@@ -5,7 +5,6 @@ import { Plus, Loader2, MessageSquare } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useWorkspaceStore } from '@/lib/store/workspace-store';
-import type { Session } from '@/lib/types';
 
 interface SessionOption {
   id: string;
@@ -17,12 +16,8 @@ async function fetchSessionsByStatus(status: string): Promise<SessionOption[]> {
   try {
     const res = await fetch(`/api/sessions?status=${encodeURIComponent(status)}`);
     if (!res.ok) return [];
-    const body = (await res.json()) as { data?: Session[] };
-    return (body.data ?? []).map((s) => ({
-      id: s.id,
-      title: s.title,
-      status: s.status,
-    }));
+    const body = (await res.json()) as { data?: SessionOption[] };
+    return body.data ?? [];
   } catch {
     return [];
   }

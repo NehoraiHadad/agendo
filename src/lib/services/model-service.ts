@@ -1,7 +1,9 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
+// NOTE: @anthropic-ai/claude-agent-sdk is imported dynamically in readClaudeModelsViaSdk()
+// to avoid pulling the ESM-only package into the Next.js Turbopack bundle, which causes
+// repeated "can't be external" warnings and memory leaks in dev mode.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -255,6 +257,9 @@ function resolveCliPath(): string {
  * supportedModels(), then closes the query immediately.
  */
 async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
+  // Dynamic import to keep the ESM-only SDK out of the Turbopack bundle
+  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
   // Create a never-resolving async iterable so the query stays open
   // long enough for us to call supportedModels().
   const prompt: AsyncIterable<never> = {
@@ -265,7 +270,7 @@ async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
     },
   };
 
-  const q = sdkQuery({
+  const q = query({
     prompt,
     options: {
       pathToClaudeCodeExecutable: resolveCliPath(),

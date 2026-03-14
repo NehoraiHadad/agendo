@@ -1,15 +1,4 @@
-import {
-  eq,
-  and,
-  desc,
-  count,
-  getTableColumns,
-  or,
-  ilike,
-  inArray,
-  isNull,
-  isNotNull,
-} from 'drizzle-orm';
+import { eq, and, desc, count, or, ilike, inArray, isNull, isNotNull, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -291,17 +280,32 @@ export interface SessionWithAgent extends Session {
   taskTitle: string | null;
 }
 
+/** Lightweight projection for listing sessions — avoids fetching multi-MB initial_prompt blobs. */
+export interface SessionListItem {
+  id: string;
+  status: string;
+  title: string | null;
+  initialPrompt: string | null;
+  agentName: string;
+  taskTitle: string | null;
+  createdAt: Date;
+}
+
 export async function listSessionsByProject(
   projectId: string,
   filter: 'free-chats' | 'task-sessions',
   limit = 20,
-): Promise<SessionWithAgent[]> {
+): Promise<SessionListItem[]> {
   const taskFilter = filter === 'free-chats' ? isNull(sessions.taskId) : isNotNull(sessions.taskId);
   const rows = await db
     .select({
-      ...getTableColumns(sessions),
+      id: sessions.id,
+      status: sessions.status,
+      title: sessions.title,
+      initialPrompt: sql<string | null>`left(${sessions.initialPrompt}, 80)`,
       agentName: agents.name,
       taskTitle: tasks.title,
+      createdAt: sessions.createdAt,
     })
     .from(sessions)
     .leftJoin(tasks, eq(sessions.taskId, tasks.id))
@@ -309,14 +313,14 @@ export async function listSessionsByProject(
     .where(and(eq(sessions.projectId, projectId), taskFilter))
     .orderBy(desc(sessions.createdAt))
     .limit(limit);
-  return rows as SessionWithAgent[];
+  return rows;
 }
 
 /** @deprecated Use listSessionsByProject(projectId, 'free-chats', limit) */
 export async function listFreeChatsByProject(
   projectId: string,
   limit = 20,
-): Promise<SessionWithAgent[]> {
+): Promise<SessionListItem[]> {
   return listSessionsByProject(projectId, 'free-chats', limit);
 }
 
@@ -324,7 +328,7 @@ export async function listFreeChatsByProject(
 export async function listTaskSessionsByProject(
   projectId: string,
   limit = 20,
-): Promise<SessionWithAgent[]> {
+): Promise<SessionListItem[]> {
   return listSessionsByProject(projectId, 'task-sessions', limit);
 }
 
@@ -340,7 +344,8 @@ export async function searchSessions(q: string, limit = 5): Promise<SearchSessio
     .select({
       id: sessions.id,
       title: sessions.title,
-      initialPrompt: sessions.initialPrompt,
+      // Truncate to 80 chars — used as display fallback only, not full content needed
+      initialPromptPreview: sql<string | null>`left(${sessions.initialPrompt}, 80)`,
       status: sessions.status,
       agentName: agents.name,
     })
@@ -352,7 +357,7 @@ export async function searchSessions(q: string, limit = 5): Promise<SearchSessio
 
   return rows.map((row) => ({
     id: row.id,
-    title: row.title ?? row.initialPrompt?.slice(0, 80) ?? 'Untitled session',
+    title: row.title ?? row.initialPromptPreview ?? 'Untitled session',
     status: row.status,
     agentName: row.agentName,
   }));
@@ -367,8 +372,24 @@ export interface ListSessionsInput {
   pageSize?: number;
 }
 
+/** Lightweight projection for the sessions list API — avoids fetching large text columns. */
+export interface SessionSummary {
+  id: string;
+  status: string;
+  kind: string;
+  title: string | null;
+  agentId: string;
+  agentName: string | null;
+  taskId: string | null;
+  taskTitle: string | null;
+  projectId: string | null;
+  permissionMode: string | null;
+  model: string | null;
+  createdAt: Date;
+}
+
 export async function listSessions(filters?: ListSessionsInput): Promise<{
-  data: Session[];
+  data: SessionSummary[];
   total: number;
   page: number;
   pageSize: number;
@@ -391,9 +412,18 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
   const [data, [{ total }]] = await Promise.all([
     db
       .select({
-        ...getTableColumns(sessions),
+        id: sessions.id,
+        status: sessions.status,
+        kind: sessions.kind,
+        title: sessions.title,
+        agentId: sessions.agentId,
         agentName: agents.name,
+        taskId: sessions.taskId,
         taskTitle: tasks.title,
+        projectId: sessions.projectId,
+        permissionMode: sessions.permissionMode,
+        model: sessions.model,
+        createdAt: sessions.createdAt,
       })
       .from(sessions)
       .leftJoin(agents, eq(sessions.agentId, agents.id))

@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['pg', '@anthropic-ai/claude-agent-sdk'],
+  serverExternalPackages: ['pg'],
   typescript: {
     // Type checking runs separately via `pnpm typecheck`.
     // Skipping it here avoids OOM on the 4GB build server.

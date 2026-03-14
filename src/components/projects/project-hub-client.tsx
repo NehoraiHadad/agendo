@@ -25,7 +25,7 @@ import { SnapshotsTab } from '@/components/snapshots/snapshots-tab';
 import { ProjectMcpConfig } from '@/components/mcp/project-mcp-config';
 import { Button } from '@/components/ui/button';
 import type { Project, Task, Agent, McpServer, ProjectMcpServer, Plan } from '@/lib/types';
-import type { SessionWithAgent } from '@/lib/services/session-service';
+import type { SessionListItem } from '@/lib/services/session-service';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
@@ -57,8 +57,8 @@ interface ProjectMcpOverride extends ProjectMcpServer {
 
 interface ProjectHubClientProps {
   project: Project;
-  freeChats: SessionWithAgent[];
-  taskSessions: SessionWithAgent[];
+  freeChats: SessionListItem[];
+  taskSessions: SessionListItem[];
   openTasks: Task[];
   agents: Agent[];
   allMcpServers: McpServer[];
@@ -225,7 +225,7 @@ function ConversationsTab({
   conversations,
   onNewConversation,
 }: {
-  conversations: SessionWithAgent[];
+  conversations: SessionListItem[];
   onNewConversation: () => void;
 }) {
   if (conversations.length === 0) {
@@ -286,7 +286,7 @@ function ConversationsTab({
   );
 }
 
-function SessionsTab({ sessions }: { sessions: SessionWithAgent[] }) {
+function SessionsTab({ sessions }: { sessions: SessionListItem[] }) {
   if (sessions.length === 0) {
     return (
       <div className="text-center py-12">
