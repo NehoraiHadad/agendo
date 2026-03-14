@@ -6,6 +6,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    env: {
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/agendo_test',
+      JWT_SECRET: 'test-secret-at-least-16-chars',
+      NODE_ENV: 'test',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

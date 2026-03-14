@@ -62,9 +62,9 @@ describe('config', () => {
     expect(config.PORT).toBe(4100);
     expect(config.NODE_ENV).toBe('test');
     expect(config.TERMINAL_WS_PORT).toBe(4101);
-    expect(config.LOG_DIR).toBe('/data/agendo/logs');
+    expect(config.LOG_DIR).toBe('./logs');
     expect(config.WORKER_POLL_INTERVAL_MS).toBe(2000);
-    expect(config.WORKER_MAX_CONCURRENT_JOBS).toBe(5);
+    expect(config.WORKER_MAX_CONCURRENT_JOBS).toBe(3);
     expect(config.STALE_JOB_THRESHOLD_MS).toBe(120000);
     expect(config.HEARTBEAT_INTERVAL_MS).toBe(30000);
   });
