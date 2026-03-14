@@ -1,7 +1,9 @@
+import { readFileSync, existsSync } from 'node:fs';
 import { NextRequest } from 'next/server';
 import { subscribe, channelName } from '@/lib/realtime/pg-notify';
-import { getBrainstorm, getMessages } from '@/lib/services/brainstorm-service';
+import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { assertUUID } from '@/lib/api-handler';
+import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import type { BrainstormEvent, BrainstormRoomStatus } from '@/lib/realtime/event-types';
 
 /**
@@ -34,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return new Response('BrainstormRoom not found', { status: 404 });
   }
 
-  // Parse lastEventId from query params — used to skip already-seen messages on reconnect
+  // Parse lastEventId from query params — used to skip already-seen events on reconnect
   const url = new URL(req.url);
   const lastEventIdParam = url.searchParams.get('lastEventId');
   const lastEventId = lastEventIdParam ? parseInt(lastEventIdParam, 10) : 0;
@@ -83,39 +85,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }
       }
 
-      // Phase 2: replay stored messages, skipping any the client already has.
+      // Phase 2: replay historical events from the log file after lastEventId.
       // PG NOTIFY has no replay buffer — events published while the client was
-      // disconnected are permanently lost. We replay from DB so reconnecting
-      // clients get full history. Messages with eventId <= lastEventId are
-      // skipped because the client already received them before reconnecting.
-      try {
-        // Build agentId → agentName lookup from participants
-        const agentNameMap = new Map<string, string>();
-        for (const p of room.participants) {
-          agentNameMap.set(p.agentId, p.agentName);
+      // disconnected are permanently lost. The log file acts as the durable
+      // replay store for reconnecting clients.
+      if (room.logFilePath && existsSync(room.logFilePath)) {
+        try {
+          const logContent = readFileSync(room.logFilePath, 'utf-8');
+          const catchupEvents = readBrainstormEventsFromLog(logContent, lastEventId);
+          for (const ev of catchupEvents) {
+            send(ev);
+          }
+        } catch {
+          // Log file unreadable — skip catchup, continue with live stream
         }
-
-        const historicalMessages = await getMessages(id);
-        for (let i = 0; i < historicalMessages.length; i++) {
-          const eventId = i + 1;
-          if (eventId <= lastEventId) continue; // Client already has this message
-          const msg = historicalMessages[i];
-          const replayEvent: BrainstormEvent = {
-            id: eventId,
-            roomId: id,
-            ts: msg.createdAt.getTime(),
-            type: 'message',
-            wave: msg.wave,
-            senderType: msg.senderType as 'agent' | 'user',
-            agentId: msg.senderAgentId ?? undefined,
-            agentName: msg.senderAgentId ? agentNameMap.get(msg.senderAgentId) : undefined,
-            content: msg.content,
-            isPass: msg.isPass,
-          };
-          send(replayEvent);
-        }
-      } catch {
-        // Historical replay failed — continue with live stream only
       }
 
       // Phase 3: subscribe to live events via PG NOTIFY

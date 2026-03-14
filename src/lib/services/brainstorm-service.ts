@@ -1,19 +1,11 @@
 import { eq, and, desc, asc, getTableColumns, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import {
-  brainstormRooms,
-  brainstormParticipants,
-  brainstormMessages,
-  agents,
-  projects,
-  tasks,
-} from '@/lib/db/schema';
+import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { NotFoundError, ConflictError } from '@/lib/errors';
 import type {
   BrainstormRoom,
   BrainstormParticipant,
-  BrainstormMessage,
   BrainstormStatus,
   BrainstormParticipantStatus,
 } from '@/lib/types';
@@ -37,7 +29,6 @@ export interface CreateBrainstormInput {
 
 export interface BrainstormWithDetails extends BrainstormRoom {
   participants: Array<BrainstormParticipant & { agentName: string; agentSlug: string }>;
-  messages: BrainstormMessage[];
   project: { id: string; name: string } | null;
   task: { id: string; title: string } | null;
 }
@@ -98,13 +89,6 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
     .where(eq(brainstormParticipants.roomId, id))
     .orderBy(asc(brainstormParticipants.joinedAt));
 
-  // Fetch messages ordered chronologically
-  const messageRows = await db
-    .select()
-    .from(brainstormMessages)
-    .where(eq(brainstormMessages.roomId, id))
-    .orderBy(asc(brainstormMessages.createdAt));
-
   // Fetch project
   let project: { id: string; name: string } | null = null;
   if (room.projectId) {
@@ -130,7 +114,6 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
   return {
     ...room,
     participants: participantRows,
-    messages: messageRows,
     project,
     task,
   };
@@ -292,49 +275,15 @@ export async function updateParticipantStatus(
     .where(eq(brainstormParticipants.id, participantId));
 }
 
-// ============================================================================
-// Messages
-// ============================================================================
-
-export interface AddMessageInput {
-  roomId: string;
-  wave: number;
-  senderType: 'agent' | 'user';
-  senderAgentId?: string;
-  content: string;
-  isPass?: boolean;
-}
-
 /**
- * Persist a message to the room. Returns the saved record.
+ * Persist the log file path for a brainstorm room.
+ * Called by the orchestrator after it resolves and opens the log file.
  */
-export async function addMessage(input: AddMessageInput): Promise<BrainstormMessage> {
-  const [message] = await db
-    .insert(brainstormMessages)
-    .values({
-      roomId: input.roomId,
-      wave: input.wave,
-      senderType: input.senderType,
-      senderAgentId: input.senderAgentId ?? null,
-      content: input.content,
-      isPass: input.isPass ?? false,
-    })
-    .returning();
-  return message;
-}
-
-/**
- * Get messages for a room, optionally filtered to a specific wave, in chronological order.
- */
-export async function getMessages(roomId: string, wave?: number): Promise<BrainstormMessage[]> {
-  const conditions = [eq(brainstormMessages.roomId, roomId)];
-  if (wave !== undefined) conditions.push(eq(brainstormMessages.wave, wave));
-
-  return db
-    .select()
-    .from(brainstormMessages)
-    .where(and(...conditions))
-    .orderBy(asc(brainstormMessages.createdAt));
+export async function updateBrainstormLogPath(id: string, logFilePath: string): Promise<void> {
+  await db
+    .update(brainstormRooms)
+    .set({ logFilePath, updatedAt: new Date() })
+    .where(eq(brainstormRooms.id, id));
 }
 
 /**

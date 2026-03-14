@@ -95,20 +95,9 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       });
     }
 
-    const messages: BrainstormMessageItem[] = room.messages.map((m) => {
-      const participant = m.senderAgentId ? participants.get(m.senderAgentId) : undefined;
-      return {
-        id: m.id,
-        wave: m.wave,
-        senderType: m.senderType,
-        agentId: m.senderAgentId ?? undefined,
-        agentName: participant?.agentName,
-        content: m.content,
-        isPass: m.isPass,
-        ts: new Date(m.createdAt).getTime(),
-      };
-    });
-
+    // Messages are not pre-populated here. The SSE endpoint replays them
+    // from the log file on connect, so handleEvent() populates the message
+    // list via 'message' events after the SSE stream is established.
     set({
       roomId: room.id,
       title: room.title,
@@ -120,7 +109,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       project: room.project,
       task: room.task,
       participants,
-      messages,
+      messages: [],
       streamingText: new Map(),
       converged: false,
       maxWavesReached: false,

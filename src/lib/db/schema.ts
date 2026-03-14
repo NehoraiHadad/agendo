@@ -480,6 +480,7 @@ export const brainstormRooms = pgTable(
     maxWaves: integer('max_waves').notNull().default(10),
     config: jsonb('config').notNull().$type<BrainstormConfig>().default({}),
     synthesis: text('synthesis'),
+    logFilePath: text('log_file_path'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -509,28 +510,6 @@ export const brainstormParticipants = pgTable(
   (table) => [
     index('idx_brainstorm_participants_room').on(table.roomId, table.status),
     uniqueIndex('idx_brainstorm_participants_room_agent').on(table.roomId, table.agentId),
-  ],
-);
-
-// --- Brainstorm Messages ----------------------------------------------------
-// Every message in the room (agent responses, user steering, PASSes).
-
-export const brainstormMessages = pgTable(
-  'brainstorm_messages',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    roomId: uuid('room_id')
-      .notNull()
-      .references(() => brainstormRooms.id, { onDelete: 'cascade' }),
-    wave: integer('wave').notNull(),
-    senderType: text('sender_type', { enum: ['agent', 'user'] }).notNull(),
-    senderAgentId: uuid('sender_agent_id').references(() => agents.id, { onDelete: 'set null' }),
-    isPass: boolean('is_pass').notNull().default(false),
-    content: text('content').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index('idx_brainstorm_messages_room_wave').on(table.roomId, table.wave, table.createdAt),
   ],
 );
 

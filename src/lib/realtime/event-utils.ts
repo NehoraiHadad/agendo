@@ -1,4 +1,4 @@
-import type { AgendoEvent } from './event-types';
+import type { AgendoEvent, BrainstormEvent } from './event-types';
 
 // ============================================================================
 // Serialization helpers
@@ -67,5 +67,50 @@ export function readEventsFromLog(logContent: string, afterSeq: number): AgendoE
       events.push(event);
     }
   }
+  return events;
+}
+
+/**
+ * Read BrainstormEvents from a brainstorm log file with seq > afterSeq.
+ * Uses the same log format as session events: [system] [{id}|{type}] {json}
+ * but parses as BrainstormEvent (which has roomId instead of sessionId).
+ *
+ * Handles event ID resets that occur when the orchestrator restarts (e.g.
+ * after a room extension). The same reset detection logic as readEventsFromLog
+ * applies: a significant ID drop triggers a filter-threshold reset.
+ */
+export function readBrainstormEventsFromLog(
+  logContent: string,
+  afterSeq: number,
+): BrainstormEvent[] {
+  const events: BrainstormEvent[] = [];
+  let maxSeenId = 0;
+  let filterThreshold = afterSeq;
+
+  for (const rawLine of logContent.split('\n')) {
+    if (!rawLine.trim()) continue;
+    const line = rawLine.replace(/^\[(stdout|stderr|system|user)\] /, '');
+    const match = line.match(/^\[(\d+)\|([^\]]+)\] (.+)$/);
+    if (!match) continue;
+
+    let event: BrainstormEvent;
+    try {
+      event = JSON.parse(match[3]) as BrainstormEvent;
+    } catch {
+      continue;
+    }
+
+    if (event.id < maxSeenId - 100 && filterThreshold > 0) {
+      filterThreshold = 0;
+    }
+    if (event.id > maxSeenId) {
+      maxSeenId = event.id;
+    }
+
+    if (event.id > filterThreshold) {
+      events.push(event);
+    }
+  }
+
   return events;
 }

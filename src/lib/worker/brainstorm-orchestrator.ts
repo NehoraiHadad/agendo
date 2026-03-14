@@ -6,6 +6,7 @@
  * steering, and emits BrainstormEvents over PG NOTIFY for the frontend SSE stream.
  */
 
+import { readFileSync, existsSync } from 'node:fs';
 import { createLogger } from '@/lib/logger';
 import { subscribe, publish, channelName } from '@/lib/realtime/pg-notify';
 import { getSessionProc } from '@/lib/worker/session-runner';
@@ -15,12 +16,13 @@ import {
   getBrainstorm,
   updateBrainstormStatus,
   updateBrainstormWave,
+  updateBrainstormLogPath,
   updateParticipantSession,
   updateParticipantStatus,
-  addMessage,
-  getMessages,
   setBrainstormSynthesis,
 } from '@/lib/services/brainstorm-service';
+import { FileLogWriter, resolveBrainstormLogPath } from '@/lib/worker/log-writer';
+import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import type {
   BrainstormEvent,
   BrainstormEventPayload,
@@ -94,6 +96,10 @@ export class BrainstormOrchestrator {
   private currentWave = 0;
   private readonly maxWaves: number;
   private waveTimeoutSec: number;
+  /** Log file writer — opened in run(), closed in finally */
+  private logWriter: FileLogWriter | null = null;
+  /** Resolved log file path — used by extension resume to read past events */
+  private logFilePath: string | null = null;
   /**
    * How long to wait for all participant sessions to reach awaiting_input
    * before the orchestrator gives up. Defaults to 5 minutes (independent
@@ -128,8 +134,28 @@ export class BrainstormOrchestrator {
   /** Main entry point — called by the worker job handler */
   async run(): Promise<void> {
     log.info({ roomId: this.roomId }, 'Brainstorm orchestrator starting');
+
+    // Resolve and open the log file for this room. All events emitted via
+    // emitEvent() are written here for SSE reconnect replay.
+    this.logFilePath = resolveBrainstormLogPath(this.roomId);
+    this.logWriter = new FileLogWriter(this.logFilePath);
+    this.logWriter.open();
+
     try {
       const room = await getBrainstorm(this.roomId);
+
+      // Persist the log file path so the SSE endpoint can locate it on reconnect.
+      // Use the room's existing logFilePath if already set (extension resume).
+      if (!room.logFilePath) {
+        await updateBrainstormLogPath(this.roomId, this.logFilePath);
+      } else {
+        // Existing path — reopen the log writer against the persisted path so
+        // all events from all runs land in the same file.
+        this.logWriter.close().catch(() => {});
+        this.logFilePath = room.logFilePath;
+        this.logWriter = new FileLogWriter(this.logFilePath);
+        this.logWriter.open();
+      }
 
       // Use config-level wave timeout if specified (overrides constructor arg)
       const roomConfig = room.config as {
@@ -197,6 +223,11 @@ export class BrainstormOrchestrator {
       // will re-enqueue them fresh.
       await this.terminateParticipantSessions().catch(() => {});
       this.cleanup();
+      // Close the log writer after all events have been flushed.
+      if (this.logWriter) {
+        await this.logWriter.close().catch(() => {});
+        this.logWriter = null;
+      }
       log.info({ roomId: this.roomId }, 'Brainstorm orchestrator finished');
     }
   }
@@ -500,33 +531,51 @@ export class BrainstormOrchestrator {
   private async runWaveLoop(room: BrainstormWithDetails): Promise<void> {
     // For fresh rooms: start from wave 0 with the topic.
     // For extended rooms (currentWave > 0): resume from the next wave,
-    // seeding it with the last wave's collected responses from the DB.
+    // seeding it with the last wave's collected responses from the log file.
     let wave = room.currentWave > 0 ? room.currentWave + 1 : 0;
     let waveContent: string;
 
     if (wave === 0) {
       waveContent = room.topic;
     } else {
-      // Resuming after convergence/pause. Check for a pending user steer
-      // message that was persisted by the steer API route (when the
-      // orchestrator wasn't running to receive the PG NOTIFY signal).
-      const pendingSteerMessages = await getMessages(room.id, wave);
-      const userSteer = pendingSteerMessages.find((m) => m.senderType === 'user');
+      // Resuming after convergence/pause. Read historical events from the log
+      // file to find a pending user steer and the last wave's agent messages.
+      const allEvents =
+        this.logFilePath && existsSync(this.logFilePath)
+          ? readBrainstormEventsFromLog(readFileSync(this.logFilePath, 'utf-8'), 0)
+          : [];
 
-      // Fetch the last completed wave's agent messages to use as seed content
-      const lastMessages = await getMessages(room.id, room.currentWave);
+      // Check for a pending user steer written by the steer API route while
+      // the orchestrator wasn't running (paused room scenario).
+      const userSteerEvent = allEvents.find(
+        (e) => e.type === 'message' && e.wave === wave && e.senderType === 'user',
+      );
+      const userSteer =
+        userSteerEvent?.type === 'message' && userSteerEvent.senderType === 'user'
+          ? userSteerEvent
+          : null;
+
+      // Fetch the last completed wave's agent messages to seed the next wave.
       const agentMap = new Map(this.participants.map((p) => [p.agentId, p.agentName]));
-      const agentMessages = lastMessages
-        .filter((m) => m.senderType === 'agent' && !m.isPass)
-        .map((m) => ({
-          agentName: agentMap.get(m.senderAgentId ?? '') ?? 'Agent',
-          content: m.content,
+      const agentMessages = allEvents
+        .filter(
+          (e) =>
+            e.type === 'message' &&
+            e.wave === room.currentWave &&
+            e.senderType === 'agent' &&
+            !e.isPass,
+        )
+        .map((e) => ({
+          agentName: e.type === 'message' ? (agentMap.get(e.agentId ?? '') ?? 'Agent') : 'Agent',
+          content: e.type === 'message' ? e.content : '',
           isPass: false,
         }));
 
       if (userSteer) {
-        // User sent a steer while paused — resume with their message
-        log.info({ roomId: this.roomId, wave }, 'Found pending user steer from DB, resuming');
+        // User sent a steer while paused — resume with their message.
+        // The steer event was already written to the log by the steer route;
+        // re-emit it here so live subscribers see the resume without duplication.
+        log.info({ roomId: this.roomId, wave }, 'Found pending user steer from log, resuming');
         await this.resetPassedParticipants();
         await this.emitEvent({
           type: 'message',
@@ -591,12 +640,7 @@ export class BrainstormOrchestrator {
         if (control.type === 'steer' && control.text) {
           // Resume: reset all passes, inject user message as next wave content
           await this.resetPassedParticipants();
-          await addMessage({
-            roomId: this.roomId,
-            wave: wave + 1,
-            senderType: 'user',
-            content: control.text,
-          });
+          // Emit the user steer as a message event — emitEvent() writes it to the log file.
           await this.emitEvent({
             type: 'message',
             wave: wave + 1,
@@ -631,12 +675,7 @@ export class BrainstormOrchestrator {
 
         if (control.type === 'steer' && control.text) {
           await this.resetPassedParticipants();
-          await addMessage({
-            roomId: this.roomId,
-            wave: wave + 1,
-            senderType: 'user',
-            content: control.text,
-          });
+          // Emit the user steer as a message event — emitEvent() writes it to the log file.
           await this.emitEvent({
             type: 'message',
             wave: wave + 1,
@@ -659,12 +698,6 @@ export class BrainstormOrchestrator {
       if (this.pendingSteer.length > 0) {
         const steerText = this.pendingSteer.join('\n\n');
         this.pendingSteer = [];
-        await addMessage({
-          roomId: this.roomId,
-          wave: wave + 1,
-          senderType: 'user',
-          content: steerText,
-        });
         await this.emitEvent({
           type: 'message',
           wave: wave + 1,
@@ -916,17 +949,6 @@ export class BrainstormOrchestrator {
           isPass,
         });
 
-        // Persist immediately so DB is in sync with what was already streamed
-        // to the frontend. Without this, a page refresh mid-wave loses messages.
-        await addMessage({
-          roomId: this.roomId,
-          wave: this.currentWave,
-          senderType: 'agent',
-          senderAgentId: participant.agentId,
-          content: rawResponse,
-          isPass,
-        });
-
         // Emit participant status update
         await this.emitEvent({
           type: 'participant:status',
@@ -1021,18 +1043,25 @@ export class BrainstormOrchestrator {
     await this.emitEvent({ type: 'room:state', status: 'synthesizing' });
 
     try {
-      const allMessages = await getMessages(this.roomId);
+      // Build transcript from log file events.
+      const allEvents =
+        this.logFilePath && existsSync(this.logFilePath)
+          ? readBrainstormEventsFromLog(readFileSync(this.logFilePath, 'utf-8'), 0)
+          : [];
 
-      // Build transcript
-      const transcript = allMessages
-        .map((msg) => {
+      const messageEvents = allEvents.filter((e) => e.type === 'message');
+
+      const transcript = messageEvents
+        .map((e) => {
+          if (e.type !== 'message') return '';
           const sender =
-            msg.senderType === 'user'
+            e.senderType === 'user'
               ? '[User]'
-              : `[${this.participants.find((p) => p.agentId === msg.senderAgentId)?.agentName ?? 'Agent'}]`;
-          const passNote = msg.isPass ? ' [PASSED]' : '';
-          return `Wave ${msg.wave} — ${sender}${passNote}:\n${msg.content}`;
+              : `[${this.participants.find((p) => p.agentId === e.agentId)?.agentName ?? 'Agent'}]`;
+          const passNote = e.isPass ? ' [PASSED]' : '';
+          return `Wave ${e.wave} — ${sender}${passNote}:\n${e.content}`;
         })
+        .filter(Boolean)
         .join('\n\n---\n\n');
 
       const synthesisPrompt = `You are synthesizing a brainstorm discussion.
@@ -1279,7 +1308,7 @@ RULES:
 TOPIC: ${room.topic}`;
   }
 
-  /** Emit a BrainstormEvent to the room's PG NOTIFY channel */
+  /** Emit a BrainstormEvent to the room's PG NOTIFY channel and write to the log file. */
   private async emitEvent(payload: BrainstormEventPayload): Promise<void> {
     this.eventSeq++;
     const event = {
@@ -1288,6 +1317,14 @@ TOPIC: ${room.topic}`;
       ts: Date.now(),
       ...payload,
     } as BrainstormEvent;
+
+    // Persist to log file for SSE replay on reconnect.
+    // Double-cast through unknown: BrainstormEvent is a discriminated union without an index
+    // signature, but at runtime the shape satisfies what writeEvent expects.
+    this.logWriter?.writeEvent(
+      event as unknown as { id: number; type: string; [key: string]: unknown },
+    );
+
     await publish(channelName('brainstorm_events', this.roomId), event);
   }
 

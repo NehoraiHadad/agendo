@@ -71,3 +71,10 @@ export function resolveSessionLogPath(sessionId: string): string {
   const mm = (now.getMonth() + 1).toString().padStart(2, '0');
   return join(config.LOG_DIR, yyyy, mm, `session-${sessionId}.log`);
 }
+
+export function resolveBrainstormLogPath(roomId: string): string {
+  const now = new Date();
+  const yyyy = now.getFullYear().toString();
+  const mm = (now.getMonth() + 1).toString().padStart(2, '0');
+  return join(config.LOG_DIR, yyyy, mm, `brainstorm-${roomId}.log`);
+}

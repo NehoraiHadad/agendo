@@ -7,7 +7,6 @@ import { NextRequest } from 'next/server';
 
 vi.mock('@/lib/services/brainstorm-service', () => ({
   getBrainstorm: vi.fn(),
-  getMessages: vi.fn(),
 }));
 
 vi.mock('@/lib/realtime/pg-notify', () => ({
@@ -19,14 +18,27 @@ vi.mock('@/lib/api-handler', () => ({
   assertUUID: vi.fn(),
 }));
 
+// Mock fs so we control log file reads without touching the real filesystem
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+}));
+
+vi.mock('@/lib/realtime/event-utils', () => ({
+  readBrainstormEventsFromLog: vi.fn(),
+}));
+
 import { GET } from '../[id]/events/route';
-import { getBrainstorm, getMessages } from '@/lib/services/brainstorm-service';
+import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { existsSync, readFileSync } from 'node:fs';
+import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 const ROOM_ID = '00000000-0000-0000-0000-000000000001';
+const LOG_PATH = '/tmp/test-brainstorm.log';
 
 /** Read all SSE frames from a Response stream and return them parsed. */
 async function readSseFrames(
@@ -90,6 +102,7 @@ function makeRoom(
     roomId?: string;
     joinedAt?: Date;
   }>,
+  logFilePath?: string,
 ) {
   return {
     id: ROOM_ID,
@@ -102,6 +115,7 @@ function makeRoom(
     taskId: null,
     config: {},
     synthesis: null,
+    logFilePath: logFilePath ?? null,
     createdAt: new Date(),
     updatedAt: new Date(),
     participants: participants.map((p) => ({
@@ -115,23 +129,27 @@ function makeRoom(
       model: p.model ?? null,
       joinedAt: p.joinedAt ?? new Date(),
     })),
-    messages: [],
     project: null,
     task: null,
   };
 }
 
-/** Build a minimal message row. */
-function makeMessage(i: number, agentId: string, content = `Message ${i}`) {
+/** Build a minimal BrainstormEvent for use in log replay tests. */
+function makeMessageEvent(
+  i: number,
+  agentId: string,
+  content = `Message ${i}`,
+): Record<string, unknown> {
   return {
-    id: `msg-${i}`,
+    id: i,
     roomId: ROOM_ID,
+    ts: Date.now() + i * 1000,
+    type: 'message',
     wave: 1,
     senderType: 'agent',
-    senderAgentId: agentId,
-    isPass: false,
+    agentId,
     content,
-    createdAt: new Date(Date.now() + i * 1000),
+    isPass: false,
   };
 }
 
@@ -144,13 +162,15 @@ describe('GET /api/brainstorms/[id]/events', () => {
     vi.clearAllMocks();
   });
 
-  describe('lastEventId — skipping already-seen messages', () => {
-    it('sends all messages when lastEventId is absent (fresh connect)', async () => {
+  describe('log file replay — lastEventId filtering', () => {
+    it('sends all events when lastEventId is absent (fresh connect)', async () => {
       const agentId = 'agent-aaa';
-      const messages = [1, 2, 3, 4, 5].map((i) => makeMessage(i, agentId));
+      const events = [1, 2, 3, 4, 5].map((i) => makeMessageEvent(i, agentId));
 
-      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([]) as never);
-      vi.mocked(getMessages).mockResolvedValue(messages as never);
+      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([], LOG_PATH) as never);
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue('dummy-log-content' as never);
+      vi.mocked(readBrainstormEventsFromLog).mockReturnValue(events as never);
 
       const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
       const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
@@ -159,17 +179,18 @@ describe('GET /api/brainstorms/[id]/events', () => {
       const messageFrames = frames.filter((f) => f.data.type === 'message');
 
       expect(messageFrames).toHaveLength(5);
-      // Event ids should be 1-5
-      const ids = messageFrames.map((f) => Number(f.id));
-      expect(ids).toEqual([1, 2, 3, 4, 5]);
+      expect(readBrainstormEventsFromLog).toHaveBeenCalledWith('dummy-log-content', 0);
     });
 
-    it('skips messages with eventId <= lastEventId on reconnect', async () => {
+    it('calls readBrainstormEventsFromLog with lastEventId on reconnect', async () => {
       const agentId = 'agent-aaa';
-      const messages = [1, 2, 3, 4, 5].map((i) => makeMessage(i, agentId));
+      // Simulate the log reader returning only events after id=3
+      const events = [4, 5].map((i) => makeMessageEvent(i, agentId));
 
-      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([]) as never);
-      vi.mocked(getMessages).mockResolvedValue(messages as never);
+      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([], LOG_PATH) as never);
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue('dummy-log-content' as never);
+      vi.mocked(readBrainstormEventsFromLog).mockReturnValue(events as never);
 
       const req = new NextRequest(
         `http://localhost/api/brainstorms/${ROOM_ID}/events?lastEventId=3`,
@@ -179,18 +200,39 @@ describe('GET /api/brainstorms/[id]/events', () => {
       const frames = await readSseFrames(response);
       const messageFrames = frames.filter((f) => f.data.type === 'message');
 
-      // Only messages 4 and 5 (eventId 4 and 5) should be replayed
       expect(messageFrames).toHaveLength(2);
-      const ids = messageFrames.map((f) => Number(f.id));
-      expect(ids).toEqual([4, 5]);
+      expect(readBrainstormEventsFromLog).toHaveBeenCalledWith('dummy-log-content', 3);
     });
 
-    it('sends no historical messages when lastEventId equals total message count', async () => {
-      const agentId = 'agent-aaa';
-      const messages = [1, 2, 3].map((i) => makeMessage(i, agentId));
+    it('skips log replay when room has no logFilePath', async () => {
+      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([]) as never); // no logFilePath
+      vi.mocked(existsSync).mockReturnValue(false);
 
-      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([]) as never);
-      vi.mocked(getMessages).mockResolvedValue(messages as never);
+      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
+      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
+
+      await readSseFrames(response);
+
+      expect(readBrainstormEventsFromLog).not.toHaveBeenCalled();
+    });
+
+    it('skips log replay when log file does not exist', async () => {
+      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([], LOG_PATH) as never);
+      vi.mocked(existsSync).mockReturnValue(false); // file missing
+
+      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
+      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
+
+      await readSseFrames(response);
+
+      expect(readBrainstormEventsFromLog).not.toHaveBeenCalled();
+    });
+
+    it('sends no historical events when log returns empty array', async () => {
+      vi.mocked(getBrainstorm).mockResolvedValue(makeRoom([], LOG_PATH) as never);
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue('dummy-log-content' as never);
+      vi.mocked(readBrainstormEventsFromLog).mockReturnValue([]);
 
       const req = new NextRequest(
         `http://localhost/api/brainstorms/${ROOM_ID}/events?lastEventId=3`,

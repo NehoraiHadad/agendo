@@ -27,8 +27,6 @@ export type BrainstormRoom = InferSelectModel<typeof schema.brainstormRooms>;
 export type NewBrainstormRoom = InferInsertModel<typeof schema.brainstormRooms>;
 export type BrainstormParticipant = InferSelectModel<typeof schema.brainstormParticipants>;
 export type NewBrainstormParticipant = InferInsertModel<typeof schema.brainstormParticipants>;
-export type BrainstormMessage = InferSelectModel<typeof schema.brainstormMessages>;
-export type NewBrainstormMessage = InferInsertModel<typeof schema.brainstormMessages>;
 
 // ---- Enum value types ----
 export type TaskStatus = (typeof schema.taskStatusEnum.enumValues)[number];
