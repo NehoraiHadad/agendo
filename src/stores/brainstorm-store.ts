@@ -40,6 +40,7 @@ interface BrainstormState {
   currentWave: number;
   maxWaves: number;
   synthesis: string | null;
+  rating: number | null;
   project: { id: string; name: string } | null;
   task: { id: string; title: string } | null;
 
@@ -59,10 +60,11 @@ interface BrainstormState {
   // Actions
   setRoom: (room: BrainstormWithDetails) => void;
   handleEvent: (event: BrainstormEvent) => void;
+  onRated: (rating: number) => void;
   reset: () => void;
 }
 
-const initialState: Omit<BrainstormState, 'setRoom' | 'handleEvent' | 'reset'> = {
+const initialState: Omit<BrainstormState, 'setRoom' | 'handleEvent' | 'onRated' | 'reset'> = {
   roomId: null,
   title: '',
   topic: '',
@@ -70,6 +72,7 @@ const initialState: Omit<BrainstormState, 'setRoom' | 'handleEvent' | 'reset'> =
   currentWave: 0,
   maxWaves: 10,
   synthesis: null,
+  rating: null,
   project: null,
   task: null,
   participants: new Map(),
@@ -117,6 +120,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       currentWave: room.currentWave,
       maxWaves: room.maxWaves,
       synthesis: room.synthesis ?? null,
+      rating: room.rating ?? null,
       project: room.project,
       task: room.task,
       participants,
@@ -125,6 +129,10 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       converged: false,
       maxWavesReached: false,
     });
+  },
+
+  onRated: (rating: number) => {
+    set({ rating });
   },
 
   handleEvent: (event) => {

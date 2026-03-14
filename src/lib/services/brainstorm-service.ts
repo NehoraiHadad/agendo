@@ -29,6 +29,7 @@ export interface CreateBrainstormInput {
   topic: string;
   maxWaves?: number;
   config?: Record<string, unknown>;
+  diagnosis?: string;
   participants: Array<{
     agentId: string;
     model?: string;
@@ -60,6 +61,7 @@ export async function createBrainstorm(input: CreateBrainstormInput): Promise<Br
         topic: input.topic,
         maxWaves: input.maxWaves ?? 10,
         config: input.config ?? {},
+        diagnosis: input.diagnosis,
       })
       .returning();
 
@@ -140,8 +142,23 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
 // List result type (includes aggregate counts)
 // ============================================================================
 
-export interface BrainstormRoomSummary extends BrainstormRoom {
-  /** Number of non-left participants in this room. */
+/**
+ * Lightweight projection for brainstorm list views.
+ * Omits large text columns (`synthesis`, `diagnosis`) and `config` jsonb
+ * that are only needed in the detail view.
+ */
+export interface BrainstormRoomSummary {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  title: string;
+  topic: string;
+  status: BrainstormStatus;
+  currentWave: number;
+  maxWaves: number;
+  createdAt: Date;
+  updatedAt: Date;
+  /** Number of participants in this room. */
   participantCount: number;
 }
 
@@ -161,7 +178,16 @@ export async function listBrainstorms(filters?: {
 
   const rows = await db
     .select({
-      ...getTableColumns(brainstormRooms),
+      id: brainstormRooms.id,
+      projectId: brainstormRooms.projectId,
+      taskId: brainstormRooms.taskId,
+      title: brainstormRooms.title,
+      topic: brainstormRooms.topic,
+      status: brainstormRooms.status,
+      currentWave: brainstormRooms.currentWave,
+      maxWaves: brainstormRooms.maxWaves,
+      createdAt: brainstormRooms.createdAt,
+      updatedAt: brainstormRooms.updatedAt,
       participantCount: count(brainstormParticipants.id),
     })
     .from(brainstormRooms)
@@ -265,6 +291,21 @@ export async function updateParticipantStatus(
   await db
     .update(brainstormParticipants)
     .set({ status })
+    .where(eq(brainstormParticipants.id, participantId));
+}
+
+/**
+ * Update the in-flight streaming text for a participant.
+ * Called periodically by the orchestrator during agent response generation.
+ * Set to null when the turn completes.
+ */
+export async function updateParticipantStreamingText(
+  participantId: string,
+  streamingText: string | null,
+): Promise<void> {
+  await db
+    .update(brainstormParticipants)
+    .set({ streamingText })
     .where(eq(brainstormParticipants.id, participantId));
 }
 

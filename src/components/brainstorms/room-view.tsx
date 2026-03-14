@@ -16,6 +16,7 @@ import { MessageCard, StreamingCard, ThinkingCard } from './message-card';
 import { ComposeBar } from './compose-bar';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import type { BrainstormMessageItem, ParticipantState } from '@/stores/brainstorm-store';
+import { Rating } from './rating';
 
 // ============================================================================
 // Wave divider
@@ -324,6 +325,8 @@ export function RoomView({
   const converged = useBrainstormStore((s) => s.converged);
   const maxWavesReached = useBrainstormStore((s) => s.maxWavesReached);
   const currentWave = useBrainstormStore((s) => s.currentWave);
+  const rating = useBrainstormStore((s) => s.rating);
+  const onRated = useBrainstormStore((s) => s.onRated);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -384,7 +387,8 @@ export function RoomView({
         {/* Status banners */}
         {converged && <ConvergedBanner />}
         {maxWavesReached && !converged && <MaxWavesBanner />}
-        {status === 'ended' && <EndedBanner />}
+        {status === 'ended' && !rating && <Rating roomId={roomId} onRated={onRated} />}
+        {status === 'ended' && !!rating && <EndedBanner />}
 
         {/* Synthesis */}
         {synthesis && <SynthesisPanel synthesis={synthesis} />}

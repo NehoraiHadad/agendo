@@ -25,8 +25,8 @@ export async function enqueueBrainstorm(data: RunBrainstormJobData): Promise<str
 
 /**
  * Register the worker handler for brainstorm orchestration jobs.
- * A single worker slot is sufficient — the orchestrator is a lightweight
- * coordinator that delegates heavy AI work to participant sessions.
+ * Up to 3 brainstorm rooms can run concurrently — each orchestrator is a
+ * lightweight coordinator that delegates heavy AI work to participant sessions.
  */
 export async function registerBrainstormWorker(
   handler: (job: Job<RunBrainstormJobData>) => Promise<void>,
@@ -35,7 +35,7 @@ export async function registerBrainstormWorker(
   await boss.createQueue(BRAINSTORM_QUEUE_NAME);
   await boss.work<RunBrainstormJobData>(
     BRAINSTORM_QUEUE_NAME,
-    { batchSize: 1 },
+    { batchSize: 3 },
     async (jobs: Job<RunBrainstormJobData>[]) => {
       for (const job of jobs) {
         await handler(job);

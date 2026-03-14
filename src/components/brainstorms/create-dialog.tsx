@@ -65,6 +65,7 @@ interface DraftState {
   topic?: string;
   selectedProjectId?: string;
   maxWaves?: number;
+  diagnosis?: string;
 }
 
 // ============================================================================
@@ -80,6 +81,8 @@ interface FormContentProps {
   setSelectedProjectId: (v: string) => void;
   maxWaves: number;
   setMaxWaves: (v: number) => void;
+  diagnosis: string;
+  setDiagnosis: (v: string) => void;
   participants: ParticipantSelection[];
   toggleAgent: (agent: AgentOption) => void;
   isAgentSelected: (id: string) => boolean;
@@ -100,6 +103,8 @@ function FormContent({
   setSelectedProjectId,
   maxWaves,
   setMaxWaves,
+  diagnosis,
+  setDiagnosis,
   participants,
   toggleAgent,
   isAgentSelected,
@@ -139,6 +144,25 @@ function FormContent({
           rows={3}
           className="text-sm resize-none"
         />
+      </div>
+
+      {/* Diagnostic Question */}
+      <div className="space-y-1.5">
+        <Label htmlFor="brainstorm-diagnosis" className="text-xs font-medium text-foreground/70">
+          What was the biggest problem with your last brainstorm?
+        </Label>
+        <Select value={diagnosis} onValueChange={setDiagnosis}>
+          <SelectTrigger className="text-sm">
+            <SelectValue placeholder="Select a problem..." />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Idea Quality">Idea Quality</SelectItem>
+            <SelectItem value="Lack of Focus">Lack of Focus</SelectItem>
+            <SelectItem value="Poor Follow-through">Poor Follow-through</SelectItem>
+            <SelectItem value="Not Enough Ideas">Not Enough Ideas</SelectItem>
+            <SelectItem value="Other">Other</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Project selector */}
@@ -323,6 +347,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? '');
   const [maxWaves, setMaxWaves] = useState(10);
   const [participants, setParticipants] = useState<ParticipantSelection[]>([]);
+  const [diagnosis, setDiagnosis] = useState('');
 
   // Loading states
   const [agents, setAgents] = useState<AgentOption[]>([]);
@@ -337,9 +362,9 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   /** Save current form state as draft (called on every field change) */
   const persistDraft = useCallback(() => {
     if (!title && !topic) return;
-    const draft: DraftState = { title, topic, selectedProjectId, maxWaves };
+    const draft: DraftState = { title, topic, selectedProjectId, maxWaves, diagnosis };
     saveDraft(JSON.stringify(draft));
-  }, [title, topic, selectedProjectId, maxWaves, saveDraft]);
+  }, [title, topic, selectedProjectId, maxWaves, diagnosis, saveDraft]);
 
   // Auto-save draft whenever form fields change
   useEffect(() => {
@@ -357,6 +382,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (draft.topic) setTopic(draft.topic);
       if (draft.selectedProjectId && !projectId) setSelectedProjectId(draft.selectedProjectId);
       if (draft.maxWaves) setMaxWaves(draft.maxWaves);
+      if (draft.diagnosis) setDiagnosis(draft.diagnosis);
     } catch {
       // malformed draft — ignore
     }
@@ -444,6 +470,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
           topic: topic.trim(),
           projectId: resolvedProjectId,
           maxWaves,
+          diagnosis,
           participants: participants.map((p) => ({
             agentId: p.agentId,
             model: p.model || undefined,
@@ -495,6 +522,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     title,
     topic,
     maxWaves,
+    diagnosis,
     participants,
     onOpenChange,
     router,
@@ -509,6 +537,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     setSelectedProjectId,
     maxWaves,
     setMaxWaves,
+    diagnosis,
+    setDiagnosis,
     participants,
     toggleAgent,
     isAgentSelected,

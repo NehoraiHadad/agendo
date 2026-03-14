@@ -17,6 +17,7 @@ import {
   updateBrainstormWave,
   updateParticipantSession,
   updateParticipantStatus,
+  updateParticipantStreamingText,
   addMessage,
   getMessages,
   setBrainstormSynthesis,
@@ -29,6 +30,9 @@ import type {
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 
 const log = createLogger('brainstorm-orchestrator');
+
+/** How long to accumulate text-delta events before flushing to the frontend (ms). */
+const DELTA_FLUSH_INTERVAL_MS = 150;
 
 // ============================================================================
 // Types
@@ -47,10 +51,18 @@ interface ParticipantState {
   waveStatus: WaveStatus;
   /** Accumulates agent:text chunks during the current wave turn */
   responseBuffer: string[];
+  /** Timestamp of last streaming_text DB write, for throttling */
+  lastStreamingTextWriteMs: number;
   /** True once this participant has passed in any previous wave (excludes from future waves) */
   hasPassed: boolean;
   /** True once this participant has been explicitly removed — never reset by steer */
   hasLeft: boolean;
+  /** Timestamp (ms) when this participant first reached awaiting_input, or null if not yet ready */
+  readyAt: number | null;
+  /** Accumulated delta text waiting to be flushed to the frontend */
+  deltaBuffer: string;
+  /** Timer handle for the periodic delta flush */
+  deltaFlushTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface BrainstormControlMessage {
@@ -73,7 +85,10 @@ interface BrainstormControlMessage {
  * well above the per-wave timeout so participants aren't evicted before
  * they've had a chance to start.
  */
-const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 600; // 10 minutes — Claude/Copilot ACP+SDK startup can take 4-5 min under load
+const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 600; // 10 minutes — global safety net, rarely triggers with per-participant timeouts
+
+/** Per-participant startup timeout. Agents that fail to reach awaiting_input within this window are evicted. */
+const PER_PARTICIPANT_READY_TIMEOUT_SEC = 180; // 3 minutes
 
 export class BrainstormOrchestrator {
   private readonly roomId: string;
@@ -98,6 +113,8 @@ export class BrainstormOrchestrator {
   private controlResolve: ((msg: BrainstormControlMessage) => void) | null = null;
   /** Set by the 'end' control message when synthesis was requested. */
   private synthesisPending = false;
+  /** Guards against double-subscription when subscribeToSession() is called twice for the same sessionId. */
+  private subscribedSessionIds = new Set<string>();
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120) {
     this.roomId = roomId;
@@ -145,8 +162,12 @@ export class BrainstormOrchestrator {
         model: p.model ?? undefined,
         waveStatus: 'pending' as WaveStatus,
         responseBuffer: [],
+        lastStreamingTextWriteMs: 0,
         hasPassed: false,
         hasLeft: false,
+        readyAt: null,
+        deltaBuffer: '',
+        deltaFlushTimer: null,
       }));
 
       // Mark room as active
@@ -280,26 +301,84 @@ export class BrainstormOrchestrator {
   /**
    * Wait until all participants have reached awaiting_input at least once.
    * Relies on subscribeToSession() setting waveStatus='done' on first awaiting_input.
+   *
+   * Per-participant timeout: if any individual agent fails to start within
+   * PER_PARTICIPANT_READY_TIMEOUT_SEC (3 minutes), it is evicted from the room
+   * and the brainstorm continues with the remaining participants. If ALL participants
+   * fail to start, the brainstorm rejects so the room can be marked as paused.
+   *
+   * A global safety-net timeout (participantReadyTimeoutSec, default 10 min) still
+   * applies as a backstop but should rarely trigger now.
    */
   private async waitForAllParticipantsReady(): Promise<void> {
-    const timeoutMs = this.participantReadyTimeoutSec * 1000;
+    const globalTimeoutMs = this.participantReadyTimeoutSec * 1000;
+    const perParticipantTimeoutMs = PER_PARTICIPANT_READY_TIMEOUT_SEC * 1000;
+    // Record when we entered this method — all participant timers start here because
+    // createParticipantSessions() launches all sessions in parallel before calling us.
+    const startedAt = Date.now();
     let cancelled = false;
     let pollCount = 0;
 
     log.info(
       {
         roomId: this.roomId,
-        timeoutSec: this.participantReadyTimeoutSec,
+        globalTimeoutSec: this.participantReadyTimeoutSec,
+        perParticipantTimeoutSec: PER_PARTICIPANT_READY_TIMEOUT_SEC,
         count: this.participants.length,
       },
       'Waiting for participant sessions to reach awaiting_input',
     );
 
     await Promise.race([
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
         const check = async () => {
           if (cancelled) return;
-          const allReady = this.participants.every(
+
+          const elapsed = Date.now() - startedAt;
+
+          // Check per-participant timeouts for participants still pending/thinking.
+          for (const p of this.participants) {
+            if (p.hasLeft || p.waveStatus === 'done' || p.waveStatus === 'passed') continue;
+            if (elapsed < perParticipantTimeoutMs) continue;
+
+            // This participant has exceeded its per-participant startup window.
+            log.warn(
+              {
+                roomId: this.roomId,
+                agentName: p.agentName,
+                elapsedSec: Math.round(elapsed / 1000),
+              },
+              'Participant failed to start within per-participant timeout — evicting',
+            );
+
+            await this.emitEvent({
+              type: 'room:error',
+              message: `Agent ${p.agentName} failed to start within 3 minutes — removing from brainstorm`,
+            }).catch(() => {});
+
+            p.hasLeft = true;
+            p.hasPassed = true;
+            p.waveStatus = 'done';
+
+            await updateParticipantStatus(p.participantId, 'left').catch(() => {});
+
+            await this.emitEvent({
+              type: 'participant:left',
+              agentId: p.agentId,
+              agentName: p.agentName,
+            }).catch(() => {});
+          }
+
+          // Check if all remaining (non-evicted) participants are ready.
+          const remaining = this.participants.filter((p) => !p.hasLeft);
+          if (remaining.length === 0) {
+            reject(
+              new Error('All participants failed to start within the per-participant timeout'),
+            );
+            return;
+          }
+
+          const allReady = remaining.every(
             (p) => p.waveStatus === 'done' || p.waveStatus === 'passed',
           );
           if (allReady) {
@@ -313,7 +392,8 @@ export class BrainstormOrchestrator {
           pollCount++;
           if (pollCount % 10 === 0) {
             for (const p of this.participants) {
-              if (p.waveStatus === 'done' || p.waveStatus === 'passed' || !p.sessionId) continue;
+              if (p.hasLeft || p.waveStatus === 'done' || p.waveStatus === 'passed' || !p.sessionId)
+                continue;
               try {
                 const info = await getSessionStatus(p.sessionId);
                 if (info?.status === 'awaiting_input') {
@@ -337,25 +417,32 @@ export class BrainstormOrchestrator {
         setTimeout(() => {
           cancelled = true;
           const notReady = this.participants
-            .filter((p) => p.waveStatus !== 'done' && p.waveStatus !== 'passed')
+            .filter((p) => !p.hasLeft && p.waveStatus !== 'done' && p.waveStatus !== 'passed')
             .map((p) => p.agentName);
           reject(
             new Error(
-              `Participants did not reach ready state within ${timeoutMs}ms. ` +
+              `Participants did not reach ready state within ${globalTimeoutMs}ms (global safety net). ` +
                 `Still pending: ${notReady.join(', ')}`,
             ),
           );
-        }, timeoutMs),
+        }, globalTimeoutMs),
       ),
     ]);
 
-    // Reset statuses to 'pending' for wave 0
+    // Reset statuses to 'pending' for wave 0 (only for participants still in the room).
     for (const p of this.participants) {
+      if (p.hasLeft) continue;
       p.waveStatus = 'pending';
       p.responseBuffer = [];
+      p.deltaBuffer = '';
+      if (p.deltaFlushTimer) {
+        clearTimeout(p.deltaFlushTimer);
+        p.deltaFlushTimer = null;
+      }
     }
 
-    log.info({ roomId: this.roomId }, 'All participant sessions ready');
+    const activeCount = this.participants.filter((p) => !p.hasLeft).length;
+    log.info({ roomId: this.roomId, activeCount }, 'All participant sessions ready');
   }
 
   // ============================================================================
@@ -366,6 +453,17 @@ export class BrainstormOrchestrator {
   private async subscribeToSession(participant: ParticipantState): Promise<void> {
     if (!participant.sessionId) return;
     const sessionId = participant.sessionId;
+
+    // Guard against double-subscription (e.g. extension resume calling subscribeToSession
+    // for a participant that already has a live subscription from a prior call).
+    if (this.subscribedSessionIds.has(sessionId)) {
+      log.info(
+        { roomId: this.roomId, sessionId },
+        'Session already subscribed — skipping duplicate',
+      );
+      return;
+    }
+    this.subscribedSessionIds.add(sessionId);
 
     const unsub = await subscribe(channelName('agendo_events', sessionId), (rawPayload: string) => {
       let event: AgendoEvent;
@@ -615,6 +713,13 @@ export class BrainstormOrchestrator {
       if (p.hasPassed) continue;
       p.waveStatus = 'thinking';
       p.responseBuffer = [];
+      p.lastStreamingTextWriteMs = 0;
+      // Clear any leftover delta state from the previous wave
+      p.deltaBuffer = '';
+      if (p.deltaFlushTimer) {
+        clearTimeout(p.deltaFlushTimer);
+        p.deltaFlushTimer = null;
+      }
       await this.emitEvent({
         type: 'participant:status',
         agentId: p.agentId,
@@ -720,12 +825,16 @@ export class BrainstormOrchestrator {
         // empty and the wave records a blank message.
         if (!event.fromDelta) {
           participant.responseBuffer.push(event.text);
-          // Also forward as a real-time streaming delta to the frontend
-          void this.emitEvent({
-            type: 'message:delta',
-            agentId: participant.agentId,
-            text: event.text,
-          }).catch(() => {});
+          // Accumulate into delta buffer; a timer batches rapid bursts into a
+          // single PG NOTIFY publish to avoid flooding the channel.
+          participant.deltaBuffer += event.text;
+          if (!participant.deltaFlushTimer) {
+            participant.deltaFlushTimer = setTimeout(() => {
+              this.flushParticipantDelta(participant);
+            }, DELTA_FLUSH_INTERVAL_MS);
+          }
+          // Throttled DB persistence for reconnect resilience
+          this.persistStreamingText(participant);
         }
         break;
 
@@ -765,7 +874,56 @@ export class BrainstormOrchestrator {
     }
   }
 
+  /**
+   * Flush accumulated delta text to the frontend as a single batched event.
+   * Resets the buffer and clears the timer handle so the next delta starts fresh.
+   */
+  private flushParticipantDelta(participant: ParticipantState): void {
+    participant.deltaFlushTimer = null;
+    if (participant.deltaBuffer.length === 0) return;
+    const text = participant.deltaBuffer;
+    participant.deltaBuffer = '';
+    void this.emitEvent({
+      type: 'message:delta',
+      agentId: participant.agentId,
+      text,
+    }).catch(() => {});
+  }
+
+  /**
+   * Persist accumulated streaming text to DB for reconnect resilience.
+   * Throttled to at most one write every 2 seconds per participant to avoid
+   * hammering the DB during fast streaming.
+   */
+  private persistStreamingText(participant: ParticipantState): void {
+    const now = Date.now();
+    if (now - participant.lastStreamingTextWriteMs < 2000) return;
+    participant.lastStreamingTextWriteMs = now;
+    const text = participant.responseBuffer.join('');
+    if (text.length === 0) return;
+    void updateParticipantStreamingText(participant.participantId, text).catch((err: unknown) => {
+      log.warn(
+        { err, roomId: this.roomId, agentName: participant.agentName },
+        'Failed to persist streaming text',
+      );
+    });
+  }
+
   private onParticipantTurnComplete(participant: ParticipantState): void {
+    // Flush any remaining buffered deltas before emitting the final complete message
+    if (participant.deltaFlushTimer) {
+      clearTimeout(participant.deltaFlushTimer);
+      participant.deltaFlushTimer = null;
+    }
+    if (participant.deltaBuffer.length > 0) {
+      void this.emitEvent({
+        type: 'message:delta',
+        agentId: participant.agentId,
+        text: participant.deltaBuffer,
+      }).catch(() => {});
+      participant.deltaBuffer = '';
+    }
+
     const rawResponse = participant.responseBuffer.join('').trim();
     const isPass = rawResponse.toLowerCase().startsWith('[pass]');
 
@@ -794,6 +952,9 @@ export class BrainstormOrchestrator {
           content: rawResponse,
           isPass,
         });
+
+        // Clear streaming text from participant row (turn is complete)
+        void updateParticipantStreamingText(participant.participantId, null).catch(() => {});
 
         // Emit participant status update
         await this.emitEvent({
@@ -972,6 +1133,11 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
       rejectFn = reject;
     });
 
+    // Use a mutable ref object so the subscribe callback can safely reference the
+    // timeout handle even if an event fires synchronously (before the setTimeout
+    // assignment below executes), avoiding the temporal dead zone of a plain `let`.
+    const timeoutRef: { handle: ReturnType<typeof setTimeout> | undefined } = { handle: undefined };
+
     // Subscribe BEFORE the session is enqueued to avoid missing events.
     const unsub = await subscribe(channelName('agendo_events', sessionId), (rawPayload: string) => {
       let event: AgendoEvent;
@@ -982,18 +1148,24 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
       }
 
       if (event.type === 'agent:text') {
+        // Authoritative complete text — replace any accumulated deltas
+        buffer.length = 0;
+        buffer.push(event.text);
+      } else if (event.type === 'agent:text-delta' && !event.fromDelta) {
+        // Streaming delta — accumulate (ACP agents only emit text-delta, never agent:text)
         buffer.push(event.text);
       } else if (event.type === 'session:state' && event.status === 'awaiting_input') {
+        // Turn complete — resolve with accumulated text
         if (!resolved) {
           resolved = true;
-          clearTimeout(timeoutHandle);
+          clearTimeout(timeoutRef.handle);
           resolveFn(buffer.join('').trim());
         }
       }
     });
     this.unsubscribers.push(unsub);
 
-    const timeoutHandle = setTimeout(
+    timeoutRef.handle = setTimeout(
       () => {
         if (!resolved) {
           resolved = true;
@@ -1008,6 +1180,7 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     try {
       return await resultPromise;
     } finally {
+      clearTimeout(timeoutRef.handle);
       unsub();
       // Remove from unsubscribers since we already cleaned up
       const idx = this.unsubscribers.indexOf(unsub);
@@ -1171,7 +1344,7 @@ TOPIC: ${room.topic}`;
     );
   }
 
-  /** Clean up all PG NOTIFY subscriptions */
+  /** Clean up all PG NOTIFY subscriptions and pending timers */
   private cleanup(): void {
     for (const unsub of this.unsubscribers) {
       try {
@@ -1181,6 +1354,15 @@ TOPIC: ${room.topic}`;
       }
     }
     this.unsubscribers = [];
+    this.subscribedSessionIds.clear();
+
+    // Cancel any pending delta flush timers to avoid fire-after-cleanup emissions
+    for (const p of this.participants) {
+      if (p.deltaFlushTimer) {
+        clearTimeout(p.deltaFlushTimer);
+        p.deltaFlushTimer = null;
+      }
+    }
   }
 }
 

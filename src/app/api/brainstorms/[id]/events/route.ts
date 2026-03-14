@@ -34,6 +34,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return new Response('BrainstormRoom not found', { status: 404 });
   }
 
+  // Parse lastEventId from query params — used to skip already-seen messages on reconnect
+  const url = new URL(req.url);
+  const lastEventIdParam = url.searchParams.get('lastEventId');
+  const lastEventId = lastEventIdParam ? parseInt(lastEventIdParam, 10) : 0;
+
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
 
@@ -78,11 +83,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }
       }
 
-      // Phase 2: replay ALL stored messages on every connection.
+      // Phase 1.75: emit accumulated streaming text for participants mid-turn.
+      // This covers the gap when a client reconnects while an agent is generating.
+      // The client receives a message:delta with the buffered partial response so
+      // it can render a partial ThinkingCard instead of an empty spinner.
+      for (const p of room.participants) {
+        if (p.status === 'active' && p.streamingText) {
+          send({
+            id: 0,
+            roomId: id,
+            ts: Date.now(),
+            type: 'message:delta',
+            agentId: p.agentId,
+            text: p.streamingText,
+          } as BrainstormEvent);
+        }
+      }
+
+      // Phase 2: replay stored messages, skipping any the client already has.
       // PG NOTIFY has no replay buffer — events published while the client was
-      // disconnected are permanently lost. We always replay from the DB so
-      // reconnecting clients get full history. The Zustand store deduplicates
-      // by event id on the client side.
+      // disconnected are permanently lost. We replay from DB so reconnecting
+      // clients get full history. Messages with eventId <= lastEventId are
+      // skipped because the client already received them before reconnecting.
       try {
         // Build agentId → agentName lookup from participants
         const agentNameMap = new Map<string, string>();
@@ -92,9 +114,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
         const historicalMessages = await getMessages(id);
         for (let i = 0; i < historicalMessages.length; i++) {
+          const eventId = i + 1;
+          if (eventId <= lastEventId) continue; // Client already has this message
           const msg = historicalMessages[i];
           const replayEvent: BrainstormEvent = {
-            id: i + 1,
+            id: eventId,
             roomId: id,
             ts: msg.createdAt.getTime(),
             type: 'message',

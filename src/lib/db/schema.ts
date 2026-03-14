@@ -480,6 +480,8 @@ export const brainstormRooms = pgTable(
     maxWaves: integer('max_waves').notNull().default(10),
     config: jsonb('config').notNull().$type<BrainstormConfig>().default({}),
     synthesis: text('synthesis'),
+    diagnosis: text('diagnosis'),
+    rating: integer('rating'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -503,6 +505,8 @@ export const brainstormParticipants = pgTable(
       .references(() => agents.id),
     sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
     model: text('model'),
+    /** Accumulated streaming text for the current turn. Null when idle. */
+    streamingText: text('streaming_text'),
     status: brainstormParticipantStatusEnum('status').notNull().default('pending'),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   },
