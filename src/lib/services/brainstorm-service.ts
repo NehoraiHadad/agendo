@@ -292,21 +292,6 @@ export async function updateParticipantStatus(
     .where(eq(brainstormParticipants.id, participantId));
 }
 
-/**
- * Update the in-flight streaming text for a participant.
- * Called periodically by the orchestrator during agent response generation.
- * Set to null when the turn completes.
- */
-export async function updateParticipantStreamingText(
-  participantId: string,
-  streamingText: string | null,
-): Promise<void> {
-  await db
-    .update(brainstormParticipants)
-    .set({ streamingText })
-    .where(eq(brainstormParticipants.id, participantId));
-}
-
 // ============================================================================
 // Messages
 // ============================================================================

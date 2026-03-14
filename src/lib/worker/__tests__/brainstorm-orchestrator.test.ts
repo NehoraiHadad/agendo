@@ -49,7 +49,6 @@ const mockUpdateParticipantStatus = vi.fn().mockResolvedValue(undefined);
 const mockAddMessage = vi.fn().mockResolvedValue({ id: 'msg-1' });
 const mockGetMessages = vi.fn().mockResolvedValue([]);
 const mockSetBrainstormSynthesis = vi.fn().mockResolvedValue(undefined);
-const mockUpdateParticipantStreamingText = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@/lib/services/brainstorm-service', () => ({
   getBrainstorm: mockGetBrainstorm,
@@ -57,7 +56,6 @@ vi.mock('@/lib/services/brainstorm-service', () => ({
   updateBrainstormWave: mockUpdateBrainstormWave,
   updateParticipantSession: mockUpdateParticipantSession,
   updateParticipantStatus: mockUpdateParticipantStatus,
-  updateParticipantStreamingText: mockUpdateParticipantStreamingText,
   addMessage: mockAddMessage,
   getMessages: mockGetMessages,
   setBrainstormSynthesis: mockSetBrainstormSynthesis,

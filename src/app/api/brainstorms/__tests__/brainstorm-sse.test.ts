@@ -85,7 +85,6 @@ function makeRoom(
     agentName: string;
     agentSlug: string;
     status: string;
-    streamingText?: string | null;
     sessionId?: string | null;
     model?: string | null;
     roomId?: string;
@@ -112,7 +111,6 @@ function makeRoom(
       agentName: p.agentName,
       agentSlug: p.agentSlug,
       status: p.status,
-      streamingText: p.streamingText ?? null,
       sessionId: p.sessionId ?? null,
       model: p.model ?? null,
       joinedAt: p.joinedAt ?? new Date(),
@@ -203,116 +201,6 @@ describe('GET /api/brainstorms/[id]/events', () => {
       const messageFrames = frames.filter((f) => f.data.type === 'message');
 
       expect(messageFrames).toHaveLength(0);
-    });
-  });
-
-  describe('streaming text — emitted on reconnect for mid-turn participants', () => {
-    it('emits a message:delta event for active participant with streamingText', async () => {
-      const agentId = 'agent-bbb';
-      const room = makeRoom([
-        {
-          id: 'participant-1',
-          agentId,
-          agentName: 'Gemini',
-          agentSlug: 'gemini-cli-1',
-          status: 'active',
-          streamingText: 'partial response so far...',
-        },
-      ]);
-
-      vi.mocked(getBrainstorm).mockResolvedValue(room as never);
-      vi.mocked(getMessages).mockResolvedValue([] as never);
-
-      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
-      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
-
-      const frames = await readSseFrames(response);
-      const deltaFrames = frames.filter((f) => f.data.type === 'message:delta');
-
-      expect(deltaFrames).toHaveLength(1);
-      expect(deltaFrames[0]!.data.agentId).toBe(agentId);
-      expect(deltaFrames[0]!.data.text).toBe('partial response so far...');
-    });
-
-    it('does NOT emit message:delta for active participant with null streamingText', async () => {
-      const agentId = 'agent-ccc';
-      const room = makeRoom([
-        {
-          id: 'participant-2',
-          agentId,
-          agentName: 'Claude',
-          agentSlug: 'claude-code-1',
-          status: 'active',
-          streamingText: null,
-        },
-      ]);
-
-      vi.mocked(getBrainstorm).mockResolvedValue(room as never);
-      vi.mocked(getMessages).mockResolvedValue([] as never);
-
-      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
-      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
-
-      const frames = await readSseFrames(response);
-      const deltaFrames = frames.filter((f) => f.data.type === 'message:delta');
-
-      expect(deltaFrames).toHaveLength(0);
-    });
-
-    it('does NOT emit message:delta for non-active participant even if streamingText exists', async () => {
-      const agentId = 'agent-ddd';
-      const room = makeRoom([
-        {
-          id: 'participant-3',
-          agentId,
-          agentName: 'Codex',
-          agentSlug: 'codex-cli-1',
-          status: 'passed', // Not active
-          streamingText: 'stale text that should not be emitted',
-        },
-      ]);
-
-      vi.mocked(getBrainstorm).mockResolvedValue(room as never);
-      vi.mocked(getMessages).mockResolvedValue([] as never);
-
-      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
-      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
-
-      const frames = await readSseFrames(response);
-      const deltaFrames = frames.filter((f) => f.data.type === 'message:delta');
-
-      expect(deltaFrames).toHaveLength(0);
-    });
-
-    it('emits message:delta before historical messages on reconnect', async () => {
-      const agentId = 'agent-eee';
-      const room = makeRoom([
-        {
-          id: 'participant-4',
-          agentId,
-          agentName: 'Gemini',
-          agentSlug: 'gemini-cli-1',
-          status: 'active',
-          streamingText: 'currently generating...',
-        },
-      ]);
-      const messages = [makeMessage(1, agentId)];
-
-      vi.mocked(getBrainstorm).mockResolvedValue(room as never);
-      vi.mocked(getMessages).mockResolvedValue(messages as never);
-
-      const req = new NextRequest(`http://localhost/api/brainstorms/${ROOM_ID}/events`);
-      const response = await GET(req, { params: Promise.resolve({ id: ROOM_ID }) });
-
-      const frames = await readSseFrames(response);
-
-      const deltaIdx = frames.findIndex((f) => f.data.type === 'message:delta');
-      const messageIdx = frames.findIndex((f) => f.data.type === 'message');
-
-      // delta should arrive before the historical message replay
-      expect(deltaIdx).toBeGreaterThanOrEqual(0);
-      expect(messageIdx).toBeGreaterThanOrEqual(0);
-      expect(deltaIdx).toBeLessThan(messageIdx);
     });
   });
 });

@@ -17,7 +17,6 @@ import {
   updateBrainstormWave,
   updateParticipantSession,
   updateParticipantStatus,
-  updateParticipantStreamingText,
   addMessage,
   getMessages,
   setBrainstormSynthesis,
@@ -51,8 +50,6 @@ interface ParticipantState {
   waveStatus: WaveStatus;
   /** Accumulates agent:text chunks during the current wave turn */
   responseBuffer: string[];
-  /** Timestamp of last streaming_text DB write, for throttling */
-  lastStreamingTextWriteMs: number;
   /** True once this participant has passed in any previous wave (excludes from future waves) */
   hasPassed: boolean;
   /** True once this participant has been explicitly removed — never reset by steer */
@@ -162,7 +159,6 @@ export class BrainstormOrchestrator {
         model: p.model ?? undefined,
         waveStatus: 'pending' as WaveStatus,
         responseBuffer: [],
-        lastStreamingTextWriteMs: 0,
         hasPassed: false,
         hasLeft: false,
         readyAt: null,
@@ -713,7 +709,6 @@ export class BrainstormOrchestrator {
       if (p.hasPassed) continue;
       p.waveStatus = 'thinking';
       p.responseBuffer = [];
-      p.lastStreamingTextWriteMs = 0;
       // Clear any leftover delta state from the previous wave
       p.deltaBuffer = '';
       if (p.deltaFlushTimer) {
@@ -833,8 +828,6 @@ export class BrainstormOrchestrator {
               this.flushParticipantDelta(participant);
             }, DELTA_FLUSH_INTERVAL_MS);
           }
-          // Throttled DB persistence for reconnect resilience
-          this.persistStreamingText(participant);
         }
         break;
 
@@ -890,25 +883,6 @@ export class BrainstormOrchestrator {
     }).catch(() => {});
   }
 
-  /**
-   * Persist accumulated streaming text to DB for reconnect resilience.
-   * Throttled to at most one write every 2 seconds per participant to avoid
-   * hammering the DB during fast streaming.
-   */
-  private persistStreamingText(participant: ParticipantState): void {
-    const now = Date.now();
-    if (now - participant.lastStreamingTextWriteMs < 2000) return;
-    participant.lastStreamingTextWriteMs = now;
-    const text = participant.responseBuffer.join('');
-    if (text.length === 0) return;
-    void updateParticipantStreamingText(participant.participantId, text).catch((err: unknown) => {
-      log.warn(
-        { err, roomId: this.roomId, agentName: participant.agentName },
-        'Failed to persist streaming text',
-      );
-    });
-  }
-
   private onParticipantTurnComplete(participant: ParticipantState): void {
     // Flush any remaining buffered deltas before emitting the final complete message
     if (participant.deltaFlushTimer) {
@@ -952,9 +926,6 @@ export class BrainstormOrchestrator {
           content: rawResponse,
           isPass,
         });
-
-        // Clear streaming text from participant row (turn is complete)
-        void updateParticipantStreamingText(participant.participantId, null).catch(() => {});
 
         // Emit participant status update
         await this.emitEvent({

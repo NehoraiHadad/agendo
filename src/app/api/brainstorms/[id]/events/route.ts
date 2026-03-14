@@ -83,23 +83,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }
       }
 
-      // Phase 1.75: emit accumulated streaming text for participants mid-turn.
-      // This covers the gap when a client reconnects while an agent is generating.
-      // The client receives a message:delta with the buffered partial response so
-      // it can render a partial ThinkingCard instead of an empty spinner.
-      for (const p of room.participants) {
-        if (p.status === 'active' && p.streamingText) {
-          send({
-            id: 0,
-            roomId: id,
-            ts: Date.now(),
-            type: 'message:delta',
-            agentId: p.agentId,
-            text: p.streamingText,
-          } as BrainstormEvent);
-        }
-      }
-
       // Phase 2: replay stored messages, skipping any the client already has.
       // PG NOTIFY has no replay buffer — events published while the client was
       // disconnected are permanently lost. We replay from DB so reconnecting
