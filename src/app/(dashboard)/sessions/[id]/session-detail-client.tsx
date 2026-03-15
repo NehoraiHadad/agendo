@@ -23,6 +23,7 @@ import {
   Users,
   GitFork,
   Network,
+  MessageCircleQuestion,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,6 +48,7 @@ import { TeamDiagram } from '@/components/sessions/team-diagram';
 import { AgentSwitchButton } from '@/components/sessions/agent-switch-button';
 import { AgentSwitchDialog } from '@/components/sessions/agent-switch-dialog';
 import { SessionLineage } from '@/components/sessions/session-lineage';
+import { BtwModal } from '@/components/sessions/btw-modal';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
@@ -225,6 +227,17 @@ export function SessionDetailClient({
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const [dynamicModels, setDynamicModels] = useState<DynamicModelOption[]>([]);
+  const [showBtw, setShowBtw] = useState(false);
+
+  // The Claude session ref (used by BTW for context-aware side questions).
+  // Prefer the live SSE event, fall back to the DB-persisted value so BTW
+  // works even when the page is opened after the session:init event fired.
+  const claudeSessionId = useMemo(() => {
+    const initEvent = stream.events
+      .filter((e): e is Extract<typeof e, { type: 'session:init' }> => e.type === 'session:init')
+      .at(-1);
+    return initEvent?.sessionRef ?? session.sessionRef ?? null;
+  }, [stream.events, session.sessionRef]);
 
   // Close model menu on outside click
   useEffect(() => {
@@ -249,6 +262,18 @@ export function SessionDetailClient({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showMobileMenu]);
+
+  // Keyboard shortcut: Ctrl+B / Cmd+B toggles BTW modal
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault();
+        setShowBtw((prev) => !prev);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   // Fetch available models for this agent's provider
   useEffect(() => {
@@ -780,6 +805,19 @@ export function SessionDetailClient({
                     </span>
                   </button>
 
+                  {/* BTW side-channel */}
+                  <button
+                    onClick={() => {
+                      setShowBtw(true);
+                      setShowMobileMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-amber-400 hover:bg-amber-500/[0.08] active:bg-amber-500/[0.12] transition-colors"
+                  >
+                    <MessageCircleQuestion className="size-4 shrink-0" />
+                    <span className="flex-1">btw…</span>
+                    <span className="text-xs font-mono opacity-40">⌘B</span>
+                  </button>
+
                   {/* Switch Agent */}
                   <button
                     onClick={() => {
@@ -960,6 +998,18 @@ export function SessionDetailClient({
                 <span>Fork</span>
               </Button>
 
+              {/* BTW side-channel */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowBtw(true)}
+                title="Ask a side question (Ctrl+B)"
+                className="h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20"
+              >
+                <MessageCircleQuestion className="size-3" />
+                <span>btw</span>
+              </Button>
+
               {/* Switch agent */}
               <AgentSwitchButton
                 currentAgentId={session.agentId}
@@ -1136,6 +1186,13 @@ export function SessionDetailClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* BTW side-channel modal */}
+      <BtwModal
+        open={showBtw}
+        onClose={() => setShowBtw(false)}
+        claudeSessionId={claudeSessionId}
+      />
 
       {/* Agent switch dialog */}
       <AgentSwitchDialog
