@@ -54,30 +54,36 @@ export function modelDisplayLabel(modelId: string): string {
 /**
  * Check if a picker model option matches the current active model.
  *
- * Claude SDK returns aliases ("default", "sonnet", "haiku") while session:init
- * reports full IDs ("claude-opus-4-6[1m]"). We match by:
- * 1. Exact match (same ID)
- * 2. The picker label matches the family extracted from the active model
- *    (e.g. picker label "Opus 4.6" matches active "claude-opus-4-6[1m]")
+ * Matching strategy:
+ * 1. Exact ID match — works for all providers where IDs are real model IDs
+ * 2. isDefault fallback — when the active model is a full ID (e.g. "claude-opus-4-6[1m]")
+ *    that doesn't match any alias, the default picker entry is the match
+ *    (since the CLI defaults to its default model when no --model flag was passed)
+ *
+ * After a user switches models, currentModel becomes the alias itself
+ * (e.g. "sonnet") via the "Model switched to" event, so exact match works.
  */
 export function isModelMatch(
   pickerId: string,
-  pickerLabel: string,
+  _pickerLabel: string,
   activeModelId: string | null,
+  pickerIsDefault?: boolean,
+  allPickerIds?: string[],
 ): boolean {
   if (!activeModelId) return false;
-  const aLower = activeModelId.toLowerCase();
-  const pLower = pickerId.toLowerCase();
 
   // Exact ID match
-  if (aLower === pLower) return true;
+  if (activeModelId.toLowerCase() === pickerId.toLowerCase()) return true;
 
-  // Derive short label from active model ("claude-opus-4-6[1m]" → "Opus 4.6")
-  const activeLabel = modelDisplayLabel(activeModelId).toLowerCase();
-  const pLabel = pickerLabel.toLowerCase();
-
-  // Label match (e.g. both are "opus 4.6")
-  if (activeLabel && pLabel && activeLabel === pLabel) return true;
+  // If the active model doesn't match ANY picker ID exactly, it's a full ID
+  // reported by session:init (e.g. "claude-opus-4-6[1m]"). In that case,
+  // the default picker entry is the current model.
+  if (pickerIsDefault && allPickerIds) {
+    const hasExactMatch = allPickerIds.some(
+      (id) => id.toLowerCase() === activeModelId.toLowerCase(),
+    );
+    if (!hasExactMatch) return true;
+  }
 
   return false;
 }

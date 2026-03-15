@@ -316,29 +316,6 @@ interface ClaudeSdkModel {
   supportsAutoMode?: boolean;
 }
 
-/**
- * Map a Claude SDK alias (e.g. "default") to a real model ID
- * using the description field which contains the actual model name.
- *
- * The SDK returns entries like:
- *   { value: "default", description: "Opus 4.6 · Most capable..." }
- *   { value: "sonnet", description: "Sonnet 4.6 · Best for everyday..." }
- *   { value: "haiku", description: "Haiku 4.5 · Fastest..." }
- *
- * We use the alias as-is (it's what `claude --model <alias>` accepts).
- */
-function formatClaudeSdkModel(m: ClaudeSdkModel, isDefault: boolean): ModelOption {
-  // Extract "Opus 4.6", "Sonnet 4.6", "Haiku 4.5" from description
-  const descLabel = m.description.split('·')[0]?.trim() ?? m.displayName;
-
-  return {
-    id: m.value,
-    label: descLabel,
-    description: m.description,
-    isDefault,
-  };
-}
-
 async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
   const scriptPath = join(process.cwd(), 'scripts', 'list-claude-models.mjs');
 
@@ -364,7 +341,13 @@ async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
 
   const models = JSON.parse(stdout.trim()) as ClaudeSdkModel[];
 
-  return models.map((m) => formatClaudeSdkModel(m, m.value === 'default'));
+  // Pass through as-is from the SDK — no manipulation
+  return models.map((m) => ({
+    id: m.value,
+    label: m.displayName,
+    description: m.description,
+    isDefault: m.value === 'default',
+  }));
 }
 
 /**

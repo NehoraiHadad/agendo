@@ -274,6 +274,7 @@ export function SessionDetailClient({
   }, [agentBinaryPath]);
 
   const headerModels = dynamicModels;
+  const allPickerIds = useMemo(() => headerModels.map((m) => m.id), [headerModels]);
 
   // Derive model from the latest system:info "Model switched" event, init event, or session DB.
   // system:info events from handleSetModel are the freshest source after a model switch.
@@ -681,7 +682,13 @@ export function SessionDetailClient({
                           Model
                         </p>
                         {headerModels.map((m) => {
-                          const isActiveModel = isModelMatch(m.id, m.label, currentModel);
+                          const isActiveModel = isModelMatch(
+                            m.id,
+                            m.label,
+                            currentModel,
+                            m.isDefault,
+                            allPickerIds,
+                          );
                           return (
                             <button
                               key={m.id}
@@ -839,7 +846,13 @@ export function SessionDetailClient({
                       </div>
                     ) : (
                       headerModels.map((m) => {
-                        const isActiveModel = isModelMatch(m.id, m.label, currentModel);
+                        const isActiveModel = isModelMatch(
+                          m.id,
+                          m.label,
+                          currentModel,
+                          m.isDefault,
+                          allPickerIds,
+                        );
                         return (
                           <button
                             key={m.id}
