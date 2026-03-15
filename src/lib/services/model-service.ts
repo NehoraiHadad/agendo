@@ -2,9 +2,6 @@ import { readFile, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
-// NOTE: @anthropic-ai/claude-agent-sdk is imported dynamically in readClaudeModelsViaSdk()
-// to avoid pulling the ESM-only package into the Next.js Turbopack bundle, which causes
-// repeated "can't be external" warnings and memory leaks in dev mode.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,6 +76,50 @@ function safeSpawnWithStdin(
 
     proc.stdin.write(stdin);
     proc.stdin.end();
+  });
+}
+
+/** Spawn a process, collect stdout, with optional env override. Uses spawn (no shell). */
+function safeSpawnCollect(
+  cmd: string,
+  args: string[],
+  opts: { timeout?: number; env?: Record<string, string | undefined>; cwd?: string },
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cp = require('node:child_process') as typeof import('node:child_process');
+    const timeout = opts.timeout ?? 15000;
+
+    const proc = cp.spawn(cmd, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: opts.env as NodeJS.ProcessEnv,
+      cwd: opts.cwd,
+    });
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    let stderr = '';
+    proc.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf-8');
+    });
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`safeSpawnCollect timeout after ${timeout}ms`));
+    }, timeout);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`Process exited with code ${code}: ${stderr.slice(0, 1000)}`));
+      } else {
+        resolve(Buffer.concat(chunks).toString('utf-8'));
+      }
+    });
+    proc.on('error', (spawnErr: Error) => {
+      clearTimeout(timer);
+      reject(spawnErr);
+    });
   });
 }
 
@@ -246,55 +287,54 @@ async function readCodexModelsFromCache(): Promise<ModelOption[]> {
 // Claude: query models via the @anthropic-ai/claude-agent-sdk
 // ---------------------------------------------------------------------------
 
-/** Resolve the path to the SDK's cli.js (needed for pathToClaudeCodeExecutable). */
-function resolveCliPath(): string {
-  const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
-  return join(sdkEntry, '..', 'cli.js');
-}
-
 /**
- * Query Claude models via the SDK's `supportedModels()` method.
- * Uses a single-turn string prompt so the CLI starts, returns init data
- * (including models), then exits cleanly. Must strip CLAUDECODE env vars
- * to avoid "nested session" errors when running inside a Claude Code context.
+ * Query Claude models via the SDK's `supportedModels()` in a child Node process.
+ *
+ * Why a child process?
+ * The SDK's `query()` fails inside Next.js Turbopack with "Query closed before
+ * response received" — Turbopack's module evaluation interferes with the SDK's
+ * async lifecycle. Running `scripts/list-claude-models.mjs` as a standalone Node
+ * process bypasses Turbopack entirely and uses normal Node ESM resolution.
+ *
+ * Why strip CLAUDECODE?
+ * The Claude CLI checks `process.env.CLAUDECODE === "1"` at startup and refuses
+ * to launch ("cannot launch inside another Claude Code session"). This var leaks
+ * into PM2-managed processes when `pm2 start` is run from a Claude Code session.
  */
 async function readClaudeModelsViaSdk(): Promise<ModelOption[]> {
-  // Dynamic import to keep the ESM-only SDK out of the Turbopack bundle
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  const scriptPath = join(process.cwd(), 'scripts', 'list-claude-models.mjs');
 
-  // Strip CLAUDECODE vars so the SDK can spawn a child Claude process
+  // Strip vars that interfere with the child process:
+  // - CLAUDECODE/CLAUDE_CODE_ENTRYPOINT: CLI refuses to start ("nested session")
+  // - NODE_CHANNEL_FD/NODE_CHANNEL_SERIALIZATION_MODE: PM2 IPC channel leaks
+  // - NODE_OPTIONS: parent memory limits shouldn't constrain the child
+  const stripKeys = new Set([
+    'CLAUDECODE',
+    'CLAUDE_CODE_ENTRYPOINT',
+    'NODE_CHANNEL_FD',
+    'NODE_CHANNEL_SERIALIZATION_MODE',
+    'NODE_OPTIONS',
+  ]);
   const cleanEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([k]) => k !== 'CLAUDECODE' && k !== 'CLAUDE_CODE_ENTRYPOINT',
-    ),
+    Object.entries(process.env).filter(([k]) => !stripKeys.has(k)),
   );
 
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 15000);
-
-  const q = query({
-    prompt: 'hi', // minimal prompt to trigger init; maxTurns:1 stops after first response
-    options: {
-      pathToClaudeCodeExecutable: resolveCliPath(),
-      env: cleanEnv,
-      maxTurns: 1,
-      cwd: '/tmp',
-      abortController,
-      permissionMode: 'default',
-    },
+  const stdout = await safeSpawnCollect('node', [scriptPath], {
+    timeout: 15000,
+    env: cleanEnv,
   });
 
-  try {
-    const models = await q.supportedModels();
-    return models.map((m) => ({
-      id: m.value,
-      label: m.displayName,
-      description: m.description,
-    }));
-  } finally {
-    clearTimeout(timeout);
-    q.close();
-  }
+  const models = JSON.parse(stdout.trim()) as Array<{
+    value: string;
+    displayName: string;
+    description: string;
+  }>;
+
+  return models.map((m) => ({
+    id: m.value,
+    label: m.displayName,
+    description: m.description,
+  }));
 }
 
 /**
@@ -309,8 +349,8 @@ async function readClaudeModels(): Promise<ModelOption[]> {
   try {
     const sdkModels = await readClaudeModelsViaSdk();
     if (sdkModels.length > 0) return sdkModels;
-  } catch {
-    // SDK failed, fall through to legacy
+  } catch (err) {
+    console.error('[model-service] SDK readClaudeModelsViaSdk failed:', (err as Error).message);
   }
   return readClaudeModelsLegacy();
 }
