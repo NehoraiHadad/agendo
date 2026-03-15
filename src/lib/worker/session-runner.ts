@@ -33,6 +33,7 @@ function binaryNameToProvider(name: string): Provider | null {
   if (name === 'claude') return 'anthropic';
   if (name === 'codex') return 'openai';
   if (name === 'gemini') return 'google';
+  if (name === 'copilot') return 'github';
   return null;
 }
 

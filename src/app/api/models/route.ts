@@ -14,7 +14,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const resolved = resolveProvider(provider);
   if (!resolved) {
     return NextResponse.json(
-      { error: `Unknown provider: "${provider}". Use claude, codex, or gemini.` },
+      { error: `Unknown provider: "${provider}". Use claude, codex, gemini, or copilot.` },
       { status: 400 },
     );
   }

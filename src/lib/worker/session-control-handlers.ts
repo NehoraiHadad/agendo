@@ -180,14 +180,10 @@ export async function handleSetModel(model: string, ctx: SessionControlCtx): Pro
     const success = await ctx.adapter.setModel(model);
     if (success) {
       await db.update(sessions).set({ model }).where(eq(sessions.id, ctx.session.id));
-      // Emit session:init so the frontend info panel updates the displayed model.
-      await ctx.emitEvent({
-        type: 'session:init',
-        sessionRef: '',
-        slashCommands: [],
-        mcpServers: [],
-        model,
-      });
+      // Emit system:info — the info panel and detail header parse the model from
+      // this message. We intentionally do NOT emit a session:init here because that
+      // would clobber the real init event's mcpServers, slashCommands, and sessionRef
+      // with empty values.
       await ctx.emitEvent({ type: 'system:info', message: `Model switched to "${model}".` });
     } else {
       await ctx.emitEvent({

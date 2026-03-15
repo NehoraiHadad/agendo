@@ -126,8 +126,23 @@ export function SessionInfoPanel({
 }: SessionInfoPanelProps) {
   const initEvent = getLatestInitEvent(stream.events);
   const mcpServers = initEvent?.mcpServers ?? [];
-  const model = initEvent?.model ?? session.model;
   const slashCommands = initEvent?.slashCommands ?? [];
+
+  // Derive the current model from three sources (most-recent wins):
+  // 1. system:info "Model switched to ..." messages (emitted by handleSetModel)
+  // 2. The latest session:init event's model field
+  // 3. The DB session.model (reliable for historical/idle sessions)
+  const modelFromSwitchEvent = (() => {
+    const switchEvent = [...stream.events]
+      .reverse()
+      .find(
+        (e) =>
+          e.type === 'system:info' &&
+          (e as Extract<typeof e, { type: 'system:info' }>).message.startsWith('Model switched to'),
+      ) as Extract<(typeof stream.events)[number], { type: 'system:info' }> | undefined;
+    return switchEvent?.message.match(/Model switched to "(.+)"/)?.[1] ?? null;
+  })();
+  const model = modelFromSwitchEvent ?? initEvent?.model ?? session.model;
 
   // Rich command data from session:commands event (emitted after init by SDK adapter)
   const richCommandsEvent = stream.events

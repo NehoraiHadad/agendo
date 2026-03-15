@@ -55,5 +55,6 @@ export function deriveProvider(binaryPath: string): string {
   if (base.startsWith('claude')) return 'claude';
   if (base.startsWith('codex')) return 'codex';
   if (base.startsWith('gemini')) return 'gemini';
+  if (base.startsWith('copilot')) return 'copilot';
   return 'claude';
 }
