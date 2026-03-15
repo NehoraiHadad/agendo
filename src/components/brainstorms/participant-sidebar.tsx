@@ -394,8 +394,9 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   const canContinue = status === 'ended';
   const canDelete = status === 'ended' || status === 'waiting';
 
-  // Wave progress percentage
-  const waveProgress = maxWaves > 0 ? Math.min((currentWave / maxWaves) * 100, 100) : 0;
+  // Wave progress — currentWave is 0-indexed internally, display as 1-indexed
+  const displayWave = currentWave + 1;
+  const waveProgress = maxWaves > 0 ? Math.min((displayWave / maxWaves) * 100, 100) : 0;
 
   return (
     <div className="flex flex-col w-[272px] shrink-0 border-l border-white/[0.06] bg-[oklch(0.085_0_0)] overflow-hidden">
@@ -425,7 +426,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
               <div className="flex items-center gap-1.5">
                 <Waves className="size-3 text-muted-foreground/25 shrink-0" />
                 <span className="text-[10px] text-muted-foreground/40 font-mono">
-                  Wave {currentWave} / {maxWaves}
+                  Wave {displayWave} / {maxWaves}
                 </span>
               </div>
               <span className="text-[10px] text-muted-foreground/25 font-mono">
@@ -437,7 +438,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
                 className="h-full bg-primary/50 rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${waveProgress}%` }}
                 role="progressbar"
-                aria-valuenow={currentWave}
+                aria-valuenow={displayWave}
                 aria-valuemin={0}
                 aria-valuemax={maxWaves}
               />

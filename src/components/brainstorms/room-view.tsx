@@ -25,12 +25,18 @@ import type { BrainstormMessageItem, ParticipantState } from '@/stores/brainstor
 // ============================================================================
 
 function WaveDivider({ wave }: { wave: number }) {
+  // wave is 0-indexed internally; display as 1-indexed for humans
+  const displayWave = wave + 1;
   return (
-    <div className="flex items-center gap-3 py-3 px-1" role="separator" aria-label={`Wave ${wave}`}>
+    <div
+      className="flex items-center gap-3 py-3 px-1"
+      role="separator"
+      aria-label={`Wave ${displayWave}`}
+    >
       <div className="flex-1 h-px bg-white/[0.05]" />
       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/25 font-mono tracking-widest uppercase">
         <Waves className="size-3" />
-        Wave {wave}
+        Wave {displayWave}
       </div>
       <div className="flex-1 h-px bg-white/[0.05]" />
     </div>
