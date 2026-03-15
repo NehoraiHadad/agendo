@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useMemo, memo } from 'react';
+import { useRef, useEffect, useState, useMemo, memo, useCallback } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -9,11 +9,14 @@ import {
   Waves,
   Sparkles,
   Users,
+  Copy,
+  Check,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageCard, StreamingCard, ThinkingCard } from './message-card';
 import { ComposeBar } from './compose-bar';
+import { synthesisMdComponents } from './markdown-components';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import type { BrainstormMessageItem, ParticipantState } from '@/stores/brainstorm-store';
 
@@ -89,76 +92,62 @@ function EndedBanner() {
 // Synthesis panel
 // ============================================================================
 
-const synthesisMarkdownComponents = {
-  p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
-  ),
-  h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-sm font-semibold text-foreground/90 mb-2 mt-4 first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-xs font-semibold text-foreground/80 mb-1.5 mt-3 first:mt-0">{children}</h2>
-  ),
-  h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">{children}</h3>
-  ),
-  ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>
-  ),
-  ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>
-  ),
-  li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="text-foreground/70 leading-relaxed">{children}</li>
-  ),
-  code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-    const isBlock = className?.includes('language-');
-    return isBlock ? (
-      <code className="block bg-black/20 rounded-md px-3 py-2 text-[11px] font-mono overflow-x-auto whitespace-pre my-2 border border-white/[0.06]">
-        {children}
-      </code>
-    ) : (
-      <code className="bg-black/20 rounded px-1 py-px text-[11px] font-mono border border-white/[0.06]">
-        {children}
-      </code>
-    );
-  },
-  blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-violet-500/30 pl-3 text-foreground/65 italic my-2">
-      {children}
-    </blockquote>
-  ),
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-foreground/85">{children}</strong>
-  ),
-};
-
 function SynthesisPanel({ synthesis }: { synthesis: string }) {
   const [expanded, setExpanded] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      await navigator.clipboard.writeText(synthesis);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    },
+    [synthesis],
+  );
 
   return (
     <div className="mx-4 my-3 rounded-xl border border-violet-500/20 bg-violet-950/15 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-violet-950/20 transition-colors"
-        aria-expanded={expanded}
-      >
-        <Sparkles className="size-3.5 text-violet-400/70 shrink-0" />
-        <span className="text-xs font-semibold text-violet-300/90 flex-1 text-left">Synthesis</span>
-        {!expanded && (
-          <span className="text-[10px] text-muted-foreground/35 mr-1">Click to expand</span>
-        )}
-        {expanded ? (
-          <ChevronDown className="size-3.5 text-violet-400/50 shrink-0" />
-        ) : (
-          <ChevronRight className="size-3.5 text-violet-400/50 shrink-0" />
-        )}
-      </button>
+      <div className="w-full flex items-center gap-2.5 px-4 py-3">
+        {/* Clickable expand/collapse area */}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2.5 flex-1 hover:opacity-80 transition-opacity"
+          aria-expanded={expanded}
+        >
+          <Sparkles className="size-3.5 text-violet-400/70 shrink-0" />
+          <span className="text-xs font-semibold text-violet-300/90 flex-1 text-left">
+            Synthesis
+          </span>
+          {!expanded && (
+            <span className="text-[10px] text-muted-foreground/35 mr-1">Click to expand</span>
+          )}
+          {expanded ? (
+            <ChevronDown className="size-3.5 text-violet-400/50 shrink-0" />
+          ) : (
+            <ChevronRight className="size-3.5 text-violet-400/50 shrink-0" />
+          )}
+        </button>
+
+        {/* Copy button — separate from expand/collapse */}
+        <button
+          type="button"
+          onClick={(e) => void handleCopy(e)}
+          className="p-1.5 rounded-md hover:bg-violet-500/10 transition-colors shrink-0"
+          aria-label="Copy synthesis to clipboard"
+        >
+          {copied ? (
+            <Check className="size-3.5 text-emerald-400" />
+          ) : (
+            <Copy className="size-3.5 text-violet-400/50" />
+          )}
+        </button>
+      </div>
       {expanded && (
         <div className="px-4 pb-4 text-xs text-foreground/70 border-t border-violet-500/10">
-          <div className="pt-3">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={synthesisMarkdownComponents}>
+          <div dir="auto" className="pt-3">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={synthesisMdComponents}>
               {synthesis}
             </ReactMarkdown>
           </div>

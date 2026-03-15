@@ -29,20 +29,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, McpServer, Task } from '@/lib/types';
+import { deriveProvider } from '@/lib/utils/session-controls';
 
 interface ModelOption {
   id: string;
   label: string;
   description: string;
-}
-
-/** Derive provider name from an agent binary path for model API queries. */
-function deriveProvider(binaryPath: string): string {
-  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
-  if (base.startsWith('claude')) return 'claude';
-  if (base.startsWith('codex')) return 'codex';
-  if (base.startsWith('gemini')) return 'gemini';
-  return 'claude';
 }
 
 interface StartSessionDialogProps {

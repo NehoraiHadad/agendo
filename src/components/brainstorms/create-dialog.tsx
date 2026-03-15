@@ -26,6 +26,8 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
+import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
+import { deriveProvider } from '@/lib/utils/session-controls';
 
 // ============================================================================
 // Types
@@ -35,6 +37,7 @@ interface AgentOption {
   id: string;
   name: string;
   slug: string;
+  binaryPath: string;
 }
 
 interface ProjectOption {
@@ -47,6 +50,12 @@ interface ParticipantSelection {
   agentName: string;
   agentSlug: string;
   model: string;
+}
+
+interface ModelOption {
+  id: string;
+  label: string;
+  description: string;
 }
 
 interface CreateDialogProps {
@@ -65,6 +74,21 @@ interface DraftState {
   topic?: string;
   selectedProjectId?: string;
   maxWaves?: number;
+}
+
+// ============================================================================
+// Section header
+// ============================================================================
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <span className="text-[10px] font-semibold text-muted-foreground/30 uppercase tracking-widest">
+        {children}
+      </span>
+      <div className="flex-1 h-px bg-white/[0.04]" />
+    </div>
+  );
 }
 
 // ============================================================================
@@ -89,6 +113,8 @@ interface FormContentProps {
   isLoadingAgents: boolean;
   isLoadingProjects: boolean;
   showProjectSelector: boolean;
+  modelsByProvider: Record<string, ModelOption[]>;
+  loadingProviders: Set<string>;
 }
 
 function FormContent({
@@ -109,15 +135,20 @@ function FormContent({
   isLoadingAgents,
   isLoadingProjects,
   showProjectSelector,
+  modelsByProvider,
+  loadingProviders,
 }: FormContentProps) {
   return (
     <div className="space-y-5">
+      <SectionHeader>Details</SectionHeader>
+
       {/* Title */}
       <div className="space-y-1.5">
         <Label htmlFor="brainstorm-title" className="text-xs font-medium text-foreground/70">
           Title
         </Label>
         <Input
+          dir="auto"
           id="brainstorm-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -132,6 +163,7 @@ function FormContent({
           Topic
         </Label>
         <Textarea
+          dir="auto"
           id="brainstorm-topic"
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
@@ -167,6 +199,8 @@ function FormContent({
         </div>
       )}
 
+      <SectionHeader>Configuration</SectionHeader>
+
       {/* Max waves */}
       <div className="space-y-1.5">
         <Label htmlFor="max-waves" className="text-xs font-medium text-foreground/70">
@@ -186,12 +220,11 @@ function FormContent({
         </p>
       </div>
 
-      <Separator />
+      <SectionHeader>Participants</SectionHeader>
 
       {/* Participants */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-medium text-foreground/70">Participants</Label>
+        <div className="flex items-center justify-end">
           <span className="text-[10px] text-muted-foreground/40">
             {participants.length} selected · min 2
           </span>
@@ -208,15 +241,18 @@ function FormContent({
           </p>
         ) : (
           <div className="space-y-2">
-            {agents.map((agent) => {
+            {agents.map((agent, agentIndex) => {
               const selected = isAgentSelected(agent.id);
               const participant = participants.find((p) => p.agentId === agent.id);
+              const colors = getAgentColor(agent.slug, agentIndex);
+              const initials = getInitials(agent.name);
+              const borderColorClass = colors.border.replace('border-l-', 'border-');
               return (
                 <div
                   key={agent.id}
                   className={`rounded-lg border transition-colors ${
                     selected
-                      ? 'border-primary/30 bg-primary/[0.04]'
+                      ? `${borderColorClass} bg-white/[0.02]`
                       : 'border-white/[0.06] bg-white/[0.01]'
                   }`}
                 >
@@ -229,6 +265,11 @@ function FormContent({
                       onCheckedChange={() => toggleAgent(agent)}
                       className="shrink-0"
                     />
+                    <div
+                      className={`shrink-0 size-6 rounded-full flex items-center justify-center text-[9px] font-bold border ${borderColorClass} bg-white/[0.03]`}
+                    >
+                      <span className={colors.dot}>{initials}</span>
+                    </div>
                     <span className="text-sm text-foreground/80 flex-1">{agent.name}</span>
                     <span className="text-[10px] text-muted-foreground/35 font-mono hidden sm:inline">
                       {agent.slug}
@@ -241,12 +282,41 @@ function FormContent({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <span className="text-[10px] text-muted-foreground/40 shrink-0">Model:</span>
-                      <Input
-                        value={participant.model}
-                        onChange={(e) => setParticipantModel(agent.id, e.target.value)}
-                        placeholder="default"
-                        className="h-6 text-[11px] border-white/[0.08] bg-transparent"
-                      />
+                      {(() => {
+                        const provider = deriveProvider(agent.binaryPath);
+                        const models = modelsByProvider[provider] ?? [];
+                        const isLoading = loadingProviders.has(provider);
+
+                        if (isLoading) {
+                          return (
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/40">
+                              <Loader2 className="size-3 animate-spin" />
+                              Loading...
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <Select
+                            value={participant.model || '__default__'}
+                            onValueChange={(v) =>
+                              setParticipantModel(agent.id, v === '__default__' ? '' : v)
+                            }
+                          >
+                            <SelectTrigger className="h-7 text-[11px] flex-1 border-white/[0.08] bg-transparent">
+                              <SelectValue placeholder="Default model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__default__">Default</SelectItem>
+                              {models.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -331,6 +401,10 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Model picker state
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
+  const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set());
+
   // Draft persistence via existing useDraft hook (debounced localStorage)
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:brainstorm:new');
 
@@ -362,6 +436,30 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     }
   }, [getDraft, projectId]);
 
+  /** Fetch models for a provider (with in-memory caching). */
+  const fetchModelsForProvider = useCallback(
+    async (provider: string) => {
+      if (modelsByProvider[provider] ?? loadingProviders.has(provider)) return;
+      setLoadingProviders((prev) => new Set(prev).add(provider));
+      try {
+        const res = await fetch(`/api/models?provider=${encodeURIComponent(provider)}`);
+        if (res.ok) {
+          const body = (await res.json()) as { data: ModelOption[] };
+          setModelsByProvider((prev) => ({ ...prev, [provider]: body.data ?? [] }));
+        }
+      } catch {
+        // ignore — model list is non-critical
+      } finally {
+        setLoadingProviders((prev) => {
+          const next = new Set(prev);
+          next.delete(provider);
+          return next;
+        });
+      }
+    },
+    [modelsByProvider, loadingProviders],
+  );
+
   // Fetch agents and projects when dialog opens
   useEffect(() => {
     if (!open) return;
@@ -388,17 +486,23 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     [participants],
   );
 
-  const toggleAgent = useCallback((agent: AgentOption) => {
-    setParticipants((prev) => {
-      if (prev.some((p) => p.agentId === agent.id)) {
-        return prev.filter((p) => p.agentId !== agent.id);
-      }
-      return [
-        ...prev,
-        { agentId: agent.id, agentName: agent.name, agentSlug: agent.slug, model: '' },
-      ];
-    });
-  }, []);
+  const toggleAgent = useCallback(
+    (agent: AgentOption) => {
+      setParticipants((prev) => {
+        if (prev.some((p) => p.agentId === agent.id)) {
+          return prev.filter((p) => p.agentId !== agent.id);
+        }
+        // Fetch models for this agent's provider
+        const provider = deriveProvider(agent.binaryPath);
+        void fetchModelsForProvider(provider);
+        return [
+          ...prev,
+          { agentId: agent.id, agentName: agent.name, agentSlug: agent.slug, model: '' },
+        ];
+      });
+    },
+    [fetchModelsForProvider],
+  );
 
   const setParticipantModel = useCallback((agentId: string, model: string) => {
     setParticipants((prev) => prev.map((p) => (p.agentId === agentId ? { ...p, model } : p)));
@@ -518,6 +622,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     isLoadingAgents,
     isLoadingProjects,
     showProjectSelector: !projectId,
+    modelsByProvider,
+    loadingProviders,
   };
 
   const footerProps: FooterContentProps = {

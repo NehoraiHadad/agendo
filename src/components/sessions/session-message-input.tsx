@@ -15,6 +15,7 @@ import { apiFetch } from '@/lib/api-types';
 import { ModelPickerPopover } from '@/components/sessions/model-picker-popover';
 import { MemoryEditorModal } from '@/components/sessions/memory-editor-modal';
 import type { SessionStatus } from '@/lib/realtime/events';
+import { deriveProvider } from '@/lib/utils/session-controls';
 
 // ---------------------------------------------------------------------------
 // Slash commands — populated live from the agent's system:init event
@@ -178,16 +179,6 @@ function getBlockedMessage(
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-
-/** Derive a provider name from an agent binaryPath for the model picker. */
-function deriveProvider(binaryPath?: string): string | null {
-  if (!binaryPath) return null;
-  const base = binaryPath.split('/').pop()?.toLowerCase() ?? '';
-  if (base.startsWith('claude')) return 'claude';
-  if (base.startsWith('codex')) return 'codex';
-  if (base.startsWith('gemini')) return 'gemini';
-  return null;
-}
 
 export function SessionMessageInput({
   sessionId,
@@ -556,7 +547,7 @@ export function SessionMessageInput({
         {/* Model picker */}
         {showModelPicker && (
           <ModelPickerPopover
-            provider={deriveProvider(agentBinaryPath)}
+            provider={deriveProvider(agentBinaryPath ?? '')}
             onSelect={(modelId) => {
               setShowModelPicker(false);
               void apiFetch(`/api/sessions/${sessionId}/model`, {

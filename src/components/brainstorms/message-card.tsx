@@ -1,69 +1,12 @@
 'use client';
 
-import { memo, useState } from 'react';
+import { memo, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp, ChevronsRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsRight, Copy, Check } from 'lucide-react';
 import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
 import type { BrainstormMessageItem } from '@/stores/brainstorm-store';
-
-// ============================================================================
-// Markdown components (shared)
-// ============================================================================
-
-const mdComponents = {
-  p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>
-  ),
-  code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-    const isBlock = className?.includes('language-');
-    return isBlock ? (
-      <code className="block bg-black/20 rounded-md px-3 py-2 text-[11px] font-mono overflow-x-auto whitespace-pre my-2 border border-white/[0.06]">
-        {children}
-      </code>
-    ) : (
-      <code className="bg-black/20 rounded px-1 py-px text-[11px] font-mono border border-white/[0.06]">
-        {children}
-      </code>
-    );
-  },
-  ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>
-  ),
-  ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>
-  ),
-  li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="text-foreground/70 leading-relaxed">{children}</li>
-  ),
-  h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-sm font-semibold text-foreground/90 mb-1 mt-3 first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-xs font-semibold text-foreground/80 mb-1 mt-2.5 first:mt-0">{children}</h2>
-  ),
-  h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">{children}</h3>
-  ),
-  blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-white/20 pl-3 text-foreground/55 italic my-1.5">
-      {children}
-    </blockquote>
-  ),
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-foreground/85">{children}</strong>
-  ),
-  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-primary/70 underline underline-offset-2 hover:text-primary/90 transition-colors"
-    >
-      {children}
-    </a>
-  ),
-};
+import { brainstormMdComponents } from './markdown-components';
 
 // ============================================================================
 // Pass Message
@@ -152,7 +95,10 @@ export function StreamingCard({
 
         {/* Streaming text */}
         {text && (
-          <div className="text-xs text-foreground/65 break-words overflow-hidden leading-relaxed">
+          <div
+            dir="auto"
+            className="text-xs text-foreground/65 break-words overflow-hidden leading-relaxed"
+          >
             {text}
             <span
               className={`inline-block w-0.5 h-3 ml-0.5 ${colors.pulse} animate-pulse align-middle`}
@@ -233,7 +179,10 @@ function UserMessage({ content, ts }: { content: string; ts: number }) {
     <div className="flex justify-end gap-2.5 items-end">
       <div className="max-w-[80%] group space-y-1">
         <div className="bg-primary/[0.10] border border-primary/20 rounded-2xl rounded-br-sm px-3.5 py-2.5">
-          <p className="text-xs text-foreground/85 leading-relaxed whitespace-pre-wrap break-words">
+          <p
+            dir="auto"
+            className="text-xs text-foreground/85 leading-relaxed whitespace-pre-wrap break-words"
+          >
             {content}
           </p>
         </div>
@@ -268,9 +217,16 @@ const COLLAPSE_LINE_COUNT = 20;
 function AgentMessageCard({ message, agentSlug, agentIndex }: AgentMessageProps) {
   const colors = getAgentColor(agentSlug, agentIndex);
   const [expanded, setExpanded] = useState(true);
+  const [copied, setCopied] = useState(false);
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const agentName = message.agentName ?? 'Agent';
   const initials = getInitials(agentName);
+
+  const handleCopy = useCallback(async () => {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [message.content]);
 
   const lines = message.content.split('\n');
   const shouldCollapse = lines.length > COLLAPSE_LINE_COUNT;
@@ -303,10 +259,27 @@ function AgentMessageCard({ message, agentSlug, agentIndex }: AgentMessageProps)
 
         {/* Message bubble */}
         <div
-          className={`${colors.bg} rounded-xl rounded-tl-sm border-l-2 ${colors.border} px-3 py-2.5`}
+          className={`${colors.bg} rounded-xl rounded-tl-sm border-l-2 ${colors.border} px-3 py-2.5 relative`}
         >
-          <div className="text-xs text-foreground/75 break-words overflow-hidden leading-relaxed">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {/* Copy button — top right, hover revealed */}
+          <button
+            type="button"
+            onClick={() => void handleCopy()}
+            className="absolute top-2 right-2 p-1 rounded hover:bg-white/[0.08] opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label="Copy message"
+          >
+            {copied ? (
+              <Check className="size-3 text-emerald-400" />
+            ) : (
+              <Copy className="size-3 text-muted-foreground/40" />
+            )}
+          </button>
+
+          <div
+            dir="auto"
+            className="text-xs text-foreground/75 break-words overflow-hidden leading-relaxed"
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={brainstormMdComponents}>
               {displayContent}
             </ReactMarkdown>
           </div>

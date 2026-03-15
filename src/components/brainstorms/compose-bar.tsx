@@ -111,6 +111,7 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
 
       <div className="flex items-end gap-2">
         <Textarea
+          dir="auto"
           ref={textareaRef}
           value={text}
           onChange={handleChange}

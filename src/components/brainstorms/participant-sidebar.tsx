@@ -368,7 +368,10 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
           <RoomStatusBadge status={status} />
         </div>
         {topic && (
-          <p className="text-[11px] text-muted-foreground/45 leading-relaxed line-clamp-3">
+          <p
+            dir="auto"
+            className="text-[11px] text-muted-foreground/45 leading-relaxed line-clamp-3"
+          >
             {topic}
           </p>
         )}
