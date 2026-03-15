@@ -6,6 +6,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { readLatestContextWindow } from '@/lib/worker/context-window-cache';
 
 const execFileAsync = promisify(execFile);
 
@@ -92,6 +93,14 @@ export const GET = withErrorBoundary(async () => {
 
   const raw = await readFile(SNAPSHOT_PATH, 'utf-8');
   const snapshot = JSON.parse(raw) as Record<string, unknown>;
+
+  // Inject context_window from the live cache (written by session-process.ts on every
+  // agent:result event) so the value is always accurate regardless of what measure.py
+  // has hardcoded. Cache wins over measure.py's static value.
+  const liveContextWindow = readLatestContextWindow();
+  if (liveContextWindow) {
+    snapshot.context_window = liveContextWindow;
+  }
 
   let coachData: Record<string, unknown> | null = null;
   if (coachResult?.stdout) {

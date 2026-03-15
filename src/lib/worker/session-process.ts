@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { persistContextWindow } from '@/lib/worker/context-window-cache';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 
@@ -484,10 +485,12 @@ export class SessionProcess {
     await this.dataPipeline.persistEventSideEffects(event);
 
     // Cache context window size for real-time agent:usage emission on next message_start.
+    // Also persist to disk so offline tools (measure.py) can use the real value.
     if (event.type === 'agent:result' && event.modelUsage) {
-      for (const usage of Object.values(event.modelUsage)) {
+      for (const [modelId, usage] of Object.entries(event.modelUsage)) {
         if (usage.contextWindow) {
           this.dataPipeline.lastContextWindow = usage.contextWindow;
+          persistContextWindow(modelId, usage.contextWindow);
           break;
         }
       }

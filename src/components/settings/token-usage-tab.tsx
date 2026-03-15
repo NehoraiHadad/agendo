@@ -127,7 +127,7 @@ function fmtTokens(n: number): string {
   return `~${(n / 1000).toFixed(1)}K`;
 }
 
-function pctOfContext(tokens: number, contextWindow = 200_000): number {
+function pctOfContext(tokens: number, contextWindow = 1_000_000): number {
   return Math.round((tokens / contextWindow) * 100 * 10) / 10;
 }
 
@@ -643,10 +643,10 @@ export function TokenUsageTab() {
 
   if (!snapshot) return null;
 
-  const ctx = snapshot.context_window ?? 200_000;
+  const ctx = snapshot.context_window ?? 1_000_000;
   const total = snapshot.totals.estimated_total;
   const pct = pctOfContext(total, ctx);
-  const ctxLabel = `${ctx / 1000}K`;
+  const ctxLabel = ctx >= 1_000_000 ? `${ctx / 1_000_000}M` : `${ctx / 1000}K`;
   const rows = buildRows(snapshot);
   const suggestions = buildSuggestions(snapshot);
   const baselines = snapshot.session_baselines ?? [];
