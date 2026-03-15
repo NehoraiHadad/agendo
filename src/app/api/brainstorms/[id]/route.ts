@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { getBrainstorm, deleteBrainstorm } from '@/lib/services/brainstorm-service';
 import { db } from '@/lib/db';
 import { brainstormRooms } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -45,5 +45,14 @@ export const PATCH = withErrorBoundary(
 
     if (!updated) throw new NotFoundError('BrainstormRoom', id);
     return NextResponse.json({ data: updated });
+  },
+);
+
+export const DELETE = withErrorBoundary(
+  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
+    const { id } = await params;
+    assertUUID(id, 'BrainstormRoom');
+    await deleteBrainstorm(id);
+    return new NextResponse(null, { status: 204 });
   },
 );

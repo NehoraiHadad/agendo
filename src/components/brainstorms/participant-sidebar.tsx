@@ -11,7 +11,9 @@ import {
   Sparkles,
   Waves,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -277,9 +279,13 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   const maxWaves = useBrainstormStore((s) => s.maxWaves);
   const participants = useBrainstormStore((s) => s.participants);
 
+  const router = useRouter();
+
   const [isEnding, setIsEnding] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [isContinuing, setIsContinuing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const participantList = Array.from(participants.values());
   const existingAgentIds = new Set(participantList.map((p) => p.agentId));
@@ -347,12 +353,37 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
     }
   }, [isContinuing, roomId]);
 
+  const handleDelete = useCallback(async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 3000);
+      return;
+    }
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/brainstorms/${roomId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      toast.success('Brainstorm deleted');
+      router.push('/brainstorms');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete');
+    } finally {
+      setIsDeleting(false);
+      setConfirmDelete(false);
+    }
+  }, [confirmDelete, isDeleting, roomId, router]);
+
   const canEnd = status === 'active' || status === 'paused';
   // Synthesis requires the orchestrator to still be running — only possible when paused.
   // An ended room has no orchestrator listening; the synthesis button would silently fail.
   const canSynthesize = status === 'paused';
   const canAddParticipant = status === 'waiting';
   const canContinue = status === 'ended';
+  const canDelete = status === 'ended' || status === 'waiting';
 
   // Wave progress percentage
   const waveProgress = maxWaves > 0 ? Math.min((currentWave / maxWaves) * 100, 100) : 0;
@@ -444,7 +475,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       </div>
 
       {/* Actions */}
-      {(canAddParticipant || canSynthesize || canEnd || canContinue) && (
+      {(canAddParticipant || canSynthesize || canEnd || canContinue || canDelete) && (
         <div className="shrink-0 border-t border-white/[0.04] p-3 space-y-2">
           {canAddParticipant && (
             <AddParticipantRow roomId={roomId} existingAgentIds={existingAgentIds} />
@@ -498,6 +529,23 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
                 <RefreshCw className="size-3" />
               )}
               Continue (+5 rounds)
+            </Button>
+          )}
+
+          {canDelete && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleDelete()}
+              disabled={isDeleting}
+              className="w-full h-8 text-xs border-red-500/15 bg-white/[0.01] hover:bg-red-500/[0.05] text-red-400/60 hover:text-red-300 hover:border-red-500/25 gap-1.5 transition-colors"
+            >
+              {isDeleting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-3" />
+              )}
+              {confirmDelete ? 'Confirm delete?' : 'Delete Room'}
             </Button>
           )}
         </div>

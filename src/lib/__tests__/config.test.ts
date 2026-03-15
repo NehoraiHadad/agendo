@@ -55,6 +55,13 @@ describe('config', () => {
     vi.stubEnv('DATABASE_URL', VALID_ENV.DATABASE_URL);
     vi.stubEnv('JWT_SECRET', VALID_ENV.JWT_SECRET);
     vi.stubEnv('NODE_ENV', 'test'); // explicitly set to test for deterministic assertion
+    // Clear optional env vars that might leak from PM2 / ecosystem.config.js
+    // so Zod defaults are exercised properly.
+    delete process.env.LOG_DIR;
+    delete process.env.WORKER_MAX_CONCURRENT_JOBS;
+    delete process.env.STALE_JOB_THRESHOLD_MS;
+    delete process.env.HEARTBEAT_INTERVAL_MS;
+    delete process.env.WORKER_POLL_INTERVAL_MS;
 
     const { config } = await import('../config');
 

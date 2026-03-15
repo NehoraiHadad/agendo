@@ -2,7 +2,7 @@ import { eq, and, desc, asc, getTableColumns, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { NotFoundError, ConflictError } from '@/lib/errors';
+import { NotFoundError, ConflictError, ValidationError } from '@/lib/errors';
 import type {
   BrainstormRoom,
   BrainstormParticipant,
@@ -284,6 +284,26 @@ export async function updateBrainstormLogPath(id: string, logFilePath: string): 
     .update(brainstormRooms)
     .set({ logFilePath, updatedAt: new Date() })
     .where(eq(brainstormRooms.id, id));
+}
+
+/**
+ * Delete a brainstorm room. Participants are cascade-deleted by the FK constraint.
+ * Active and synthesizing rooms cannot be deleted — end them first.
+ */
+export async function deleteBrainstorm(id: string): Promise<void> {
+  const [room] = await db
+    .select({ id: brainstormRooms.id, status: brainstormRooms.status })
+    .from(brainstormRooms)
+    .where(eq(brainstormRooms.id, id))
+    .limit(1);
+
+  requireFound(room, 'BrainstormRoom', id);
+
+  if (room.status === 'active' || room.status === 'synthesizing') {
+    throw new ValidationError('Cannot delete an active brainstorm room. End it first.');
+  }
+
+  await db.delete(brainstormRooms).where(eq(brainstormRooms.id, id));
 }
 
 /**
