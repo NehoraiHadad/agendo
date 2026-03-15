@@ -30,6 +30,8 @@ export function nextMode(current: PermissionMode): PermissionMode {
 export interface DynamicModelOption {
   id: string;
   label: string;
+  /** Whether this model is the CLI's default when no --model flag is passed. */
+  isDefault?: boolean;
 }
 
 /** Extract a short human-readable label from a model ID string.
@@ -47,6 +49,37 @@ export function modelDisplayLabel(modelId: string): string {
     }
   }
   return modelId.replace(/^claude-/, '');
+}
+
+/**
+ * Check if a picker model option matches the current active model.
+ *
+ * Claude SDK returns aliases ("default", "sonnet", "haiku") while session:init
+ * reports full IDs ("claude-opus-4-6[1m]"). We match by:
+ * 1. Exact match (same ID)
+ * 2. The picker label matches the family extracted from the active model
+ *    (e.g. picker label "Opus 4.6" matches active "claude-opus-4-6[1m]")
+ */
+export function isModelMatch(
+  pickerId: string,
+  pickerLabel: string,
+  activeModelId: string | null,
+): boolean {
+  if (!activeModelId) return false;
+  const aLower = activeModelId.toLowerCase();
+  const pLower = pickerId.toLowerCase();
+
+  // Exact ID match
+  if (aLower === pLower) return true;
+
+  // Derive short label from active model ("claude-opus-4-6[1m]" → "Opus 4.6")
+  const activeLabel = modelDisplayLabel(activeModelId).toLowerCase();
+  const pLabel = pickerLabel.toLowerCase();
+
+  // Label match (e.g. both are "opus 4.6")
+  if (activeLabel && pLabel && activeLabel === pLabel) return true;
+
+  return false;
 }
 
 /** Derive provider name from binary path for model API queries. */

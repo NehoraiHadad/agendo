@@ -35,6 +35,7 @@ interface ModelOption {
   id: string;
   label: string;
   description: string;
+  isDefault?: boolean;
 }
 
 interface StartSessionDialogProps {
@@ -262,18 +263,25 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
 
             {activeAgentId && (
               <div className="space-y-2">
-                <Label htmlFor="session-model">Model (optional)</Label>
+                <Label htmlFor="session-model">Model</Label>
                 {isLoadingModels ? (
                   <Skeleton className="h-9 w-full" />
                 ) : availableModels.length > 0 ? (
                   <Select value={selectedModel} onValueChange={setSelectedModel}>
                     <SelectTrigger id="session-model" className="w-full">
-                      <SelectValue placeholder="Default model" />
+                      <SelectValue
+                        placeholder={
+                          availableModels.find((m) => m.isDefault)?.label ?? 'Select model…'
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {availableModels.map((m) => (
                         <SelectItem key={m.id} value={m.id}>
                           {m.label}
+                          {m.isDefault && (
+                            <span className="ml-1.5 text-muted-foreground text-xs">(default)</span>
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>

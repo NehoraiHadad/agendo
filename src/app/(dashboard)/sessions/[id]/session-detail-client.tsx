@@ -64,6 +64,7 @@ import {
   nextMode as getNextMode,
   modelDisplayLabel,
   deriveProvider,
+  isModelMatch,
 } from '@/lib/utils/session-controls';
 
 const WebTerminal = dynamic(
@@ -254,10 +255,18 @@ export function SessionDetailClient({
     const provider = deriveProvider(agentBinaryPath);
     const controller = new AbortController();
     fetch(`/api/models?provider=${encodeURIComponent(provider)}`, { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: DynamicModelOption[] }>) : null))
+      .then((res) =>
+        res.ok
+          ? (res.json() as Promise<{
+              data: Array<{ id: string; label: string; isDefault?: boolean }>;
+            }>)
+          : null,
+      )
       .then((body) => {
         if (!controller.signal.aborted && body?.data) {
-          setDynamicModels(body.data.map((m) => ({ id: m.id, label: m.label })));
+          setDynamicModels(
+            body.data.map((m) => ({ id: m.id, label: m.label, isDefault: m.isDefault })),
+          );
         }
       })
       .catch(() => {});
@@ -672,7 +681,7 @@ export function SessionDetailClient({
                           Model
                         </p>
                         {headerModels.map((m) => {
-                          const isActiveModel = currentModel?.toLowerCase() === m.id.toLowerCase();
+                          const isActiveModel = isModelMatch(m.id, m.label, currentModel);
                           return (
                             <button
                               key={m.id}
@@ -830,7 +839,7 @@ export function SessionDetailClient({
                       </div>
                     ) : (
                       headerModels.map((m) => {
-                        const isActiveModel = currentModel?.toLowerCase() === m.id.toLowerCase();
+                        const isActiveModel = isModelMatch(m.id, m.label, currentModel);
                         return (
                           <button
                             key={m.id}
