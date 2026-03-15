@@ -13,6 +13,7 @@ import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload } from '@/lib/realtime/events';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
+import { readContextWindowForModel } from '@/lib/worker/context-window-cache';
 
 const log = createLogger('session-data-pipeline');
 
@@ -177,6 +178,12 @@ export class SessionDataPipeline {
       }
       if (event.model) {
         updates.model = event.model;
+        // Pre-populate lastContextWindow from cache so the context bar works on
+        // the very first turn (before agent:result fires and provides the real value).
+        if (!this._lastContextWindow) {
+          const cached = readContextWindowForModel(event.model);
+          if (cached) this._lastContextWindow = cached;
+        }
       }
       if (Object.keys(updates).length > 0) {
         await db.update(sessions).set(updates).where(eq(sessions.id, this.deps.sessionId));

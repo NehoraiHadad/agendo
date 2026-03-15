@@ -75,3 +75,27 @@ export function persistContextWindow(modelId: string | null, contextWindow: numb
 export function readLatestContextWindow(): number | null {
   return readCache()?.latest ?? null;
 }
+
+/**
+ * Returns all known per-model context windows, or null if no cache exists.
+ * Exposed in the /api/token-usage response so the settings tab can show
+ * accurate values for every model the user has run.
+ */
+export function readAllContextWindows(): Record<string, number> | null {
+  const cache = readCache();
+  return cache?.models ?? null;
+}
+
+/**
+ * Returns the cached context window for a specific model, falling back to the
+ * latest known value, or null if no cache exists.
+ *
+ * Use this to pre-populate lastContextWindow at session:init time so the
+ * context bar is accurate even on the very first turn (before agent:result fires).
+ */
+export function readContextWindowForModel(modelId: string | null): number | null {
+  const cache = readCache();
+  if (!cache) return null;
+  if (modelId && cache.models[modelId]) return cache.models[modelId];
+  return cache.latest ?? null;
+}
