@@ -558,9 +558,7 @@ export function PlanConversationPanel({
                   </p>
                 ) : (
                   dynamicModels.map((m) => {
-                    const isActive =
-                      currentModel?.toLowerCase() === m.id.toLowerCase() ||
-                      currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                    const isActive = currentModel?.toLowerCase() === m.id.toLowerCase();
                     return (
                       <button
                         key={m.id}

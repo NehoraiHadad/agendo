@@ -364,6 +364,17 @@ async function readClaudeModelsLegacy(): Promise<ModelOption[]> {
       });
     }
 
+    // Sort: opus first, then sonnet, then haiku. Within family: highest version first, 1M after base.
+    models.sort((a, b) => {
+      const fa = a.id.includes('opus') ? 0 : a.id.includes('sonnet') ? 1 : 2;
+      const fb = b.id.includes('opus') ? 0 : b.id.includes('sonnet') ? 1 : 2;
+      if (fa !== fb) return fa - fb;
+      const baseA = a.id.replace('[1m]', '');
+      const baseB = b.id.replace('[1m]', '');
+      if (baseA !== baseB) return baseB.localeCompare(baseA);
+      return (a.id.includes('[1m]') ? 1 : 0) - (b.id.includes('[1m]') ? 1 : 0);
+    });
+
     return models;
   } catch {
     return [];

@@ -672,9 +672,7 @@ export function SessionDetailClient({
                           Model
                         </p>
                         {headerModels.map((m) => {
-                          const isActiveModel =
-                            currentModel?.toLowerCase() === m.id.toLowerCase() ||
-                            currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                          const isActiveModel = currentModel?.toLowerCase() === m.id.toLowerCase();
                           return (
                             <button
                               key={m.id}
@@ -832,9 +830,7 @@ export function SessionDetailClient({
                       </div>
                     ) : (
                       headerModels.map((m) => {
-                        const isActiveModel =
-                          currentModel?.toLowerCase() === m.id.toLowerCase() ||
-                          currentModel?.toLowerCase().includes(m.id.toLowerCase());
+                        const isActiveModel = currentModel?.toLowerCase() === m.id.toLowerCase();
                         return (
                           <button
                             key={m.id}
