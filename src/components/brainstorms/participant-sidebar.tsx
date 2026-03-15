@@ -303,6 +303,15 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
+      // Update local store immediately — SSE may not be connected for
+      // waiting/paused rooms, so the room:state event might not arrive.
+      useBrainstormStore.getState().handleEvent({
+        id: 0,
+        roomId,
+        ts: Date.now(),
+        type: 'room:state',
+        status: 'ended',
+      });
       toast.success('Brainstorm ended');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to end brainstorm');

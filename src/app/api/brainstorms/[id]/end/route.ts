@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { getBrainstorm, updateBrainstormStatus } from '@/lib/services/brainstorm-service';
 import { publish, channelName } from '@/lib/realtime/pg-notify';
 import { ConflictError } from '@/lib/errors';
 
@@ -22,13 +22,29 @@ export const POST = withErrorBoundary(
       throw new ConflictError('BrainstormRoom is already ended');
     }
 
-    // Do NOT update status here — the orchestrator is the single writer
-    // for room status. Setting it prematurely causes conflicts if publish fails.
-    // Signal the orchestrator to wrap up (and optionally synthesize)
+    // Signal the orchestrator to wrap up (and optionally synthesize).
+    // If the orchestrator is alive, it will handle the transition cleanly
+    // (including synthesis if requested).
     await publish(channelName('brainstorm_control', id), {
       type: 'end',
       synthesize: body.synthesize,
     });
+
+    // Fallback: if the orchestrator is NOT running (e.g. worker restarted,
+    // room was paused/waiting), the PG NOTIFY goes nowhere. Directly update
+    // the DB status and emit a room:state event so the frontend reflects it.
+    // For rooms with a live orchestrator this is a harmless idempotent write
+    // (the orchestrator also sets status='ended' on its exit path).
+    if (room.status === 'waiting' || room.status === 'paused') {
+      await updateBrainstormStatus(id, 'ended');
+      await publish(channelName('brainstorm_events', id), {
+        id: Date.now(),
+        roomId: id,
+        ts: Date.now(),
+        type: 'room:state',
+        status: 'ended',
+      });
+    }
 
     return NextResponse.json({ data: { ended: true } });
   },
