@@ -6,22 +6,16 @@ import type { SessionStatus } from '@/lib/realtime/event-types';
 const log = createLogger('pg-notify');
 
 // Dedicated pool for LISTEN connections (cannot share with Drizzle pool).
-// Each subscribe() call acquires one client from this pool.
+// With the multiplexer, we need at most one connection per distinct channel
+// (not one per subscriber). Worker uses ~13 channels max for a brainstorm,
+// frontend SSE reuses channels. max=20 is plenty.
 let listenerPool: Pool | null = null;
 
 function getListenerPool(): Pool {
   if (!listenerPool) {
-    // Each subscribe() call holds one connection for the LISTEN lifetime.
-    // Brainstorm sizing (6 participants): 6 session control + 6 orchestrator event +
-    // 1 orchestrator control = 13 connections. Plus standalone user sessions (~6 concurrent
-    // with WORKER_MAX_CONCURRENT_JOBS=6) = ~6 more. Buffer for SSE and misc = 21+.
-    // Set max=40 to comfortably handle concurrent brainstorms + regular sessions.
-    //
-    // keepAlive: true — enables TCP keepalive probes so the OS detects dead connections
-    // within ~60-90s rather than after the 2-hour default tcp_keepalives_idle.
     listenerPool = new Pool({
       connectionString: config.DATABASE_URL,
-      max: 40,
+      max: 20,
       keepAlive: true,
       keepAliveInitialDelayMillis: 30_000,
     });
@@ -78,143 +72,160 @@ export async function broadcastSessionStatus(
   await publish(channelName('agendo_events', sessionId), event);
 }
 
-/**
- * Mutable reference wrapper used to swap out the active LISTEN client
- * on reconnect without invalidating the outer unsubscribe closure.
- */
-interface ClientRef {
+// ============================================================================
+// Channel multiplexer — one PG connection per channel, fan out to N listeners
+// ============================================================================
+
+type Callback = (payload: string) => void;
+
+interface ChannelSlot {
   client: PoolClient;
-  handler: (msg: { channel: string; payload?: string }) => void;
-  heartbeatTimer: ReturnType<typeof setInterval> | null;
+  listeners: Set<Callback>;
+  heartbeatTimer: ReturnType<typeof setInterval>;
   dead: boolean;
 }
 
-/**
- * Acquire a new LISTEN client and attach the notification + error handlers.
- * Mutates the provided `ref` in-place so the outer unsubscribe closure
- * continues to reference the current (possibly reconnected) client.
- */
-async function setupListenClient(
-  channel: string,
-  callback: (payload: string) => void,
-  ref: ClientRef,
-): Promise<void> {
-  // Clear old heartbeat timer before acquiring a new client.
-  if (ref.heartbeatTimer !== null) {
-    clearInterval(ref.heartbeatTimer);
-    ref.heartbeatTimer = null;
-  }
+/** Map from channel name → shared slot. */
+const channels = new Map<string, ChannelSlot>();
+/** Channels currently reconnecting — prevents duplicate reconnect attempts. */
+const reconnecting = new Set<string>();
 
+/**
+ * Set up a new PG LISTEN client for a channel.
+ * All listeners in the slot's Set receive every notification.
+ */
+async function createChannelSlot(channel: string): Promise<ChannelSlot> {
   const client = await getListenerPool().connect();
   await client.query(`LISTEN "${channel}"`);
 
-  const handler = (msg: { channel: string; payload?: string }) => {
-    if (msg.channel === channel && msg.payload) callback(msg.payload);
+  const slot: ChannelSlot = {
+    client,
+    listeners: new Set(),
+    heartbeatTimer: null as unknown as ReturnType<typeof setInterval>,
+    dead: false,
   };
 
-  client.on('notification', handler);
-
-  // Error handler: log, release the dead client, and reconnect — unless
-  // the subscription has already been torn down by the caller.
-  client.on('error', (err) => {
-    if (ref.dead) return;
-    log.warn({ channel, err }, 'pg-notify LISTEN client error — reconnecting');
-
-    if (ref.heartbeatTimer !== null) {
-      clearInterval(ref.heartbeatTimer);
-      ref.heartbeatTimer = null;
+  client.on('notification', (msg: { channel: string; payload?: string }) => {
+    if (msg.channel === channel && msg.payload) {
+      for (const cb of slot.listeners) {
+        try {
+          cb(msg.payload);
+        } catch {
+          // Individual listener error — don't break others
+        }
+      }
     }
-
-    // Remove the old handler before releasing to prevent stale callbacks.
-    client.off('notification', ref.handler);
-    client.release(true); // `true` destroys the connection rather than pooling it
-
-    reconnect(channel, callback, ref);
   });
 
-  ref.client = client;
-  ref.handler = handler;
+  client.on('error', (err) => {
+    if (slot.dead) return;
+    log.warn({ channel, err }, 'pg-notify channel slot error — reconnecting');
+    reconnectSlot(channel, slot);
+  });
 
-  // Periodic heartbeat: send a lightweight SELECT 1 every 60 seconds.
-  // If it fails the error event above handles reconnect.
-  ref.heartbeatTimer = setInterval(() => {
-    if (ref.dead) {
-      clearInterval(ref.heartbeatTimer as ReturnType<typeof setInterval>);
-      ref.heartbeatTimer = null;
-      return;
-    }
-    ref.client.query('SELECT 1').catch((err) => {
-      // The error event on the client will fire separately and handle reconnect.
+  // Heartbeat every 60s
+  slot.heartbeatTimer = setInterval(() => {
+    if (slot.dead || slot.listeners.size === 0) return;
+    slot.client.query('SELECT 1').catch((err) => {
       log.debug({ channel, err }, 'pg-notify heartbeat failed');
     });
   }, 60_000);
+
+  return slot;
 }
 
-/** Reconnect with simple back-off: 1s, 2s, 4s, then every 8s. */
-function reconnect(
-  channel: string,
-  callback: (payload: string) => void,
-  ref: ClientRef,
-  attempt = 0,
-): void {
-  if (ref.dead) return;
+/** Reconnect a channel slot, preserving all listeners. */
+function reconnectSlot(channel: string, oldSlot: ChannelSlot): void {
+  if (reconnecting.has(channel)) return;
+  reconnecting.add(channel);
 
-  const delayMs = Math.min(1_000 * 2 ** attempt, 8_000);
-  log.info({ channel, attempt, delayMs }, 'pg-notify reconnecting');
+  // Clean up old slot
+  clearInterval(oldSlot.heartbeatTimer);
+  oldSlot.dead = true;
+  try {
+    oldSlot.client.release(true);
+  } catch {
+    /* already released */
+  }
 
-  setTimeout(() => {
-    if (ref.dead) return;
-    setupListenClient(channel, callback, ref)
-      .then(() => {
-        log.info({ channel }, 'pg-notify reconnect succeeded');
-      })
-      .catch((err) => {
-        log.warn({ channel, attempt, err }, 'pg-notify reconnect attempt failed — retrying');
-        reconnect(channel, callback, ref, attempt + 1);
-      });
-  }, delayMs);
+  const listeners = oldSlot.listeners;
+  channels.delete(channel);
+
+  if (listeners.size === 0) {
+    reconnecting.delete(channel);
+    return;
+  }
+
+  const attempt = (n: number) => {
+    const delayMs = Math.min(1_000 * 2 ** n, 8_000);
+    log.info({ channel, attempt: n, delayMs, listeners: listeners.size }, 'pg-notify reconnecting');
+
+    setTimeout(() => {
+      if (listeners.size === 0) {
+        reconnecting.delete(channel);
+        return;
+      }
+
+      createChannelSlot(channel)
+        .then((newSlot) => {
+          for (const cb of listeners) {
+            newSlot.listeners.add(cb);
+          }
+          channels.set(channel, newSlot);
+          reconnecting.delete(channel);
+          log.info({ channel, listeners: listeners.size }, 'pg-notify reconnect succeeded');
+        })
+        .catch((err) => {
+          log.warn({ channel, attempt: n, err }, 'pg-notify reconnect failed — retrying');
+          attempt(n + 1);
+        });
+    }, delayMs);
+  };
+
+  attempt(0);
+}
+
+/** Tear down a channel slot when its last listener unsubscribes. */
+function destroySlot(channel: string, slot: ChannelSlot): void {
+  slot.dead = true;
+  clearInterval(slot.heartbeatTimer);
+  channels.delete(channel);
+  slot.client.query(`UNLISTEN "${channel}"`).catch(() => {});
+  slot.client.release();
 }
 
 /**
  * Subscribe to a PG NOTIFY channel.
- * Returns an unsubscribe function that releases the connection.
+ * Returns an unsubscribe function that removes this listener.
  *
- * Improvements over the naive implementation:
- * - TCP keepalive on the pool detects dead connections within ~60-90 s.
- * - Error handler automatically reconnects when the LISTEN client dies.
- * - 60 s heartbeat (SELECT 1) catches stalls before keepalive probes fire.
- * - The returned unsubscribe function works correctly after any number of
- *   reconnects because it closes over the mutable `ref` wrapper.
- *
- * IMPORTANT: We must hold a reference to the handler function and remove it
- * via client.off() before releasing the client back to the pool. Without this,
- * a reused pool client accumulates stale handlers from previous subscriptions
- * and fires them all when a new notification arrives — causing duplicate events.
+ * Uses a multiplexer: the first subscriber on a channel creates a PG LISTEN
+ * connection; subsequent subscribers share it. The connection is released
+ * when the last subscriber unsubscribes. This prevents connection pool
+ * exhaustion from browser SSE reconnections.
  */
-export async function subscribe(
-  channel: string,
-  callback: (payload: string) => void,
-): Promise<() => void> {
-  // Placeholder values overwritten immediately by setupListenClient.
-  const ref: ClientRef = {
-    client: null as unknown as PoolClient,
-    handler: () => {},
-    heartbeatTimer: null,
-    dead: false,
-  };
+export async function subscribe(channel: string, callback: Callback): Promise<() => void> {
+  let slot = channels.get(channel);
 
-  await setupListenClient(channel, callback, ref);
+  if (!slot) {
+    slot = await createChannelSlot(channel);
+    channels.set(channel, slot);
+  }
 
+  slot.listeners.add(callback);
+
+  let unsubscribed = false;
   return () => {
-    ref.dead = true;
+    if (unsubscribed) return;
+    unsubscribed = true;
 
-    if (ref.heartbeatTimer !== null) {
-      clearInterval(ref.heartbeatTimer);
-      ref.heartbeatTimer = null;
+    const currentSlot = channels.get(channel);
+    if (!currentSlot) return;
+
+    currentSlot.listeners.delete(callback);
+
+    // Last listener — tear down the PG connection
+    if (currentSlot.listeners.size === 0) {
+      destroySlot(channel, currentSlot);
     }
-
-    ref.client.off('notification', ref.handler);
-    ref.client.query(`UNLISTEN "${channel}"`).catch(() => {});
-    ref.client.release();
   };
 }
