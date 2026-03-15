@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { resolveCliPath, stripClaudeEnv } from '@/lib/worker/adapters/build-sdk-options';
 
 const BTW_SYSTEM_PROMPT = `You are answering a quick side question. The user is asking about something related to the conversation you can see in your history.
 
@@ -62,13 +63,6 @@ export const POST = async (req: NextRequest): Promise<Response> => {
        */
       const isFirstQuestion = !btwSessionId;
 
-      // Strip CLAUDECODE/CLAUDE_CODE_ENTRYPOINT from env to avoid
-      // "nested session" block when spawning claude from Next.js
-      const cleanEnv: Record<string, string | undefined> = {
-        CLAUDECODE: undefined,
-        CLAUDE_CODE_ENTRYPOINT: undefined,
-      };
-
       const sdkQuery = query({
         prompt: question,
         options: {
@@ -82,7 +76,8 @@ export const POST = async (req: NextRequest): Promise<Response> => {
                 resume: btwSessionId,
               }),
           allowedTools: [],
-          env: cleanEnv,
+          pathToClaudeCodeExecutable: resolveCliPath(),
+          env: stripClaudeEnv(process.env),
         },
       });
 

@@ -4,6 +4,20 @@ import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SpawnOpts } from './types';
 
 /**
+ * Strip env vars that block claude from spawning inside itself.
+ * Accepts `Record<string, string | undefined>` so it works with both
+ * `process.env` (values may be undefined) and fully-defined env maps.
+ */
+export function stripClaudeEnv(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const result = { ...env };
+  delete result['CLAUDECODE'];
+  delete result['CLAUDE_CODE_ENTRYPOINT'];
+  return result;
+}
+
+/**
  * Resolve the path to the Claude Code executable.
  * Prefers the system-installed `claude` binary (so user-level skills, hooks, and commands
  * from ~/.claude/ are available). Falls back to the SDK's bundled cli.js if not found.
@@ -15,7 +29,7 @@ import type { SpawnOpts } from './types';
  * timers from firing and causing the stale-reaper to kill the session mid-startup.
  */
 let cachedCliPath: string | null = null;
-function resolveCliPath(): string {
+export function resolveCliPath(): string {
   if (cachedCliPath) return cachedCliPath;
   if (process.env.CLAUDE_CLI_PATH) {
     cachedCliPath = process.env.CLAUDE_CLI_PATH;
@@ -42,9 +56,7 @@ function resolveCliPath(): string {
  */
 export function buildSdkOptions(opts: SpawnOpts, canUseTool: CanUseTool): Options {
   // Strip env vars that block claude from spawning inside itself
-  const env = Object.fromEntries(
-    Object.entries(opts.env).filter(([k]) => k !== 'CLAUDECODE' && k !== 'CLAUDE_CODE_ENTRYPOINT'),
-  );
+  const env = stripClaudeEnv(opts.env) as Record<string, string>;
 
   // extraArgs keys are without "--" prefix (SDK adds them automatically)
   const extraArgs: Record<string, string | null> = {};
