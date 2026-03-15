@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useRef, useState, useCallback, useMemo } from 'react';
 import {
   DndContext,
   closestCorners,
@@ -83,7 +83,17 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const projectsById = useTaskBoardStore((s) => s.projectsById);
   const selectedProjectIds = useTaskBoardStore((s) => s.selectedProjectIds);
   const setProjectFilter = useTaskBoardStore((s) => s.setProjectFilter);
+  // Hydrate the store synchronously on first render (both SSR and client) so that
+  // `hasTasks` / `hasProjects` are consistent between the server-rendered HTML and
+  // the initial client render. A useEffect-based hydration runs too late — the first
+  // client render still sees an empty store, causing a different component tree and
+  // mismatched Radix UI `aria-controls` IDs (hydration mismatch).
   const hydrated = useRef(false);
+  if (!hydrated.current) {
+    hydrated.current = true;
+    hydrate(initialData, initialCursors);
+    hydrateProjects(initialProjects);
+  }
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragSourceStatus, setDragSourceStatus] = useState<TaskStatus | null>(null);
@@ -91,14 +101,6 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
 
   // Initialize SSE connection
   useBoardSse();
-
-  useEffect(() => {
-    if (!hydrated.current) {
-      hydrate(initialData, initialCursors);
-      hydrateProjects(initialProjects);
-      hydrated.current = true;
-    }
-  }, [initialData, initialCursors, initialProjects, hydrate, hydrateProjects]);
 
   const toggleProjectFilter = useCallback(
     (projectId: string) => {
