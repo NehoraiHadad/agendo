@@ -200,6 +200,8 @@ interface GroupedItem {
   parentId?: string;
   childCount?: number;
   isCollapsed?: boolean;
+  /** Visual nesting depth: 0 = root, 1 = child, 2 = grandchild, etc. */
+  depth: number;
 }
 
 /* ─── Component ────────────────────────────────────────────── */
@@ -244,49 +246,54 @@ export const TaskColumn = memo(function TaskColumn({
     return bestId;
   }, [status, taskIds, tasksById]);
 
-  // Build grouped items: group subtasks under their parent when both exist in this column
+  // Build grouped items: recursively group subtasks under their parent when both exist in column.
+  // Supports arbitrary nesting depth (sub-subtasks, grandchildren, etc.).
   const groupedItems = useMemo(() => {
     const columnIdSet = new Set(taskIds);
     const childrenByParent = new Map<string, string[]>();
-    const childIds = new Set<string>();
+    const hasParentInColumn = new Set<string>();
 
     for (const id of taskIds) {
       const task = tasksById[id];
-      if (!task?.parentTaskId) continue;
-      if (!columnIdSet.has(task.parentTaskId)) continue;
-
-      childIds.add(id);
-      const existing = childrenByParent.get(task.parentTaskId);
-      if (existing) {
-        existing.push(id);
-      } else {
-        childrenByParent.set(task.parentTaskId, [id]);
-      }
+      if (!task?.parentTaskId || !columnIdSet.has(task.parentTaskId)) continue;
+      hasParentInColumn.add(id);
+      const arr = childrenByParent.get(task.parentTaskId);
+      if (arr) arr.push(id);
+      else childrenByParent.set(task.parentTaskId, [id]);
     }
 
     const items: GroupedItem[] = [];
 
-    for (const id of taskIds) {
-      if (childIds.has(id)) continue;
-
-      const children = childrenByParent.get(id);
-      if (children && children.length > 0) {
+    const flatten = (id: string, depth: number) => {
+      const children = childrenByParent.get(id) ?? [];
+      if (children.length > 0) {
         const isCollapsed = collapsedParents.has(id);
-        // Parent as stack (renders card + children inline)
         items.push({
-          type: 'group-stack',
+          // Top-level parents use the CardStack treatment; nested parents are group-child
+          type: depth === 0 ? 'group-stack' : 'group-child',
           taskId: id,
           childCount: children.length,
           isCollapsed,
+          depth,
         });
-        // Children (only when expanded)
         if (!isCollapsed) {
           for (const childId of children) {
-            items.push({ type: 'group-child', taskId: childId, parentId: id });
+            flatten(childId, depth + 1);
           }
         }
       } else {
-        items.push({ type: 'standalone', taskId: id });
+        items.push({
+          type: depth === 0 ? 'standalone' : 'group-child',
+          taskId: id,
+          depth,
+        });
+      }
+    };
+
+    // Only start from root items (no parent in this column)
+    for (const id of taskIds) {
+      if (!hasParentInColumn.has(id)) {
+        flatten(id, 0);
       }
     }
 
@@ -343,6 +350,7 @@ export const TaskColumn = memo(function TaskColumn({
           <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
             {groupedItems.map((item) => {
               if (item.type === 'group-stack') {
+                // Top-level parent with children: full CardStack treatment
                 return (
                   <CardStack
                     key={`stack-${item.taskId}`}
@@ -360,16 +368,47 @@ export const TaskColumn = memo(function TaskColumn({
               }
 
               if (item.type === 'group-child') {
+                // Cap visual indent at 3 levels to avoid cards becoming too narrow
+                const indentPx = Math.min(item.depth, 3) * 12;
+                const hasNestedChildren = (item.childCount ?? 0) > 0;
+
                 return (
                   <div
                     key={item.taskId}
-                    className="ml-3 border-l-2 border-white/[0.06] pl-1.5 animate-in slide-in-from-top-1 fade-in duration-150"
+                    style={{ marginLeft: `${indentPx}px` }}
+                    className="border-l-2 border-white/[0.06] pl-1.5 animate-in slide-in-from-top-1 fade-in duration-150"
                   >
-                    <TaskCard
-                      taskId={item.taskId}
-                      isGroupChild
-                      isNextUp={item.taskId === nextUpTaskId}
-                    />
+                    {hasNestedChildren ? (
+                      // This child itself has children — show it with a compact collapse toggle
+                      <div className="relative">
+                        <TaskCard
+                          taskId={item.taskId}
+                          isGroupChild
+                          isNextUp={item.taskId === nextUpTaskId}
+                        />
+                        <button
+                          onClick={() => toggleCollapsed(item.taskId)}
+                          className={cn(
+                            'flex w-full items-center justify-center gap-1.5 py-0.5 -mb-0.5',
+                            'text-[10px] text-muted-foreground/25 hover:text-muted-foreground/50',
+                            'transition-colors duration-150',
+                          )}
+                        >
+                          <span className="h-px flex-1 max-w-6 bg-current" />
+                          <span className="tabular-nums">
+                            {item.isCollapsed ? '▶' : '▾'} {item.childCount} subtask
+                            {item.childCount !== 1 ? 's' : ''}
+                          </span>
+                          <span className="h-px flex-1 max-w-6 bg-current" />
+                        </button>
+                      </div>
+                    ) : (
+                      <TaskCard
+                        taskId={item.taskId}
+                        isGroupChild
+                        isNextUp={item.taskId === nextUpTaskId}
+                      />
+                    )}
                   </div>
                 );
               }

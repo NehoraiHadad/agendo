@@ -354,12 +354,8 @@ export async function listTasksByStatus(
   return { tasks: page, nextCursor };
 }
 
-export async function listSubtasks(parentTaskId: string): Promise<Task[]> {
-  return db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.parentTaskId, parentTaskId))
-    .orderBy(asc(tasks.sortOrder));
+export async function listSubtasks(parentTaskId: string): Promise<TaskBoardItem[]> {
+  return listTasksBoardItems([eq(tasks.parentTaskId, parentTaskId)]);
 }
 
 export interface ReorderTaskInput {
