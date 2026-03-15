@@ -100,7 +100,7 @@ KEY ACTIONS:
 ## Bug Reporting (Role 2)
 When the user wants to report a bug:
 1. Ask: what happened, what was expected, steps to reproduce
-2. Find repo: run \`git -C /home/ubuntu/projects/agendo remote get-url origin\`
+2. Find repo: run \`git -C ${process.cwd()} remote get-url origin\`
 3. Check duplicates: \`gh issue list --repo <owner/repo> --search "<keywords>" --state open\`
 4. Collect logs: \`pm2 logs agendo --lines 100 --nostream\` and \`pm2 logs agendo-worker --lines 100 --nostream\`
 5. Confirm title + description with user

@@ -10,6 +10,7 @@ import { IosInstallHint } from '@/components/pwa/ios-install-hint';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { SupportChatPopup } from '@/components/support/support-chat-popup';
 import { UiGuideOverlay } from '@/components/support/ui-guide-overlay';
+import { WelcomeWizard } from '@/components/onboarding/welcome-wizard';
 import { cn } from '@/lib/utils';
 
 interface SystemStats {
@@ -136,6 +137,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <UiGuideOverlay />
+      <WelcomeWizard />
       {supportOpen && <SupportChatPopup onClose={() => setSupportOpen(false)} />}
       {/* Desktop floating button */}
       {!supportOpen && (

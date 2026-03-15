@@ -142,7 +142,7 @@ export function getAuthConfig(binaryName: string): AuthConfig | null {
 
 /** Read the agendo-worker env block from ecosystem.config.js */
 function readWorkerEnvFromEcosystem(): Record<string, string> {
-  const ecosystemPath = '/home/ubuntu/projects/ecosystem.config.js';
+  const ecosystemPath = path.resolve(os.homedir(), 'projects', 'ecosystem.config.js');
   const content = fs.readFileSync(ecosystemPath, 'utf-8');
 
   const moduleObj: {
@@ -230,7 +230,7 @@ export function checkAuthStatus(binaryName: string): AuthStatusResult {
  * NEVER restarts `agendo` — only `agendo-worker`.
  */
 export async function writeEnvVarToEcosystem(envVar: string, value: string): Promise<void> {
-  const ecosystemPath = '/home/ubuntu/projects/ecosystem.config.js';
+  const ecosystemPath = path.resolve(os.homedir(), 'projects', 'ecosystem.config.js');
   let content = fs.readFileSync(ecosystemPath, 'utf-8');
 
   // Escape the value for insertion into JS source

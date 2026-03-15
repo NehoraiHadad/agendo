@@ -47,3 +47,59 @@ RUN echo "--- Verifying node_modules installed ---" && \
 RUN echo "=== All verification checks passed ==="
 
 CMD ["echo", "Setup test completed successfully."]
+
+# Stage 3: Verify install.ps1 works under PowerShell Core with Node.js
+FROM mcr.microsoft.com/powershell:lts-ubuntu-24.04 AS ps1-full-test
+
+# Install Node.js 22 + build-essential (for node-pty native addon)
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl gnupg build-essential python3 && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pnpm via corepack
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+COPY . .
+
+ENV SKIP_DB=1
+
+RUN echo "=== PS1 full test: running install.ps1 -Dev ===" && \
+    pwsh -File scripts/install.ps1 -Dev
+
+# Verify key outputs
+RUN echo "--- Verifying .env.local exists ---" && \
+    test -f .env.local && echo "PASS: .env.local exists" || { echo "FAIL: .env.local missing"; exit 1; }
+RUN echo "--- Verifying JWT_SECRET is set and non-empty ---" && \
+    grep -qP 'JWT_SECRET=.+' .env.local && echo "PASS: JWT_SECRET is set and non-empty" || { echo "FAIL: JWT_SECRET missing or empty"; exit 1; }
+RUN echo "--- Verifying node_modules installed ---" && \
+    test -d node_modules && echo "PASS: node_modules directory exists" || { echo "FAIL: node_modules missing"; exit 1; }
+RUN echo "--- Verifying ecosystem.config.js exists ---" && \
+    test -f ecosystem.config.js && echo "PASS: ecosystem.config.js exists" || { echo "FAIL: ecosystem.config.js missing"; exit 1; }
+RUN echo "--- Verifying logs directory exists ---" && \
+    test -d logs && echo "PASS: logs directory exists" || { echo "FAIL: logs directory missing"; exit 1; }
+RUN echo "=== All PS1 verification checks passed ==="
+
+CMD ["echo", "PS1 setup test completed successfully."]
+
+# Stage 4: Verify install.ps1 fails gracefully without Node.js
+FROM mcr.microsoft.com/powershell:lts-ubuntu-24.04 AS ps1-prereq-test
+
+WORKDIR /app
+COPY scripts/install.ps1 scripts/install.ps1
+COPY .env.example .env.example
+COPY ecosystem.config.example.js ecosystem.config.example.js
+
+RUN echo "=== PS1 prereq test: expecting graceful failure without Node.js ===" && \
+    if pwsh -File scripts/install.ps1 -Dev 2>&1; then \
+      echo "FAIL: install.ps1 should have exited with error when Node.js is missing" && exit 1; \
+    else \
+      echo "PASS: install.ps1 correctly detected missing Node.js"; \
+    fi
+
+CMD ["echo", "PS1 prereq test completed successfully."]

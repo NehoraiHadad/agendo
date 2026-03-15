@@ -72,7 +72,7 @@ If the auto-derived task title does not accurately reflect what you're integrati
 
 ## Agendo codebase — key facts
 
-- Next.js 16 App Router at \`/home/ubuntu/projects/agendo\`
+- Next.js 16 App Router at \`${process.cwd()}\`
 - API routes: \`src/app/api/\` — use \`withErrorBoundary\`, named exports only
 - UI pages: \`src/app/(dashboard)/\`
 - UI components: \`src/components/\` — shadcn/ui + Tailwind CSS
@@ -121,7 +121,7 @@ You can use Bash for read-only operations (curl, cat, git log, git show, ls, fin
    agent: "claude-code-1"
    taskId: <your taskId from step 1>
    permissionMode: "bypassPermissions"
-   initialPrompt: "You are an Integration Implementer for Agendo (Next.js 16, /home/ubuntu/projects/agendo). Call get_my_task to read the plan. Call list_tasks with parentTaskId=<taskId> to get subtasks. Work in /home/ubuntu/projects/agendo. Execute each subtask in order, mark each done. Run pnpm lint && pnpm typecheck (zero warnings). Commit with git. Mark parent task done."
+   initialPrompt: "You are an Integration Implementer for Agendo (Next.js 16, ${process.cwd()}). Call get_my_task to read the plan. Call list_tasks with parentTaskId=<taskId> to get subtasks. Work in ${process.cwd()}. Execute each subtask in order, mark each done. Run pnpm lint && pnpm typecheck (zero warnings). Commit with git. Mark parent task done."
    \`\`\`
 7. \`update_task\` → \`in_progress\` — your job is done; Implementer takes over`;
 }
