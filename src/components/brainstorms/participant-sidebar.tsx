@@ -344,17 +344,24 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   const handleContinue = useCallback(async () => {
     if (isContinuing) return;
     setIsContinuing(true);
+    const additionalWaves = 5;
     try {
       const res = await fetch(`/api/brainstorms/${roomId}/extend`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ additionalWaves: 5 }),
+        body: JSON.stringify({ additionalWaves }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
-      toast.success('Brainstorm continuing — 5 more rounds');
+      // Update maxWaves in store immediately so the sidebar reflects it
+      const store = useBrainstormStore.getState();
+      useBrainstormStore.setState({
+        maxWaves: store.maxWaves + additionalWaves,
+        maxWavesReached: false,
+      });
+      toast.success(`+${additionalWaves} rounds added`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to continue brainstorm');
     } finally {
@@ -391,7 +398,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   // An ended room has no orchestrator listening; the synthesis button would silently fail.
   const canSynthesize = status === 'paused';
   const canAddParticipant = status === 'waiting';
-  const canContinue = status === 'ended';
+  const canContinue = status === 'ended' || status === 'paused';
   const canDelete = status === 'ended' || status === 'waiting';
 
   // Wave progress — currentWave is 0-indexed internally, display as 1-indexed

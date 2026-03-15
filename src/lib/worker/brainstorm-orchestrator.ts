@@ -65,10 +65,11 @@ interface ParticipantState {
 }
 
 interface BrainstormControlMessage {
-  type: 'steer' | 'end' | 'remove-participant';
+  type: 'steer' | 'end' | 'remove-participant' | 'extend';
   text?: string;
   synthesize?: boolean;
   agentId?: string;
+  additionalWaves?: number;
 }
 
 // ============================================================================
@@ -94,7 +95,7 @@ export class BrainstormOrchestrator {
   private eventSeq = 0;
   private participants: ParticipantState[] = [];
   private currentWave = 0;
-  private readonly maxWaves: number;
+  private maxWaves: number;
   private waveTimeoutSec: number;
   /** Log file writer — opened in run(), closed in finally */
   private logWriter: FileLogWriter | null = null;
@@ -1006,6 +1007,21 @@ export class BrainstormOrchestrator {
         }
         // If not paused, waveLoop will check this.stopped after wave completes
         break;
+
+      case 'extend': {
+        const extra = msg.additionalWaves ?? 5;
+        this.maxWaves += extra;
+        log.info({ roomId: this.roomId, extra, maxWaves: this.maxWaves }, 'Max waves extended');
+
+        if (this.paused) {
+          // Resume the wave loop — treat like a steer with no text so it
+          // continues with the previous wave's broadcast content.
+          const resolve = this.controlResolve;
+          this.controlResolve = null;
+          resolve?.({ type: 'steer', text: 'Continue the brainstorm with the additional rounds.' });
+        }
+        break;
+      }
 
       case 'remove-participant': {
         if (!msg.agentId) return;

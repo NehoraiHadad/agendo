@@ -208,6 +208,23 @@ export async function updateBrainstormWave(id: string, wave: number): Promise<vo
 }
 
 /**
+ * Update the maxWaves cap on a room (e.g. when extending a paused room).
+ * Returns the updated record.
+ */
+export async function updateBrainstormMaxWaves(
+  id: string,
+  maxWaves: number,
+): Promise<BrainstormRoom> {
+  const [updated] = await db
+    .update(brainstormRooms)
+    .set({ maxWaves, updatedAt: new Date() })
+    .where(eq(brainstormRooms.id, id))
+    .returning();
+  if (!updated) throw new NotFoundError('BrainstormRoom', id);
+  return updated;
+}
+
+/**
  * Store the final synthesis text on a completed room.
  */
 export async function setBrainstormSynthesis(id: string, synthesis: string): Promise<void> {
