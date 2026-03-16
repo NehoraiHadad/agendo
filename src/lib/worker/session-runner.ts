@@ -75,6 +75,7 @@ export async function runSession(
   resumeRef?: string,
   resumeSessionAt?: string,
   resumePrompt?: string,
+  skipResumeContext?: boolean,
 ): Promise<void> {
   const session = await getSession(sessionId);
   const agent = await getAgentById(session.agentId);
@@ -228,31 +229,37 @@ export async function runSession(
   // already done before taking action. Prevents repeating completed steps.
   // Save the user's display text BEFORE prepending the context so the chat view
   // shows only what the user actually typed (not the system preamble).
+  //
+  // skipResumeContext=true is set for mid-turn auto-resumes (worker/infra restart).
+  // In those cases the agent already has its full conversation history via resumeRef,
+  // so prepending a context dump is redundant — the short resumePrompt is enough.
   const userResumeText = resumeRef ? prompt : undefined;
-  if (resumeRef && session.taskId && task) {
-    // Task sessions: prepend progress notes + verification instruction.
-    const recentEvents = await listTaskEvents(session.taskId, 10);
-    const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
+  if (resumeRef && !skipResumeContext) {
+    if (session.taskId && task) {
+      // Task sessions: prepend progress notes + verification instruction.
+      const recentEvents = await listTaskEvents(session.taskId, 10);
+      const progressNotes = recentEvents.filter((e) => e.eventType === 'agent_note').slice(0, 5);
 
-    if (progressNotes.length > 0 || task) {
-      const mostRecentNote = progressNotes[0];
-      const mostRecentNoteText =
-        (mostRecentNote?.payload as { note?: string } | undefined)?.note ?? '';
-      const wasInterrupted = mostRecentNoteText.includes('Session interrupted mid-turn');
+      if (progressNotes.length > 0 || task) {
+        const mostRecentNote = progressNotes[0];
+        const mostRecentNoteText =
+          (mostRecentNote?.payload as { note?: string } | undefined)?.note ?? '';
+        const wasInterrupted = mostRecentNoteText.includes('Session interrupted mid-turn');
 
-      const resumeCtx = generateResumeContext(task.title, progressNotes, wasInterrupted);
-      prompt = resumeCtx + prompt;
+        const resumeCtx = generateResumeContext(task.title, progressNotes, wasInterrupted);
+        prompt = resumeCtx + prompt;
+      }
+    } else {
+      // Planning/conversation sessions (no taskId, no progress notes):
+      // Inject a brief verification instruction so the agent checks what was
+      // already done before acting — prevents repeating completed steps.
+      const planningResumeCtx =
+        `[Resume Context]\n` +
+        `Your session was interrupted mid-turn. Review your conversation history to verify ` +
+        `what was already completed before taking further action.\n` +
+        `---\n`;
+      prompt = planningResumeCtx + prompt;
     }
-  } else if (resumeRef) {
-    // Planning/conversation sessions (no taskId, no progress notes):
-    // Inject a brief verification instruction so the agent checks what was
-    // already done before acting — prevents repeating completed steps.
-    const planningResumeCtx =
-      `[Resume Context]\n` +
-      `Your session was interrupted mid-turn. Review your conversation history to verify ` +
-      `what was already completed before taking further action.\n` +
-      `---\n`;
-    prompt = planningResumeCtx + prompt;
   }
 
   // Check for a pending resume image saved by the message API (cold resume with attachment).
@@ -309,6 +316,19 @@ export async function runSession(
     }
   }
 
+  // Guard: if this session already has a live process on this worker, skip.
+  // This prevents a duplicate pg-boss job (e.g. from a cold-resume fallback
+  // that fired while the process was still alive) from overwriting the live
+  // sessionProc reference in the maps — which would orphan the real process.
+  const existingProc = allSessionProcs.get(sessionId);
+  if (existingProc) {
+    log.info(
+      { sessionId },
+      'Session already has live process on this worker, skipping duplicate job',
+    );
+    return;
+  }
+
   const adapter = selectAdapter(agent);
   const sessionProc = new SessionProcess(session, adapter, workerId);
 
@@ -339,9 +359,15 @@ export async function runSession(
   log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot released for session');
 
   // Wire exit cleanup: remove from both maps when the process actually exits.
+  // Only delete if the entry still points to THIS sessionProc — a later
+  // runSession call may have legitimately replaced us (e.g. after cold resume).
   void sessionProc.waitForExit().then(() => {
-    allSessionProcs.delete(sessionId);
-    liveSessionProcs.delete(sessionId);
+    if (allSessionProcs.get(sessionId) === sessionProc) {
+      allSessionProcs.delete(sessionId);
+    }
+    if (liveSessionProcs.get(sessionId) === sessionProc) {
+      liveSessionProcs.delete(sessionId);
+    }
     log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'session removed from live map');
   });
 }

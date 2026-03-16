@@ -184,6 +184,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         sessionId: session.id,
         resumeRef: session.sessionRef,
         resumePrompt: 'The worker restarted. Please continue where you left off.',
+        skipResumeContext: true,
       });
       log.info(
         { sessionId: session.id, attempt, maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS },

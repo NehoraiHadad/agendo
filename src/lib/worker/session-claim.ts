@@ -14,11 +14,17 @@ export async function claimSession(
   sessionId: string,
   workerId: string,
 ): Promise<{ eventSeq: number } | null> {
-  // Only claim from 'idle' or 'ended' — never from 'active'. The zombie
-  // reconciler always resets orphaned 'active' sessions back to 'idle' before
-  // re-enqueueing, so a legitimate resume always starts from 'idle'. Allowing
-  // 'active' here caused a double-claim race: the retried old job and the
-  // reconciler's new job both claimed the same session concurrently.
+  // Claim from 'idle', 'ended', or 'awaiting_input' — never from 'active'.
+  // The zombie reconciler resets orphaned 'active' sessions to 'idle' before
+  // re-enqueueing. Allowing 'active' here caused a double-claim race.
+  //
+  // 'awaiting_input' is included because: when a session's process dies while
+  // in awaiting_input (e.g. idle timeout, crash, or orphaned by a worker
+  // restart), the DB status stays 'awaiting_input' until onExit runs. If the
+  // process is gone from the worker's in-memory maps, the message route's
+  // cold-resume fallback enqueues a new job — which needs to claim the session.
+  // The runSession guard (allSessionProcs.has check) prevents double-claiming
+  // sessions that still have a live process on this worker.
   const [claimed] = await db
     .update(sessions)
     .set({
@@ -27,11 +33,16 @@ export async function claimSession(
       startedAt: new Date(),
       heartbeatAt: new Date(),
     })
-    .where(and(eq(sessions.id, sessionId), inArray(sessions.status, ['idle', 'ended'])))
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        inArray(sessions.status, ['idle', 'ended', 'awaiting_input']),
+      ),
+    )
     .returning({ id: sessions.id, eventSeq: sessions.eventSeq });
 
   if (!claimed) {
-    log.info({ sessionId }, 'Session already claimed — skipping');
+    log.info({ sessionId }, 'Session not claimable (status is active or unknown) — skipping');
     return null;
   }
 

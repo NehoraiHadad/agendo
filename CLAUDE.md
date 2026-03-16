@@ -112,8 +112,8 @@ The system runs as three cooperating processes:
 │  Next.js App (port 4100)                │
 │  - API routes (src/app/api/)            │
 │  - Kanban UI, session viewer            │
-│  - Proxies /api/sessions/:id/live       │
-│    → Worker SSE (port 4102)             │
+│  - Streaming proxy: /api/sessions/:id/  │
+│    events → Worker SSE (port 4102)      │
 └───────────────┬─────────────────────────┘
                 │ pg-boss queues + Worker HTTP (port 4102)
 ┌───────────────▼─────────────────────────┐
@@ -121,8 +121,8 @@ The system runs as three cooperating processes:
 │  - Dequeues execute-capability jobs     │
 │  - Dequeues run-session jobs            │
 │  - Spawns AI CLI subprocesses           │
-│  - Serves SSE directly to browsers      │
-│    (in-memory listeners, no PG NOTIFY)  │
+│  - Serves SSE directly (in-memory      │
+│    listeners, Worker HTTP endpoints)    │
 └───────────────┬─────────────────────────┘
                 │ stdio transport
 ┌───────────────▼─────────────────────────┐
@@ -135,7 +135,7 @@ The system runs as three cooperating processes:
 
 ## Sessions
 
-Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via HTTP POST to Worker (port 4102); worker streams `AgendoEvent`s via in-memory SSE listeners served directly at `GET /api/sessions/:id/live` (proxied through Next.js rewrite). Use POST `/api/sessions`.
+Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via HTTP POST to Worker (port 4102); worker streams `AgendoEvent`s via in-memory SSE listeners. The Next.js route handler at `/api/sessions/:id/events` acts as a streaming proxy to Worker HTTP (`GET :4102/sessions/:id/events`). Use POST `/api/sessions`.
 
 ### Session `kind` Field
 
@@ -156,7 +156,7 @@ Preamble routing uses `session.taskId` (not `kind`): if `taskId` is present, the
 Worker (session-process.ts)
   → emitEvent() notifies sessionEventListeners (in-memory Map)
   → Worker SSE handler (src/lib/worker/worker-sse.ts) pushes to connected browsers
-  → Next.js proxies GET /api/sessions/:id/live → Worker :4102/sessions/:id/events
+  → Next.js streaming proxy (GET /api/sessions/:id/events → Worker :4102/sessions/:id/events)
   → React hooks (use-session-stream.ts) update Zustand store
 ```
 

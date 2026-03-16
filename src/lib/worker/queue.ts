@@ -13,6 +13,13 @@ export interface RunSessionJobData {
    * for the InitialPromptBanner in the UI.
    */
   resumePrompt?: string;
+  /**
+   * When true, skip prepending the generateResumeContext block (task title +
+   * progress notes). Used for mid-turn auto-resumes (worker/infra restart) where
+   * the agent already has its full conversation history via resumeRef and only
+   * needs a short "continue" nudge — not a redundant context dump.
+   */
+  skipResumeContext?: boolean;
 }
 
 export const SESSION_QUEUE_NAME = 'run-session';

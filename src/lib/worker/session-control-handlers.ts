@@ -472,6 +472,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
       sessionId: ctx.sessionId,
       resumeRef,
       resumePrompt,
+      skipResumeContext: true,
     }).catch((err: unknown) => {
       log.error(
         { err, sessionId: ctx.sessionId },

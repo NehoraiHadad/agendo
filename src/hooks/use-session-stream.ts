@@ -29,8 +29,11 @@ const initialState: SessionStreamState = {
 function reducer(state: SessionStreamState, action: StreamAction): SessionStreamState {
   switch (action.type) {
     case 'APPEND_EVENT': {
-      // Guard against duplicate delivery (e.g. SSE reconnect replaying already-seen events)
-      if (action.event.id > 0 && state.events.some((e) => e.id === action.event.id)) {
+      // Guard against duplicate delivery (e.g. SSE reconnect replaying already-seen events).
+      // id: 0 is used by synthetic/meta events (e.g. the log-fallback reconnect marker);
+      // those must also be deduped — without this guard they bypass dedup on every reconnect
+      // and produce duplicate React keys (e.g. `info-0`).
+      if (state.events.some((e) => e.id === action.event.id)) {
         return state;
       }
       const events = [...state.events, action.event];

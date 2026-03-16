@@ -27,12 +27,19 @@ const inFlightJobs = new Set<Promise<void>>();
 const inFlightBrainstormJobs = new Set<Promise<void>>();
 
 async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
-  const { sessionId, resumeRef, resumeSessionAt, resumePrompt } = job.data;
+  const { sessionId, resumeRef, resumeSessionAt, resumePrompt, skipResumeContext } = job.data;
   log.info({ sessionId, slotsInUse: inFlightJobs.size + 1 }, 'slot claimed for session');
 
   const promise = (async () => {
     try {
-      await runSession(sessionId, WORKER_ID, resumeRef, resumeSessionAt, resumePrompt);
+      await runSession(
+        sessionId,
+        WORKER_ID,
+        resumeRef,
+        resumeSessionAt,
+        resumePrompt,
+        skipResumeContext,
+      );
       log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot freed for session');
     } catch (err) {
       log.error({ err, sessionId }, 'Session failed');
