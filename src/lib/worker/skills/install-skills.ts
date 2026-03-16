@@ -1,14 +1,27 @@
 /**
- * Install/update SKILL.md files to ~/.agents/skills/ for native CLI discovery.
+ * Install/update SKILL.md files for native CLI discovery.
  *
  * Called once at worker startup. Idempotent — only writes when content differs.
- * Follows the Agent Skills standard: ~/.agents/skills/{skill-name}/SKILL.md
+ *
+ * Strategy:
+ * - Files written to ~/.agents/skills/ (Agent Skills standard — single source of truth)
+ * - Symlinks created from ~/.claude/skills/ → ~/.agents/skills/ (Claude Code discovery)
+ * - Same pattern already used by remotion-best-practices and agent-browser
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { createLogger } from '@/lib/logger';
 import { loadAllSkills, type Skill } from './skill-registry';
@@ -18,9 +31,10 @@ const log = createLogger('skill-installer');
 /** Map registry skill names to the SKILL.md directory names and frontmatter descriptions. */
 const SKILL_META: Record<string, { dirName: string; description: string }> = {
   'agendo-workflow': {
-    dirName: 'agendo-task-workflow',
-    description: `Use this skill when working with Agendo MCP tools (mcp__agendo__*).
-  Covers task lifecycle, progress tracking, multi-agent coordination.`,
+    dirName: 'agendo',
+    description: `Expert guidance for working inside Agendo task management sessions.
+  Use when mcp__agendo__* tools are available. Covers task lifecycle, progress tracking,
+  multi-agent orchestration, status transitions, planning mode, and permission modes.`,
   },
   'artifact-design': {
     dirName: 'agendo-artifact-design',
@@ -50,9 +64,50 @@ function md5(content: string): string {
   return createHash('md5').update(content, 'utf-8').digest('hex');
 }
 
+/** Source of truth: ~/.agents/skills/ (Agent Skills standard) */
+const AGENTS_SKILLS_DIR = join(homedir(), '.agents', 'skills');
+
+/** Symlink target: ~/.claude/skills/ (Claude Code discovery) */
+const CLAUDE_SKILLS_DIR = join(homedir(), '.claude', 'skills');
+
 /**
- * Install all SKILL.md files to ~/.agents/skills/.
- * Idempotent: only writes when content has changed.
+ * Ensure a symlink exists from ~/.claude/skills/{name} → ~/.agents/skills/{name}.
+ * If a real directory already exists at the symlink path, it is replaced.
+ */
+function ensureSymlink(dirName: string): void {
+  const target = join(AGENTS_SKILLS_DIR, dirName);
+  const link = join(CLAUDE_SKILLS_DIR, dirName);
+
+  // Use relative path for portability (matches existing remotion-best-practices pattern)
+  const relTarget = relative(CLAUDE_SKILLS_DIR, target);
+
+  // Already a correct symlink?
+  try {
+    const stat = lstatSync(link);
+    if (stat.isSymbolicLink()) {
+      if (readlinkSync(link) === relTarget) return; // already correct
+      unlinkSync(link); // wrong target — recreate
+    } else {
+      // Real directory/file at link path — remove it so we can symlink
+      // (e.g. leftover from when installSkills wrote files to both locations)
+      unlinkSync(link);
+    }
+  } catch {
+    // Doesn't exist — will create below
+  }
+
+  try {
+    mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true });
+    symlinkSync(relTarget, link);
+    log.info({ dirName, link, target: relTarget }, 'Created symlink for Claude skill discovery');
+  } catch (err) {
+    log.warn({ err, dirName }, 'Failed to create Claude skills symlink');
+  }
+}
+
+/**
+ * Install all SKILL.md files to ~/.agents/skills/ and symlink from ~/.claude/skills/.
+ * Idempotent: only writes when content has changed, only creates symlinks when missing.
  */
 export async function installSkills(): Promise<void> {
   const skills = loadAllSkills();
@@ -61,12 +116,10 @@ export async function installSkills(): Promise<void> {
     return;
   }
 
-  const baseDir = join(homedir(), '.agents', 'skills');
-
   try {
-    mkdirSync(baseDir, { recursive: true });
+    mkdirSync(AGENTS_SKILLS_DIR, { recursive: true });
   } catch (err) {
-    log.warn({ err }, `Cannot create ${baseDir} — skipping SKILL.md installation`);
+    log.warn({ err }, `Cannot create ${AGENTS_SKILLS_DIR} — skipping SKILL.md installation`);
     return;
   }
 
@@ -80,7 +133,7 @@ export async function installSkills(): Promise<void> {
       continue;
     }
 
-    const skillDir = join(baseDir, meta.dirName);
+    const skillDir = join(AGENTS_SKILLS_DIR, meta.dirName);
     const skillFile = join(skillDir, 'SKILL.md');
     const newContent = buildSkillFile(skill, meta);
     const newHash = md5(newContent);
@@ -91,6 +144,8 @@ export async function installSkills(): Promise<void> {
         const existing = readFileSync(skillFile, 'utf-8');
         if (md5(existing) === newHash) {
           skipped++;
+          // Still ensure symlink exists even if content hasn't changed
+          ensureSymlink(meta.dirName);
           continue;
         }
       } catch {
@@ -105,7 +160,11 @@ export async function installSkills(): Promise<void> {
       log.info({ skill: meta.dirName, path: skillFile }, 'Installed SKILL.md');
     } catch (err) {
       log.warn({ err, skill: meta.dirName }, 'Failed to write SKILL.md — skipping');
+      continue;
     }
+
+    // Symlink from ~/.claude/skills/ → ~/.agents/skills/ for Claude discovery
+    ensureSymlink(meta.dirName);
   }
 
   log.info({ installed, skipped, total: skills.length }, 'SKILL.md installation complete');

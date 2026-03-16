@@ -7,7 +7,7 @@ describe('skill-registry', () => {
       const skill = loadSkill('agendo-workflow');
       expect(skill).not.toBeNull();
       expect(skill!.name).toBe('agendo-workflow');
-      expect(skill!.content).toContain('Agendo Task Workflow');
+      expect(skill!.content).toContain('Agendo Workflow');
       expect(skill!.content).toContain('get_my_task');
     });
 
@@ -37,7 +37,7 @@ describe('skill-registry', () => {
   describe('getSkillContent', () => {
     it('returns content for known skill', () => {
       const content = getSkillContent('agendo-workflow');
-      expect(content).toContain('Agendo Task Workflow');
+      expect(content).toContain('Agendo Workflow');
     });
 
     it('returns empty string for unknown skill', () => {
