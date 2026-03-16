@@ -54,7 +54,7 @@ describe('worker-client', () => {
 
       const result = await sendSessionControl('session-abc', { type: 'message', text: 'hi' });
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, dispatched: true });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:4102/sessions/session-abc/control',
         expect.objectContaining({
@@ -68,16 +68,16 @@ describe('worker-client', () => {
       );
     });
 
-    it('returns false on non-ok response', async () => {
+    it('returns ok:false on non-ok response', async () => {
       mockFetch.mockResolvedValue(makeErrorResponse(500));
       const result = await sendSessionControl('session-abc', { type: 'cancel' });
-      expect(result).toBe(false);
+      expect(result).toEqual({ ok: false });
     });
 
-    it('returns false on network error', async () => {
+    it('returns ok:false on network error', async () => {
       mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
       const result = await sendSessionControl('session-abc', { type: 'cancel' });
-      expect(result).toBe(false);
+      expect(result).toEqual({ ok: false });
     });
   });
 
@@ -87,17 +87,17 @@ describe('worker-client', () => {
 
       const result = await sendSessionEvent('session-xyz', { type: 'agent:text', text: 'event' });
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, dispatched: true });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:4102/sessions/session-xyz/events',
         expect.any(Object),
       );
     });
 
-    it('returns false on failure', async () => {
+    it('returns ok:false on failure', async () => {
       mockFetch.mockRejectedValue(new Error('connection refused'));
       const result = await sendSessionEvent('session-xyz', {});
-      expect(result).toBe(false);
+      expect(result).toEqual({ ok: false });
     });
   });
 
@@ -107,7 +107,7 @@ describe('worker-client', () => {
 
       const result = await sendBrainstormControl('room-1', { type: 'steer', text: 'pivot' });
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, dispatched: true });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:4102/brainstorms/room-1/control',
         expect.objectContaining({
@@ -120,10 +120,10 @@ describe('worker-client', () => {
       );
     });
 
-    it('returns false on non-ok response', async () => {
+    it('returns ok:false on non-ok response', async () => {
       mockFetch.mockResolvedValue(makeErrorResponse(404));
       const result = await sendBrainstormControl('room-1', {});
-      expect(result).toBe(false);
+      expect(result).toEqual({ ok: false });
     });
   });
 
@@ -133,17 +133,17 @@ describe('worker-client', () => {
 
       const result = await sendBrainstormEvent('room-2', { type: 'agent:text', text: 'idea' });
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, dispatched: true });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:4102/brainstorms/room-2/events',
         expect.any(Object),
       );
     });
 
-    it('returns false on network error', async () => {
+    it('returns ok:false on network error', async () => {
       mockFetch.mockRejectedValue(new Error('timeout'));
       const result = await sendBrainstormEvent('room-2', {});
-      expect(result).toBe(false);
+      expect(result).toEqual({ ok: false });
     });
   });
 });

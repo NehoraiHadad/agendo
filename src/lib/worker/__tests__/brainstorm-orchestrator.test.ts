@@ -48,7 +48,7 @@ vi.mock('@/lib/worker/worker-sse', () => ({
 // ---------------------------------------------------------------------------
 
 vi.mock('@/lib/realtime/worker-client', () => ({
-  sendSessionControl: vi.fn().mockResolvedValue(true),
+  sendSessionControl: vi.fn().mockResolvedValue({ ok: true, dispatched: true }),
 }));
 
 // ---------------------------------------------------------------------------

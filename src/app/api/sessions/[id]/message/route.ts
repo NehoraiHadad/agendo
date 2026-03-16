@@ -52,9 +52,9 @@ export const POST = withErrorBoundary(
       return NextResponse.json({ data: { resuming: true } }, { status: 202 });
     }
 
-    // Hot path: process is alive — forward message via PG NOTIFY.
-    // Images are saved to disk first; only the file path is sent through PG NOTIFY
-    // to avoid exceeding the 7500-byte payload limit (a base64 image is far larger).
+    // Hot path: process is alive — forward message via Worker HTTP.
+    // Images are saved to disk first; only the file path is sent through the control
+    // channel to avoid large payloads.
     let imageRef: { path: string; mimeType: string } | undefined;
     if (image) {
       const dir = join(config.LOG_DIR, 'attachments', id);
@@ -69,7 +69,25 @@ export const POST = withErrorBoundary(
       text: message,
       ...(imageRef && { imageRef }),
     };
-    await sendSessionControl(id, control);
+    const result = await sendSessionControl(id, control);
+
+    // If the worker doesn't have the process in memory (e.g. after a restart),
+    // fall back to cold resume so the message isn't silently lost.
+    if (!result.dispatched) {
+      if (image && imageRef) {
+        const dir = join(config.LOG_DIR, 'attachments', id);
+        writeFileSync(
+          join(dir, 'resume-pending.json'),
+          JSON.stringify({ path: imageRef.path, mimeType: imageRef.mimeType }),
+        );
+      }
+      await enqueueSession({
+        sessionId: id,
+        resumeRef: session.sessionRef ?? undefined,
+        resumePrompt: message,
+      });
+      return NextResponse.json({ data: { resuming: true } }, { status: 202 });
+    }
 
     return NextResponse.json({ data: { delivered: true } }, { status: 202 });
   },
