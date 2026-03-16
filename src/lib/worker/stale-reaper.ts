@@ -3,9 +3,34 @@ import { sessions } from '@/lib/db/schema';
 import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
-import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
+import { sessionEventListeners } from '@/lib/worker/worker-sse';
+import type { SessionStatus } from '@/lib/realtime/event-types';
 
 const log = createLogger('stale-reaper');
+
+/**
+ * Notify in-memory SSE listeners of a session status change.
+ * Used by the stale reaper to push status updates to connected browser tabs
+ * without going through PG NOTIFY.
+ */
+function notifySessionStatus(sessionId: string, status: SessionStatus): void {
+  const listeners = sessionEventListeners.get(sessionId);
+  if (!listeners) return;
+  const event = {
+    id: 0,
+    sessionId,
+    ts: Date.now(),
+    type: 'session:state' as const,
+    status,
+  };
+  for (const cb of listeners) {
+    try {
+      cb(event);
+    } catch {
+      // Individual listener error — ignore
+    }
+  }
+}
 
 function killPid(pid: number): void {
   if (pid === 0) return; // pid=0 is not a real OS process (SDK adapters)
@@ -88,8 +113,8 @@ export class StaleReaper {
             log.info({ pid: row.pid, sessionId: row.id }, 'Killing orphaned PID for session');
             killPid(row.pid);
           }
-          // Broadcast the status change so SSE subscribers update the UI
-          await broadcastSessionStatus(row.id, 'idle');
+          // Notify in-memory SSE listeners so connected browser tabs see the status change.
+          notifySessionStatus(row.id, 'idle');
         }
       }
 

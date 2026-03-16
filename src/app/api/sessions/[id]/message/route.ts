@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { enqueueSession } from '@/lib/worker/queue';
 import { BadRequestError } from '@/lib/errors';
 import { config } from '@/lib/config';
@@ -69,7 +69,7 @@ export const POST = withErrorBoundary(
       text: message,
       ...(imageRef && { imageRef }),
     };
-    await publish(channelName('agendo_control', id), control);
+    await sendSessionControl(id, control);
 
     return NextResponse.json({ data: { delivered: true } }, { status: 202 });
   },

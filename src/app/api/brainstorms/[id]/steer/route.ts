@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendBrainstormControl, sendBrainstormEvent } from '@/lib/realtime/worker-client';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
 import { FileLogWriter } from '@/lib/worker/log-writer';
 
@@ -12,7 +12,7 @@ const steerSchema = z.object({
 
 /** Emit an immediate SSE event so the UI shows the user's message without waiting for the orchestrator. */
 async function emitUserMessageEvent(roomId: string, wave: number, text: string): Promise<void> {
-  await publish(channelName('brainstorm_events', roomId), {
+  await sendBrainstormEvent(roomId, {
     type: 'message',
     wave,
     senderType: 'user',
@@ -87,7 +87,7 @@ export const POST = withErrorBoundary(
 
     // Orchestrator is alive — send control signal via PG NOTIFY.
     // Do NOT write to log here; the orchestrator is the sole log writer for live events.
-    await publish(channelName('brainstorm_control', id), {
+    await sendBrainstormControl(id, {
       type: 'steer',
       text: body.text,
     });

@@ -4,9 +4,33 @@ import { eq, and, inArray, lt, sql } from 'drizzle-orm';
 import { enqueueSession, SESSION_QUEUE_NAME } from '../lib/worker/queue';
 import { enqueueBrainstorm, BRAINSTORM_QUEUE_NAME } from '../lib/worker/brainstorm-queue';
 import { createLogger } from '@/lib/logger';
-import { broadcastSessionStatus } from '@/lib/realtime/pg-notify';
+import { sessionEventListeners } from '@/lib/worker/worker-sse';
+import type { SessionStatus } from '@/lib/realtime/event-types';
 
 const log = createLogger('zombie-reconciler');
+
+/**
+ * Notify in-memory SSE listeners of a session status change.
+ * Used by the zombie reconciler to push status updates to connected browser tabs.
+ */
+function notifySessionStatus(sessionId: string, status: SessionStatus): void {
+  const listeners = sessionEventListeners.get(sessionId);
+  if (!listeners) return;
+  const event = {
+    id: 0,
+    sessionId,
+    ts: Date.now(),
+    type: 'session:state' as const,
+    status,
+  };
+  for (const cb of listeners) {
+    try {
+      cb(event);
+    } catch {
+      // Individual listener error — ignore
+    }
+  }
+}
 
 // ============================================================================
 // Shared constants & utilities
@@ -108,7 +132,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         .where(and(eq(sessions.id, session.id), eq(sessions.status, 'awaiting_input')));
 
       log.info({ sessionId: session.id }, 'Session was awaiting_input, marked idle (not killed)');
-      await broadcastSessionStatus(session.id, 'idle');
+      notifySessionStatus(session.id, 'idle');
       continue;
     }
 
@@ -138,7 +162,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
       { sessionId: session.id, wasStatus: session.status },
       'Session marked idle after worker restart',
     );
-    await broadcastSessionStatus(session.id, 'idle');
+    notifySessionStatus(session.id, 'idle');
 
     // Auto-recovery: re-enqueue only if the session was active (mid-work) and
     // hasn't already been recovered too many times.

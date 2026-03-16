@@ -3,7 +3,7 @@ import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { BadRequestError, NotFoundError } from '@/lib/errors';
 
 const VALID_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'dontAsk'] as const;
@@ -47,7 +47,7 @@ export const PATCH = withErrorBoundary(
 
     // Notify worker if process is live — it will terminate and restart with new mode.
     if (['active', 'awaiting_input'].includes(updated.status)) {
-      await publish(channelName('agendo_control', id), { type: 'set-permission-mode', mode });
+      await sendSessionControl(id, { type: 'set-permission-mode', mode });
     }
 
     return NextResponse.json({ data: updated });

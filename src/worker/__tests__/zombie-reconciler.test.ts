@@ -47,9 +47,9 @@ vi.mock('../../lib/worker/brainstorm-queue', () => ({
   BRAINSTORM_QUEUE_NAME: 'run-brainstorm',
 }));
 
-// Mock pg-notify
-vi.mock('../../lib/realtime/pg-notify', () => ({
-  broadcastSessionStatus: vi.fn().mockResolvedValue(undefined),
+// Mock worker-sse to prevent real in-memory listener calls
+vi.mock('../../lib/worker/worker-sse', () => ({
+  sessionEventListeners: new Map(),
 }));
 
 // Mock drizzle-orm operators

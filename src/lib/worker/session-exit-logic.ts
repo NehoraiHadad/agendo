@@ -63,7 +63,6 @@ export interface CleanupDeps {
   approvalHandler: { drain(decision: 'deny'): void };
   teamManager: { stop(): void };
   policyFilePath: string | null;
-  unsubscribeControl: (() => void) | null;
 }
 
 export interface ExitStatusDeps {
@@ -109,10 +108,8 @@ export function cleanupResources(deps: CleanupDeps): void {
     deps.policyFilePath = null;
   }
 
-  // Unsubscribe from the control channel to release the pg pool connection.
-  // Null it out immediately to prevent any subsequent re-entry from releasing twice.
-  deps.unsubscribeControl?.();
-  deps.unsubscribeControl = null;
+  // Control channel unsubscription removed: control is now delivered via
+  // Worker HTTP (port 4102) — no PG NOTIFY subscription to release.
 }
 
 // ---------------------------------------------------------------------------

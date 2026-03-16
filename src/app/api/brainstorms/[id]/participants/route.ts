@@ -6,7 +6,7 @@ import {
   addParticipant,
   removeParticipant,
 } from '@/lib/services/brainstorm-service';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
 
 const MUTABLE_STATUSES = ['waiting', 'active', 'paused'] as const;
@@ -50,7 +50,7 @@ export const DELETE = withErrorBoundary(
     await removeParticipant(id, body.agentId);
 
     // Notify the orchestrator so it stops routing waves to this agent
-    await publish(channelName('brainstorm_control', id), {
+    await sendBrainstormControl(id, {
       type: 'remove-participant',
       agentId: body.agentId,
     });

@@ -11,16 +11,15 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-vi.mock('@/lib/realtime/pg-notify', () => ({
-  publish: vi.fn(),
-  channelName: vi.fn((prefix: string, id: string) => `${prefix}_${id.replace(/-/g, '')}`),
+vi.mock('@/lib/realtime/worker-client', () => ({
+  sendSessionControl: vi.fn(),
 }));
 
 import { PATCH } from '../route';
 import { db } from '@/lib/db';
-import { publish } from '@/lib/realtime/pg-notify';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 
-const mockPublish = vi.mocked(publish);
+const mockSendSessionControl = vi.mocked(sendSessionControl);
 
 const SESSION_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -111,39 +110,39 @@ describe('PATCH /api/sessions/[id]/mode', () => {
     });
   });
 
-  describe('PG NOTIFY behavior', () => {
-    it('publishes set-permission-mode control when session is active', async () => {
+  describe('Worker HTTP control behavior', () => {
+    it('sends set-permission-mode control when session is active', async () => {
       mockDbReturning([{ id: SESSION_ID, status: 'active', permissionMode: 'default' }]);
       const [req, ctx] = makeRequest({ mode: 'default' });
       await PATCH(req, ctx);
-      expect(mockPublish).toHaveBeenCalledOnce();
-      expect(mockPublish).toHaveBeenCalledWith(
-        expect.stringContaining(SESSION_ID.replace(/-/g, '')),
-        { type: 'set-permission-mode', mode: 'default' },
-      );
+      expect(mockSendSessionControl).toHaveBeenCalledOnce();
+      expect(mockSendSessionControl).toHaveBeenCalledWith(SESSION_ID, {
+        type: 'set-permission-mode',
+        mode: 'default',
+      });
     });
 
-    it('publishes set-permission-mode control when session is awaiting_input', async () => {
+    it('sends set-permission-mode control when session is awaiting_input', async () => {
       mockDbReturning([
         { id: SESSION_ID, status: 'awaiting_input', permissionMode: 'bypassPermissions' },
       ]);
       const [req, ctx] = makeRequest({ mode: 'bypassPermissions' });
       await PATCH(req, ctx);
-      expect(mockPublish).toHaveBeenCalledOnce();
+      expect(mockSendSessionControl).toHaveBeenCalledOnce();
     });
 
-    it('does NOT publish control when session is idle', async () => {
+    it('does NOT send control when session is idle', async () => {
       mockDbReturning([{ id: SESSION_ID, status: 'idle', permissionMode: 'acceptEdits' }]);
       const [req, ctx] = makeRequest({ mode: 'acceptEdits' });
       await PATCH(req, ctx);
-      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockSendSessionControl).not.toHaveBeenCalled();
     });
 
-    it('does NOT publish control when session is ended', async () => {
+    it('does NOT send control when session is ended', async () => {
       mockDbReturning([{ id: SESSION_ID, status: 'ended', permissionMode: 'default' }]);
       const [req, ctx] = makeRequest({ mode: 'default' });
       await PATCH(req, ctx);
-      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockSendSessionControl).not.toHaveBeenCalled();
     });
   });
 });

@@ -15,6 +15,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(4100),
   TERMINAL_WS_PORT: z.coerce.number().default(4101),
+  WORKER_HTTP_PORT: z.coerce.number().default(4102),
   JWT_SECRET: z.string().min(16),
   MCP_SERVER_PATH: z.string().optional(),
   TERMINAL_JWT_SECRET: z.string().min(16).optional(),

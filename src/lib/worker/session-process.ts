@@ -8,7 +8,7 @@ const log = createLogger('session-process');
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { config } from '@/lib/config';
-import { publish, subscribe, channelName } from '@/lib/realtime/pg-notify';
+import { sessionEventListeners } from '@/lib/worker/worker-sse';
 import { serializeEvent } from '@/lib/realtime/events';
 import type {
   AgendoEvent,
@@ -86,7 +86,6 @@ function resolveSessionLogPath(sessionId: string): string {
 export class SessionProcess {
   private managedProcess: ManagedProcess | null = null;
   private logWriter: FileLogWriter | null = null;
-  private unsubscribeControl: (() => void) | null = null;
   private exitCtx = new ExitContext();
   /** Stored cwd for plan file reading during clearContextRestart. */
   private spawnCwd: string | null = null;
@@ -119,6 +118,10 @@ export class SessionProcess {
   private teamManager!: SessionTeamManager;
   /** Temp TOML policy file path written for Gemini sessions; cleaned up on exit. */
   private policyFilePath: string | null = null;
+  /** Debounce timer for flushing eventSeq to DB. */
+  private seqFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last eventSeq value that was persisted to DB. */
+  private seqFlushedValue = 0;
 
   constructor(
     private session: Session,
@@ -170,7 +173,7 @@ export class SessionProcess {
         void this.onExit(-1);
       },
       this.adapter.getMcpStatus?.bind(this.adapter),
-      // publishTextDelta: emit agent:text-delta directly to PG NOTIFY (no log write)
+      // publishTextDelta: emit agent:text-delta to in-memory SSE listeners (no log write, no DB)
       async (text) => {
         const event: AgendoEvent = {
           id: ++this.eventSeq,
@@ -179,9 +182,18 @@ export class SessionProcess {
           type: 'agent:text-delta',
           text,
         };
-        await publish(channelName('agendo_events', this.session.id), event);
+        const listeners = sessionEventListeners.get(this.session.id);
+        if (listeners) {
+          for (const cb of listeners) {
+            try {
+              cb(event);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
       },
-      // publishThinkingDelta: emit agent:thinking-delta directly to PG NOTIFY
+      // publishThinkingDelta: emit agent:thinking-delta to in-memory SSE listeners
       async (text) => {
         const event: AgendoEvent = {
           id: ++this.eventSeq,
@@ -190,7 +202,16 @@ export class SessionProcess {
           type: 'agent:thinking-delta',
           text,
         };
-        await publish(channelName('agendo_events', this.session.id), event);
+        const listeners = sessionEventListeners.get(this.session.id);
+        if (listeners) {
+          for (const cb of listeners) {
+            try {
+              cb(event);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
       },
     );
   }
@@ -244,24 +265,11 @@ export class SessionProcess {
     await db.update(sessions).set({ logFilePath: logPath }).where(eq(sessions.id, this.session.id));
 
     // Start the heartbeat as early as possible — right after claim succeeds.
-    // subscribe() below acquires a PG NOTIFY connection from the listener pool.
-    // When the pool is near capacity (e.g. during a brainstorm with many participants),
-    // subscribe() can block waiting for a free slot. Without a running heartbeat,
-    // heartbeatAt stays at the claim timestamp, the stale-reaper threshold fires
-    // after 120s, and the session is killed before it even starts. ActivityTracker
-    // skips the PID liveness check when getPid() returns null, so starting the
-    // heartbeat before the process exists is safe.
+    // Control messages are now delivered via Worker HTTP (port 4102) instead of
+    // PG NOTIFY, so there is no subscribe() call here.
+    // ActivityTracker skips the PID liveness check when getPid() returns null,
+    // so starting the heartbeat before the process exists is safe.
     this.activityTracker.startHeartbeat();
-
-    // Subscribe to control channel for inbound messages (send, cancel, redirect, tool-approval).
-    this.unsubscribeControl = await subscribe(
-      channelName('agendo_control', this.session.id),
-      (payload) => {
-        this.onControl(payload).catch((err: unknown) => {
-          log.error({ err, sessionId: this.session.id }, 'Control handler error');
-        });
-      },
-    );
 
     // Emit an explicit session:state { active } event so the frontend always
     // transitions to "Active" when a session starts (or cold-resumes).
@@ -511,7 +519,7 @@ export class SessionProcess {
   // Private: control channel handling
   // ---------------------------------------------------------------------------
 
-  private async onControl(payload: string): Promise<void> {
+  public async onControl(payload: string): Promise<void> {
     let control: AgendoControl;
     try {
       control = JSON.parse(payload) as AgendoControl;
@@ -679,6 +687,9 @@ export class SessionProcess {
       .update(sessions)
       .set({ status, lastActiveAt: new Date() })
       .where(eq(sessions.id, this.session.id));
+    // Flush eventSeq immediately on status transitions so reconnecting clients
+    // can resume from the correct position when the session status changes.
+    this.flushSeqNow();
     await this.emitEvent({ type: 'session:state', status });
 
     if (status === 'awaiting_input') {
@@ -728,9 +739,7 @@ export class SessionProcess {
       approvalHandler: this.approvalHandler,
       teamManager: this.teamManager,
       policyFilePath: this.policyFilePath,
-      unsubscribeControl: this.unsubscribeControl,
     });
-    this.unsubscribeControl = null;
     this.policyFilePath = null;
 
     // Map ActivityTracker flags to ExitContext reasons for the extracted determineExitStatus.
@@ -773,6 +782,14 @@ export class SessionProcess {
       wasInterruptedMidTurn,
     );
 
+    // Cancel debounced flush timer and do a final immediate flush so the DB
+    // has the correct eventSeq before the session is considered done.
+    if (this.seqFlushTimer !== null) {
+      clearTimeout(this.seqFlushTimer);
+      this.seqFlushTimer = null;
+    }
+    this.flushSeqNow();
+
     if (this.logWriter) {
       await this.logWriter.close();
       this.logWriter = null;
@@ -786,17 +803,47 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   /**
-   * Assign a monotonic sequence number, persist it to the sessions row,
-   * publish the event to PG NOTIFY, and write it to the session log file.
+   * Debounced flush of eventSeq to the sessions DB row.
+   * Batches multiple rapid event emissions into one DB write every 5 seconds,
+   * instead of one write per event.
+   */
+  private debouncedSeqFlush(): void {
+    if (this.seqFlushTimer !== null) return; // already scheduled
+    this.seqFlushTimer = setTimeout(() => {
+      this.seqFlushTimer = null;
+      void this.flushSeqNow();
+    }, 5_000);
+  }
+
+  /**
+   * Immediately persist the current eventSeq to DB.
+   * Called on status transitions and session exit to ensure the DB is up-to-date
+   * before SSE reconnects read the eventSeq field.
+   */
+  private flushSeqNow(): void {
+    const current = this.eventSeq;
+    if (current === this.seqFlushedValue) return;
+    this.seqFlushedValue = current;
+    db.update(sessions)
+      .set({ eventSeq: current })
+      .where(eq(sessions.id, this.session.id))
+      .catch((err: unknown) => {
+        log.warn({ err, sessionId: this.session.id }, 'Failed to flush eventSeq to DB');
+      });
+  }
+
+  /**
+   * Assign a monotonic sequence number, notify in-memory SSE listeners,
+   * and write the event to the session log file for replay on reconnect.
+   *
+   * DB eventSeq is updated via a debounced flush (every 5s) rather than
+   * per-event to avoid one DB write per event on the hot path.
    *
    * Returns the fully constructed AgendoEvent for downstream use.
    */
   private async emitEvent(partial: AgendoEventPayload): Promise<AgendoEvent> {
     const seq = ++this.eventSeq;
-
-    // Keep eventSeq in sync on the session row so SSE reconnects know
-    // how many events have been emitted without reading the log file.
-    await db.update(sessions).set({ eventSeq: seq }).where(eq(sessions.id, this.session.id));
+    this.debouncedSeqFlush();
 
     const event = {
       id: seq,
@@ -805,11 +852,19 @@ export class SessionProcess {
       ...partial,
     } as AgendoEvent;
 
-    // Publish to the per-session PG NOTIFY channel. The SSE route listens
-    // here and forwards events to connected browser clients.
-    await publish(channelName('agendo_events', this.session.id), event);
+    // Notify all in-memory SSE listeners (browser tabs connected to Worker SSE).
+    const listeners = sessionEventListeners.get(this.session.id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try {
+          cb(event);
+        } catch {
+          // Individual listener error — don't break others
+        }
+      }
+    }
 
-    // Write the structured event line to the session log file for replay.
+    // Write the structured event line to the session log file for SSE replay on reconnect.
     if (this.logWriter) {
       this.logWriter.write(serializeEvent(event), 'system');
     }

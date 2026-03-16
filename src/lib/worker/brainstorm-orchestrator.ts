@@ -8,7 +8,9 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { createLogger } from '@/lib/logger';
-import { subscribe, publish, channelName } from '@/lib/realtime/pg-notify';
+import { brainstormEventListeners, addSessionEventListener } from '@/lib/worker/worker-sse';
+import { liveBrainstormHandlers } from '@/lib/worker/worker-http';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { getSessionProc } from '@/lib/worker/session-runner';
 import { createSession, getSessionStatus } from '@/lib/services/session-service';
 import { enqueueSession } from '@/lib/worker/queue';
@@ -197,10 +199,10 @@ export class BrainstormOrchestrator {
       await updateBrainstormStatus(this.roomId, 'active');
       await this.emitEvent({ type: 'room:state', status: 'active' });
 
-      // Subscribe to the room control channel BEFORE creating sessions so that
-      // any steer sent by the user during the (potentially 10+ min) startup
-      // window is queued in this.pendingSteer rather than silently dropped.
-      await this.subscribeToControl();
+      // Register the control handler BEFORE creating sessions so that any steer
+      // sent by the user during the (potentially 10+ min) startup window is
+      // queued in this.pendingSteer rather than silently dropped.
+      this.subscribeToControl();
 
       // Create sessions for all participants
       await this.createParticipantSessions(room);
@@ -252,7 +254,7 @@ export class BrainstormOrchestrator {
           const sessionStatus = sessionInfo?.status ?? 'idle';
 
           // Subscribe before potentially triggering the session to avoid missing events
-          await this.subscribeToSession(participant);
+          this.subscribeToSession(participant);
 
           if (sessionStatus === 'awaiting_input') {
             // Session is still alive and ready — mark it done immediately so
@@ -477,8 +479,8 @@ export class BrainstormOrchestrator {
   // Subscription management
   // ============================================================================
 
-  /** Subscribe to a participant session's event channel */
-  private async subscribeToSession(participant: ParticipantState): Promise<void> {
+  /** Subscribe to a participant session's event channel via in-memory listener. */
+  private subscribeToSession(participant: ParticipantState): void {
     if (!participant.sessionId) return;
     const sessionId = participant.sessionId;
 
@@ -493,36 +495,27 @@ export class BrainstormOrchestrator {
     }
     this.subscribedSessionIds.add(sessionId);
 
-    const unsub = await subscribe(channelName('agendo_events', sessionId), (rawPayload: string) => {
-      let event: AgendoEvent;
-      try {
-        event = JSON.parse(rawPayload) as AgendoEvent;
-      } catch {
-        return;
-      }
+    const unsub = addSessionEventListener(sessionId, (event: AgendoEvent) => {
       this.handleSessionEvent(participant, event);
     });
 
     this.unsubscribers.push(unsub);
   }
 
-  /** Subscribe to the brainstorm control channel for user steering */
-  private async subscribeToControl(): Promise<void> {
-    const unsub = await subscribe(
-      channelName('brainstorm_control', this.roomId),
-      (rawPayload: string) => {
-        let msg: BrainstormControlMessage;
-        try {
-          msg = JSON.parse(rawPayload) as BrainstormControlMessage;
-        } catch {
-          log.warn({ roomId: this.roomId, rawPayload }, 'Invalid control message');
-          return;
-        }
-        this.handleControlMessage(msg);
-      },
-    );
+  /** Register the control message handler in the Worker HTTP dispatch map. */
+  private subscribeToControl(): void {
+    const handler = (rawPayload: string) => {
+      let msg: BrainstormControlMessage;
+      try {
+        msg = JSON.parse(rawPayload) as BrainstormControlMessage;
+      } catch {
+        log.warn({ roomId: this.roomId, rawPayload }, 'Invalid control message');
+        return;
+      }
+      this.handleControlMessage(msg);
+    };
 
-    this.unsubscribers.push(unsub);
+    liveBrainstormHandlers.set(this.roomId, handler);
   }
 
   // ============================================================================
@@ -1155,14 +1148,7 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     const timeoutRef: { handle: ReturnType<typeof setTimeout> | undefined } = { handle: undefined };
 
     // Subscribe BEFORE the session is enqueued to avoid missing events.
-    const unsub = await subscribe(channelName('agendo_events', sessionId), (rawPayload: string) => {
-      let event: AgendoEvent;
-      try {
-        event = JSON.parse(rawPayload) as AgendoEvent;
-      } catch {
-        return;
-      }
-
+    const unsub = addSessionEventListener(sessionId, (event: AgendoEvent) => {
       if (event.type === 'agent:text') {
         // Authoritative complete text — replace any accumulated deltas
         buffer.length = 0;
@@ -1255,15 +1241,12 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     }
 
     // Fallback: session is active but running in another worker (or not yet in map).
-    // Use PG NOTIFY as the cross-worker delivery channel.
+    // Use Worker HTTP control channel for delivery.
     log.info(
       { roomId: this.roomId, sessionId, status: info?.status },
-      'injectMessage: fallback to PG NOTIFY delivery',
+      'injectMessage: fallback to Worker HTTP delivery',
     );
-    await publish(channelName('agendo_control', sessionId), {
-      type: 'message' as const,
-      text,
-    });
+    await sendSessionControl(sessionId, { type: 'message' as const, text });
   }
 
   /**
@@ -1341,7 +1324,17 @@ TOPIC: ${room.topic}`;
       event as unknown as { id: number; type: string; [key: string]: unknown },
     );
 
-    await publish(channelName('brainstorm_events', this.roomId), event);
+    // Notify all in-memory SSE listeners (browser tabs connected to Worker SSE).
+    const listeners = brainstormEventListeners.get(this.roomId);
+    if (listeners) {
+      for (const cb of listeners) {
+        try {
+          cb(event);
+        } catch {
+          // Individual listener error — don't break others
+        }
+      }
+    }
   }
 
   /**
@@ -1362,13 +1355,19 @@ TOPIC: ${room.topic}`;
     );
 
     await Promise.allSettled(
-      sessionIds.map((sessionId) =>
-        publish(channelName('agendo_control', sessionId), { type: 'cancel' }),
-      ),
+      sessionIds.map(async (sessionId) => {
+        const proc = getSessionProc(sessionId);
+        if (proc) {
+          await proc.onControl(JSON.stringify({ type: 'cancel' }));
+        } else {
+          // Session not on this worker — deliver via Worker HTTP.
+          await sendSessionControl(sessionId, { type: 'cancel' });
+        }
+      }),
     );
   }
 
-  /** Clean up all PG NOTIFY subscriptions and pending timers */
+  /** Clean up all PG NOTIFY subscriptions, Worker HTTP handlers, and pending timers */
   private cleanup(): void {
     for (const unsub of this.unsubscribers) {
       try {
@@ -1379,6 +1378,9 @@ TOPIC: ${room.topic}`;
     }
     this.unsubscribers = [];
     this.subscribedSessionIds.clear();
+
+    // Deregister the control handler from the Worker HTTP dispatch map.
+    liveBrainstormHandlers.delete(this.roomId);
 
     // Cancel any pending delta flush timers to avoid fire-after-cleanup emissions
     for (const p of this.participants) {

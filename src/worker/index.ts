@@ -12,6 +12,7 @@ import { reconcileZombies } from './zombie-reconciler';
 import { installSkills } from '../lib/worker/skills/install-skills';
 import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
 import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
+import { startWorkerHttp, stopWorkerHttp } from '../lib/worker/worker-http';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { createLogger } from '@/lib/logger';
 
@@ -100,6 +101,9 @@ async function main(): Promise<void> {
   // Install/update SKILL.md files for native CLI skill discovery
   await installSkills();
 
+  // Start Worker HTTP server for direct control/event dispatch (replaces pg_notify control channel)
+  startWorkerHttp();
+
   // Register session job handler
   await registerSessionWorker(handleSessionJob);
   log.info('Listening for session jobs');
@@ -164,6 +168,7 @@ async function main(): Promise<void> {
         new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
       ]);
     }
+    await stopWorkerHttp();
     await pool.end();
     process.exit(0);
   };

@@ -7,7 +7,7 @@ import {
   updateBrainstormMaxWaves,
 } from '@/lib/services/brainstorm-service';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
 
 const extendSchema = z.object({
@@ -28,7 +28,7 @@ export const POST = withErrorBoundary(
       // an extend control message so the orchestrator picks up the new limit
       // and resumes the wave loop.
       const updated = await updateBrainstormMaxWaves(id, room.maxWaves + body.additionalWaves);
-      await publish(channelName('brainstorm_control', id), {
+      await sendBrainstormControl(id, {
         type: 'extend',
         additionalWaves: body.additionalWaves,
       });

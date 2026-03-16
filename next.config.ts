@@ -13,6 +13,19 @@ const nextConfig: NextConfig = {
     // specific modules used (DndContext, useSortable, etc.) are bundled.
     optimizePackageImports: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
   },
+  async rewrites() {
+    const workerPort = process.env.WORKER_HTTP_PORT ?? '4102';
+    return [
+      {
+        source: '/api/sessions/:id/live',
+        destination: `http://localhost:${workerPort}/sessions/:id/events`,
+      },
+      {
+        source: '/api/brainstorms/:id/live',
+        destination: `http://localhost:${workerPort}/brainstorms/:id/events`,
+      },
+    ];
+  },
   async headers() {
     return [
       {

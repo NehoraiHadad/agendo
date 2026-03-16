@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm, updateBrainstormStatus } from '@/lib/services/brainstorm-service';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendBrainstormControl, sendBrainstormEvent } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
 
 const endSchema = z.object({
@@ -25,7 +25,7 @@ export const POST = withErrorBoundary(
     // Signal the orchestrator to wrap up (and optionally synthesize).
     // If the orchestrator is alive, it will handle the transition cleanly
     // (including synthesis if requested).
-    await publish(channelName('brainstorm_control', id), {
+    await sendBrainstormControl(id, {
       type: 'end',
       synthesize: body.synthesize,
     });
@@ -37,7 +37,7 @@ export const POST = withErrorBoundary(
     // (the orchestrator also sets status='ended' on its exit path).
     if (room.status === 'waiting' || room.status === 'paused') {
       await updateBrainstormStatus(id, 'ended');
-      await publish(channelName('brainstorm_events', id), {
+      await sendBrainstormEvent(id, {
         id: Date.now(),
         roomId: id,
         ts: Date.now(),

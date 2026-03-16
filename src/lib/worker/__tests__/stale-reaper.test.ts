@@ -20,11 +20,9 @@ vi.mock('@/lib/config', () => ({
   },
 }));
 
-// Mock pg-notify to prevent real PG NOTIFY calls
-vi.mock('@/lib/realtime/pg-notify', () => ({
-  broadcastSessionStatus: vi.fn().mockResolvedValue(undefined),
-  channelName: vi.fn((_prefix: string, id: string) => `test_${id}`),
-  publish: vi.fn().mockResolvedValue(undefined),
+// Mock worker-sse to prevent real in-memory listener calls
+vi.mock('@/lib/worker/worker-sse', () => ({
+  sessionEventListeners: new Map(),
 }));
 
 // Must import after mocks

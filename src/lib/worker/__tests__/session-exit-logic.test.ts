@@ -288,7 +288,6 @@ describe('cleanupResources', () => {
       stop: vi.fn(),
     },
     policyFilePath: null,
-    unsubscribeControl: null,
     ...overrides,
   });
 
@@ -319,21 +318,6 @@ describe('cleanupResources', () => {
     const deps = makeCleanupDeps();
     cleanupResources(deps);
     expect(deps.teamManager.stop).toHaveBeenCalled();
-  });
-
-  it('calls unsubscribeControl and nulls it', () => {
-    const unsub = vi.fn();
-    const deps = makeCleanupDeps({ unsubscribeControl: unsub });
-
-    cleanupResources(deps);
-
-    expect(unsub).toHaveBeenCalled();
-    expect(deps.unsubscribeControl).toBeNull();
-  });
-
-  it('does not throw when unsubscribeControl is null', () => {
-    const deps = makeCleanupDeps({ unsubscribeControl: null });
-    expect(() => cleanupResources(deps)).not.toThrow();
   });
 
   it('removes policy file if present', () => {

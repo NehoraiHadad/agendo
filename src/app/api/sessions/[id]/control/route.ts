@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { BadRequestError } from '@/lib/errors';
 import { getSession, restartFreshFromSession } from '@/lib/services/session-service';
 import { db } from '@/lib/db';
@@ -75,7 +75,7 @@ export const POST = withErrorBoundary(
       } else {
         // Active session: relay to worker with the new session ID so it can
         // enqueue it from onExit after the process terminates cleanly.
-        await publish(channelName('agendo_control', id), {
+        await sendSessionControl(id, {
           ...body,
           newSessionIdForWorker: newSession.id,
         });
@@ -135,7 +135,7 @@ export const POST = withErrorBoundary(
       // Session is active — fall through to PG NOTIFY relay for the worker.
     }
 
-    await publish(channelName('agendo_control', id), body);
+    await sendSessionControl(id, body);
 
     return NextResponse.json({ data: { delivered: true } }, { status: 202 });
   },

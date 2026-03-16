@@ -93,7 +93,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       // subsequent reconnects, but the query param ensures the server can use it
       // on the very first client-initiated reconnect call.
       const lastId = lastEventIdRef.current;
-      const url = `/api/sessions/${sessionId}/events${lastId > 0 ? `?lastEventId=${lastId}` : ''}`;
+      const url = `/api/sessions/${sessionId}/live${lastId > 0 ? `?lastEventId=${lastId}` : ''}`;
       const es = new EventSource(url);
       eventSourceRef.current = es;
 

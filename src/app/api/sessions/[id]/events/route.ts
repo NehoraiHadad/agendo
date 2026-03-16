@@ -1,113 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { existsSync, readFileSync } from 'node:fs';
-import { subscribe, channelName, publish } from '@/lib/realtime/pg-notify';
-import { readEventsFromLog } from '@/lib/realtime/events';
-import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
-
-function makeSessionStateEvent(session: {
-  id: string;
-  status: string;
-  eventSeq: number;
-}): AgendoEvent {
-  return {
-    id: 0, // synthetic event, not counted in seq
-    sessionId: session.id,
-    ts: Date.now(),
-    type: 'session:state',
-    status: session.status as SessionStatus,
-  };
-}
-
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  try {
-    assertUUID(id, 'Session');
-  } catch {
-    return new Response('Not found', { status: 404 });
-  }
-  // On browser-auto-reconnect the Last-Event-ID header is set; on client-triggered
-  // reconnect (new EventSource instance) it isn't, so fall back to the query param.
-  const lastEventId =
-    parseInt(
-      req.headers.get('last-event-id') ?? req.nextUrl.searchParams.get('lastEventId') ?? '0',
-      10,
-    ) || 0;
-
-  let session;
-  try {
-    session = await getSession(id);
-  } catch {
-    return new Response('Session not found', { status: 404 });
-  }
-
-  const encoder = new TextEncoder();
-  let unsubscribe: (() => void) | null = null;
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      function send(event: AgendoEvent) {
-        try {
-          controller.enqueue(encoder.encode(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          // Client disconnected
-        }
-      }
-
-      // 1. Emit current session state immediately
-      send(makeSessionStateEvent(session));
-
-      // 2. Catchup: replay historical events from the log file after lastEventId.
-      // The log file is the single source of truth for ALL agent types (Claude,
-      // Codex, Gemini). It already contains every AgendoEvent emitted during the
-      // session, including user messages — no need for agent-specific read paths.
-      if (session.logFilePath && existsSync(session.logFilePath)) {
-        try {
-          const logContent = readFileSync(session.logFilePath, 'utf-8');
-          const catchupEvents = readEventsFromLog(logContent, lastEventId);
-          for (const ev of catchupEvents) {
-            send(ev);
-          }
-        } catch {
-          // Log file unreadable — skip catchup
-        }
-      }
-
-      // 3. Subscribe to live events via PG NOTIFY
-      try {
-        unsubscribe = await subscribe(channelName('agendo_events', id), (payload) => {
-          try {
-            const ev = JSON.parse(payload) as AgendoEvent;
-            send(ev);
-          } catch {
-            // Invalid payload — ignore
-          }
-        });
-      } catch {
-        // PG subscribe failed — close stream
-        controller.close();
-      }
-    },
-    cancel() {
-      unsubscribe?.();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
-}
+import { sendSessionEvent } from '@/lib/realtime/worker-client';
+import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 /**
  * POST /api/sessions/:id/events
  *
- * Accepts an event payload and broadcasts it to all SSE subscribers via PG NOTIFY.
+ * Accepts an event payload and forwards it to the worker via HTTP so the
+ * worker's in-memory SSE listeners receive it.
+ *
+ * GET /api/sessions/:id/events is intentionally removed — clients should use
+ * /api/sessions/:id/live which is a Next.js rewrite to the Worker SSE endpoint.
  */
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
@@ -119,15 +23,7 @@ export const POST = withErrorBoundary(
 
     const body = (await req.json()) as Record<string, unknown>;
 
-    // Publish to the session's PG NOTIFY channel so all SSE subscribers receive it
-    const event: AgendoEvent = {
-      id: 0, // synthetic — not counted in sequence
-      sessionId: id,
-      ts: Date.now(),
-      ...(body as AgendoEventPayload),
-    };
-
-    await publish(channelName('agendo_events', id), event);
+    await sendSessionEvent(id, body as AgendoEventPayload);
 
     return new NextResponse(null, { status: 204 });
   },

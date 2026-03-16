@@ -3,7 +3,7 @@ import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { publish, channelName } from '@/lib/realtime/pg-notify';
+import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { BadRequestError, NotFoundError } from '@/lib/errors';
 
 /**
@@ -41,7 +41,7 @@ export const PATCH = withErrorBoundary(
 
     // Notify worker if process is live — it will send set_model control_request.
     if (['active', 'awaiting_input'].includes(updated.status)) {
-      await publish(channelName('agendo_control', id), { type: 'set-model', model });
+      await sendSessionControl(id, { type: 'set-model', model });
     }
 
     return NextResponse.json({ data: updated });

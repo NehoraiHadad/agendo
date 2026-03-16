@@ -3,38 +3,52 @@
  *
  * #1 — collectSingleTurnResponse handles agent:text-delta (ACP agents)
  * #5 — subscribeToSession is idempotent (no double-subscription on resume)
- * #6 — Delta batching: rapid text-delta events are coalesced into a single PG NOTIFY publish
+ * #6 — Delta batching: rapid text-delta events are coalesced into a single brainstorm event
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { AgendoEvent } from '@/lib/realtime/event-types';
 
 // ---------------------------------------------------------------------------
-// Mock: pg-notify
+// Mock: worker-sse
+// Capture addSessionEventListener calls so tests can fire events into them.
 // ---------------------------------------------------------------------------
 
-/** Capture subscribe handlers so tests can fire events into them */
-const subscribeHandlers = new Map<string, ((payload: string) => void)[]>();
-const mockSubscribe = vi.fn(async (channel: string, handler: (payload: string) => void) => {
-  if (!subscribeHandlers.has(channel)) {
-    subscribeHandlers.set(channel, []);
+/** Registered session event listeners: sessionId → callback[] */
+const sessionListeners = new Map<string, Array<(event: AgendoEvent) => void>>();
+
+const mockAddSessionEventListener = vi.fn((sessionId: string, cb: (event: AgendoEvent) => void) => {
+  if (!sessionListeners.has(sessionId)) {
+    sessionListeners.set(sessionId, []);
   }
-  subscribeHandlers.get(channel)!.push(handler);
+  sessionListeners.get(sessionId)!.push(cb);
   return () => {
-    const handlers = subscribeHandlers.get(channel);
-    if (handlers) {
-      const idx = handlers.indexOf(handler);
-      if (idx >= 0) handlers.splice(idx, 1);
+    const cbs = sessionListeners.get(sessionId);
+    if (cbs) {
+      const idx = cbs.indexOf(cb);
+      if (idx >= 0) cbs.splice(idx, 1);
     }
   };
 });
 
-const mockPublish = vi.fn().mockResolvedValue(undefined);
-const mockChannelName = vi.fn((prefix: string, id: string) => `${prefix}_${id}`);
+/** Captured brainstorm events emitted via in-memory listeners */
+const emittedBrainstormEvents: unknown[] = [];
 
-vi.mock('@/lib/realtime/pg-notify', () => ({
-  subscribe: mockSubscribe,
-  publish: mockPublish,
-  channelName: mockChannelName,
+const mockBrainstormEventListeners = new Map<string, Set<(event: unknown) => void>>();
+
+vi.mock('@/lib/worker/worker-sse', () => ({
+  addSessionEventListener: mockAddSessionEventListener,
+  brainstormEventListeners: mockBrainstormEventListeners,
+  sessionEventListeners: new Map(),
+  addBrainstormEventListener: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock: worker-client
+// ---------------------------------------------------------------------------
+
+vi.mock('@/lib/realtime/worker-client', () => ({
+  sendSessionControl: vi.fn().mockResolvedValue(true),
 }));
 
 // ---------------------------------------------------------------------------
@@ -103,12 +117,15 @@ const { BrainstormOrchestrator } = await import('../brainstorm-orchestrator');
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Fire a raw JSON payload at every handler subscribed to the given channel */
-function fireEvent(channel: string, payload: unknown): void {
-  const handlers = subscribeHandlers.get(channel) ?? [];
-  const raw = JSON.stringify(payload);
-  for (const h of handlers) {
-    h(raw);
+/** Fire an AgendoEvent to all listeners subscribed to the given sessionId */
+function fireSessionEvent(
+  sessionId: string,
+  payload: Partial<AgendoEvent> & { type: string },
+): void {
+  const callbacks = sessionListeners.get(sessionId) ?? [];
+  const event = { id: 1, sessionId, ts: Date.now(), ...payload } as AgendoEvent;
+  for (const cb of callbacks) {
+    cb(event);
   }
 }
 
@@ -118,8 +135,9 @@ function fireEvent(channel: string, payload: unknown): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  subscribeHandlers.clear();
-  mockPublish.mockResolvedValue(undefined);
+  sessionListeners.clear();
+  emittedBrainstormEvents.length = 0;
+  mockBrainstormEventListeners.clear();
   mockUpdateBrainstormStatus.mockResolvedValue(undefined);
   mockUpdateBrainstormWave.mockResolvedValue(undefined);
   mockUpdateParticipantSession.mockResolvedValue(undefined);
@@ -142,11 +160,7 @@ afterEach(() => {
 describe('collectSingleTurnResponse', () => {
   it('accumulates agent:text-delta events and resolves on awaiting_input', async () => {
     const sessionId = 'synth-session-1';
-    const channel = `agendo_events_${sessionId}`;
 
-    // collectSingleTurnResponse is private — exercise it via runSynthesis by
-    // providing a complete room whose wave loop calls runSynthesis.
-    // Easier approach: access private method via type casting.
     const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
       collectSingleTurnResponse: (sessionId: string) => Promise<string>;
       unsubscribers: Array<() => void>;
@@ -156,12 +170,12 @@ describe('collectSingleTurnResponse', () => {
     const resultPromise = orchestrator.collectSingleTurnResponse(sessionId);
 
     // Simulate ACP agent streaming text-delta events
-    fireEvent(channel, { type: 'agent:text-delta', text: 'Hello ' });
-    fireEvent(channel, { type: 'agent:text-delta', text: 'world' });
-    fireEvent(channel, { type: 'agent:text-delta', text: '!' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: 'Hello ' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: 'world' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: '!' });
 
     // Simulate turn completion
-    fireEvent(channel, { type: 'session:state', status: 'awaiting_input' });
+    fireSessionEvent(sessionId, { type: 'session:state', status: 'awaiting_input' });
 
     const result = await resultPromise;
 
@@ -170,7 +184,6 @@ describe('collectSingleTurnResponse', () => {
 
   it('ignores agent:text-delta events with fromDelta=true', async () => {
     const sessionId = 'synth-session-2';
-    const channel = `agendo_events_${sessionId}`;
 
     const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
       collectSingleTurnResponse: (sessionId: string) => Promise<string>;
@@ -179,10 +192,14 @@ describe('collectSingleTurnResponse', () => {
     const resultPromise = orchestrator.collectSingleTurnResponse(sessionId);
 
     // fromDelta=true events should be ignored (they are re-emissions of already-accumulated text)
-    fireEvent(channel, { type: 'agent:text-delta', text: 'ignored', fromDelta: true });
+    fireSessionEvent(sessionId, {
+      type: 'agent:text-delta',
+      text: 'ignored',
+      fromDelta: true,
+    } as AgendoEvent & { type: 'agent:text-delta' });
     // Non-fromDelta delta should be accumulated
-    fireEvent(channel, { type: 'agent:text-delta', text: 'real text' });
-    fireEvent(channel, { type: 'session:state', status: 'awaiting_input' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: 'real text' });
+    fireSessionEvent(sessionId, { type: 'session:state', status: 'awaiting_input' });
 
     const result = await resultPromise;
     expect(result).toBe('real text');
@@ -190,7 +207,6 @@ describe('collectSingleTurnResponse', () => {
 
   it('handles agent:text replacing accumulated deltas (authoritative complete text)', async () => {
     const sessionId = 'synth-session-3';
-    const channel = `agendo_events_${sessionId}`;
 
     const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
       collectSingleTurnResponse: (sessionId: string) => Promise<string>;
@@ -199,13 +215,13 @@ describe('collectSingleTurnResponse', () => {
     const resultPromise = orchestrator.collectSingleTurnResponse(sessionId);
 
     // Deltas arrive first
-    fireEvent(channel, { type: 'agent:text-delta', text: 'partial ' });
-    fireEvent(channel, { type: 'agent:text-delta', text: 'content' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: 'partial ' });
+    fireSessionEvent(sessionId, { type: 'agent:text-delta', text: 'content' });
 
     // Authoritative complete text replaces the accumulated deltas
-    fireEvent(channel, { type: 'agent:text', text: 'complete authoritative text' });
+    fireSessionEvent(sessionId, { type: 'agent:text', text: 'complete authoritative text' });
 
-    fireEvent(channel, { type: 'session:state', status: 'awaiting_input' });
+    fireSessionEvent(sessionId, { type: 'session:state', status: 'awaiting_input' });
 
     const result = await resultPromise;
     // Should return the authoritative agent:text, not the deltas
@@ -218,7 +234,7 @@ describe('collectSingleTurnResponse', () => {
 // ---------------------------------------------------------------------------
 
 describe('subscribeToSession idempotency', () => {
-  it('calls subscribe only once when subscribeToSession is called twice with same sessionId', async () => {
+  it('calls addSessionEventListener only once when subscribeToSession is called twice with same sessionId', () => {
     const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
       subscribeToSession: (participant: {
         sessionId: string | null;
@@ -232,7 +248,7 @@ describe('subscribeToSession idempotency', () => {
         hasLeft: boolean;
         deltaBuffer: string;
         deltaFlushTimer: ReturnType<typeof setTimeout> | null;
-      }) => Promise<void>;
+      }) => void;
     };
 
     const participant = {
@@ -250,16 +266,17 @@ describe('subscribeToSession idempotency', () => {
     };
 
     // Call twice with the same participant/sessionId
-    await orchestrator.subscribeToSession(participant);
-    await orchestrator.subscribeToSession(participant);
+    orchestrator.subscribeToSession(participant);
+    orchestrator.subscribeToSession(participant);
 
-    // subscribe should have been called exactly once
-    const sessionChannel = 'agendo_events_session-abc';
-    const channelCalls = mockSubscribe.mock.calls.filter((c) => c[0] === sessionChannel);
-    expect(channelCalls).toHaveLength(1);
+    // addSessionEventListener should have been called exactly once for this sessionId
+    const callsForSession = mockAddSessionEventListener.mock.calls.filter(
+      (c) => c[0] === 'session-abc',
+    );
+    expect(callsForSession).toHaveLength(1);
   });
 
-  it('subscribes independently for different sessionIds', async () => {
+  it('subscribes independently for different sessionIds', () => {
     const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
       subscribeToSession: (participant: {
         sessionId: string | null;
@@ -273,7 +290,7 @@ describe('subscribeToSession idempotency', () => {
         hasLeft: boolean;
         deltaBuffer: string;
         deltaFlushTimer: ReturnType<typeof setTimeout> | null;
-      }) => Promise<void>;
+      }) => void;
     };
 
     const base = {
@@ -289,28 +306,35 @@ describe('subscribeToSession idempotency', () => {
       deltaFlushTimer: null,
     };
 
-    await orchestrator.subscribeToSession({ ...base, sessionId: 'session-A' });
-    await orchestrator.subscribeToSession({ ...base, sessionId: 'session-B' });
+    orchestrator.subscribeToSession({ ...base, sessionId: 'session-A' });
+    orchestrator.subscribeToSession({ ...base, sessionId: 'session-B' });
 
-    // Both channels should have exactly one subscription
-    expect(mockSubscribe.mock.calls.filter((c) => c[0] === 'agendo_events_session-A')).toHaveLength(
+    // Both sessionIds should have exactly one subscription
+    expect(mockAddSessionEventListener.mock.calls.filter((c) => c[0] === 'session-A')).toHaveLength(
       1,
     );
-    expect(mockSubscribe.mock.calls.filter((c) => c[0] === 'agendo_events_session-B')).toHaveLength(
+    expect(mockAddSessionEventListener.mock.calls.filter((c) => c[0] === 'session-B')).toHaveLength(
       1,
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// #6 — Delta batching: rapid deltas are coalesced
+// #6 — Delta batching: rapid deltas are coalesced into a single brainstorm event
 // ---------------------------------------------------------------------------
 
 describe('delta batching', () => {
   it('batches multiple rapid text-delta events into a single emitEvent call', async () => {
     vi.useFakeTimers();
 
-    const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
+    const roomId = 'room-123';
+    // Register a listener to capture brainstorm events
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -344,37 +368,31 @@ describe('delta batching', () => {
       deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
     };
 
-    // Fire 5 rapid text-delta events — should NOT publish immediately
+    // Fire 5 rapid text-delta events — should NOT emit message:delta immediately
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'a' });
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'b' });
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'c' });
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'd' });
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'e' });
 
-    // Before the flush timer fires: no publish should have happened yet for message:delta
-    const deltaPublishsBefore = mockPublish.mock.calls.filter((c) => {
-      const payload = c[1] as { type?: string };
-      return typeof payload === 'object' && payload?.type === 'message:delta';
-    });
-    expect(deltaPublishsBefore).toHaveLength(0);
+    // Before the flush timer fires: no message:delta event yet
+    const deltaEventsBefore = capturedEvents.filter(
+      (e) => (e as { type?: string }).type === 'message:delta',
+    );
+    expect(deltaEventsBefore).toHaveLength(0);
 
     // Advance time past DELTA_FLUSH_INTERVAL_MS (150ms)
     await vi.advanceTimersByTimeAsync(200);
 
-    // Now exactly one publish for message:delta should have fired with concatenated text
-    const deltaPublishsAfter = mockPublish.mock.calls.filter((c) => {
-      const payload = c[1] as { type?: string; text?: string };
-      return typeof payload === 'object' && payload?.type === 'message:delta';
-    });
-    expect(deltaPublishsAfter).toHaveLength(1);
+    // Now exactly one message:delta event should have been emitted with concatenated text
+    const deltaEventsAfter = capturedEvents.filter(
+      (e) => (e as { type?: string }).type === 'message:delta',
+    );
+    expect(deltaEventsAfter).toHaveLength(1);
 
-    const publishedPayload = deltaPublishsAfter[0][1] as {
-      type: string;
-      text: string;
-      agentId: string;
-    };
-    expect(publishedPayload.text).toBe('abcde');
-    expect(publishedPayload.agentId).toBe('agent-1');
+    const emittedEvent = deltaEventsAfter[0] as { type: string; text: string; agentId: string };
+    expect(emittedEvent.text).toBe('abcde');
+    expect(emittedEvent.agentId).toBe('agent-1');
 
     // responseBuffer should have all the chunks accumulated (for turn-complete)
     expect(participant.responseBuffer).toEqual(['a', 'b', 'c', 'd', 'e']);
@@ -383,7 +401,13 @@ describe('delta batching', () => {
   it('resets delta buffer after flush so the next batch starts fresh', async () => {
     vi.useFakeTimers();
 
-    const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
+    const roomId = 'room-456';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -425,14 +449,13 @@ describe('delta batching', () => {
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'second' });
     await vi.advanceTimersByTimeAsync(200);
 
-    // There should be exactly two separate message:delta publishes
-    const deltaPublishes = mockPublish.mock.calls.filter((c) => {
-      const payload = c[1] as { type?: string };
-      return typeof payload === 'object' && payload?.type === 'message:delta';
-    });
-    expect(deltaPublishes).toHaveLength(2);
+    // There should be exactly two separate message:delta events
+    const deltaEvents = capturedEvents.filter(
+      (e) => (e as { type?: string }).type === 'message:delta',
+    );
+    expect(deltaEvents).toHaveLength(2);
 
-    const texts = deltaPublishes.map((c) => (c[1] as { text: string }).text);
+    const texts = deltaEvents.map((e) => (e as { text: string }).text);
     expect(texts[0]).toBe('first');
     expect(texts[1]).toBe('second');
   });
@@ -440,7 +463,13 @@ describe('delta batching', () => {
   it('does not emit message:delta for fromDelta=true events', async () => {
     vi.useFakeTimers();
 
-    const orchestrator = new BrainstormOrchestrator('room-123', 3, 120) as unknown as {
+    const roomId = 'room-789';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -482,11 +511,10 @@ describe('delta batching', () => {
     });
     await vi.advanceTimersByTimeAsync(200);
 
-    const deltaPublishes = mockPublish.mock.calls.filter((c) => {
-      const payload = c[1] as { type?: string };
-      return typeof payload === 'object' && payload?.type === 'message:delta';
-    });
-    expect(deltaPublishes).toHaveLength(0);
+    const deltaEvents = capturedEvents.filter(
+      (e) => (e as { type?: string }).type === 'message:delta',
+    );
+    expect(deltaEvents).toHaveLength(0);
     expect(participant.responseBuffer).toHaveLength(0);
     expect(participant.deltaBuffer).toBe('');
   });

@@ -56,7 +56,7 @@ pnpm worker:dev                 # tsx watch for local dev
 - **Process manager**: PM2
 - **UI**: shadcn/ui + Tailwind CSS
 - **State**: Zustand (client), Server Components (server)
-- **Real-time**: SSE (board updates, log streaming), PG NOTIFY (worker↔frontend bridge), WebSocket (terminal)
+- **Real-time**: SSE (board updates, log streaming), Worker HTTP (port 4102, events path), WebSocket (terminal)
 - **Terminal**: xterm.js v6 (`@xterm/*` scoped packages) + node-pty + `ws` WebSocket
 - **MCP**: `@modelcontextprotocol/sdk` (stdio transport)
 
@@ -65,7 +65,7 @@ pnpm worker:dev                 # tsx watch for local dev
 | Service         | Port | PM2 Name          |
 | --------------- | ---- | ----------------- |
 | Next.js app     | 4100 | `agendo`          |
-| Worker          | —    | `agendo-worker`   |
+| Worker          | 4102 | `agendo-worker`   |
 | Terminal server | 4101 | `agendo-terminal` |
 
 Config: `/home/ubuntu/projects/agendo/ecosystem.config.js`. After env changes: `pm2 restart <name> --update-env && pm2 save`. To fully purge old vars: `pm2 delete <name> && pm2 start ecosystem.config.js --only <name>`.
@@ -97,10 +97,11 @@ pm2 restart agendo-worker --update-env
 From `src/lib/config.ts` (validated with Zod on startup):
 
 - `DATABASE_URL` — PostgreSQL connection string
-- `JWT_SECRET` — min 16 chars, used for API auth
+- `JWT_SECRET` — min 16 chars, used for API auth and Worker HTTP Bearer auth
 - `LOG_DIR` — defaults to `./logs` (production uses `/data/agendo/logs` via ecosystem.config.js)
 - `ALLOWED_WORKING_DIRS` — colon-separated allowed dirs (default `/home/ubuntu/projects:/tmp`)
 - `MCP_SERVER_PATH` — path to bundled MCP server (`dist/mcp-server.js`)
+- `WORKER_HTTP_PORT` — Worker HTTP server port (default 4102)
 
 ## Architecture: Three Processes
 
@@ -111,15 +112,17 @@ The system runs as three cooperating processes:
 │  Next.js App (port 4100)                │
 │  - API routes (src/app/api/)            │
 │  - Kanban UI, session viewer            │
-│  - SSE endpoints for real-time push     │
+│  - Proxies /api/sessions/:id/live       │
+│    → Worker SSE (port 4102)             │
 └───────────────┬─────────────────────────┘
-                │ pg-boss queues + PG NOTIFY
+                │ pg-boss queues + Worker HTTP (port 4102)
 ┌───────────────▼─────────────────────────┐
-│  Worker (agendo-worker)                 │
+│  Worker (agendo-worker, port 4102)      │
 │  - Dequeues execute-capability jobs     │
 │  - Dequeues run-session jobs            │
 │  - Spawns AI CLI subprocesses           │
-│  - Emits AgendoEvents via PG NOTIFY     │
+│  - Serves SSE directly to browsers      │
+│    (in-memory listeners, no PG NOTIFY)  │
 └───────────────┬─────────────────────────┘
                 │ stdio transport
 ┌───────────────▼─────────────────────────┐
@@ -132,7 +135,7 @@ The system runs as three cooperating processes:
 
 ## Sessions
 
-Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via PG NOTIFY (`agendo_control_*`); worker streams `AgendoEvent`s back via PG NOTIFY (`agendo_events_*`). Use POST `/api/sessions`.
+Sessions are long-lived AI conversations (`run-session` queue, `session-runner.ts`). The worker spawns the agent CLI process (`session-process.ts`) and keeps it alive for multi-turn interaction. Frontend sends messages via HTTP POST to Worker (port 4102); worker streams `AgendoEvent`s via in-memory SSE listeners served directly at `GET /api/sessions/:id/live` (proxied through Next.js rewrite). Use POST `/api/sessions`.
 
 ### Session `kind` Field
 
@@ -151,9 +154,9 @@ Preamble routing uses `session.taskId` (not `kind`): if `taskId` is present, the
 
 ```
 Worker (session-process.ts)
-  → publishes AgendoEvent via pg_notify('agendo_events_{sessionId}')
-  → SSE endpoint (src/app/api/sessions/[id]/events/route.ts) subscribes
-  → pushes to frontend via EventSource
+  → emitEvent() notifies sessionEventListeners (in-memory Map)
+  → Worker SSE handler (src/lib/worker/worker-sse.ts) pushes to connected browsers
+  → Next.js proxies GET /api/sessions/:id/live → Worker :4102/sessions/:id/events
   → React hooks (use-session-stream.ts) update Zustand store
 ```
 
@@ -162,12 +165,12 @@ Control signals flow in reverse:
 ```
 Frontend sends message
   → POST /api/sessions/[id]/messages
-  → pg_notify('agendo_control_{sessionId}', {type:'message', text})
-  → Worker reads in session-process.ts via subscribe()
+  → sendSessionControl() → POST localhost:4102/sessions/:id/control (Worker HTTP)
+  → Worker reads in session-process.ts via onControl()
   → Pipes stdin to agent CLI
 ```
 
-PG NOTIFY payloads >7500 bytes are replaced with a `{type:'ref'}` stub (`src/lib/realtime/pg-notify.ts`).
+SSE reconnect catchup reads from the session log file (no DB needed for replay).
 
 ## Worker Adapter Pattern
 
