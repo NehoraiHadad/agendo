@@ -16,6 +16,7 @@ import {
   Settings,
   Search,
   Lightbulb,
+  HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
@@ -56,6 +57,7 @@ interface SidebarStats {
 
 interface SidebarProps {
   onMobileClose?: () => void;
+  onSupportOpen?: () => void;
 }
 
 const navItems = [
@@ -82,7 +84,7 @@ const subscribeSidebarStorage = (cb: () => void) => {
 const getSidebarSnapshot = () => localStorage.getItem(SIDEBAR_KEY) === 'true';
 const getSidebarServerSnapshot = () => false;
 
-export function Sidebar({ onMobileClose }: SidebarProps) {
+export function Sidebar({ onMobileClose, onSupportOpen }: SidebarProps) {
   const pathname = usePathname();
   const isCollapsed = useSyncExternalStore(
     subscribeSidebarStorage,
@@ -340,6 +342,37 @@ export function Sidebar({ onMobileClose }: SidebarProps) {
 
       {/* Footer */}
       <div className="relative border-t border-white/[0.04] p-3 mt-auto">
+        {/* Support button */}
+        {onSupportOpen && (
+          <div className="mb-3">
+            {isCollapsed ? (
+              <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onSupportOpen}
+                    aria-label="Open support chat"
+                    className="flex h-9 w-full items-center justify-center rounded-lg text-muted-foreground/40 hover:text-foreground/65 hover:bg-white/[0.04] transition-colors"
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="text-xs">
+                  Support
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <button
+                onClick={onSupportOpen}
+                aria-label="Open support chat"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/55 hover:text-foreground/80 hover:bg-white/[0.04] transition-colors group"
+              >
+                <HelpCircle className="h-4 w-4 shrink-0 text-muted-foreground/45 group-hover:text-foreground/65 transition-colors" />
+                <span>Support</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {!isCollapsed ? (
           <div className="space-y-2 px-1">
             <div className="flex items-center gap-2">

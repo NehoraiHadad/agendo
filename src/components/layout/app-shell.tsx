@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { Menu, HelpCircle } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './sidebar';
 import { NotificationToggle } from '@/components/pwa/notification-toggle';
@@ -108,7 +108,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             mobileOpen ? 'flex' : 'hidden sm:flex',
           )}
         >
-          <Sidebar onMobileClose={() => setMobileOpen(false)} />
+          <Sidebar
+            onMobileClose={() => setMobileOpen(false)}
+            onSupportOpen={() => setSupportOpen(true)}
+          />
         </div>
 
         {/* Main content area */}
@@ -119,13 +122,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="flex-1 text-sm font-semibold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
               agenDo
             </span>
-            <button
-              onClick={() => setSupportOpen(true)}
-              aria-label="Open support chat"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground/50 hover:text-foreground/70 hover:bg-white/[0.06] transition-colors"
-            >
-              <HelpCircle className="h-4 w-4" />
-            </button>
             <NotificationToggle />
           </header>
           <IosInstallHint />
@@ -139,23 +135,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <UiGuideOverlay />
       <WelcomeWizard />
       {supportOpen && <SupportChatPopup onClose={() => setSupportOpen(false)} />}
-      {/* Desktop floating button */}
-      {!supportOpen && (
-        <button
-          onClick={() => setSupportOpen(true)}
-          aria-label="Open support chat"
-          className={cn(
-            'fixed bottom-6 right-6 z-50 hidden sm:flex',
-            'h-12 w-12 items-center justify-center rounded-full',
-            'bg-primary/15 border border-primary/25 backdrop-blur-sm',
-            'text-primary hover:bg-primary/25 hover:border-primary/40',
-            'shadow-lg hover:shadow-primary/20 transition-all duration-200',
-            'hover:scale-105 active:scale-95',
-          )}
-        >
-          <HelpCircle className="h-5 w-5" />
-        </button>
-      )}
     </TooltipProvider>
   );
 }
