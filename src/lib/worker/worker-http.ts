@@ -78,7 +78,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return;
   }
 
-  // SSE routes — no Bearer auth required (auth via Next.js proxy cookie forwarding)
+  // SSE routes — no Bearer auth (proxied from Next.js route handler on same machine)
   if (method === 'GET') {
     const sseMatch = /^\/(sessions|brainstorms)\/([^/]+)\/events$/.exec(pathname);
     if (sseMatch) {

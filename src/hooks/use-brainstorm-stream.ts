@@ -31,7 +31,7 @@ export function useBrainstormStream(roomId: string | null): void {
       }
 
       const lastId = lastEventIdRef.current;
-      const url = `/api/brainstorms/${roomId}/live${lastId > 0 ? `?lastEventId=${lastId}` : ''}`;
+      const url = `/api/brainstorms/${roomId}/events${lastId > 0 ? `?lastEventId=${lastId}` : ''}`;
       const es = new EventSource(url);
       eventSourceRef.current = es;
 
