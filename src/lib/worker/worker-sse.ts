@@ -194,6 +194,15 @@ export async function handleSessionSSE(
           'CLI-native history reconstruction used for catchup',
         );
         let seq = lastEventId + 1;
+        // Emit a system:info marker so the UI knows the source
+        const sourceEvent: AgendoEvent = {
+          id: seq++,
+          sessionId: session.id,
+          ts: Date.now(),
+          type: 'system:info',
+          message: `History loaded from CLI native storage (${historyEvents.length} events)`,
+        };
+        sendEvent(res, sourceEvent);
         for (const payload of historyEvents) {
           const event: AgendoEvent = {
             id: seq++,
@@ -218,10 +227,19 @@ export async function handleSessionSSE(
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
       const catchupEvents = readEventsFromLog(logContent, lastEventId);
-      for (const ev of catchupEvents) {
-        sendEvent(res, ev);
-      }
       if (catchupEvents.length > 0) {
+        // Emit a system:info marker so the UI knows the source
+        const fallbackEvent: AgendoEvent = {
+          id: 0,
+          sessionId: session.id,
+          ts: Date.now(),
+          type: 'system:info',
+          message: `History loaded from log file (${catchupEvents.length} events)`,
+        };
+        sendEvent(res, fallbackEvent);
+        for (const ev of catchupEvents) {
+          sendEvent(res, ev);
+        }
         catchupSent = true;
       }
     } catch {
