@@ -28,6 +28,13 @@ const envSchema = z.object({
   // Override model for summarization (e.g. "gemini-2.5-flash", "haiku", "o4-mini")
   // If not set, uses fast defaults: gemini→Flash, claude→Haiku, codex→o4-mini
   SUMMARIZATION_MODEL: z.string().optional(),
+  // Whether to write events to the session log file (audit trail).
+  // Default: true (transitional period — CLI-native history is now primary for SSE catchup).
+  // Set to false once CLI-native history reconstruction is fully trusted.
+  LOG_EVENTS: z
+    .string()
+    .transform((v) => v.toLowerCase() !== 'false' && v !== '0')
+    .default('true'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

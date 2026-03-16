@@ -880,8 +880,10 @@ export class SessionProcess {
       }
     }
 
-    // Write the structured event line to the session log file for SSE replay on reconnect.
-    if (this.logWriter) {
+    // Write the structured event line to the session log file (optional audit trail).
+    // CLI-native history (adapter.getHistory()) is now the primary source for SSE catchup.
+    // Log file is the fallback for agents without getHistory() support (Gemini, Copilot).
+    if (config.LOG_EVENTS && this.logWriter) {
       this.logWriter.write(serializeEvent(event), 'system');
     }
 
