@@ -31,8 +31,19 @@ export type AssistantPart =
   | { kind: 'text'; text: string; fromDelta?: boolean }
   | { kind: 'tool'; tool: ToolState };
 
+/** Metadata from agent:result, attached to the last assistant bubble of the turn. */
+export interface TurnMeta {
+  costUsd: number | null;
+  sessionCostUsd: number | null;
+  durationMs: number | null;
+  durationApiMs: number | null;
+  turns: number | null;
+  webSearches: number;
+  denials: number;
+}
+
 export type DisplayItem =
-  | { kind: 'assistant'; id: number; ts?: number; parts: AssistantPart[] }
+  | { kind: 'assistant'; id: number; ts?: number; parts: AssistantPart[]; turnMeta?: TurnMeta }
   | {
       kind: 'turn-complete';
       id: number;
@@ -284,31 +295,48 @@ export function buildDisplayItems(
       }
 
       case 'agent:result': {
-        const label = ev.isError ? errorSubtypeLabel(ev.subtype) : 'Turn complete';
-        const parts: string[] = [label];
-        if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
-        if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
-        if (ev.durationApiMs != null && ev.durationMs != null && ev.durationMs > 0) {
-          const pct = Math.round((ev.durationApiMs / ev.durationMs) * 100);
-          parts.push(`${pct}% API`);
-        }
         const webSearches = ev.serverToolUse?.webSearchRequests ?? 0;
-        if (webSearches > 0) parts.push(`${webSearches} search${webSearches > 1 ? 'es' : ''}`);
         const denials = ev.permissionDenials?.length ?? 0;
-        if (denials > 0) parts.push(`${denials} denied`);
         if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
         // Capture messageUuid for the next user message's branch button.
         lastAgentResultUuid = ev.messageUuid;
-        items.push({
-          kind: 'turn-complete',
-          id: ev.id,
-          ts: ev.ts,
-          text: parts.join(' · '),
-          costUsd: ev.costUsd ?? null,
-          sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
-          isError: ev.isError,
-          errors: ev.errors,
-        });
+
+        if (ev.isError) {
+          // Errors are still shown as a visible pill so the user notices them.
+          const label = errorSubtypeLabel(ev.subtype);
+          const parts: string[] = [label];
+          if (ev.turns != null) parts.push(`${ev.turns} turn${ev.turns !== 1 ? 's' : ''}`);
+          if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
+          if (ev.costUsd != null) parts.push(`$${ev.costUsd.toFixed(4)}`);
+          items.push({
+            kind: 'turn-complete',
+            id: ev.id,
+            ts: ev.ts,
+            text: parts.join(' · '),
+            costUsd: ev.costUsd ?? null,
+            sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
+            isError: true,
+            errors: ev.errors,
+          });
+        } else {
+          // Non-error: attach metadata to the last assistant bubble (shown on hover).
+          const meta: TurnMeta = {
+            costUsd: ev.costUsd ?? null,
+            sessionCostUsd: ev.costUsd != null ? sessionCostUsd : null,
+            durationMs: ev.durationMs ?? null,
+            durationApiMs: ev.durationApiMs ?? null,
+            turns: ev.turns ?? null,
+            webSearches,
+            denials,
+          };
+          // Walk backwards to find the last assistant item and attach turnMeta.
+          for (let i = items.length - 1; i >= 0; i--) {
+            if (items[i].kind === 'assistant') {
+              (items[i] as Extract<DisplayItem, { kind: 'assistant' }>).turnMeta = meta;
+              break;
+            }
+          }
+        }
         break;
       }
 

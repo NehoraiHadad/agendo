@@ -28,6 +28,8 @@ import {
   Pencil,
   Cpu,
   Users,
+  Clock,
+  DollarSign,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -60,6 +62,7 @@ import {
   type ToolState,
   type AssistantPart,
   type DisplayItem,
+  type TurnMeta,
 } from './session-chat-utils';
 
 // ---------------------------------------------------------------------------
@@ -725,16 +728,67 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
   return result;
 }
 
+/** Inline turn stats shown on click on the last assistant bubble of a turn. */
+function TurnMetaPopover({ meta }: { meta: TurnMeta }) {
+  const [open, setOpen] = useState(false);
+
+  const stats: string[] = [];
+  if (meta.turns != null) stats.push(`${meta.turns} turn${meta.turns !== 1 ? 's' : ''}`);
+  if (meta.durationMs != null) stats.push(`${(meta.durationMs / 1000).toFixed(1)}s`);
+  if (meta.durationApiMs != null && meta.durationMs != null && meta.durationMs > 0) {
+    const pct = Math.round((meta.durationApiMs / meta.durationMs) * 100);
+    stats.push(`${pct}% API`);
+  }
+  if (meta.webSearches > 0)
+    stats.push(`${meta.webSearches} search${meta.webSearches > 1 ? 'es' : ''}`);
+  if (meta.denials > 0) stats.push(`${meta.denials} denied`);
+
+  return (
+    <span className="inline-flex items-center gap-1 opacity-0 group-hover/assistantrow:opacity-100 transition-opacity">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/30 hover:text-muted-foreground/60 transition-colors pl-0.5"
+        title="Turn stats"
+      >
+        <Clock className="size-2.5" />
+        {meta.durationMs != null && <span>{(meta.durationMs / 1000).toFixed(1)}s</span>}
+        {meta.costUsd != null && (
+          <>
+            <DollarSign className="size-2.5 ml-0.5" />
+            <span>{meta.costUsd.toFixed(4)}</span>
+          </>
+        )}
+      </button>
+      {open && (
+        <span className="inline-flex items-center bg-[oklch(0.12_0_0)] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-[10px] text-muted-foreground/70 shadow-lg gap-x-3 gap-y-0.5 flex-wrap animate-fade-in-up">
+          {stats.length > 0 && <span>{stats.join(' · ')}</span>}
+          {meta.costUsd != null && (
+            <span className="font-mono">turn ${meta.costUsd.toFixed(4)}</span>
+          )}
+          {meta.sessionCostUsd != null && (
+            <span className="font-mono text-muted-foreground/50">
+              session ${meta.sessionCostUsd.toFixed(4)}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function AssistantBubble({
   parts,
   sessionId,
   showAvatar = true,
   ts,
+  turnMeta,
 }: {
   parts: AssistantPart[];
   sessionId: string;
   showAvatar?: boolean;
   ts?: number;
+  turnMeta?: TurnMeta;
 }) {
   return (
     <div className="flex gap-2.5 items-start w-full animate-fade-in-up group/assistantrow">
@@ -748,11 +802,14 @@ function AssistantBubble({
       )}
       <div className="space-y-1.5 min-w-0 flex-1">
         {renderAssistantParts(parts, sessionId)}
-        {ts && (
-          <span className="block text-[10px] text-muted-foreground/25 opacity-0 group-hover/assistantrow:opacity-100 transition-opacity pl-0.5">
-            {formatMessageTime(ts)}
-          </span>
-        )}
+        <span className="flex items-center gap-2 min-h-[14px]">
+          {ts && (
+            <span className="text-[10px] text-muted-foreground/25 opacity-0 group-hover/assistantrow:opacity-100 transition-opacity pl-0.5">
+              {formatMessageTime(ts)}
+            </span>
+          )}
+          {turnMeta && <TurnMetaPopover meta={turnMeta} />}
+        </span>
       </div>
     </div>
   );
@@ -1329,6 +1386,7 @@ export function SessionChatView({
             sessionId={sessionId}
             showAvatar={showAvatar}
             ts={item.ts}
+            turnMeta={item.turnMeta}
           />
         );
       }

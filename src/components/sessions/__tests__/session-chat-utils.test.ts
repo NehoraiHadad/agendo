@@ -172,16 +172,43 @@ describe('buildDisplayItems', () => {
     }
   });
 
-  it('creates turn-complete item for agent:result event', () => {
+  it('attaches turnMeta to last assistant bubble for non-error agent:result', () => {
     const events: AgendoEvent[] = [
-      { ...base, id: 1, type: 'agent:result', turns: 3, durationMs: 1500, costUsd: 0.01 },
+      { ...base, id: 1, type: 'agent:text', text: 'Hello' },
+      { ...base, id: 2, type: 'agent:result', turns: 3, durationMs: 1500, costUsd: 0.01 },
     ];
     const items = buildDisplayItems(events, emptyMap);
+    // Should NOT create a turn-complete item — metadata is on the assistant bubble.
     expect(items).toHaveLength(1);
-    expect(items[0].kind).toBe('turn-complete');
-    if (items[0].kind === 'turn-complete') {
-      expect(items[0].text).toContain('Turn complete');
-      expect(items[0].costUsd).toBe(0.01);
+    expect(items[0].kind).toBe('assistant');
+    if (items[0].kind === 'assistant') {
+      expect(items[0].turnMeta).toBeDefined();
+      expect(items[0].turnMeta!.costUsd).toBe(0.01);
+      expect(items[0].turnMeta!.turns).toBe(3);
+      expect(items[0].turnMeta!.durationMs).toBe(1500);
+    }
+  });
+
+  it('creates turn-complete pill for error agent:result', () => {
+    const events: AgendoEvent[] = [
+      { ...base, id: 1, type: 'agent:text', text: 'Oops' },
+      {
+        ...base,
+        id: 2,
+        type: 'agent:result',
+        isError: true,
+        subtype: 'error_max_turns',
+        turns: 5,
+        durationMs: 3000,
+        costUsd: 0.05,
+      },
+    ];
+    const items = buildDisplayItems(events, emptyMap);
+    expect(items).toHaveLength(2);
+    expect(items[1].kind).toBe('turn-complete');
+    if (items[1].kind === 'turn-complete') {
+      expect(items[1].text).toContain('Max turns reached');
+      expect(items[1].isError).toBe(true);
     }
   });
 
