@@ -22,7 +22,9 @@ export type AppServerSyntheticEvent =
   | {
       type: 'as:skills';
       skills: Array<{ name: string; description: string; shortDescription?: string }>;
-    };
+    }
+  | { type: 'as:usage'; used: number; size: number }
+  | { type: 'as:diff-update'; diff: string };
 
 export interface AppServerTurnError {
   message: string;
@@ -284,6 +286,19 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
     // -----------------------------------------------------------------------
     case 'as:error':
       return [{ type: 'system:error', message: `Codex error: ${event.message}` }];
+
+    // -----------------------------------------------------------------------
+    // usage → agent:usage (context bar for Codex sessions)
+    // -----------------------------------------------------------------------
+    case 'as:usage':
+      return [{ type: 'agent:usage', used: event.used, size: event.size }];
+
+    // -----------------------------------------------------------------------
+    // diff-update → system:info (aggregated unified diff for turn)
+    // -----------------------------------------------------------------------
+    case 'as:diff-update':
+      if (!event.diff) return [];
+      return [{ type: 'system:info', message: `Turn diff:\n\`\`\`diff\n${event.diff}\n\`\`\`` }];
 
     // -----------------------------------------------------------------------
     // skills → session:commands (Codex uses $skill-name prefix, not /)

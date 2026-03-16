@@ -236,6 +236,51 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
   }
 
+  /**
+   * List all Codex threads on disk, optionally filtered by working directory.
+   * Uses `thread/list` JSON-RPC — requires a running app-server process.
+   * Returns thread metadata (id, preview, cwd, createdAt, updatedAt).
+   */
+  async listThreads(opts?: { cwd?: string; limit?: number; cursor?: string }): Promise<{
+    threads: Array<{
+      id: string;
+      preview: string;
+      cwd: string;
+      createdAt: number;
+      updatedAt: number;
+    }>;
+    nextCursor: string | null;
+  } | null> {
+    if (!this.alive) return null;
+
+    try {
+      const result = (await this.transport.call(
+        'thread/list',
+        {
+          cwd: opts?.cwd ?? this.sessionCwd,
+          limit: opts?.limit ?? 50,
+          cursor: opts?.cursor ?? null,
+          sortKey: 'updated_at',
+          archived: false,
+        },
+        15_000,
+      )) as {
+        threads: Array<{
+          id: string;
+          preview: string;
+          cwd: string;
+          createdAt: number;
+          updatedAt: number;
+        }>;
+        nextCursor: string | null;
+      };
+      return result;
+    } catch (err) {
+      log.debug({ err }, 'thread/list failed');
+      return null;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Private: server launch
   // -------------------------------------------------------------------------
@@ -354,7 +399,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         approvalPolicy: getApprovalPolicy(opts.permissionMode),
         sandbox: getSandboxMode(opts.permissionMode),
         model: opts.model ?? null,
-        persistExtendedHistory: false,
+        persistExtendedHistory: true,
         ...(this.developerInstructions
           ? { developerInstructions: this.developerInstructions }
           : {}),
@@ -378,7 +423,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         approvalPolicy: getApprovalPolicy(opts.permissionMode),
         sandbox: getSandboxMode(opts.permissionMode),
         experimentalRawEvents: false,
-        persistExtendedHistory: false,
+        persistExtendedHistory: true,
         ...(this.developerInstructions
           ? { developerInstructions: this.developerInstructions }
           : {}),
@@ -632,27 +677,48 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       }
 
       case 'thread/tokenUsage/updated': {
-        const usage = params.usage as {
-          inputTokenCount?: number;
-          outputTokenCount?: number;
-          cacheReadTokenCount?: number;
-          cacheWriteTokenCount?: number;
+        // Actual type: { threadId, turnId, tokenUsage: { total: TokenUsageBreakdown, last: ..., modelContextWindow: number|null } }
+        // TokenUsageBreakdown: { totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens }
+        const tokenUsage = params.tokenUsage as {
+          total?: {
+            totalTokens?: number;
+            inputTokens?: number;
+            cachedInputTokens?: number;
+            outputTokens?: number;
+            reasoningOutputTokens?: number;
+          };
+          last?: Record<string, number>;
+          modelContextWindow?: number | null;
         } | null;
-        if (usage) {
+        if (tokenUsage?.total) {
+          const total = tokenUsage.total;
+          // Use totalTokens if available, otherwise sum individual fields
           const used =
-            (usage.inputTokenCount ?? 0) +
-            (usage.outputTokenCount ?? 0) +
-            (usage.cacheReadTokenCount ?? 0) +
-            (usage.cacheWriteTokenCount ?? 0);
-          // o4-mini context window is 200k tokens; use 200000 as the limit
-          // if Codex doesn't report an explicit limit.
-          const limit = 200000;
+            total.totalTokens ??
+            (total.inputTokens ?? 0) +
+              (total.cachedInputTokens ?? 0) +
+              (total.outputTokens ?? 0) +
+              (total.reasoningOutputTokens ?? 0);
+          // Use the real modelContextWindow from Codex instead of hardcoded 200K
+          const limit = tokenUsage.modelContextWindow ?? this.tokenUsage?.limit ?? 200_000;
           this.tokenUsage = { used, limit };
+          // Emit agent:usage so the frontend context bar works for Codex sessions
+          this.emitSynthetic({ type: 'as:usage', used, size: limit });
           if (used / limit >= 0.8) {
             this.triggerCompaction().catch((err: unknown) => {
               log.error({ err }, 'compaction error');
             });
           }
+        }
+        break;
+      }
+
+      // Aggregated unified diff of all file changes in the current turn.
+      // Emitted live as files change — gives the frontend a real-time diff view.
+      case 'turn/diff/updated': {
+        const diff = params.diff as string | undefined;
+        if (diff) {
+          this.emitSynthetic({ type: 'as:diff-update', diff });
         }
         break;
       }
@@ -722,6 +788,31 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     if (method === 'tool/requestUserInput') {
       const answers = await handleCodexUserInputRequest(params, this.approvalHandler);
       this.transport.respond(id, { answers });
+      return;
+    }
+
+    // Dynamic tool calls — Codex can invoke client-defined tools.
+    // Currently Agendo doesn't register custom tools with Codex, so this will
+    // only fire if external config or future features add client tools.
+    // We emit an info event so the user sees the call, and return an error
+    // indicating the tool is not implemented on the Agendo side.
+    if (method === 'item/tool/call') {
+      const toolName = (params.tool as string) ?? 'unknown';
+      const callId = (params.callId as string) ?? '';
+      log.info({ toolName, callId }, 'Dynamic tool call received from Codex');
+      this.emitSynthetic({
+        type: 'as:info',
+        message: `Codex requested dynamic tool: ${toolName} (not yet implemented in Agendo)`,
+      });
+      this.transport.respond(id, {
+        contentItems: [
+          {
+            type: 'inputText',
+            text: `Error: Tool "${toolName}" is not available. Use MCP tools instead.`,
+          },
+        ],
+        success: false,
+      });
       return;
     }
 
