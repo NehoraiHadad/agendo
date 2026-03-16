@@ -153,6 +153,37 @@ describe('mapCopilotJsonToEvents', () => {
 
   // NO copilot:commands case (dropped from Copilot)
 
+  // -----------------------------------------------------------------------
+  // copilot:usage with cost → agent:usage with costUsd
+  // -----------------------------------------------------------------------
+  it('maps copilot:usage with cost to agent:usage with costUsd', () => {
+    const event: CopilotEvent = {
+      type: 'copilot:usage',
+      used: 5000,
+      size: 128000,
+      cost: { amount: 0.03, currency: 'USD' },
+    };
+    const result = mapCopilotJsonToEvents(event);
+    expect(result).toEqual([{ type: 'agent:usage', used: 5000, size: 128000, costUsd: 0.03 }]);
+  });
+
+  it('maps copilot:usage without cost to agent:usage without costUsd', () => {
+    const event: CopilotEvent = { type: 'copilot:usage', used: 5000, size: 128000 };
+    const result = mapCopilotJsonToEvents(event);
+    expect(result).toEqual([{ type: 'agent:usage', used: 5000, size: 128000 }]);
+    // costUsd should NOT be present at all
+    expect(result[0]).not.toHaveProperty('costUsd');
+  });
+
+  // -----------------------------------------------------------------------
+  // copilot:session-info → session:info
+  // -----------------------------------------------------------------------
+  it('maps copilot:session-info with title to session:info', () => {
+    const event: CopilotEvent = { type: 'copilot:session-info', title: 'My Session' };
+    const result = mapCopilotJsonToEvents(event);
+    expect(result).toEqual([{ type: 'session:info', title: 'My Session' }]);
+  });
+
   // unknown → empty array
   it('returns empty array for unknown event types', () => {
     const event = { type: 'unknown' } as unknown as CopilotEvent;

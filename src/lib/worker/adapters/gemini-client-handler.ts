@@ -9,9 +9,20 @@ import type {
   ReadTextFileResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
+  CreateTerminalRequest,
+  CreateTerminalResponse,
+  TerminalOutputRequest,
+  TerminalOutputResponse,
+  WaitForTerminalExitRequest,
+  WaitForTerminalExitResponse,
+  KillTerminalCommandRequest,
+  KillTerminalCommandResponse,
+  ReleaseTerminalRequest,
+  ReleaseTerminalResponse,
 } from '@agentclientprotocol/sdk';
 import type { GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import type { ToolApprovalFn } from '@/lib/worker/adapters/types';
+import { AcpTerminalHandler } from '@/lib/worker/adapters/acp-terminal-handler';
 
 const log = createLogger('gemini-client-handler');
 
@@ -40,11 +51,18 @@ export function extractMessage(err: unknown): string {
  *  - writeTextFile      — agent writes a file to the client filesystem
  */
 export class GeminiClientHandler implements Client {
+  private readonly terminalHandler = new AcpTerminalHandler();
+
   constructor(
     private readonly emitNdjson: (event: GeminiEvent) => void,
     private readonly getApprovalHandler: () => ToolApprovalFn | null,
     private readonly activeToolCalls: Set<string>,
   ) {}
+
+  /** Release all managed terminals (call on session end). */
+  releaseAllTerminals(): void {
+    this.terminalHandler.releaseAll();
+  }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     const { toolCall, options } = params;
@@ -138,9 +156,22 @@ export class GeminiClientHandler implements Client {
       case 'current_mode_update':
         this.emitNdjson({ type: 'gemini:mode-change', modeId: update.currentModeId });
         break;
-      case 'usage_update':
-        this.emitNdjson({ type: 'gemini:usage', used: update.used, size: update.size });
+      case 'usage_update': {
+        const cost = (update as unknown as { cost?: { amount: number; currency: string } | null })
+          .cost;
+        this.emitNdjson({
+          type: 'gemini:usage',
+          used: update.used,
+          size: update.size,
+          ...(cost ? { cost } : {}),
+        });
         break;
+      }
+      case 'session_info_update': {
+        const info = update as unknown as { title?: string | null };
+        this.emitNdjson({ type: 'gemini:session-info', title: info.title ?? null });
+        break;
+      }
       case 'available_commands_update':
         this.emitNdjson({
           type: 'gemini:commands',
@@ -196,6 +227,38 @@ export class GeminiClientHandler implements Client {
     } catch {
       /* ignore write errors */
     }
+    return {};
+  }
+
+  async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
+    const result = await this.terminalHandler.createTerminal({
+      command: params.command,
+      args: params.args,
+      cwd: params.cwd,
+      env: params.env as Array<{ name: string; value: string }> | undefined,
+      maxOutputBytes: params.outputByteLimit ?? undefined,
+    });
+    return { terminalId: result.terminalId };
+  }
+
+  async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
+    return this.terminalHandler.getTerminalOutputResponse(params.terminalId);
+  }
+
+  async waitForTerminalExit(
+    params: WaitForTerminalExitRequest,
+  ): Promise<WaitForTerminalExitResponse> {
+    const status = await this.terminalHandler.waitForTerminalExit(params.terminalId);
+    return { exitCode: status.exitCode, signal: status.signal };
+  }
+
+  async killTerminal(params: KillTerminalCommandRequest): Promise<KillTerminalCommandResponse> {
+    this.terminalHandler.killTerminal(params.terminalId);
+    return {};
+  }
+
+  async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
+    this.terminalHandler.releaseTerminal(params.terminalId);
     return {};
   }
 }

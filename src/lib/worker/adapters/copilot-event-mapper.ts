@@ -29,7 +29,13 @@ export type CopilotEvent =
       entries: Array<{ content: string; priority: string; status: string }>;
     }
   | { type: 'copilot:mode-change'; modeId: string }
-  | { type: 'copilot:usage'; used: number; size: number };
+  | {
+      type: 'copilot:usage';
+      used: number;
+      size: number;
+      cost?: { amount: number; currency: string } | null;
+    }
+  | { type: 'copilot:session-info'; title?: string | null };
 
 // ---------------------------------------------------------------------------
 // Main mapper: CopilotEvent → AgendoEventPayload[]
@@ -162,10 +168,25 @@ export function mapCopilotJsonToEvents(event: CopilotEvent): AgendoEventPayload[
     }
 
     // -----------------------------------------------------------------------
-    // copilot:usage → agent:usage (real-time context window stats)
+    // copilot:usage → agent:usage (real-time context window stats + optional cost)
     // -----------------------------------------------------------------------
-    case 'copilot:usage':
-      return [{ type: 'agent:usage', used: event.used, size: event.size }];
+    case 'copilot:usage': {
+      const usageEvent: AgendoEventPayload = {
+        type: 'agent:usage',
+        used: event.used,
+        size: event.size,
+      };
+      if (event.cost?.amount != null) {
+        (usageEvent as { costUsd?: number }).costUsd = event.cost.amount;
+      }
+      return [usageEvent];
+    }
+
+    // -----------------------------------------------------------------------
+    // copilot:session-info → session:info (auto-title, metadata updates)
+    // -----------------------------------------------------------------------
+    case 'copilot:session-info':
+      return [{ type: 'session:info', title: event.title ?? null }];
 
     default:
       return [];

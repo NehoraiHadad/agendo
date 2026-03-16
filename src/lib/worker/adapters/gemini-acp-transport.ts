@@ -178,6 +178,20 @@ export class AcpTransport {
   }
 
   /**
+   * Fork an existing session into a new independent session (UNSTABLE).
+   * Requires agent to support `sessionCapabilities.fork`.
+   * Returns the new forked session ID.
+   */
+  async forkSession(sessionId: string): Promise<string> {
+    if (!this.connection) throw new Error('No ACP connection');
+    const conn = this.connection as unknown as {
+      unstable_forkSession: (params: { sessionId: string }) => Promise<{ sessionId: string }>;
+    };
+    const result = await conn.unstable_forkSession({ sessionId });
+    return result.sessionId;
+  }
+
+  /**
    * Send a prompt (text + optional image) to the active session.
    * Times out after 10 minutes.
    */

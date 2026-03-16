@@ -157,6 +157,43 @@ describe('mapGeminiJsonToEvents', () => {
   });
 
   // -----------------------------------------------------------------------
+  // gemini:usage with cost → agent:usage with costUsd
+  // -----------------------------------------------------------------------
+  it('maps gemini:usage with cost to agent:usage with costUsd', () => {
+    const event: GeminiEvent = {
+      type: 'gemini:usage',
+      used: 5000,
+      size: 128000,
+      cost: { amount: 0.05, currency: 'USD' },
+    };
+    const result = mapGeminiJsonToEvents(event);
+    expect(result).toEqual([{ type: 'agent:usage', used: 5000, size: 128000, costUsd: 0.05 }]);
+  });
+
+  it('maps gemini:usage without cost to agent:usage without costUsd', () => {
+    const event: GeminiEvent = { type: 'gemini:usage', used: 5000, size: 128000 };
+    const result = mapGeminiJsonToEvents(event);
+    expect(result).toEqual([{ type: 'agent:usage', used: 5000, size: 128000 }]);
+    // costUsd should NOT be present at all
+    expect(result[0]).not.toHaveProperty('costUsd');
+  });
+
+  // -----------------------------------------------------------------------
+  // gemini:session-info → session:info
+  // -----------------------------------------------------------------------
+  it('maps gemini:session-info with title to session:info', () => {
+    const event: GeminiEvent = { type: 'gemini:session-info', title: 'My Session' };
+    const result = mapGeminiJsonToEvents(event);
+    expect(result).toEqual([{ type: 'session:info', title: 'My Session' }]);
+  });
+
+  it('maps gemini:session-info with null title to session:info', () => {
+    const event: GeminiEvent = { type: 'gemini:session-info', title: null };
+    const result = mapGeminiJsonToEvents(event);
+    expect(result).toEqual([{ type: 'session:info', title: null }]);
+  });
+
+  // -----------------------------------------------------------------------
   // unknown event types → empty array
   // -----------------------------------------------------------------------
   it('returns empty array for unknown event types', () => {

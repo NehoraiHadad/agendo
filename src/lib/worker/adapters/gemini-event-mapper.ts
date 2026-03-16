@@ -29,11 +29,17 @@ export type GeminiEvent =
       entries: Array<{ content: string; priority: string; status: string }>;
     }
   | { type: 'gemini:mode-change'; modeId: string }
-  | { type: 'gemini:usage'; used: number; size: number }
+  | {
+      type: 'gemini:usage';
+      used: number;
+      size: number;
+      cost?: { amount: number; currency: string } | null;
+    }
   | {
       type: 'gemini:commands';
       commands: Array<{ name: string; description: string; argumentHint: string }>;
-    };
+    }
+  | { type: 'gemini:session-info'; title?: string | null };
 
 // ---------------------------------------------------------------------------
 // Main mapper: GeminiEvent → AgendoEventPayload[]
@@ -166,10 +172,25 @@ export function mapGeminiJsonToEvents(event: GeminiEvent): AgendoEventPayload[] 
     }
 
     // -----------------------------------------------------------------------
-    // gemini:usage → agent:usage (real-time context window stats)
+    // gemini:usage → agent:usage (real-time context window stats + optional cost)
     // -----------------------------------------------------------------------
-    case 'gemini:usage':
-      return [{ type: 'agent:usage', used: event.used, size: event.size }];
+    case 'gemini:usage': {
+      const usageEvent: AgendoEventPayload = {
+        type: 'agent:usage',
+        used: event.used,
+        size: event.size,
+      };
+      if (event.cost?.amount != null) {
+        (usageEvent as { costUsd?: number }).costUsd = event.cost.amount;
+      }
+      return [usageEvent];
+    }
+
+    // -----------------------------------------------------------------------
+    // gemini:session-info → session:info (auto-title, metadata updates)
+    // -----------------------------------------------------------------------
+    case 'gemini:session-info':
+      return [{ type: 'session:info', title: event.title ?? null }];
 
     // -----------------------------------------------------------------------
     // gemini:commands → session:commands (slash command discovery)

@@ -315,4 +315,28 @@ describe('GeminiAcpTransport', () => {
       expect(transport.getConnection()).toBe(fakeConn);
     });
   });
+
+  describe('forkSession()', () => {
+    it('calls unstable_forkSession on the connection', async () => {
+      // Add unstable_forkSession to mockConnection BEFORE createConnection (Object.assign copies it)
+      (
+        mockConnection as MockConnection & { unstable_forkSession: ReturnType<typeof vi.fn> }
+      ).unstable_forkSession = vi.fn().mockResolvedValue({ sessionId: 'forked-session-456' });
+
+      transport.createConnection(fakeStdin, fakeStdout, clientHandler);
+
+      const result = await transport.forkSession('original-session-123');
+
+      expect(
+        (mockConnection as MockConnection & { unstable_forkSession: ReturnType<typeof vi.fn> })
+          .unstable_forkSession,
+      ).toHaveBeenCalledWith({ sessionId: 'original-session-123' });
+      expect(result).toBe('forked-session-456');
+    });
+
+    it('throws if no connection exists', async () => {
+      const noConnTransport = new GeminiAcpTransport();
+      await expect(noConnTransport.forkSession('session-1')).rejects.toThrow('No ACP connection');
+    });
+  });
 });

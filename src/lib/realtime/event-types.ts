@@ -109,7 +109,8 @@ export type AgendoEvent =
         status: 'pending' | 'in_progress' | 'completed';
       }>;
     })
-  | (EventBase & { type: 'agent:usage'; used: number; size: number })
+  | (EventBase & { type: 'agent:usage'; used: number; size: number; costUsd?: number })
+  | (EventBase & { type: 'session:info'; title?: string | null })
   | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
   | (EventBase & {
       type: 'system:info';
