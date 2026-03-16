@@ -21,6 +21,7 @@ import {
   Archive,
   PenLine,
   History,
+  LayoutTemplate,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from 'radix-ui';
 import ReactMarkdown from 'react-markdown';
@@ -42,13 +43,13 @@ import { InlineAnnotationSidebar } from '@/components/plans/inline-annotation-si
 import type { PlanAnnotation, BlockSelection } from '@/lib/types/annotations';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
-import type { Plan, PlanStatus, Project } from '@/lib/types';
+import type { Plan, PlanStatus, PlanMetadata, Project } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Types & constants
 // ---------------------------------------------------------------------------
 
-type ViewMode = 'edit' | 'preview' | 'split';
+type ViewMode = 'edit' | 'preview' | 'split' | 'visual';
 
 const PLAN_STATUS_CONFIG: Record<
   PlanStatus,
@@ -551,6 +552,8 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
 
   const showEditor = viewMode === 'edit' || viewMode === 'split';
   const showPreview = viewMode === 'preview' || viewMode === 'split';
+  const visualContent = (plan.metadata as PlanMetadata | null)?.visualContent ?? null;
+  const showVisual = viewMode === 'visual';
 
   return (
     <div className="flex h-full min-h-0 gap-0">
@@ -724,6 +727,20 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                   >
                     <Eye className="size-3" />
                   </button>
+                  {visualContent && (
+                    <button
+                      onClick={() => setViewMode('visual')}
+                      title="Visual"
+                      className={cn(
+                        'h-full px-2 flex items-center transition-colors',
+                        viewMode === 'visual'
+                          ? 'bg-violet-500/15 text-violet-400'
+                          : 'text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-white/[0.03]',
+                      )}
+                    >
+                      <LayoutTemplate className="size-3" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Action buttons */}
@@ -822,7 +839,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
             </div>
           </div>
         ) : (
-          /* ── Normal editor / preview layout (unchanged) ─────────── */
+          /* ── Normal editor / preview / visual layout ─────────────── */
           <div
             className={cn(
               'flex-1 min-h-0 rounded-xl border border-white/[0.06] bg-[oklch(0.08_0_0)] overflow-hidden',
@@ -874,6 +891,36 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
                 )}
                 <div className="flex-1 overflow-y-auto">
                   <PlanMarkdownPreview content={content} />
+                </div>
+              </div>
+            )}
+
+            {/* Visual panel — rendered when plan.metadata.visualContent is set */}
+            {showVisual && (
+              <div className="flex flex-col min-h-0 h-full overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-violet-500/[0.12] shrink-0">
+                  <LayoutTemplate className="size-3 text-violet-400/50" />
+                  <span className="text-[10px] uppercase tracking-widest text-violet-400/40 font-medium">
+                    Visual
+                  </span>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  {visualContent ? (
+                    // Rendered in a sandboxed iframe — no allow-same-origin prevents access
+                    // to parent cookies, localStorage, and same-origin APIs.
+                    <iframe
+                      srcDoc={visualContent}
+                      sandbox="allow-scripts allow-forms"
+                      className="w-full h-full border-0"
+                      title={`Visual: ${plan.title}`}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-sm text-muted-foreground/30 italic">
+                        No visual content available.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

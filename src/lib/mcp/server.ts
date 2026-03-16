@@ -75,6 +75,7 @@ export {
   handleSavePlan,
   handleSetExecutionOrder,
   handleListReadyTasks,
+  handleRenderArtifact,
 } from './tools/index.js';
 export {
   apiCall,

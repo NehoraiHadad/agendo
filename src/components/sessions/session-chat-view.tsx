@@ -1,6 +1,15 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
+import {
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+  createContext,
+  useContext,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Bot,
@@ -30,6 +39,7 @@ import { SessionMessageInput } from '@/components/sessions/session-message-input
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { TeamMessageCard } from '@/components/sessions/team-message-card';
+import { ArtifactCard } from '@/components/sessions/artifact-card';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import type { SessionStatus } from '@/lib/realtime/events';
 
@@ -37,6 +47,10 @@ import type { SessionStatus } from '@/lib/realtime/events';
 // creating a dynamic component reference during render (react-hooks/static-components).
 // Keep in sync with the TOOL_RENDERERS registry in interactive-tools.tsx.
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
+
+// Context that propagates agentSlug to ToolCard without prop drilling through
+// renderAssistantParts → ToolGroup → ToolCard.
+const AgentSlugContext = createContext<string | undefined>(undefined);
 import type { UseSessionStreamReturn } from '@/hooks/use-session-stream';
 import {
   buildDisplayItems,
@@ -240,6 +254,42 @@ const ToolCard = memo(function ToolCard({
   // manualOpen overrides auto-behavior once the user explicitly toggles.
   // Must be declared before any early return to satisfy Rules of Hooks.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  // Agent slug from context — drives ArtifactCard accent color.
+  const agentSlug = useContext(AgentSlugContext);
+
+  // render_artifact: when the tool has a successful result, render ArtifactCard.
+  // Match both bare name (from MCP server) and namespaced name (from Claude Code: mcp__agendo__render_artifact).
+  const isRenderArtifact =
+    tool.toolName === 'render_artifact' || tool.toolName.endsWith('__render_artifact');
+
+  // Still executing — show loading skeleton immediately so the user knows it's happening.
+  if (isRenderArtifact && !tool.result) {
+    return <ArtifactCard title="Generating artifact…" agentSlug={agentSlug} isLoading />;
+  }
+
+  if (isRenderArtifact && tool.result && !tool.result.isError) {
+    let artifact: { id: string; title: string; type: 'html' | 'svg' } | null = null;
+    try {
+      artifact = JSON.parse(tool.result.content) as {
+        id: string;
+        title: string;
+        type: 'html' | 'svg';
+      };
+    } catch {
+      // invalid JSON — fall through to default tool rendering
+    }
+    if (artifact) {
+      return (
+        <ArtifactCard
+          artifactId={artifact.id}
+          title={artifact.title}
+          artifactType={artifact.type}
+          toolResultText={tool.result.content}
+          agentSlug={agentSlug}
+        />
+      );
+    }
+  }
 
   // Interactive tools (AskUserQuestion, ExitPlanMode, …) are handled by the
   // renderer registry. InteractiveTool is a stable component — not created
@@ -1352,205 +1402,207 @@ export function SessionChatView({
   }
 
   return (
-    <div
-      className={
-        fullscreen
-          ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
-          : compact && !autoGrow
-            ? 'flex flex-col flex-1 min-h-0'
-            : 'flex flex-col flex-1 min-h-0 rounded-xl border border-white/[0.07]'
-      }
-    >
-      {/* Header — hidden in compact mode (workspace panel has its own header) */}
-      {!compact && (
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07] shrink-0 bg-[oklch(0.09_0_0)] rounded-t-xl">
-          <span className="text-xs text-muted-foreground/50">Session Chat</span>
-          <button
-            type="button"
-            onClick={() => setFullscreen((v) => !v)}
-            className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
-            aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-          >
-            {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-          </button>
-        </div>
-      )}
-
-      {/* Chat area */}
+    <AgentSlugContext.Provider value={agentSlug}>
       <div
-        ref={!(compact && autoGrow) ? scrollContainerRef : undefined}
-        onScroll={!(compact && autoGrow) ? handleScroll : undefined}
-        style={compact && !autoGrow ? { touchAction: 'pan-y' } : undefined}
         className={
           fullscreen
-            ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+            ? 'fixed inset-0 z-50 flex flex-col bg-[oklch(0.06_0_0)]'
             : compact && !autoGrow
-              ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain bg-[oklch(0.07_0_0)] p-2 space-y-2'
-              : compact && autoGrow
-                ? 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
-                : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+              ? 'flex flex-col flex-1 min-h-0'
+              : 'flex flex-col flex-1 min-h-0 rounded-xl border border-white/[0.07]'
         }
-        role="log"
-        aria-live="polite"
-        aria-label="Session chat"
       >
-        {stream.events.length === 0 && parentDisplayItems.length === 0 && !stream.error && (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
-            {currentStatus === 'idle' && !effectiveInitialPrompt ? (
-              <span className="text-xs">Send a message to start the conversation</span>
-            ) : (
-              <>
-                <Loader2 className="size-5 animate-spin" />
-                <span className="text-xs">
-                  {stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}
-                </span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Parent session history for forked sessions */}
-        {parentDisplayItems.length > 0 ? (
-          <>
-            {parentDisplayItems.map((item, i) =>
-              renderDisplayItem(item, i, parentDisplayItems[i - 1]),
-            )}
-            <div className="flex items-center gap-3 py-3 px-1">
-              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
-              <span className="text-[11px] text-muted-foreground/40 flex items-center gap-1.5">
-                <svg
-                  className="size-3"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                >
-                  <path d="M5 3v4m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6-4v2m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 4v4M5 7h6" />
-                </svg>
-                Forked here
-              </span>
-              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
-            </div>
-            {/* Fork's initial prompt appears after the separator, not at the top */}
-            {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
-          </>
-        ) : (
-          /* Non-fork: initial prompt banner at the top as usual */
-          effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />
-        )}
-
-        {augmentedDisplayItems.map((item, i) =>
-          renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
-        )}
-
-        {/* Optimistic user messages shown while real event is in-flight */}
-        {optimisticMessages.map((msg) => (
-          <UserBubble key={`opt-${msg.id}`} text={msg.text} imageDataUrl={msg.imageDataUrl} />
-        ))}
-
-        {showTyping && <TypingIndicator />}
-
-        {stream.error && <ErrorPill text={`Stream error: ${stream.error}`} />}
-
-        {/* Sticky scroll-to-bottom button — appears when user has scrolled up */}
-        {userScrolledUp && stream.events.length > 0 && (
-          <div className="sticky bottom-2 flex justify-center pointer-events-none">
+        {/* Header — hidden in compact mode (workspace panel has its own header) */}
+        {!compact && (
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07] shrink-0 bg-[oklch(0.09_0_0)] rounded-t-xl">
+            <span className="text-xs text-muted-foreground/50">Session Chat</span>
             <button
               type="button"
-              onClick={scrollToBottom}
-              className="pointer-events-auto flex items-center gap-1.5 text-xs text-foreground/70 bg-[oklch(0.12_0_0)] hover:bg-[oklch(0.16_0_0)] border border-white/[0.12] hover:border-white/[0.20] rounded-full px-3 py-1.5 shadow-lg transition-all"
+              onClick={() => setFullscreen((v) => !v)}
+              className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+              aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
             >
-              <ArrowDown className="size-3" />
-              <span>Scroll to bottom</span>
+              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
             </button>
           </div>
         )}
 
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Stop button + message input — sticky at bottom in page-scroll mode */}
-      {!compact && (
+        {/* Chat area */}
         <div
+          ref={!(compact && autoGrow) ? scrollContainerRef : undefined}
+          onScroll={!(compact && autoGrow) ? handleScroll : undefined}
+          style={compact && !autoGrow ? { touchAction: 'pan-y' } : undefined}
           className={
             fullscreen
-              ? 'shrink-0'
-              : 'shrink-0 rounded-b-xl bg-[oklch(0.085_0_0)]/95 backdrop-blur-sm border-t border-white/[0.05]'
+              ? 'flex-1 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
+              : compact && !autoGrow
+                ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain bg-[oklch(0.07_0_0)] p-2 space-y-2'
+                : compact && autoGrow
+                  ? 'overflow-x-hidden bg-[oklch(0.07_0_0)] p-2 space-y-2'
+                  : 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[oklch(0.07_0_0)] p-3 sm:p-4 space-y-3'
           }
+          role="log"
+          aria-live="polite"
+          aria-label="Session chat"
         >
-          {/* Stop button — soft interrupt, only when agent is actively running */}
-          {isActive && (
-            <div className="flex justify-center px-3 pt-1.5">
+          {stream.events.length === 0 && parentDisplayItems.length === 0 && !stream.error && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/60">
+              {currentStatus === 'idle' && !effectiveInitialPrompt ? (
+                <span className="text-xs">Send a message to start the conversation</span>
+              ) : (
+                <>
+                  <Loader2 className="size-5 animate-spin" />
+                  <span className="text-xs">
+                    {stream.isConnected ? 'Waiting for agent…' : 'Connecting…'}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Parent session history for forked sessions */}
+          {parentDisplayItems.length > 0 ? (
+            <>
+              {parentDisplayItems.map((item, i) =>
+                renderDisplayItem(item, i, parentDisplayItems[i - 1]),
+              )}
+              <div className="flex items-center gap-3 py-3 px-1">
+                <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+                <span className="text-[11px] text-muted-foreground/40 flex items-center gap-1.5">
+                  <svg
+                    className="size-3"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M5 3v4m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6-4v2m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 4v4M5 7h6" />
+                  </svg>
+                  Forked here
+                </span>
+                <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+              </div>
+              {/* Fork's initial prompt appears after the separator, not at the top */}
+              {effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />}
+            </>
+          ) : (
+            /* Non-fork: initial prompt banner at the top as usual */
+            effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />
+          )}
+
+          {augmentedDisplayItems.map((item, i) =>
+            renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
+          )}
+
+          {/* Optimistic user messages shown while real event is in-flight */}
+          {optimisticMessages.map((msg) => (
+            <UserBubble key={`opt-${msg.id}`} text={msg.text} imageDataUrl={msg.imageDataUrl} />
+          ))}
+
+          {showTyping && <TypingIndicator />}
+
+          {stream.error && <ErrorPill text={`Stream error: ${stream.error}`} />}
+
+          {/* Sticky scroll-to-bottom button — appears when user has scrolled up */}
+          {userScrolledUp && stream.events.length > 0 && (
+            <div className="sticky bottom-2 flex justify-center pointer-events-none">
               <button
                 type="button"
-                onClick={() => void handleInterrupt()}
-                disabled={isInterrupting}
-                className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
-                aria-label="Stop current agent action"
+                onClick={scrollToBottom}
+                className="pointer-events-auto flex items-center gap-1.5 text-xs text-foreground/70 bg-[oklch(0.12_0_0)] hover:bg-[oklch(0.16_0_0)] border border-white/[0.12] hover:border-white/[0.20] rounded-full px-3 py-1.5 shadow-lg transition-all"
               >
-                {isInterrupting ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Square className="size-3 fill-current" />
-                )}
-                Stop
+                <ArrowDown className="size-3" />
+                <span>Scroll to bottom</span>
               </button>
             </div>
           )}
-          {/* Codex steer input — inject guidance mid-turn */}
-          {isActive && isCodex && (
-            <div className="flex items-center gap-1.5 px-3 pt-1.5">
-              <input
-                type="text"
-                value={steerText}
-                onChange={(e) => setSteerText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSteer();
-                  }
-                }}
-                placeholder="Steer (inject guidance mid-turn)…"
-                className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-white/[0.15]"
-              />
-              <button
-                type="button"
-                onClick={() => void handleSteer()}
-                disabled={!steerText.trim() || isSteering}
-                className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded px-2 py-1 transition-colors disabled:opacity-40"
-              >
-                {isSteering ? <Loader2 className="size-3 animate-spin" /> : null}
-                Steer
-              </button>
-            </div>
-          )}
-          {/* Codex rollback button — undo last turn (conversation only) */}
-          {currentStatus === 'awaiting_input' && isCodex && (
-            <div className="flex justify-end px-3 pt-1">
-              <button
-                type="button"
-                onClick={() => void handleRollback()}
-                disabled={isRollingBack}
-                title="Undo last turn. File changes are NOT reverted — use git diff / git checkout to revert files manually."
-                className="flex items-center gap-1 text-[11px] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.04] rounded px-2 py-0.5 transition-colors disabled:opacity-40"
-              >
-                {isRollingBack ? <Loader2 className="size-3 animate-spin" /> : <span>↩</span>}
-                Undo last turn
-              </button>
-            </div>
-          )}
-          <SessionMessageInput
-            sessionId={sessionId}
-            status={currentStatus as SessionStatus}
-            onSent={handleSent}
-            slashCommands={slashCommands}
-            richSlashCommands={richSlashCommands}
-            mcpServers={mcpServers}
-            agentBinaryPath={agentBinaryPath}
-            neverStarted={currentStatus === 'idle' && stream.events.length === 0}
-          />
+
+          <div ref={bottomRef} />
         </div>
-      )}
-    </div>
+
+        {/* Stop button + message input — sticky at bottom in page-scroll mode */}
+        {!compact && (
+          <div
+            className={
+              fullscreen
+                ? 'shrink-0'
+                : 'shrink-0 rounded-b-xl bg-[oklch(0.085_0_0)]/95 backdrop-blur-sm border-t border-white/[0.05]'
+            }
+          >
+            {/* Stop button — soft interrupt, only when agent is actively running */}
+            {isActive && (
+              <div className="flex justify-center px-3 pt-1.5">
+                <button
+                  type="button"
+                  onClick={() => void handleInterrupt()}
+                  disabled={isInterrupting}
+                  className="flex items-center gap-1.5 text-xs text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/15 hover:border-amber-500/30 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+                  aria-label="Stop current agent action"
+                >
+                  {isInterrupting ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Square className="size-3 fill-current" />
+                  )}
+                  Stop
+                </button>
+              </div>
+            )}
+            {/* Codex steer input — inject guidance mid-turn */}
+            {isActive && isCodex && (
+              <div className="flex items-center gap-1.5 px-3 pt-1.5">
+                <input
+                  type="text"
+                  value={steerText}
+                  onChange={(e) => setSteerText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSteer();
+                    }
+                  }}
+                  placeholder="Steer (inject guidance mid-turn)…"
+                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-white/[0.15]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleSteer()}
+                  disabled={!steerText.trim() || isSteering}
+                  className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded px-2 py-1 transition-colors disabled:opacity-40"
+                >
+                  {isSteering ? <Loader2 className="size-3 animate-spin" /> : null}
+                  Steer
+                </button>
+              </div>
+            )}
+            {/* Codex rollback button — undo last turn (conversation only) */}
+            {currentStatus === 'awaiting_input' && isCodex && (
+              <div className="flex justify-end px-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => void handleRollback()}
+                  disabled={isRollingBack}
+                  title="Undo last turn. File changes are NOT reverted — use git diff / git checkout to revert files manually."
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.04] rounded px-2 py-0.5 transition-colors disabled:opacity-40"
+                >
+                  {isRollingBack ? <Loader2 className="size-3 animate-spin" /> : <span>↩</span>}
+                  Undo last turn
+                </button>
+              </div>
+            )}
+            <SessionMessageInput
+              sessionId={sessionId}
+              status={currentStatus as SessionStatus}
+              onSent={handleSent}
+              slashCommands={slashCommands}
+              richSlashCommands={richSlashCommands}
+              mcpServers={mcpServers}
+              agentBinaryPath={agentBinaryPath}
+              neverStarted={currentStatus === 'idle' && stream.events.length === 0}
+            />
+          </div>
+        )}
+      </div>
+    </AgentSlugContext.Provider>
   );
 }

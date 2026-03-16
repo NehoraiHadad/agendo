@@ -2,6 +2,7 @@ import { eq, and, desc, or, ilike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { plans, planVersions, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { createArtifact } from '@/lib/services/artifact-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getAgentById } from '@/lib/services/agent-service';
 import { createTask } from '@/lib/services/task-service';
@@ -308,13 +309,17 @@ export async function startPlanConversation(
  * 2. If sessionId provided and session is linked to an existing plan
  *    (via conversationSessionId): update that plan.
  * 3. Otherwise: create a new plan record linked to the session's project.
+ *
+ * When `visualContent` is provided, an HTML artifact is created and linked
+ * to the saved plan (e.g. a visual summary the agent rendered alongside the plan).
  */
 export async function savePlanFromMcp(
   sessionId: string | undefined,
   content: string,
   title?: string,
   planId?: string,
-): Promise<{ planId: string; title: string; action: 'created' | 'updated' }> {
+  visualContent?: string,
+): Promise<{ planId: string; title: string; action: 'created' | 'updated'; artifactId?: string }> {
   // Extract title from first heading if not provided
   const resolvedTitle =
     title?.trim() ||
@@ -330,11 +335,25 @@ export async function savePlanFromMcp(
 
   const versionMeta: PlanVersionMetadata = { source: 'mcp', sessionId: sessionId ?? undefined };
 
+  /** Optionally create a visual artifact linked to a saved plan. */
+  async function maybeCreateVisualArtifact(savedPlanId: string): Promise<string | undefined> {
+    if (!visualContent) return undefined;
+    const artifact = await createArtifact({
+      planId: savedPlanId,
+      sessionId: sessionId ?? null,
+      title: `Visual: ${resolvedTitle}`,
+      type: 'html',
+      content: visualContent,
+    });
+    return artifact.id;
+  }
+
   // 1. Explicit planId — update directly + create version.
   if (planId) {
     await savePlanContent(planId, content, versionMeta);
     const updated = await updatePlan(planId, { content, title: resolvedTitle, status: 'ready' });
-    return { planId: updated.id, title: updated.title, action: 'updated' };
+    const artifactId = await maybeCreateVisualArtifact(updated.id);
+    return { planId: updated.id, title: updated.title, action: 'updated', artifactId };
   }
 
   // 2. Look up session to find linked plan or project.
@@ -360,7 +379,8 @@ export async function savePlanFromMcp(
           title: resolvedTitle,
           status: 'ready',
         });
-        return { planId: updated.id, title: updated.title, action: 'updated' };
+        const artifactId = await maybeCreateVisualArtifact(updated.id);
+        return { planId: updated.id, title: updated.title, action: 'updated', artifactId };
       }
 
       // Create new plan linked to the session's project.
@@ -373,7 +393,8 @@ export async function savePlanFromMcp(
         });
         await updatePlan(created.id, { status: 'ready' });
         await savePlanContent(created.id, content, versionMeta);
-        return { planId: created.id, title: created.title, action: 'created' };
+        const artifactId = await maybeCreateVisualArtifact(created.id);
+        return { planId: created.id, title: created.title, action: 'created', artifactId };
       }
     }
   }

@@ -411,6 +411,29 @@ export const contextSnapshots = pgTable(
   (table) => [index('idx_snapshots_project').on(table.projectId, table.createdAt)],
 );
 
+// --- Artifacts --------------------------------------------------------------
+// Visual artifacts (HTML/SVG) rendered inline in the chat interface.
+// Created by agents via the render_artifact MCP tool.
+
+export const artifactTypeEnum = pgEnum('artifact_type', ['html', 'svg']);
+
+export const artifacts = pgTable(
+  'artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+    planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    type: artifactTypeEnum('type').notNull().default('html'),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_artifacts_session').on(table.sessionId, table.createdAt),
+    index('idx_artifacts_plan').on(table.planId, table.createdAt),
+  ],
+);
+
 // --- Workspaces -------------------------------------------------------------
 // Multi-agent grid layout for viewing multiple sessions simultaneously.
 

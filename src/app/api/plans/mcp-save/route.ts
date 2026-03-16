@@ -8,10 +8,18 @@ const savePlanSchema = z.object({
   title: z.string().max(500).optional(),
   planId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
+  /** Optional HTML visual to attach as an artifact linked to the saved plan. */
+  visualContent: z.string().min(1).optional(),
 });
 
 export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = savePlanSchema.parse(await req.json());
-  const result = await savePlanFromMcp(body.sessionId, body.content, body.title, body.planId);
+  const result = await savePlanFromMcp(
+    body.sessionId,
+    body.content,
+    body.title,
+    body.planId,
+    body.visualContent,
+  );
   return NextResponse.json({ data: result });
 });

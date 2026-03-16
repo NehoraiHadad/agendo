@@ -20,6 +20,7 @@ export async function handleSavePlan(args: {
   content: string;
   title?: string;
   planId?: string;
+  visual_content?: string;
 }): Promise<unknown> {
   const sessionId = process.env.AGENDO_SESSION_ID;
   return apiCall('/api/plans/mcp-save', {
@@ -29,6 +30,7 @@ export async function handleSavePlan(args: {
       ...(args.title ? { title: args.title } : {}),
       ...(args.planId ? { planId: args.planId } : {}),
       ...(sessionId ? { sessionId } : {}),
+      ...(args.visual_content ? { visualContent: args.visual_content } : {}),
     },
   });
 }
@@ -53,6 +55,12 @@ export function registerPlanTools(server: McpServer): void {
         .uuid()
         .optional()
         .describe('Existing plan ID to update (omit to create a new plan)'),
+      visual_content: z
+        .string()
+        .optional()
+        .describe(
+          'Optional self-contained HTML document to attach as a visual artifact alongside the plan (inline CSS/JS only, no external dependencies)',
+        ),
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     (args) => wrapToolCall(() => handleSavePlan(args)),

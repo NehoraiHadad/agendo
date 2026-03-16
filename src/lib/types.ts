@@ -92,6 +92,9 @@ export interface PlanMetadata {
   tags?: string[];
   notes?: string;
   executingTaskId?: string;
+  /** HTML content for a visual artifact stored directly in plan metadata. When present,
+   *  the plan detail view renders a "Visual" tab with a sandboxed iframe. */
+  visualContent?: string;
 }
 
 /** plan_versions.metadata */
