@@ -216,6 +216,26 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     return mapAppServerEventToPayloads(parsed);
   }
 
+  async getHistory(sessionRef: string, _cwd?: string): Promise<AgendoEventPayload[] | null> {
+    const threadId = sessionRef || this.threadId;
+    if (!threadId || !this.alive) return null;
+
+    try {
+      const result = (await this.transport.call(
+        'thread/read',
+        { threadId, includeTurns: true },
+        30_000,
+      )) as { thread: Record<string, unknown> };
+      if (!result?.thread) return null;
+
+      const { mapCodexThreadToEvents } = await import('./codex-history');
+      return mapCodexThreadToEvents(result.thread);
+    } catch (err) {
+      log.debug({ err, threadId }, 'getHistory (thread/read) failed');
+      return null;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Private: server launch
   // -------------------------------------------------------------------------

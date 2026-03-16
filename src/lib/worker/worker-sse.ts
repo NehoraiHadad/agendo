@@ -9,7 +9,8 @@
  *   SessionProcess.emitEvent() → sessionEventListeners map → HTTP SSE stream
  *   BrainstormOrchestrator.emitEvent() → brainstormEventListeners map → HTTP SSE stream
  *
- * Log files remain the source-of-truth for SSE reconnect catchup.
+ * CLI-native history (adapter.getHistory()) is the primary source for SSE
+ * reconnect catchup. Log files serve as fallback and audit trail.
  */
 
 import * as http from 'node:http';
@@ -18,6 +19,7 @@ import { createLogger } from '@/lib/logger';
 import { getSession } from '@/lib/services/session-service';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { readEventsFromLog, readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
+import { getSessionProc } from '@/lib/worker/session-runner';
 import type {
   AgendoEvent,
   BrainstormEvent,
@@ -108,11 +110,18 @@ function setSseHeaders(res: http.ServerResponse): void {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  // Flush headers immediately so the proxy doesn't buffer them
+  res.flushHeaders();
 }
 
 function sendEvent(res: http.ServerResponse, event: AgendoEvent | BrainstormEvent): void {
   try {
     res.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+    // Force flush so the Next.js rewrite proxy forwards immediately
+    const maybeFlush = (res as NodeJS.WritableStream & { flush?: () => void }).flush;
+    if (typeof maybeFlush === 'function') {
+      maybeFlush.call(res);
+    }
   } catch {
     // Client disconnected — write will throw, ignore
   }
@@ -127,7 +136,7 @@ function sendEvent(res: http.ServerResponse, event: AgendoEvent | BrainstormEven
  *
  * Flow:
  *   1. Send current session state from DB
- *   2. Replay historical events from log file (catchup)
+ *   2. Catchup: CLI-native history (primary) → log file (fallback)
  *   3. Register in-memory listener for live events
  *   4. Clean up on client disconnect
  */
@@ -158,16 +167,65 @@ export async function handleSessionSSE(
   };
   sendEvent(res, stateEvent);
 
-  // 2. Catchup: replay historical events from the log file after lastEventId
-  if (session.logFilePath && existsSync(session.logFilePath)) {
+  // 2. Catchup: reconstruct conversation history for the reconnecting browser.
+  //
+  //    Priority order:
+  //      (a) CLI-native history via adapter.getHistory() — the authoritative
+  //          source of conversation content. Reads directly from the CLI's own
+  //          storage (Claude JSONL, Codex thread/read).
+  //      (b) Log file — fallback for agents without getHistory() support
+  //          (Gemini, Copilot), for ended sessions with no live process, or
+  //          when getHistory() fails.
+  //
+  //    The log file is an audit trail / write-ahead log. It captures
+  //    Agendo-specific events (approvals, team messages, state transitions)
+  //    that CLI-native history doesn't have, but the core conversation
+  //    content comes from the CLI.
+  let catchupSent = false;
+
+  // 2a. Try CLI-native history first (requires a live SessionProcess)
+  const proc = getSessionProc(sessionId);
+  if (proc) {
+    try {
+      const historyEvents = await proc.getHistory();
+      if (historyEvents && historyEvents.length > 0) {
+        log.info(
+          { sessionId, eventCount: historyEvents.length },
+          'CLI-native history reconstruction used for catchup',
+        );
+        let seq = lastEventId + 1;
+        for (const payload of historyEvents) {
+          const event: AgendoEvent = {
+            id: seq++,
+            sessionId: session.id,
+            ts: Date.now(),
+            ...payload,
+          } as AgendoEvent;
+          sendEvent(res, event);
+        }
+        catchupSent = true;
+      }
+    } catch (err) {
+      log.debug(
+        { err, sessionId },
+        'CLI-native history reconstruction failed, falling back to log',
+      );
+    }
+  }
+
+  // 2b. Fallback to log file when CLI-native history is unavailable
+  if (!catchupSent && session.logFilePath && existsSync(session.logFilePath)) {
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
       const catchupEvents = readEventsFromLog(logContent, lastEventId);
       for (const ev of catchupEvents) {
         sendEvent(res, ev);
       }
+      if (catchupEvents.length > 0) {
+        catchupSent = true;
+      }
     } catch {
-      // Log file unreadable — skip catchup
+      // Log file unreadable — no catchup available
     }
   }
 

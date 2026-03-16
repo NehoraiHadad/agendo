@@ -595,6 +595,22 @@ export class SessionProcess {
   // ---------------------------------------------------------------------------
 
   /**
+   * Retrieve conversation history from the CLI's native storage.
+   * Delegates to adapter.getHistory() — used as a fallback when the
+   * Agendo log file is missing or empty.
+   *
+   * Returns AgendoEventPayload[] or null if the adapter doesn't support
+   * history retrieval (e.g. Gemini/Copilot) or the call fails.
+   */
+  async getHistory(): Promise<AgendoEventPayload[] | null> {
+    if (!this.adapter.getHistory) return null;
+    return this.adapter.getHistory(
+      this.sessionRef ?? this.session.sessionRef ?? '',
+      this.spawnCwd ?? undefined,
+    );
+  }
+
+  /**
    * Push a user message to the running agent process.
    * Only valid when the session is active or awaiting_input.
    */

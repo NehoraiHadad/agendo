@@ -298,6 +298,23 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     }
   }
 
+  async getHistory(
+    sessionRef: string,
+    cwd?: string,
+  ): Promise<import('@/lib/realtime/events').AgendoEventPayload[] | null> {
+    try {
+      const { getSessionMessages } = await import('@anthropic-ai/claude-agent-sdk');
+      const messages = await getSessionMessages(sessionRef, cwd ? { dir: cwd } : undefined);
+      if (!messages || messages.length === 0) return null;
+
+      const { mapClaudeSessionMessages } = await import('./claude-history');
+      return mapClaudeSessionMessages(messages);
+    } catch (err) {
+      log.debug({ err, sessionRef }, 'getHistory failed');
+      return null;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Private implementation
   // -------------------------------------------------------------------------

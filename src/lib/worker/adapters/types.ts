@@ -203,6 +203,24 @@ export interface AgentAdapter {
   ): import('@/lib/realtime/events').AgendoEventPayload[];
   /** The last captured assistant message UUID, used for conversation branching (Claude only). */
   lastAssistantUuid?: string;
+  /**
+   * Retrieve conversation history from the CLI's native storage and map it
+   * to AgendoEventPayload[]. Used as a fallback when the Agendo log file is
+   * missing or empty (e.g. log file deleted, imported session).
+   *
+   * - Claude: calls getSessionMessages() from the SDK (reads JSONL on disk — works offline)
+   * - Codex: calls thread/read via JSON-RPC (requires a running app-server process)
+   * - Gemini/Copilot: not available (ACP session/load requires a running process and
+   *   is designed for context restoration, not read-only history replay)
+   *
+   * @param sessionRef - CLI-native session/thread ID (Claude UUID or Codex threadId)
+   * @param cwd - Working directory hint (helps Claude find the right project JSONL)
+   * @returns AgendoEventPayload[] or null if history is unavailable
+   */
+  getHistory?(
+    sessionRef: string,
+    cwd?: string,
+  ): Promise<import('@/lib/realtime/events').AgendoEventPayload[] | null>;
 }
 
 /** Options struct for SessionProcess.start(), replacing 10 positional parameters. */

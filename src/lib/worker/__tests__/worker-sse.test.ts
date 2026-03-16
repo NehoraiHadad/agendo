@@ -50,6 +50,18 @@ vi.mock('node:fs', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock: session-runner (for getSessionProc fallback)
+// ---------------------------------------------------------------------------
+
+const { mockGetSessionProc } = vi.hoisted(() => ({
+  mockGetSessionProc: vi.fn().mockReturnValue(undefined),
+}));
+
+vi.mock('@/lib/worker/session-runner', () => ({
+  getSessionProc: mockGetSessionProc,
+}));
+
+// ---------------------------------------------------------------------------
 // Import module under test (after mocks)
 // ---------------------------------------------------------------------------
 
@@ -92,6 +104,9 @@ function makeMockRes(): {
     end(data?: string) {
       if (data) writtenData.push(data);
       ended = true;
+    },
+    flushHeaders() {
+      // no-op in test
     },
   } as unknown as http.ServerResponse;
 
