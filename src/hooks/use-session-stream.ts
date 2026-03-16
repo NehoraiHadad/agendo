@@ -6,6 +6,8 @@ import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 interface SessionStreamState {
   events: AgendoEvent[];
   sessionStatus: SessionStatus | null;
+  /** Latest permission mode from session:mode-change events (real-time). */
+  permissionMode: string | null;
   isConnected: boolean;
   error: string | null;
 }
@@ -22,6 +24,7 @@ const MAX_EVENTS = 2000;
 const initialState: SessionStreamState = {
   events: [],
   sessionStatus: null,
+  permissionMode: null,
   isConnected: false,
   error: null,
 };
@@ -39,7 +42,10 @@ function reducer(state: SessionStreamState, action: StreamAction): SessionStream
       const events = [...state.events, action.event];
       const trimmed =
         events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
-      return { ...state, events: trimmed };
+      // Track permission mode changes in real-time.
+      const newMode =
+        action.event.type === 'session:mode-change' ? action.event.mode : state.permissionMode;
+      return { ...state, events: trimmed, permissionMode: newMode };
     }
     case 'SET_STATUS':
       return { ...state, sessionStatus: action.status };

@@ -32,6 +32,7 @@ function usePanelStreamAdapter(stream: PanelStreamState) {
     () => ({
       events: stream.events,
       sessionStatus: stream.sessionStatus,
+      permissionMode: null,
       isConnected: stream.isConnected,
       error: stream.error,
       reset: () => {

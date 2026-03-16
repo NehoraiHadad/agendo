@@ -206,7 +206,7 @@ export function SessionInfoPanel({
               Permission Mode
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {permissionModeLabel(session.permissionMode)}
+              {permissionModeLabel(stream.permissionMode ?? session.permissionMode)}
             </p>
           </div>
           {session.totalCostUsd !== null && session.totalCostUsd !== undefined && (

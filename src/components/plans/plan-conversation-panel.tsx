@@ -231,11 +231,19 @@ export function PlanConversationPanel({
     () => ({
       events: stream.events,
       sessionStatus: stream.sessionStatus,
+      permissionMode: stream.permissionMode,
       isConnected: stream.isConnected,
       error: stream.error,
       reset: stream.reset,
     }),
-    [stream.events, stream.sessionStatus, stream.isConnected, stream.error, stream.reset],
+    [
+      stream.events,
+      stream.sessionStatus,
+      stream.permissionMode,
+      stream.isConnected,
+      stream.error,
+      stream.reset,
+    ],
   );
 
   const currentStatus = stream.sessionStatus as SessionStatus | null;
