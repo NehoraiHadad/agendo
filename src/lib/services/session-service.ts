@@ -24,6 +24,8 @@ export interface CreateSessionInput {
   parentSessionId?: string;
   mcpServerIds?: string[];
   useWorktree?: boolean;
+  /** Maximum API spend in USD for this session (Claude SDK only). Agent stops when exceeded. */
+  maxBudgetUsd?: number;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -56,6 +58,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
       ...(input.mcpServerIds ? { mcpServerIds: input.mcpServerIds } : {}),
       ...(input.useWorktree != null ? { useWorktree: input.useWorktree } : {}),
+      ...(input.maxBudgetUsd != null ? { maxBudgetUsd: String(input.maxBudgetUsd) } : {}),
     })
     .returning();
   return session;

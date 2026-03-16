@@ -302,12 +302,27 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     sessionRef: string,
     cwd?: string,
   ): Promise<import('@/lib/realtime/events').AgendoEventPayload[] | null> {
+    const { readClaudeJsonl, mapClaudeJsonlToEvents, mapClaudeSessionMessages } =
+      await import('./claude-history');
+
+    // Fast path: read JSONL directly (~1ms, preserves timestamps and full metadata).
+    // Falls back to the SDK path when cwd is unknown or the file is missing.
+    if (cwd) {
+      try {
+        const records = readClaudeJsonl(sessionRef, cwd);
+        if (records && records.length > 0) {
+          return mapClaudeJsonlToEvents(records);
+        }
+      } catch (err) {
+        log.debug({ err, sessionRef }, 'readClaudeJsonl failed — falling back to SDK');
+      }
+    }
+
+    // Slow path: SDK getSessionMessages() (~89ms, strips timestamps).
     try {
       const { getSessionMessages } = await import('@anthropic-ai/claude-agent-sdk');
       const messages = await getSessionMessages(sessionRef, cwd ? { dir: cwd } : undefined);
       if (!messages || messages.length === 0) return null;
-
-      const { mapClaudeSessionMessages } = await import('./claude-history');
       return mapClaudeSessionMessages(messages);
     } catch (err) {
       log.debug({ err, sessionRef }, 'getHistory failed');

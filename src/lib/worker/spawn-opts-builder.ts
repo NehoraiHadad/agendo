@@ -16,6 +16,7 @@ export function buildSpawnOpts(
     | 'effort'
     | 'kind'
     | 'useWorktree'
+    | 'maxBudgetUsd'
   >,
   spawnCwd: string,
   env: Record<string, string>,
@@ -58,5 +59,7 @@ export function buildSpawnOpts(
     ...(opts.appendSystemPrompt ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
     // Git worktree isolation (Claude only — other CLIs don't support this)
     ...(session.useWorktree ? { useWorktree: true } : {}),
+    // Maximum API spend in USD (Claude SDK only — stops the agent when exceeded)
+    ...(session.maxBudgetUsd != null ? { maxBudgetUsd: Number(session.maxBudgetUsd) } : {}),
   };
 }

@@ -215,8 +215,16 @@ export function mapSdkMessageToAgendoEvents(
     ];
 
     // Emit system:error so error results appear as red pills in the chat
-    if (isError && errors && errors.length > 0) {
-      events.push({ type: 'system:error', message: errors.join('; ') });
+    if (isError) {
+      if (subtype === 'error_max_budget_usd') {
+        events.push({
+          type: 'system:error',
+          message:
+            'Session stopped: maximum budget (USD) exceeded. Increase the budget or start a new session.',
+        });
+      } else if (errors && errors.length > 0) {
+        events.push({ type: 'system:error', message: errors.join('; ') });
+      }
     }
 
     return events;
@@ -276,6 +284,37 @@ export function mapSdkMessageToAgendoEvents(
     return [];
   }
 
-  // All other SDKMessage types (hooks, task progress, tool summaries, etc.) are ignored.
+  // ── task_progress — AI-written subagent progress summary (agentProgressSummaries) ─────────
+  if (msg.type === 'system' && msg.subtype === 'task_progress') {
+    const progressMsg = msg as {
+      type: 'system';
+      subtype: 'task_progress';
+      task_id: string;
+      description: string;
+      usage: { total_tokens: number; tool_uses: number; duration_ms: number };
+      summary?: string;
+    };
+    return [
+      {
+        type: 'agent:subagent-progress',
+        taskId: progressMsg.task_id,
+        description: progressMsg.description,
+        ...(progressMsg.summary ? { summary: progressMsg.summary } : {}),
+        usage: {
+          totalTokens: progressMsg.usage.total_tokens,
+          toolUses: progressMsg.usage.tool_uses,
+          durationMs: progressMsg.usage.duration_ms,
+        },
+      },
+    ];
+  }
+
+  // ── prompt_suggestion — predicted next user prompt (promptSuggestions) ────────────────────
+  if (msg.type === 'prompt_suggestion') {
+    const suggMsg = msg as { type: 'prompt_suggestion'; suggestion: string };
+    return [{ type: 'session:suggestion', suggestion: suggMsg.suggestion }];
+  }
+
+  // All other SDKMessage types (hooks, tool summaries, etc.) are ignored.
   return [];
 }

@@ -211,6 +211,19 @@ export type AgendoEvent =
       toolName?: string;
       summary?: string;
     })
+  /** AI-written summary of subagent progress (from agentProgressSummaries SDK feature, Claude only) */
+  | (EventBase & {
+      type: 'agent:subagent-progress';
+      taskId: string;
+      description: string;
+      summary?: string;
+      usage?: { totalTokens: number; toolUses: number; durationMs: number };
+    })
+  /** Predicted next user prompt emitted after each turn (from promptSuggestions SDK feature, Claude only) */
+  | (EventBase & {
+      type: 'session:suggestion';
+      suggestion: string;
+    })
   /** Subagent completed (tool-end event or transcript file end) */
   | (EventBase & {
       type: 'subagent:complete';

@@ -78,6 +78,8 @@ export function buildSdkOptions(opts: SpawnOpts, canUseTool: CanUseTool): Option
     enableFileCheckpointing: opts.enableFileCheckpointing ?? false,
     outputFormat: opts.outputFormat,
     includePartialMessages: true,
+    agentProgressSummaries: true,
+    promptSuggestions: true,
     maxBudgetUsd: opts.maxBudgetUsd,
     fallbackModel: opts.fallbackModel,
     systemPrompt: opts.appendSystemPrompt

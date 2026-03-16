@@ -149,6 +149,8 @@ interface SessionMessageInputProps {
   agentBinaryPath?: string;
   /** True when the session has never been started (lazy-start mode) */
   neverStarted?: boolean;
+  /** Predicted next prompt from the Claude SDK promptSuggestions feature (Claude only) */
+  promptSuggestion?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,12 +191,19 @@ export function SessionMessageInput({
   mcpServers,
   agentBinaryPath,
   neverStarted,
+  promptSuggestion,
 }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
+  // Track the last suggestion text that was dismissed or used, to avoid re-showing the same one.
+  const [suppressedSuggestion, setSuppressedSuggestion] = useState<string | null>(null);
+
+  // Active suggestion = the prop suggestion unless it was suppressed by the user
+  const activeSuggestion =
+    promptSuggestion && promptSuggestion !== suppressedSuggestion ? promptSuggestion : undefined;
 
   // Interactive command UI states
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -331,6 +340,8 @@ export function SessionMessageInput({
     }
 
     setIsSending(true);
+    // Clear any active suggestion when the user sends — it's stale after this turn.
+    setSuppressedSuggestion(promptSuggestion ?? null);
     // Capture image URL before clearing pendingImage state
     const sentImageDataUrl = pendingImage?.dataUrl;
     // Notify parent BEFORE the HTTP request so the optimistic-message baseline is
@@ -455,6 +466,25 @@ export function SessionMessageInput({
     }
     if (e.key === 'Escape' && showModelPicker) {
       setShowModelPicker(false);
+      return;
+    }
+    // Accept inline ghost suggestion with Tab (when input is empty and no picker is open)
+    if (e.key === 'Tab' && activeSuggestion && !message && !showPicker && !showModelPicker) {
+      e.preventDefault();
+      setMessage(activeSuggestion);
+      setSuppressedSuggestion(null);
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          autoGrow(textareaRef.current);
+          const len = activeSuggestion.length;
+          textareaRef.current.setSelectionRange(len, len);
+        }
+      });
+      return;
+    }
+    // Dismiss ghost suggestion with Escape (when no other picker is open)
+    if (e.key === 'Escape' && activeSuggestion && !showPicker && !showModelPicker) {
+      setSuppressedSuggestion(activeSuggestion);
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -619,19 +649,41 @@ export function SessionMessageInput({
             />
           </>
 
-          <textarea
-            ref={textareaRef}
-            value={message}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            rows={1}
-            dir="auto"
-            className="flex-1 min-h-[44px] max-h-32 rounded-xl border border-white/[0.09] bg-[oklch(0.08_0_0)] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 focus:bg-[oklch(0.085_0.003_280)] disabled:opacity-40 transition-[border-color,box-shadow,background-color] resize-none leading-tight overflow-y-auto"
-            disabled={isSending}
-            autoComplete="off"
-            spellCheck={false}
-          />
+          {/* Textarea with inline ghost suggestion (Copilot-style). Ghost text appears
+              when the input is empty and Claude has predicted a follow-up. Tab accepts,
+              Escape dismisses. Only shown for Claude sessions (prop gated upstream). */}
+          <div className="relative flex-1">
+            {activeSuggestion && !message && (
+              <>
+                <div
+                  aria-hidden="true"
+                  dir="auto"
+                  className="pointer-events-none absolute inset-0 rounded-xl px-3 py-[11px] text-sm leading-tight text-primary/45 overflow-hidden whitespace-pre-wrap break-words select-none animate-in fade-in duration-300"
+                >
+                  {activeSuggestion}
+                </div>
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute bottom-1.5 right-2 text-[10px] font-medium text-primary/40 bg-primary/8 border border-primary/20 rounded px-1 py-0.5 leading-none select-none animate-in fade-in duration-300"
+                >
+                  Tab ↵
+                </span>
+              </>
+            )}
+            <textarea
+              ref={textareaRef}
+              value={message}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              placeholder={activeSuggestion ? '' : placeholder}
+              rows={1}
+              dir="auto"
+              className="w-full min-h-[44px] max-h-32 rounded-xl border border-white/[0.09] bg-[oklch(0.08_0_0)] px-3 py-[11px] text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 focus:bg-[oklch(0.085_0.003_280)] disabled:opacity-40 transition-[border-color,box-shadow,background-color] resize-none leading-tight overflow-y-auto"
+              disabled={isSending}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
 
           <Button
             type="submit"

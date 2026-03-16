@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, GitBranch, Loader2, MessageSquare, Server } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, Loader2, MessageSquare, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -17,6 +17,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -64,6 +65,8 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [selectedMcpIds, setSelectedMcpIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
 
@@ -119,6 +122,8 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     setError(null);
     setSelectedMcpIds(new Set());
     setMcpExpanded(false);
+    setAdvancedExpanded(false);
+    setMaxBudgetUsd('');
 
     // Fetch enabled MCP servers
     fetch('/api/mcp-servers?enabled=true', { signal })
@@ -197,6 +202,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     setError(null);
 
     try {
+      const parsedBudget = maxBudgetUsd ? parseFloat(maxBudgetUsd) : undefined;
       const res = await apiFetch<ApiResponse<{ id: string }>>('/api/sessions', {
         method: 'POST',
         body: JSON.stringify({
@@ -206,6 +212,10 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           model: selectedModel || undefined,
           mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
           useWorktree: useWorktree || undefined,
+          maxBudgetUsd:
+            parsedBudget != null && !isNaN(parsedBudget) && parsedBudget > 0
+              ? parsedBudget
+              : undefined,
         }),
       });
       clearDraft();
@@ -376,6 +386,45 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                   — agent works in a separate git branch
                 </span>
               </label>
+            )}
+
+            {isClaudeAgent && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedExpanded((v) => !v)}
+                  className="flex w-full items-center gap-1.5 text-sm font-medium text-foreground/90 hover:text-foreground transition-colors"
+                >
+                  {advancedExpanded ? (
+                    <ChevronDown className="size-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-3.5 text-muted-foreground" />
+                  )}
+                  Advanced
+                </button>
+                {advancedExpanded && (
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="max-budget-usd" className="text-xs text-muted-foreground">
+                        Max budget (USD)
+                      </Label>
+                      <Input
+                        id="max-budget-usd"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="e.g. 1.00"
+                        value={maxBudgetUsd}
+                        onChange={(e) => setMaxBudgetUsd(e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                      <p className="text-[11px] text-muted-foreground/60">
+                        API key users only. Agent stops when exceeded.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             <div className="space-y-2">

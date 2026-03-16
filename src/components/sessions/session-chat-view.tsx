@@ -41,6 +41,7 @@ import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { TeamMessageCard } from '@/components/sessions/team-message-card';
 import { ArtifactCard } from '@/components/sessions/artifact-card';
 import { getTeamColor } from '@/lib/utils/team-colors';
+import { deriveProvider } from '@/lib/utils/session-controls';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
@@ -1280,6 +1281,18 @@ export function SessionChatView({
     )
     .at(-1)?.slashCommands;
 
+  // Latest prompt suggestion from session:suggestion event (Claude SDK promptSuggestions feature).
+  // Only available for Claude sessions — other providers don't emit this event.
+  const isClaudeSession = agentBinaryPath ? deriveProvider(agentBinaryPath) === 'claude' : false;
+  const promptSuggestion = isClaudeSession
+    ? stream.events
+        .filter(
+          (e): e is Extract<typeof e, { type: 'session:suggestion' }> =>
+            e.type === 'session:suggestion',
+        )
+        .at(-1)?.suggestion
+    : undefined;
+
   const isActive = currentStatus === 'active';
 
   // Drive typing indicator from session status OR from agent:activity thinking events.
@@ -1599,6 +1612,7 @@ export function SessionChatView({
               mcpServers={mcpServers}
               agentBinaryPath={agentBinaryPath}
               neverStarted={currentStatus === 'idle' && stream.events.length === 0}
+              promptSuggestion={promptSuggestion}
             />
           </div>
         )}

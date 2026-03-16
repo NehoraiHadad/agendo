@@ -299,6 +299,8 @@ export const sessions = pgTable(
     mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
     // When true, pass --worktree to CLIs that support native git worktree isolation (Claude only).
     useWorktree: boolean('use_worktree').notNull().default(false),
+    // Maximum API spend in USD for this session (Claude SDK only). Agent stops when exceeded.
+    maxBudgetUsd: numeric('max_budget_usd', { precision: 10, scale: 6 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
