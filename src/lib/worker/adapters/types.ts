@@ -219,4 +219,6 @@ export interface SessionStartOptions {
   displayText?: string;
   resumeSessionAt?: string;
   developerInstructions?: string;
+  /** Text to append to Claude's system prompt via SDK systemPrompt.append. */
+  appendSystemPrompt?: string;
 }

@@ -9,6 +9,7 @@ import {
 } from '../lib/worker/brainstorm-queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
+import { installSkills } from '../lib/worker/skills/install-skills';
 import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
 import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
 import { StaleReaper } from '../lib/worker/stale-reaper';
@@ -95,6 +96,9 @@ async function main(): Promise<void> {
 
   // Pre-flight: zombie process reconciliation
   await reconcileZombies(WORKER_ID);
+
+  // Install/update SKILL.md files for native CLI skill discovery
+  await installSkills();
 
   // Register session job handler
   await registerSessionWorker(handleSessionJob);

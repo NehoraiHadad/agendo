@@ -195,17 +195,16 @@ export async function runSession(
     log.info({ sessionId, binaryName }, 'MCP injected for session');
   }
 
-  // Phase E: Prepend context preamble on new sessions (not resumes) when MCP
-  // is active. This tells the agent what task it is working on and instructs it
-  // to use the Agendo MCP tools for reporting progress.
-  // Codex gets MCP tools via its global config.toml (agendo MCP server) with
-  // session identity passed as env vars — so it also qualifies for the preamble.
+  // Phase E: Inject dynamic context preamble into agent sessions.
+  //
+  // Skills are now loaded via native SKILL.md files (installed at worker startup),
+  // so only per-session dynamic context (task ID, project name) is injected here.
   const hasMcp =
     agent.mcpEnabled &&
     (binaryName === 'claude' || binaryName === 'gemini' || binaryName === 'codex');
+
   let codexDeveloperInstructions: string | undefined;
 
-  // Support sessions: always inject preamble (no MCP dependency)
   if (session.kind === 'support' && !resumeRef && prompt) {
     const supportPreamble = generateSupportPreamble();
     if (binaryName === 'codex') {

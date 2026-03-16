@@ -26,6 +26,7 @@ export function buildSpawnOpts(
     sdkMcpServers?: SpawnOpts['sdkMcpServers'];
     initialImage?: ImageContent;
     developerInstructions?: string;
+    appendSystemPrompt?: string;
   },
 ): SpawnOpts {
   return {
@@ -53,6 +54,8 @@ export function buildSpawnOpts(
     ...(session.kind === 'execution' ? { noSessionPersistence: true } : {}),
     // Codex: system-level context injected via developerInstructions (not a user turn)
     ...(opts.developerInstructions ? { developerInstructions: opts.developerInstructions } : {}),
+    // Claude: text appended to system prompt (survives compaction, not in user messages)
+    ...(opts.appendSystemPrompt ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
     // Git worktree isolation (Claude only — other CLIs don't support this)
     ...(session.useWorktree ? { useWorktree: true } : {}),
   };

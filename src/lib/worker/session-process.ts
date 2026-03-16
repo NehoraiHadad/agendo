@@ -212,6 +212,7 @@ export class SessionProcess {
       displayText,
       resumeSessionAt,
       developerInstructions,
+      appendSystemPrompt,
     } = opts;
     const claimed = await claimSession(this.session.id, this.workerId);
     if (!claimed) {
@@ -296,6 +297,7 @@ export class SessionProcess {
       mcpServers,
       initialImage,
       developerInstructions,
+      appendSystemPrompt,
     });
 
     // Wire approval handler so adapter can request per-tool approval
