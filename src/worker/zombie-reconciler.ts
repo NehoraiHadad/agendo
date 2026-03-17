@@ -72,7 +72,6 @@ class RecoveryCounter {
   }
 }
 
-const sessionRecoveryCounter = new RecoveryCounter();
 const brainstormRecoveryCounter = new RecoveryCounter();
 
 // ============================================================================
@@ -89,9 +88,22 @@ export async function reconcileZombies(workerId: string): Promise<void> {
   await reconcileOrphanedBrainstorms();
 }
 
-/** Reset the session recovery counter when a session completes a full turn. */
+/**
+ * Reset the durable auto-resume counter when a session completes a full turn.
+ * Fire-and-forget: errors are non-critical (the counter will reset on the next
+ * successful turn anyway).
+ *
+ * @deprecated Prefer folding `autoResumeCount: 0` into the same DB update that
+ * transitions the session to 'awaiting_input' (see session-process.ts transitionTo).
+ * This function is kept as a safety net for any other call sites.
+ */
 export function resetRecoveryCount(sessionId: string): void {
-  sessionRecoveryCounter.reset(sessionId);
+  db.update(sessions)
+    .set({ autoResumeCount: 0 })
+    .where(eq(sessions.id, sessionId))
+    .catch((err: unknown) => {
+      log.warn({ err, sessionId }, 'Failed to reset autoResumeCount');
+    });
 }
 
 // ============================================================================
@@ -108,6 +120,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
       pid: sessions.pid,
       status: sessions.status,
       sessionRef: sessions.sessionRef,
+      autoResumeCount: sessions.autoResumeCount,
     })
     .from(sessions)
     .where(
@@ -164,22 +177,31 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     );
     notifySessionStatus(session.id, 'idle');
 
-    // Auto-recovery: re-enqueue only if the session was active (mid-work) and
-    // hasn't already been recovered too many times.
+    // Auto-recovery: re-enqueue only if the session was active (mid-work),
+    // has a resumable sessionRef, and hasn't exceeded the durable recovery limit.
+    // The counter is stored in sessions.autoResumeCount (persisted in DB) so it
+    // survives worker restarts — unlike the old in-memory RecoveryCounter.
     if (session.sessionRef != null) {
-      if (sessionRecoveryCounter.hasReachedLimit(session.id)) {
-        log.info(
+      if ((session.autoResumeCount ?? 0) >= MAX_AUTO_RECOVERY_ATTEMPTS) {
+        log.warn(
           {
             sessionId: session.id,
-            attempts: MAX_AUTO_RECOVERY_ATTEMPTS,
+            attempts: session.autoResumeCount,
+            max: MAX_AUTO_RECOVERY_ATTEMPTS,
           },
-          'Session hit recovery limit, leaving idle',
+          'Session hit durable auto-resume limit, leaving idle',
         );
-        sessionRecoveryCounter.reset(session.id);
+        // Reset counter so manual resume by the user works again.
+        await db.update(sessions).set({ autoResumeCount: 0 }).where(eq(sessions.id, session.id));
         continue;
       }
 
-      const attempt = sessionRecoveryCounter.increment(session.id);
+      // Atomically increment the durable counter.
+      await db
+        .update(sessions)
+        .set({ autoResumeCount: sql`auto_resume_count + 1` })
+        .where(eq(sessions.id, session.id));
+
       await enqueueSession({
         sessionId: session.id,
         resumeRef: session.sessionRef,
@@ -187,7 +209,11 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         skipResumeContext: true,
       });
       log.info(
-        { sessionId: session.id, attempt, maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS },
+        {
+          sessionId: session.id,
+          attempt: (session.autoResumeCount ?? 0) + 1,
+          maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS,
+        },
         'Session re-enqueued for auto-recovery',
       );
     }

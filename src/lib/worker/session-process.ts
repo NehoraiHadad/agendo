@@ -46,7 +46,7 @@ import type {
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
-import { resetRecoveryCount } from '@/worker/zombie-reconciler';
+// resetRecoveryCount is now folded into transitionTo's DB update (autoResumeCount: 0)
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { ActivityTracker } from '@/lib/worker/activity-tracker';
 import type { InFlightTool } from '@/lib/worker/interruption-marker';
@@ -701,7 +701,14 @@ export class SessionProcess {
 
     await db
       .update(sessions)
-      .set({ status, lastActiveAt: new Date() })
+      .set({
+        status,
+        lastActiveAt: new Date(),
+        // Reset the durable auto-resume counter on successful turn completion.
+        // This ensures previous crash-recovery attempts don't count against
+        // future auto-recovery. Folded into this single DB write for atomicity.
+        ...(status === 'awaiting_input' && { autoResumeCount: 0 }),
+      })
       .where(eq(sessions.id, this.session.id));
     // Flush eventSeq immediately on status transitions so reconnecting clients
     // can resume from the correct position when the session status changes.
@@ -714,9 +721,8 @@ export class SessionProcess {
 
       const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
       log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
-      // Session completed a turn — reset the zombie recovery counter so it
-      // doesn't count previous restarts against future auto-recovery attempts.
-      resetRecoveryCount(this.session.id);
+      // autoResumeCount already reset to 0 in the DB update above (folded into
+      // the same write for atomicity). No separate resetRecoveryCount call needed.
       // Resolve the slot future so the pg-boss slot frees while the process
       // stays alive in-memory awaiting the next user message.
       this.slotReleaseFuture.resolve();

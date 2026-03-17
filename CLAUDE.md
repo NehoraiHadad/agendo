@@ -17,7 +17,7 @@ agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex,
 
 ```bash
 # Development (never run pnpm dev directly — use PM2)
-pm2 restart agendo-worker       # restart worker (ALWAYS safe — does not host MCP)
+./scripts/safe-restart-worker.sh  # ✅ ALWAYS use this to restart the worker (safe from inside sessions)
 ./scripts/safe-restart-agendo.sh  # restart Next.js app SAFELY (waits for sessions to end)
 pm2 restart agendo              # ⚠ DANGER during active sessions — kills MCP connection
 
@@ -74,9 +74,16 @@ Worker reads env from `ecosystem.config.js` (NOT `.env.local`). The Next.js app 
 
 ### Safe Restart Patterns
 
-`agendo-worker` **never** hosts the MCP server — always safe to restart:
+`agendo-worker` **never** hosts the MCP server, but **does host agent sessions**.
+
+⚠️ **NEVER run `pm2 restart agendo-worker` directly from an agent session** — it kills your own process and triggers an infinite restart loop. Always use the safe script:
 
 ```bash
+# From inside an agent session (auto-disables resume before restarting):
+./scripts/safe-restart-worker.sh              # build + restart
+./scripts/safe-restart-worker.sh --no-build   # restart only
+
+# From a regular terminal (no agent session), direct restart is safe:
 pm2 restart agendo-worker --update-env
 ```
 

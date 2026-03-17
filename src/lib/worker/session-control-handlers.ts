@@ -9,7 +9,7 @@
 import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-control');
@@ -390,6 +390,26 @@ export interface ReEnqueueContext {
 }
 
 /**
+ * Maximum number of consecutive auto-resume attempts before giving up.
+ * Persisted in the DB (sessions.autoResumeCount) to survive worker restarts.
+ * Resets to 0 when a session completes a successful turn (awaiting_input).
+ */
+const MAX_AUTO_RESUME_ATTEMPTS = 3;
+
+/**
+ * Atomically increment the session's autoResumeCount in the DB and return the
+ * new value. Returns null if the session row was not found (shouldn't happen).
+ */
+async function incrementAutoResumeCount(sessionId: string): Promise<number | null> {
+  const [row] = await db
+    .update(sessions)
+    .set({ autoResumeCount: sql`auto_resume_count + 1` })
+    .where(eq(sessions.id, sessionId))
+    .returning({ autoResumeCount: sessions.autoResumeCount });
+  return row?.autoResumeCount ?? null;
+}
+
+/**
  * Determine whether and how to re-enqueue a session after exit.
  * Fire-and-forget: logs errors but does not throw.
  */
@@ -401,20 +421,31 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // the user's intent is preserved without any "please continue" framing.
   if (ctx.conversationNotFound) {
     if (ctx.initialPrompt) {
-      enqueueSession({
-        sessionId: ctx.sessionId,
-        // No resumeRef — fresh spawn. DB sessionRef already cleared to null.
-        resumePrompt: ctx.initialPrompt,
-      }).catch((err: unknown) => {
-        log.error(
-          { err, sessionId: ctx.sessionId },
-          'Failed to re-enqueue session after conversation-not-found fallback',
-        );
-      });
-      log.info(
-        { sessionId: ctx.sessionId },
-        'Session auto-restarted fresh: "No conversation found" with empty JSONL',
-      );
+      (async () => {
+        try {
+          const count = await incrementAutoResumeCount(ctx.sessionId);
+          if (count !== null && count > MAX_AUTO_RESUME_ATTEMPTS) {
+            log.warn(
+              { sessionId: ctx.sessionId, attempts: count },
+              'Session hit auto-resume limit after "No conversation found", leaving idle',
+            );
+            return;
+          }
+          await enqueueSession({
+            sessionId: ctx.sessionId,
+            resumePrompt: ctx.initialPrompt ?? '',
+          });
+          log.info(
+            { sessionId: ctx.sessionId, attempt: count },
+            'Session auto-restarted fresh: "No conversation found" with empty JSONL',
+          );
+        } catch (err) {
+          log.error(
+            { err, sessionId: ctx.sessionId },
+            'Failed to re-enqueue session after conversation-not-found fallback',
+          );
+        }
+      })();
     } else {
       log.info(
         { sessionId: ctx.sessionId },
@@ -428,6 +459,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // Mode-change restart: re-enqueue immediately so the session cold-resumes
   // with the updated permissionMode (already written to DB by the PATCH endpoint).
   // The session status is now 'idle', so the next session-runner job can claim it.
+  // No counter check — this is a deliberate user-initiated action, not crash recovery.
   if (ctx.exitContext.modeChangeRestart && ctx.sessionRef) {
     enqueueSession({ sessionId: ctx.sessionId, resumeRef: ctx.sessionRef }).catch(
       (err: unknown) => {
@@ -441,6 +473,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
 
   // Clear-context restart (ExitPlanMode "Restart fresh"): enqueue the new child
   // session that was created by the API route (Direction B — new session record).
+  // No counter check — this is a deliberate user-initiated action, not crash recovery.
   if (ctx.exitContext.clearContextRestart) {
     const targetSessionId = ctx.exitContext.clearContextRestartNewSessionId ?? ctx.sessionId;
     enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
@@ -457,6 +490,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // Only fires when the session was genuinely mid-work (active, not awaiting_input),
   // has a resumable sessionRef, and no other re-enqueue path is already running.
   // resumePrompt gives the agent context so it knows to continue rather than repeat.
+  // Guarded by a durable DB counter to prevent infinite restart loops.
   const resumeRef = ctx.sessionRef ?? ctx.dbSessionRef ?? null;
   if (
     wasInterruptedMidTurn &&
@@ -465,23 +499,42 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
     !ctx.exitContext.clearContextRestart &&
     !ctx.exitContext.modeChangeRestart
   ) {
-    const resumePrompt = ctx.exitContext.terminateKilled
-      ? 'The worker restarted. Please continue where you left off.'
-      : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
-    enqueueSession({
-      sessionId: ctx.sessionId,
-      resumeRef,
-      resumePrompt,
-      skipResumeContext: true,
-    }).catch((err: unknown) => {
-      log.error(
-        { err, sessionId: ctx.sessionId },
-        'Failed to re-enqueue session after mid-turn interruption',
-      );
-    });
-    log.info(
-      { sessionId: ctx.sessionId, terminateKilled: ctx.exitContext.terminateKilled },
-      'Session auto-resumed after mid-turn interruption',
-    );
+    (async () => {
+      try {
+        const count = await incrementAutoResumeCount(ctx.sessionId);
+        if (count !== null && count > MAX_AUTO_RESUME_ATTEMPTS) {
+          log.warn(
+            { sessionId: ctx.sessionId, attempts: count, max: MAX_AUTO_RESUME_ATTEMPTS },
+            'Session hit auto-resume limit, leaving idle instead of re-enqueueing',
+          );
+          return;
+        }
+        const selfRestartWarning =
+          '\n\nCRITICAL: Do NOT run `pm2 restart agendo-worker` directly — you are running inside the worker and it will kill your own session. Use `./scripts/safe-restart-worker.sh` instead.';
+        const resumePrompt = ctx.exitContext.terminateKilled
+          ? 'The worker restarted. Please continue where you left off.' + selfRestartWarning
+          : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.' +
+            selfRestartWarning;
+        await enqueueSession({
+          sessionId: ctx.sessionId,
+          resumeRef,
+          resumePrompt,
+          skipResumeContext: true,
+        });
+        log.info(
+          {
+            sessionId: ctx.sessionId,
+            attempt: count,
+            terminateKilled: ctx.exitContext.terminateKilled,
+          },
+          'Session auto-resumed after mid-turn interruption',
+        );
+      } catch (err) {
+        log.error(
+          { err, sessionId: ctx.sessionId },
+          'Failed to re-enqueue session after mid-turn interruption',
+        );
+      }
+    })();
   }
 }

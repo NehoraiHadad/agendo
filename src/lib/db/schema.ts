@@ -282,6 +282,11 @@ export const sessions = pgTable(
     webFetchRequests: integer('web_fetch_requests').default(0),
     // Full path to the plan file captured when ExitPlanMode fires.
     planFilePath: text('plan_file_path'),
+    // Durable counter: how many times this session was auto-resumed after a
+    // mid-turn interruption (worker restart, crash, etc.). Incremented by
+    // handleReEnqueue / zombie-reconciler. Reset to 0 on successful turn
+    // (transitionTo 'awaiting_input'). Prevents infinite restart loops.
+    autoResumeCount: integer('auto_resume_count').notNull().default(0),
     totalDurationMs: integer('total_duration_ms'),
     tmuxSessionName: text('tmux_session_name'),
     // The session this was forked from, if any.
