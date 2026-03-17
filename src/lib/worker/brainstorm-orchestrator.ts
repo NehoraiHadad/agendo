@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 import { createLogger } from '@/lib/logger';
 import { brainstormEventListeners, addSessionEventListener } from '@/lib/worker/worker-sse';
 import { liveBrainstormHandlers } from '@/lib/worker/worker-http';
@@ -90,7 +91,10 @@ interface BrainstormControlMessage {
 const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 600; // 10 minutes — global safety net, rarely triggers with per-participant timeouts
 
 /** Per-participant startup timeout. Agents that fail to reach awaiting_input within this window are evicted. */
-const PER_PARTICIPANT_READY_TIMEOUT_SEC = 180; // 3 minutes
+const PER_PARTICIPANT_READY_TIMEOUT_SEC = 300; // 5 minutes — agents may research codebase on first turn
+
+/** Extra time budget for wave 0 (research wave). Agents explore the codebase before responding. */
+const WAVE_0_EXTRA_TIMEOUT_SEC = 180; // +3 minutes on top of normal wave timeout
 
 export class BrainstormOrchestrator {
   private readonly roomId: string;
@@ -765,10 +769,15 @@ export class BrainstormOrchestrator {
 
   /**
    * Schedule a timeout for the current wave.
+   * Wave 0 gets extra time (WAVE_0_EXTRA_TIMEOUT_SEC) because agents typically
+   * explore the codebase before sharing their first perspective.
    * Any participant still in 'thinking' state when the timeout fires
    * is marked as 'timeout' and treated as an implicit PASS.
    */
   private scheduleWaveTimeout(wave: number): void {
+    const extraSec = wave === 0 ? WAVE_0_EXTRA_TIMEOUT_SEC : 0;
+    const timeoutSec = this.waveTimeoutSec + extraSec;
+    log.info({ roomId: this.roomId, wave, timeoutSec }, 'Wave timeout scheduled');
     setTimeout(() => {
       if (this.currentWave !== wave) return; // Wave already moved on
       let timeoutFired = false;
@@ -791,7 +800,7 @@ export class BrainstormOrchestrator {
       if (timeoutFired) {
         this.checkWaveComplete();
       }
-    }, this.waveTimeoutSec * 1000);
+    }, timeoutSec * 1000);
   }
 
   /**
@@ -888,8 +897,37 @@ export class BrainstormOrchestrator {
         }
         break;
 
+      case 'agent:tool-start': {
+        // Forward tool activity so the UI can show what the agent is doing
+        // (e.g. "Reading orchestrator.ts" instead of just "thinking...")
+        const toolName = event.toolName ?? '';
+        const input = event.input as Record<string, unknown> | undefined;
+        const description = describeToolActivity(toolName, input);
+        if (description) {
+          void this.emitEvent({
+            type: 'participant:activity',
+            agentId: participant.agentId,
+            description,
+          }).catch(() => {});
+        }
+        break;
+      }
+
+      case 'agent:subagent-progress': {
+        // Forward subagent progress descriptions
+        const desc = event.description;
+        if (desc) {
+          void this.emitEvent({
+            type: 'participant:activity',
+            agentId: participant.agentId,
+            description: desc,
+          }).catch(() => {});
+        }
+        break;
+      }
+
       default:
-        // Other event types (tool use, thinking, etc.) are not forwarded
+        // Other event types (thinking, etc.) are not forwarded
         break;
     }
   }
@@ -1280,29 +1318,43 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
    * Build the initial preamble for a participant session.
    */
   private buildPreamble(room: BrainstormWithDetails, otherParticipantNames: string[]): string {
-    const othersText =
-      otherParticipantNames.length > 0
-        ? otherParticipantNames.join(', ')
-        : 'no other participants yet';
+    const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
+    const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + WAVE_0_EXTRA_TIMEOUT_SEC) / 60);
 
     return `You are participating in a brainstorm room called "${room.title}".
 
-Other participants: ${othersText}
+## How This Works
+You are in a multi-agent discussion with other AI models and possibly a human moderator.
+The discussion runs in **waves** (rounds). In each wave, every participant responds to
+what was said in the previous wave. Their messages will appear as "[Name]: message".
 
-RULES:
-- You are discussing with other AI models and possibly a human moderator.
-- Their messages will appear as "[Name]: message".
-- This is a DISCUSSION. Think critically. Disagree when you disagree.
-  Build on good ideas. Challenge weak ones. Be specific and concise.
-- Do NOT be agreeable for the sake of politeness. The value is in genuine
-  diverse perspectives and constructive disagreement.
-- If you agree with everything said and have NOTHING new to add — no
-  disagreement, no new angle, no important nuance — respond with exactly:
-  [PASS]
-- Keep responses focused. 2-4 paragraphs max unless the topic demands more.
-- You have access to MCP tools if you need to look up code, tasks, or
-  project context. Use them sparingly — this is primarily a thinking session.
-- Do NOT write code unless specifically asked. Focus on ideas and reasoning.
+**Wave 0 (first round):** This is your chance to explore the topic, research the codebase
+if relevant, and form your initial perspective. You have ~${wave0TimeoutDisplay} minutes for this first wave.
+Use tools (Read, Grep, Glob, etc.) to ground your response in actual code and data.
+
+**Subsequent waves:** You'll see what the other participants said and respond.
+These waves have a ~${waveTimeoutDisplay}-minute time limit, so keep responses focused.
+
+**Convergence:** When all participants agree and have nothing new to add, the discussion
+ends naturally. The moderator may also steer or end the discussion at any time.
+
+## Participants
+${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
+- You
+
+## Discussion Rules
+1. **Think critically.** Disagree when you disagree. Build on good ideas. Challenge weak ones.
+   The value is in genuine diverse perspectives and constructive disagreement.
+2. **Do NOT be agreeable for the sake of politeness.** "I agree with everything" is not helpful.
+   If you agree, explain WHY and add a new angle, nuance, or concrete detail.
+3. **Be specific.** Reference file paths, function names, line numbers when discussing code.
+   "Consider simplifying" is useless — "Reuse the existing \`formatWaveBroadcast\` at
+   orchestrator.ts:1255 instead of building a new formatter" is valuable.
+4. **[PASS]:** If you genuinely agree with everything said AND have nothing new to add —
+   no disagreement, no new angle, no important nuance — respond with exactly: [PASS]
+   Do not PASS just to be polite. Only PASS when you truly have nothing to contribute.
+5. **Keep responses focused.** 2-4 paragraphs max unless the topic demands more depth.
+6. **Do NOT write code** unless specifically asked. Focus on ideas and reasoning.
 
 TOPIC: ${room.topic}`;
   }

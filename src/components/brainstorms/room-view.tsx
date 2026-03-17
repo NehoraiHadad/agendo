@@ -249,6 +249,7 @@ const MessageList = memo(function MessageList({
                   agentSlug={agentInfo?.slug ?? ''}
                   agentIndex={agentInfo?.index ?? 0}
                   wave={currentWave}
+                  activity={p.activity}
                 />
               );
             })}

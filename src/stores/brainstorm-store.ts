@@ -15,6 +15,8 @@ export interface ParticipantState {
   sessionId: string | null;
   model: string | null;
   status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout';
+  /** Human-readable description of current activity, e.g. "Reading orchestrator.ts" */
+  activity: string | null;
 }
 
 export interface BrainstormMessageItem {
@@ -92,6 +94,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         sessionId: p.sessionId ?? null,
         model: p.model ?? null,
         status: p.status as ParticipantState['status'],
+        activity: null,
       });
     }
 
@@ -141,7 +144,13 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         const participants = new Map(state.participants);
         const existing = participants.get(event.agentId);
         if (existing) {
-          participants.set(event.agentId, { ...existing, status: event.status });
+          // Clear activity when status changes to a terminal state (done/passed/timeout)
+          const clearActivity = event.status !== 'thinking';
+          participants.set(event.agentId, {
+            ...existing,
+            status: event.status,
+            activity: clearActivity ? null : existing.activity,
+          });
         } else {
           // Participant not yet in map — add with minimal info
           participants.set(event.agentId, {
@@ -151,6 +160,20 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             sessionId: null,
             model: null,
             status: event.status,
+            activity: null,
+          });
+        }
+        set({ participants });
+        break;
+      }
+
+      case 'participant:activity': {
+        const participants = new Map(state.participants);
+        const existing = participants.get(event.agentId);
+        if (existing) {
+          participants.set(event.agentId, {
+            ...existing,
+            activity: event.description,
           });
         }
         set({ participants });
@@ -227,6 +250,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             sessionId: null,
             model: null,
             status: 'pending',
+            activity: null,
           });
           set({ participants });
         }

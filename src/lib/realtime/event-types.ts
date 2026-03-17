@@ -277,6 +277,12 @@ export type BrainstormEvent =
   | (BrainstormEventBase & { type: 'room:max-waves'; wave: number })
   | (BrainstormEventBase & { type: 'room:synthesis'; synthesis: string })
   | (BrainstormEventBase & {
+      type: 'participant:activity';
+      agentId: string;
+      /** Human-readable description of what the agent is doing, e.g. "Reading orchestrator.ts" */
+      description: string;
+    })
+  | (BrainstormEventBase & {
       type: 'participant:joined';
       agentId: string;
       agentName: string;

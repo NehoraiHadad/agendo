@@ -119,11 +119,14 @@ export function ThinkingCard({
   agentSlug,
   agentIndex,
   wave,
+  activity,
 }: {
   agentName: string;
   agentSlug: string;
   agentIndex: number;
   wave: number;
+  /** Optional description of what the agent is currently doing */
+  activity?: string | null;
 }) {
   const colors = getAgentColor(agentSlug, agentIndex);
   const initials = getInitials(agentName);
@@ -132,7 +135,7 @@ export function ThinkingCard({
     <div
       className={`flex gap-3 items-center ${colors.bg} rounded-xl px-3 py-2.5 border-l-2 ${colors.border} opacity-50`}
       role="status"
-      aria-label={`${agentName} is thinking`}
+      aria-label={`${agentName} is ${activity ?? 'thinking'}`}
     >
       {/* Avatar — pulsing to signal activity */}
       <div
@@ -144,6 +147,11 @@ export function ThinkingCard({
 
       <div className="flex flex-1 min-w-0 items-center gap-2">
         <span className="text-xs font-medium text-foreground/60 truncate">{agentName}</span>
+        {activity ? (
+          <span className="text-[10px] text-muted-foreground/35 truncate max-w-[200px]">
+            {activity}
+          </span>
+        ) : null}
         <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06] shrink-0">
           Wave {wave}
         </span>
