@@ -565,6 +565,12 @@ export interface BrainstormConfig {
   roles?: Record<string, string>;
   /** Startup timeout per participant in seconds (default 300) */
   participantReadyTimeoutSec?: number;
+  /** IDs of related brainstorm rooms whose syntheses provide context (max 3) */
+  relatedRoomIds?: string[];
+  /** Enable reactive injection: inject responses into other agents immediately (default false) */
+  reactiveInjection?: boolean;
+  /** Max responses per agent per wave when reactive injection is enabled (default 2) */
+  maxResponsesPerWave?: number;
 }
 
 // ============================================================================

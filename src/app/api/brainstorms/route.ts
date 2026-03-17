@@ -19,6 +19,7 @@ const brainstormConfigSchema = z
     language: z.string().max(100).optional(),
     roles: z.record(z.string(), z.string()).optional(),
     participantReadyTimeoutSec: z.number().int().min(60).max(1800).optional(),
+    relatedRoomIds: z.array(z.string().uuid()).max(3).optional(),
   })
   .optional();
 

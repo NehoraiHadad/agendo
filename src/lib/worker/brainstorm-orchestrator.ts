@@ -29,6 +29,7 @@ import {
   updateParticipantSession,
   updateParticipantStatus,
   setBrainstormSynthesis,
+  getCompletedRoomsForProject,
 } from '@/lib/services/brainstorm-service';
 import { FileLogWriter, resolveBrainstormLogPath } from '@/lib/worker/log-writer';
 import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
@@ -71,6 +72,8 @@ interface ParticipantState {
   deltaBuffer: string;
   /** Timer handle for the periodic delta flush */
   deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+  /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
+  waveResponseCount: number;
 }
 
 interface BrainstormControlMessage {
@@ -149,6 +152,12 @@ export class BrainstormOrchestrator {
    * where evicted participants may have waveStatus='done' before any wave has started.
    */
   waveStarted = false;
+  /** Enable reactive injection: inject responses into other agents immediately */
+  reactiveInjection = false;
+  /** Max responses per agent per wave when reactive injection is enabled */
+  maxResponsesPerWave = 2;
+  /** Count of in-flight reactive injections — wave doesn't complete until this reaches 0 */
+  pendingReactiveInjections = 0;
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
@@ -164,6 +173,8 @@ export class BrainstormOrchestrator {
     this.minWavesBeforePass = this.playbook.minWavesBeforePass;
     this.requiredObjections = this.playbook.requiredObjections;
     this.synthesisMode = this.playbook.synthesisMode;
+    this.reactiveInjection = this.playbook.reactiveInjection;
+    this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
 
     // Default startup timeout: at least 10 minutes. Never less than the wave
     // timeout itself (e.g. if waveTimeoutSec was increased significantly).
@@ -209,6 +220,8 @@ export class BrainstormOrchestrator {
       this.minWavesBeforePass = this.playbook.minWavesBeforePass;
       this.requiredObjections = this.playbook.requiredObjections;
       this.synthesisMode = this.playbook.synthesisMode;
+      this.reactiveInjection = this.playbook.reactiveInjection;
+      this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
       this.participantReadyTimeoutSec =
         this.playbook.participantReadyTimeoutSec ??
         Math.max(MIN_PARTICIPANT_READY_TIMEOUT_SEC, this.waveTimeoutSec * 2);
@@ -228,6 +241,7 @@ export class BrainstormOrchestrator {
         readyAt: null,
         deltaBuffer: '',
         deltaFlushTimer: null,
+        waveResponseCount: 0,
       }));
 
       // Mark room as active
@@ -277,6 +291,25 @@ export class BrainstormOrchestrator {
   private async createParticipantSessions(room: BrainstormWithDetails): Promise<void> {
     const allNames = room.participants.map((p) => p.agentName);
 
+    // Fetch related brainstorm syntheses if relatedRoomIds are configured
+    const roomConfig = room.config as BrainstormConfig;
+    let relatedSyntheses: Array<{ title: string; synthesis: string; createdAt: Date }> | undefined;
+    if (roomConfig.relatedRoomIds && roomConfig.relatedRoomIds.length > 0) {
+      try {
+        const completedRooms = await getCompletedRoomsForProject(room.projectId);
+        const relatedIds = new Set(roomConfig.relatedRoomIds.slice(0, 3));
+        relatedSyntheses = completedRooms.filter((r) => relatedIds.has(r.id));
+        if (relatedSyntheses.length > 0) {
+          log.info(
+            { roomId: this.roomId, relatedCount: relatedSyntheses.length },
+            'Injecting context from related brainstorms',
+          );
+        }
+      } catch (err) {
+        log.warn({ roomId: this.roomId, err }, 'Failed to fetch related brainstorm syntheses');
+      }
+    }
+
     // Create/resume all participant sessions in parallel — each is independent.
     // Parallelizing means Codex, Claude, and Copilot all start their ACP/SDK
     // handshakes at the same time instead of waiting for each other.
@@ -314,7 +347,7 @@ export class BrainstormOrchestrator {
         }
 
         const otherNames = allNames.filter((n) => n !== participant.agentName);
-        const preamble = this.buildPreamble(room, otherNames);
+        const preamble = this.buildPreamble(room, otherNames, relatedSyntheses);
 
         log.info(
           { roomId: this.roomId, agentId: participant.agentId, agentName: participant.agentName },
@@ -781,11 +814,15 @@ export class BrainstormOrchestrator {
     log.info({ roomId: this.roomId, wave }, 'Starting wave');
     await this.emitEvent({ type: 'wave:start', wave });
 
+    // Reset reactive injection counter for the new wave
+    this.pendingReactiveInjections = 0;
+
     // Reset buffers and statuses for active participants
     for (const p of this.participants) {
       if (p.hasPassed) continue;
       p.waveStatus = 'thinking';
       p.responseBuffer = [];
+      p.waveResponseCount = 0;
       // Clear any leftover delta state from the previous wave
       p.deltaBuffer = '';
       if (p.deltaFlushTimer) {
@@ -871,6 +908,10 @@ export class BrainstormOrchestrator {
     // During waitForAllParticipantsReady(), evicted participants may have
     // waveStatus='done' which would otherwise trigger premature resolution.
     if (!this.waveStarted) return;
+
+    // When reactive injection is enabled, don't complete the wave while
+    // there are still in-flight injections (agents may be re-activated).
+    if (this.reactiveInjection && this.pendingReactiveInjections > 0) return;
 
     const activeParts = this.participants.filter((p) => !p.hasPassed);
     const allTerminal = activeParts.every(
@@ -1022,7 +1063,7 @@ export class BrainstormOrchestrator {
     }).catch(() => {});
   }
 
-  private onParticipantTurnComplete(participant: ParticipantState): void {
+  onParticipantTurnComplete(participant: ParticipantState): void {
     // Flush any remaining buffered deltas before emitting the final complete message
     if (participant.deltaFlushTimer) {
       clearTimeout(participant.deltaFlushTimer);
@@ -1055,6 +1096,7 @@ export class BrainstormOrchestrator {
     }
 
     participant.waveStatus = isPass ? 'passed' : 'done';
+    participant.waveResponseCount++;
 
     void (async () => {
       try {
@@ -1076,6 +1118,11 @@ export class BrainstormOrchestrator {
           agentName: participant.agentName,
           status: isPass ? 'passed' : 'done',
         });
+
+        // Reactive injection: inject this agent's response into other participants
+        if (this.reactiveInjection && !isPass && rawResponse.length > 0) {
+          await this.reactivelyInject(participant, rawResponse);
+        }
       } catch (err) {
         log.warn(
           { err, roomId: this.roomId, agentName: participant.agentName },
@@ -1086,6 +1133,98 @@ export class BrainstormOrchestrator {
       // Check if the wave is now complete
       this.checkWaveComplete();
     })();
+  }
+
+  /**
+   * Reactive injection: inject a completed agent's response into other participants.
+   *
+   * For agents still in 'thinking' state: inject immediately (they'll incorporate it).
+   * For agents in 'done' state with budget remaining: re-activate them by setting
+   * waveStatus back to 'thinking' and injecting the new content.
+   * Agents that have 'passed', 'hasLeft', or exhausted their response budget are skipped.
+   */
+  private async reactivelyInject(sender: ParticipantState, senderResponse: string): Promise<void> {
+    const formattedResponse = `[${sender.agentName}]:\n${senderResponse}`;
+
+    const targets = this.participants.filter((p) => {
+      // Skip the sender itself
+      if (p.agentId === sender.agentId) return false;
+      // Skip passed, left, or no-session participants
+      if (p.hasPassed || p.hasLeft || !p.sessionId) return false;
+      // Skip timed-out participants
+      if (p.waveStatus === 'timeout') return false;
+
+      if (p.waveStatus === 'thinking') {
+        // Already thinking — inject directly, no budget check needed
+        return true;
+      }
+
+      if (p.waveStatus === 'done') {
+        // Re-activate if budget allows
+        return p.waveResponseCount < this.maxResponsesPerWave;
+      }
+
+      return false;
+    });
+
+    if (targets.length === 0) return;
+
+    log.info(
+      {
+        roomId: this.roomId,
+        sender: sender.agentName,
+        targetCount: targets.length,
+        targets: targets.map((t) => t.agentName),
+      },
+      'Reactive injection: injecting response into other participants',
+    );
+
+    // Track in-flight injections so checkWaveComplete doesn't resolve prematurely
+    this.pendingReactiveInjections += targets.length;
+
+    const injectionPromises = targets.map(async (target) => {
+      try {
+        // Re-activate 'done' agents
+        if (target.waveStatus === 'done') {
+          target.waveStatus = 'thinking';
+          target.responseBuffer = [];
+          target.deltaBuffer = '';
+          if (target.deltaFlushTimer) {
+            clearTimeout(target.deltaFlushTimer);
+            target.deltaFlushTimer = null;
+          }
+
+          await this.emitEvent({
+            type: 'participant:status',
+            agentId: target.agentId,
+            agentName: target.agentName,
+            status: 'thinking',
+          });
+        }
+
+        // sessionId is guaranteed non-null by the filter above (p.sessionId check)
+        const targetSessionId = target.sessionId;
+        if (targetSessionId) {
+          await this.injectMessage(targetSessionId, formattedResponse);
+        }
+      } catch (err) {
+        log.warn(
+          {
+            err,
+            roomId: this.roomId,
+            sender: sender.agentName,
+            target: target.agentName,
+          },
+          'Reactive injection failed for target',
+        );
+      } finally {
+        this.pendingReactiveInjections--;
+        // Re-check wave completion after each injection settles
+        this.checkWaveComplete();
+      }
+    });
+
+    await Promise.allSettled(injectionPromises);
   }
 
   // ============================================================================
@@ -1532,9 +1671,23 @@ ${correctionsText}`;
   }
 
   /**
-   * Build the initial preamble for a participant session.
+   * Truncate text to approximately `maxWords` words, appending "..." if truncated.
    */
-  private buildPreamble(room: BrainstormWithDetails, otherParticipantNames: string[]): string {
+  private static truncateToWords(text: string, maxWords: number): string {
+    const words = text.split(/\s+/);
+    if (words.length <= maxWords) return text;
+    return words.slice(0, maxWords).join(' ') + '...';
+  }
+
+  /**
+   * Build the initial preamble for a participant session.
+   * Optionally includes context from related brainstorm syntheses.
+   */
+  private buildPreamble(
+    room: BrainstormWithDetails,
+    otherParticipantNames: string[],
+    relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
+  ): string {
     const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
     const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + this.wave0ExtraTimeoutSec) / 60);
 
@@ -1576,6 +1729,23 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
         return `- **${role}**: ${name}`;
       });
       sections.push(`\n## Assigned Roles\n${roleLines.join('\n')}`);
+    }
+
+    // Inject context from related brainstorm syntheses (max 3)
+    if (relatedSyntheses && relatedSyntheses.length > 0) {
+      const limited = relatedSyntheses.slice(0, 3);
+      const contextLines = limited.map((rs) => {
+        const dateStr = rs.createdAt.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        });
+        const truncated = BrainstormOrchestrator.truncateToWords(rs.synthesis, 500);
+        return `### ${rs.title} (${dateStr})\n${truncated}`;
+      });
+      sections.push(
+        `\n## Context from Previous Discussions\nThe following syntheses are from earlier brainstorm sessions on this project. Use them as context — build on these decisions rather than re-debating settled points.\n\n${contextLines.join('\n\n')}`,
+      );
     }
 
     sections.push(`

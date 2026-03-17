@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
 import { deriveProvider } from '@/lib/utils/session-controls';
 import { PLAYBOOK_PRESETS, PLAYBOOK_DEFAULTS } from '@/lib/brainstorm/playbook';
@@ -58,6 +59,13 @@ interface ModelOption {
   id: string;
   label: string;
   description: string;
+}
+
+interface CompletedRoom {
+  id: string;
+  title: string;
+  synthesis: string;
+  createdAt: string;
 }
 
 interface CreateDialogProps {
@@ -121,6 +129,10 @@ interface FormContentProps {
   showProjectSelector: boolean;
   modelsByProvider: Record<string, ModelOption[]>;
   loadingProviders: Set<string>;
+  completedRooms: CompletedRoom[];
+  selectedRelatedIds: string[];
+  toggleRelatedRoom: (roomId: string) => void;
+  isLoadingCompletedRooms: boolean;
 }
 
 function FormContent({
@@ -145,6 +157,10 @@ function FormContent({
   showProjectSelector,
   modelsByProvider,
   loadingProviders,
+  completedRooms,
+  selectedRelatedIds,
+  toggleRelatedRoom,
+  isLoadingCompletedRooms,
 }: FormContentProps) {
   return (
     <div className="space-y-5">
@@ -204,6 +220,70 @@ function FormContent({
               </SelectContent>
             </Select>
           )}
+        </div>
+      )}
+
+      {/* Related brainstorms — only show when project is selected and completed rooms exist */}
+      {completedRooms.length > 0 && (
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium text-foreground/70">
+            Related Brainstorms
+            <span className="text-muted-foreground/40 font-normal ml-1">(optional, max 3)</span>
+          </Label>
+          <p className="text-[10px] text-muted-foreground/40">
+            Link previous discussions to provide context. Syntheses will be injected into the
+            preamble.
+          </p>
+          <div className="space-y-1.5 max-h-36 overflow-y-auto">
+            {completedRooms.map((room) => {
+              const isSelected = selectedRelatedIds.includes(room.id);
+              const atLimit = selectedRelatedIds.length >= 3 && !isSelected;
+              const dateStr = new Date(room.createdAt).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              });
+              const preview =
+                room.synthesis.slice(0, 100) + (room.synthesis.length > 100 ? '…' : '');
+              return (
+                <div
+                  key={room.id}
+                  className={`rounded-md border px-3 py-2 transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'border-blue-500/40 bg-blue-500/[0.05]'
+                      : atLimit
+                        ? 'border-white/[0.04] bg-white/[0.01] opacity-40 cursor-not-allowed'
+                        : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12]'
+                  }`}
+                  onClick={() => !atLimit && toggleRelatedRoom(room.id)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={isSelected}
+                      disabled={atLimit}
+                      onCheckedChange={() => toggleRelatedRoom(room.id)}
+                      className="shrink-0"
+                    />
+                    <span className="text-xs text-foreground/80 font-medium flex-1 truncate">
+                      {room.title}
+                    </span>
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0">
+                      {dateStr}
+                    </Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/40 mt-1 ml-6 line-clamp-2">
+                    {preview}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {isLoadingCompletedRooms && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground/50">
+          <Loader2 className="size-3 animate-spin" />
+          Loading related brainstorms...
         </div>
       )}
 
@@ -438,6 +518,11 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
   const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set());
 
+  // Related brainstorms state
+  const [completedRooms, setCompletedRooms] = useState<CompletedRoom[]>([]);
+  const [selectedRelatedIds, setSelectedRelatedIds] = useState<string[]>([]);
+  const [isLoadingCompletedRooms, setIsLoadingCompletedRooms] = useState(false);
+
   // Draft persistence via existing useDraft hook (debounced localStorage)
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:brainstorm:new');
 
@@ -516,6 +601,32 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     }
   }, [open, projectId]);
 
+  // Fetch completed brainstorm rooms when project changes (for "Related brainstorms" picker)
+  useEffect(() => {
+    const resolvedProject = projectId ?? selectedProjectId;
+    if (!open || !resolvedProject) {
+      setCompletedRooms([]);
+      return;
+    }
+
+    setIsLoadingCompletedRooms(true);
+    fetch(`/api/brainstorms/completed?projectId=${encodeURIComponent(resolvedProject)}`)
+      .then((r) => r.json())
+      .then((body: { data: CompletedRoom[] }) => setCompletedRooms(body.data ?? []))
+      .catch(() => setCompletedRooms([]))
+      .finally(() => setIsLoadingCompletedRooms(false));
+  }, [open, projectId, selectedProjectId]);
+
+  const toggleRelatedRoom = useCallback((roomId: string) => {
+    setSelectedRelatedIds((prev) => {
+      if (prev.includes(roomId)) {
+        return prev.filter((id) => id !== roomId);
+      }
+      if (prev.length >= 3) return prev;
+      return [...prev, roomId];
+    });
+  }, []);
+
   /** Handle preset selection — applies preset config and maxWaves */
   const handlePresetChange = useCallback((newPresetId: string) => {
     setPresetId(newPresetId);
@@ -590,6 +701,13 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
 
     setIsSubmitting(true);
     try {
+      // Merge relatedRoomIds into config if any are selected
+      const finalConfig = { ...config };
+      if (selectedRelatedIds.length > 0) {
+        finalConfig.relatedRoomIds = selectedRelatedIds;
+      }
+      const hasConfig = Object.keys(finalConfig).length > 0;
+
       const createRes = await fetch('/api/brainstorms', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -598,7 +716,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
           topic: topic.trim(),
           projectId: resolvedProjectId,
           maxWaves,
-          config: Object.keys(config).length > 0 ? config : undefined,
+          config: hasConfig ? finalConfig : undefined,
           participants: participants.map((p) => ({
             agentId: p.agentId,
             model: p.model || undefined,
@@ -636,6 +754,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       setPresetId('custom');
       setConfig({});
       setParticipants([]);
+      setSelectedRelatedIds([]);
 
       onOpenChange(false);
       router.push(`/brainstorms/${room.id}`);
@@ -650,6 +769,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     config,
     projectId,
     selectedProjectId,
+    selectedRelatedIds,
     title,
     topic,
     maxWaves,
@@ -680,6 +800,10 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     showProjectSelector: !projectId,
     modelsByProvider,
     loadingProviders,
+    completedRooms,
+    selectedRelatedIds,
+    toggleRelatedRoom,
+    isLoadingCompletedRooms,
   };
 
   const footerProps: FooterContentProps = {

@@ -980,6 +980,7 @@ describe('minWavesBeforePass enforcement', () => {
       readyAt: Date.now(),
       deltaBuffer: '',
       deltaFlushTimer: null,
+      waveResponseCount: 0,
     };
 
     // Agent sends [PASS] response
@@ -1035,6 +1036,7 @@ describe('minWavesBeforePass enforcement', () => {
       readyAt: Date.now(),
       deltaBuffer: '',
       deltaFlushTimer: null,
+      waveResponseCount: 0,
     };
 
     // Agent sends [PASS]
@@ -1226,6 +1228,7 @@ describe('validated synthesis (two-phase)', () => {
         readyAt: Date.now(),
         deltaBuffer: '',
         deltaFlushTimer: null,
+        waveResponseCount: 0,
       },
       {
         participantId: 'part-b',
@@ -1240,6 +1243,7 @@ describe('validated synthesis (two-phase)', () => {
         readyAt: Date.now(),
         deltaBuffer: '',
         deltaFlushTimer: null,
+        waveResponseCount: 0,
       },
     ];
 
@@ -1441,4 +1445,501 @@ type ParticipantState = {
   readyAt: number | null;
   deltaBuffer: string;
   deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+  /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
+  waveResponseCount: number;
 };
+
+// ---------------------------------------------------------------------------
+// #12 — Reactive injection (hybrid wave model)
+// ---------------------------------------------------------------------------
+
+describe('reactive injection', () => {
+  /** Helper: make a participant with defaults suitable for reactive injection tests */
+  function makeParticipant(
+    overrides: Partial<ParticipantState> & {
+      agentId: string;
+      agentName: string;
+      sessionId: string;
+    },
+  ): ParticipantState {
+    return {
+      participantId: `part-${overrides.agentId}`,
+      agentSlug: `${overrides.agentName.toLowerCase()}-slug`,
+      waveStatus: 'thinking',
+      responseBuffer: [],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: Date.now(),
+      deltaBuffer: '',
+      deltaFlushTimer: null,
+      waveResponseCount: 0,
+      ...overrides,
+    };
+  }
+
+  /**
+   * Common test interface for the orchestrator — exposes private fields for testing.
+   */
+  type TestOrchestrator = {
+    participants: ParticipantState[];
+    currentWave: number;
+    waveStarted: boolean;
+    reactiveInjection: boolean;
+    maxResponsesPerWave: number;
+    pendingReactiveInjections: number;
+    waveCompleteResolve: (() => void) | null;
+    handleSessionEvent: (participant: ParticipantState, event: unknown) => void;
+    onParticipantTurnComplete: (participant: ParticipantState) => void;
+    checkWaveComplete: () => void;
+    injectMessage: (sessionId: string, text: string) => Promise<void>;
+  };
+
+  it("when agent A finishes, injects A's response into agents still thinking", async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+    });
+    const agentC = makeParticipant({ agentId: 'agent-c', agentName: 'Codex', sessionId: 'sess-c' });
+
+    orchestrator.participants = [agentA, agentB, agentC];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    // Mock injectMessage to track calls
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    // Agent A produces a response
+    orchestrator.handleSessionEvent(agentA, {
+      type: 'agent:text',
+      text: 'Agent A has a great idea about X.',
+    });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    // Allow async event handlers to run
+    await vi.advanceTimersByTimeAsync(50);
+
+    // injectMessage should have been called for agents B and C (still thinking)
+    expect(injectionCalls.length).toBe(2);
+    expect(injectionCalls.some((c) => c.sessionId === 'sess-b')).toBe(true);
+    expect(injectionCalls.some((c) => c.sessionId === 'sess-c')).toBe(true);
+    // Injected text should contain Agent A's response
+    expect(injectionCalls[0].text).toContain('Agent A has a great idea about X.');
+  });
+
+  it('re-activates done agents within response budget', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-2';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+      waveStatus: 'done',
+      waveResponseCount: 1,
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+    orchestrator.maxResponsesPerWave = 2; // budget of 2
+
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    // Agent A finishes
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'New insight from A.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Agent B was 'done' with 1 response, budget is 2 — should get reactivated
+    expect(agentB.waveStatus).toBe('thinking');
+    expect(injectionCalls.some((c) => c.sessionId === 'sess-b')).toBe(true);
+  });
+
+  it('does NOT re-activate done agents that have exhausted their response budget', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-3';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+      waveStatus: 'done',
+      waveResponseCount: 2, // already at budget
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+    orchestrator.maxResponsesPerWave = 2;
+
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    // Agent A finishes
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'Another insight.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Agent B should NOT be reactivated — budget exhausted
+    expect(agentB.waveStatus).toBe('done');
+    expect(injectionCalls.some((c) => c.sessionId === 'sess-b')).toBe(false);
+  });
+
+  it('does NOT inject into passed or left participants', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-4';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+      waveStatus: 'passed',
+      hasPassed: true,
+    });
+    const agentC = makeParticipant({
+      agentId: 'agent-c',
+      agentName: 'Codex',
+      sessionId: 'sess-c',
+      waveStatus: 'done',
+      hasLeft: true,
+    });
+
+    orchestrator.participants = [agentA, agentB, agentC];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'My idea.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Neither B (passed) nor C (left) should receive injections
+    expect(injectionCalls.length).toBe(0);
+  });
+
+  it('wave completes when all agents done and no pending injections', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-5';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+      waveStatus: 'done',
+      waveResponseCount: 2,
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+      waveStatus: 'done',
+      waveResponseCount: 2,
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+    orchestrator.pendingReactiveInjections = 0;
+
+    let resolved = false;
+    orchestrator.waveCompleteResolve = () => {
+      resolved = true;
+    };
+
+    orchestrator.checkWaveComplete();
+    expect(resolved).toBe(true);
+  });
+
+  it('wave does NOT complete while there are pending reactive injections', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-6';
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+      waveStatus: 'done',
+      waveResponseCount: 1,
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+      waveStatus: 'thinking',
+      waveResponseCount: 0,
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+    orchestrator.pendingReactiveInjections = 1; // injection in flight
+
+    let resolved = false;
+    orchestrator.waveCompleteResolve = () => {
+      resolved = true;
+    };
+
+    orchestrator.checkWaveComplete();
+    // Should NOT resolve — agent B is still thinking (has a pending injection)
+    expect(resolved).toBe(false);
+  });
+
+  it('increments waveResponseCount each time agent completes a turn', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-7';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+
+    orchestrator.participants = [agentA];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    // Mock injectMessage
+    orchestrator.injectMessage = vi.fn(async () => {});
+
+    // First response
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'First response.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(agentA.waveResponseCount).toBe(1);
+
+    // Simulate being reactivated and responding again
+    agentA.waveStatus = 'thinking';
+    agentA.responseBuffer = [];
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'Second response.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(agentA.waveResponseCount).toBe(2);
+  });
+
+  it('reactiveInjection defaults to false (backward compatible)', () => {
+    const orchestrator = new BrainstormOrchestrator(
+      'room-reactive-default',
+      5,
+      120,
+    ) as unknown as TestOrchestrator;
+    expect(orchestrator.reactiveInjection).toBe(false);
+  });
+
+  it('does NOT inject reactively when reactiveInjection is disabled', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-off';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    // No reactiveInjection config — defaults to false
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    // Agent A finishes
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'My idea.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // No reactive injections — old behavior preserved
+    expect(injectionCalls.length).toBe(0);
+  });
+
+  it('startWave resets waveResponseCount for all active participants', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-reset';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator & {
+      startWave: (wave: number, content: string) => Promise<void>;
+    };
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+      waveResponseCount: 2, // leftover from previous wave
+    });
+
+    orchestrator.participants = [agentA];
+
+    // Mock injectMessage to avoid real calls
+    orchestrator.injectMessage = vi.fn(async () => {});
+
+    await orchestrator.startWave(1, 'New wave content');
+
+    expect(agentA.waveResponseCount).toBe(0);
+  });
+
+  it('formats reactive injection with agent name prefix', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-reactive-format';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: true,
+    }) as unknown as TestOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+    });
+
+    orchestrator.participants = [agentA, agentB];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    const injectionCalls: Array<{ sessionId: string; text: string }> = [];
+    orchestrator.injectMessage = vi.fn(async (sessionId: string, text: string) => {
+      injectionCalls.push({ sessionId, text });
+    });
+
+    orchestrator.handleSessionEvent(agentA, { type: 'agent:text', text: 'My deep analysis.' });
+    orchestrator.handleSessionEvent(agentA, { type: 'session:state', status: 'awaiting_input' });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Injected text should be formatted with agent name
+    expect(injectionCalls.length).toBe(1);
+    expect(injectionCalls[0].text).toContain('[Claude]');
+    expect(injectionCalls[0].text).toContain('My deep analysis.');
+  });
+});

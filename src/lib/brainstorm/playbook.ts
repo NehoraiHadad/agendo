@@ -13,7 +13,10 @@ import type { BrainstormConfig } from '@/lib/db/schema';
 
 /** Default values for all Playbook fields */
 export const PLAYBOOK_DEFAULTS: Required<
-  Omit<BrainstormConfig, 'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec'>
+  Omit<
+    BrainstormConfig,
+    'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec' | 'relatedRoomIds'
+  >
 > = {
   waveTimeoutSec: 120,
   wave0ExtraTimeoutSec: 180,
@@ -21,6 +24,8 @@ export const PLAYBOOK_DEFAULTS: Required<
   minWavesBeforePass: 2,
   requiredObjections: 0,
   synthesisMode: 'single',
+  reactiveInjection: false,
+  maxResponsesPerWave: 2,
 } as const;
 
 /** Default maxWaves (stored on the room row, not in config) */
@@ -80,7 +85,10 @@ export const PLAYBOOK_PRESETS: PlaybookPreset[] = [
  * This is the single source of truth for how config values are resolved.
  */
 export function resolvePlaybook(config: BrainstormConfig | null | undefined): Required<
-  Omit<BrainstormConfig, 'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec'>
+  Omit<
+    BrainstormConfig,
+    'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec' | 'relatedRoomIds'
+  >
 > & {
   synthesisAgentId?: string;
   language?: string;
@@ -94,6 +102,8 @@ export function resolvePlaybook(config: BrainstormConfig | null | undefined): Re
     minWavesBeforePass: config?.minWavesBeforePass ?? PLAYBOOK_DEFAULTS.minWavesBeforePass,
     requiredObjections: config?.requiredObjections ?? PLAYBOOK_DEFAULTS.requiredObjections,
     synthesisMode: config?.synthesisMode ?? PLAYBOOK_DEFAULTS.synthesisMode,
+    reactiveInjection: config?.reactiveInjection ?? PLAYBOOK_DEFAULTS.reactiveInjection,
+    maxResponsesPerWave: config?.maxResponsesPerWave ?? PLAYBOOK_DEFAULTS.maxResponsesPerWave,
     synthesisAgentId: config?.synthesisAgentId,
     language: config?.language,
     roles: config?.roles,

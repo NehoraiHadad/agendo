@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, getTableColumns, count } from 'drizzle-orm';
+import { eq, and, desc, asc, isNotNull, getTableColumns, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -349,4 +349,44 @@ export async function extendBrainstorm(
 
   if (!updated) throw new NotFoundError('BrainstormRoom', id);
   return updated;
+}
+
+// ============================================================================
+// Cross-brainstorm context
+// ============================================================================
+
+/**
+ * Lightweight projection for completed rooms used as context in new brainstorms.
+ */
+export interface CompletedRoomSummary {
+  id: string;
+  title: string;
+  synthesis: string;
+  createdAt: Date;
+}
+
+/**
+ * Get completed brainstorm rooms for a project that have a non-null synthesis.
+ * Used to populate the "Related brainstorms" picker in the create dialog
+ * and to inject context into new brainstorm preambles.
+ */
+export async function getCompletedRoomsForProject(
+  projectId: string,
+): Promise<CompletedRoomSummary[]> {
+  return db
+    .select({
+      id: brainstormRooms.id,
+      title: brainstormRooms.title,
+      synthesis: brainstormRooms.synthesis,
+      createdAt: brainstormRooms.createdAt,
+    })
+    .from(brainstormRooms)
+    .where(
+      and(
+        eq(brainstormRooms.projectId, projectId),
+        eq(brainstormRooms.status, 'ended'),
+        isNotNull(brainstormRooms.synthesis),
+      ),
+    )
+    .orderBy(desc(brainstormRooms.createdAt)) as Promise<CompletedRoomSummary[]>;
 }
