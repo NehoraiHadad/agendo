@@ -1137,6 +1137,9 @@ interface SessionChatViewProps {
   onOpenTeamPanel?: () => void;
 }
 
+// Statuses where the session is ready to accept a new user message
+const INPUT_READY = new Set(['awaiting_input', 'idle']);
+
 export function SessionChatView({
   sessionId,
   stream,
@@ -1173,13 +1176,31 @@ export function SessionChatView({
   // user:message display items (which only carry hasImage:boolean, not the URL).
   const imageUrlsQueueRef = useRef<string[]>([]);
 
-  // Queued message: held client-side while agent is active, auto-sent on awaiting_input
-  const [queuedMessage, setQueuedMessage] = useState<{
+  // Queued message: held client-side while agent is active, auto-sent on awaiting_input.
+  // Persisted to sessionStorage so it survives page refresh.
+  const QUEUE_KEY = `queued-msg:${sessionId}`;
+  type QueuedMessage = {
     text: string;
     imageDataUrl?: string;
     imagePayload?: { mimeType: string; data: string };
-  } | null>(null);
+  };
+
+  function persistQueue(msg: QueuedMessage | null) {
+    if (msg) sessionStorage.setItem(QUEUE_KEY, JSON.stringify(msg));
+    else sessionStorage.removeItem(QUEUE_KEY);
+  }
+
+  const [queuedMessage, setQueuedMessage] = useState<QueuedMessage | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const saved = sessionStorage.getItem(`queued-msg:${sessionId}`);
+      return saved ? (JSON.parse(saved) as QueuedMessage) : null;
+    } catch {
+      return null;
+    }
+  });
   const prevStatusRef = useRef<string | null>(null);
+  const sendingQueuedRef = useRef(false);
   // restoreKey increments on every edit-queued action to ensure the useEffect
   // in SessionMessageInput re-fires even if the text is the same.
   const restoreKeyRef = useRef(0);
@@ -1287,28 +1308,44 @@ export function SessionChatView({
     setQueuedMessage(null);
   }, []);
 
-  // Auto-send: when agent transitions active → awaiting_input, fire the queued message
+  // Sync queuedMessage to sessionStorage so it survives page refresh
   useEffect(() => {
-    const prev = prevStatusRef.current;
+    persistQueue(queuedMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedMessage]);
+
+  // Auto-send: whenever agent is ready for input and there is a queued message, fire it.
+  // Uses a ref guard to prevent double-send (e.g. rapid re-renders, SSE reconnects).
+  // Does NOT require a specific status transition — fires on any INPUT_READY state.
+  useEffect(() => {
     prevStatusRef.current = currentStatus ?? null;
 
-    if (queuedMessage && currentStatus === 'awaiting_input' && prev === 'active') {
-      const msg = queuedMessage;
-      setQueuedMessage(null);
+    if (
+      !queuedMessage ||
+      !currentStatus ||
+      !INPUT_READY.has(currentStatus) ||
+      sendingQueuedRef.current
+    )
+      return;
 
-      // Feed through handleSent for optimistic message baseline tracking
-      handleSent(msg.text, msg.imageDataUrl);
+    sendingQueuedRef.current = true;
+    const msg = queuedMessage;
+    setQueuedMessage(null);
 
-      // POST to server
-      const body: Record<string, unknown> = { message: msg.text };
-      if (msg.imagePayload) {
-        body.image = { mimeType: msg.imagePayload.mimeType, data: msg.imagePayload.data };
-      }
-      void apiFetch(`/api/sessions/${sessionId}/message`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+    // Feed through handleSent for optimistic message baseline tracking
+    handleSent(msg.text, msg.imageDataUrl);
+
+    // POST to server
+    const body: Record<string, unknown> = { message: msg.text };
+    if (msg.imagePayload) {
+      body.image = { mimeType: msg.imagePayload.mimeType, data: msg.imagePayload.data };
     }
+    void apiFetch(`/api/sessions/${sessionId}/message`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).finally(() => {
+      sendingQueuedRef.current = false;
+    });
   }, [currentStatus, queuedMessage, sessionId, handleSent]);
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
