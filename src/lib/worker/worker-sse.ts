@@ -183,6 +183,25 @@ export async function handleSessionSSE(
   //    content comes from the CLI.
   let catchupSent = false;
 
+  // 3. Register in-memory listener BEFORE history send to avoid race condition.
+  //    Any events emitted during the async getHistory() call are buffered and
+  //    flushed after history is sent — no events are lost.
+  const buffered: AgendoEvent[] = [];
+  let liveFlushing = false;
+  const unsub = addSessionEventListener(sessionId, (event) => {
+    if (liveFlushing) {
+      sendEvent(res, event);
+    } else {
+      buffered.push(event);
+    }
+  });
+
+  // 4. Clean up on client disconnect
+  req.on('close', () => {
+    unsub();
+    log.debug({ sessionId }, 'SSE client disconnected');
+  });
+
   // 2a. Try CLI-native history first (requires a live SessionProcess)
   // Skip on reconnect (lastEventId > 0) — client already has conversation history.
   // Re-sending CLI-native history with new sequential IDs causes message duplication
@@ -192,8 +211,21 @@ export async function handleSessionSSE(
     try {
       const historyEvents = await proc.getHistory();
       if (historyEvents && historyEvents.length > 0) {
+        // Skip the first user:message from CLI history when session.initialPrompt
+        // is set — the UI already shows it via InitialPromptBanner.
+        let skippedFirst = false;
+        const filtered = session.initialPrompt
+          ? historyEvents.filter((ev) => {
+              if (!skippedFirst && ev.type === 'user:message') {
+                skippedFirst = true;
+                return false;
+              }
+              return true;
+            })
+          : historyEvents;
+
         log.info(
-          { sessionId, eventCount: historyEvents.length },
+          { sessionId, eventCount: filtered.length, skippedInitialPrompt: skippedFirst },
           'CLI-native history reconstruction used for catchup',
         );
         let seq = lastEventId + 1;
@@ -203,10 +235,10 @@ export async function handleSessionSSE(
           sessionId: session.id,
           ts: Date.now(),
           type: 'system:info',
-          message: `History loaded from CLI native storage (${historyEvents.length} events)`,
+          message: `History loaded from CLI native storage (${filtered.length} events)`,
         };
         sendEvent(res, sourceEvent);
-        for (const payload of historyEvents) {
+        for (const payload of filtered) {
           const event: AgendoEvent = {
             id: seq++,
             sessionId: session.id,
@@ -250,16 +282,12 @@ export async function handleSessionSSE(
     }
   }
 
-  // 3. Register in-memory listener for live events
-  const unsub = addSessionEventListener(sessionId, (event) => {
-    sendEvent(res, event);
-  });
-
-  // 4. Clean up on client disconnect
-  req.on('close', () => {
-    unsub();
-    log.debug({ sessionId }, 'SSE client disconnected');
-  });
+  // Flush any events that arrived during the async history send, then switch
+  // to direct mode so all subsequent events go straight to the client.
+  for (const ev of buffered) {
+    sendEvent(res, ev);
+  }
+  liveFlushing = true;
 }
 
 // ============================================================================
