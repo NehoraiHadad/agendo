@@ -135,10 +135,23 @@ interface PendingImage {
   data: string;
 }
 
+/** Image payload shape for queued messages (base64 data for POST body). */
+export interface QueuedImagePayload {
+  mimeType: string;
+  data: string;
+}
+
 interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
   onSent?: (text: string, imageDataUrl?: string) => void;
+  /** Called instead of onSent when status is 'active' — queues the message client-side. */
+  onQueue?: (text: string, imageDataUrl?: string, imagePayload?: QueuedImagePayload) => void;
+  /** Text to restore into the textarea when the user edits a queued message.
+   *  Wrapped in an object with a monotonic key so the effect re-fires even if the text is identical. */
+  restoredDraft?: { text: string; key: number } | null;
+  /** Image to restore when the user edits a queued message. */
+  restoredImage?: PendingImage | null;
   /** Live slash commands received from the agent's system:init event (bare names, fallback) */
   slashCommands?: string[];
   /** Rich slash commands from the agent's session:commands event (name + description + argumentHint) */
@@ -186,6 +199,9 @@ export function SessionMessageInput({
   sessionId,
   status,
   onSent,
+  onQueue,
+  restoredDraft,
+  restoredImage,
   slashCommands,
   richSlashCommands,
   mcpServers,
@@ -227,6 +243,27 @@ export function SessionMessageInput({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // Restore textarea content when user edits a queued message (pill → back to input).
+  // The object wrapper with a monotonic `key` ensures the effect fires even when
+  // the text hasn't changed (e.g. edit → cancel → re-type same text → edit again).
+  useEffect(() => {
+    if (restoredDraft == null) return;
+    setMessage(restoredDraft.text);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        autoGrow(textareaRef.current);
+        textareaRef.current.focus();
+        const len = restoredDraft.text.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
+    });
+  }, [restoredDraft]);
+
+  // Restore image attachment when user edits a queued message
+  useEffect(() => {
+    if (restoredImage) setPendingImage(restoredImage);
+  }, [restoredImage]);
 
   const isAccepting =
     status === 'active' || status === 'awaiting_input' || status === 'idle' || status === 'ended';
@@ -336,6 +373,22 @@ export function SessionMessageInput({
     const blockedCmd = allCommands.find((c) => c.blocked && trimmed.split(/\s/)[0] === c.name);
     if (blockedCmd) {
       setToast(getBlockedMessage(blockedCmd.name, mcpServers));
+      return;
+    }
+
+    // Queue path: when the agent is mid-turn, hold the message client-side
+    // instead of sending immediately. The parent component will auto-send
+    // when the agent transitions to awaiting_input.
+    if (status === 'active' && onQueue) {
+      const imgPayload = pendingImage
+        ? { mimeType: pendingImage.mimeType, data: pendingImage.data }
+        : undefined;
+      onQueue(trimmed, pendingImage?.dataUrl, imgPayload);
+      setMessage('');
+      clearDraft();
+      setPendingImage(null);
+      setSuppressedSuggestion(promptSuggestion ?? null);
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
       return;
     }
 

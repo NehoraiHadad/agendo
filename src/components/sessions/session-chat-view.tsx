@@ -38,12 +38,14 @@ import { WriteView } from '@/components/executions/tool-views/write-view';
 import { EditView } from '@/components/executions/tool-views/edit-view';
 import { MultiEditView } from '@/components/executions/tool-views/multi-edit-view';
 import { SessionMessageInput } from '@/components/sessions/session-message-input';
+import { PendingMessagePill } from '@/components/sessions/pending-message-pill';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { TeamMessageCard } from '@/components/sessions/team-message-card';
 import { ArtifactCard } from '@/components/sessions/artifact-card';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { deriveProvider } from '@/lib/utils/session-controls';
+import { apiFetch } from '@/lib/api-types';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
@@ -1171,6 +1173,23 @@ export function SessionChatView({
   // user:message display items (which only carry hasImage:boolean, not the URL).
   const imageUrlsQueueRef = useRef<string[]>([]);
 
+  // Queued message: held client-side while agent is active, auto-sent on awaiting_input
+  const [queuedMessage, setQueuedMessage] = useState<{
+    text: string;
+    imageDataUrl?: string;
+    imagePayload?: { mimeType: string; data: string };
+  } | null>(null);
+  const prevStatusRef = useRef<string | null>(null);
+  // restoreKey increments on every edit-queued action to ensure the useEffect
+  // in SessionMessageInput re-fires even if the text is the same.
+  const restoreKeyRef = useRef(0);
+  const [restoredDraft, setRestoredDraft] = useState<{ text: string; key: number } | null>(null);
+  const [restoredImage, setRestoredImage] = useState<{
+    dataUrl: string;
+    mimeType: string;
+    data: string;
+  } | null>(null);
+
   const handleInterrupt = useCallback(async () => {
     if (isInterrupting) return;
     setIsInterrupting(true);
@@ -1237,6 +1256,60 @@ export function SessionChatView({
     },
     [effectiveInitialPrompt, currentStatus],
   );
+
+  // Queue a message client-side when agent is mid-turn (status === 'active').
+  // Replaces any existing queued message (only one at a time).
+  const handleQueue = useCallback(
+    (text: string, imageDataUrl?: string, imagePayload?: { mimeType: string; data: string }) => {
+      setQueuedMessage({ text, imageDataUrl, imagePayload });
+    },
+    [],
+  );
+
+  // Edit: move queued message back to the textarea
+  const handleEditQueued = useCallback(() => {
+    if (!queuedMessage) return;
+    setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
+    setRestoredImage(
+      queuedMessage.imageDataUrl && queuedMessage.imagePayload
+        ? {
+            dataUrl: queuedMessage.imageDataUrl,
+            mimeType: queuedMessage.imagePayload.mimeType,
+            data: queuedMessage.imagePayload.data,
+          }
+        : null,
+    );
+    setQueuedMessage(null);
+  }, [queuedMessage]);
+
+  // Cancel: discard the queued message
+  const handleCancelQueued = useCallback(() => {
+    setQueuedMessage(null);
+  }, []);
+
+  // Auto-send: when agent transitions active → awaiting_input, fire the queued message
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = currentStatus ?? null;
+
+    if (queuedMessage && currentStatus === 'awaiting_input' && prev === 'active') {
+      const msg = queuedMessage;
+      setQueuedMessage(null);
+
+      // Feed through handleSent for optimistic message baseline tracking
+      handleSent(msg.text, msg.imageDataUrl);
+
+      // POST to server
+      const body: Record<string, unknown> = { message: msg.text };
+      if (msg.imagePayload) {
+        body.image = { mimeType: msg.imagePayload.mimeType, data: msg.imagePayload.data };
+      }
+      void apiFetch(`/api/sessions/${sessionId}/message`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    }
+  }, [currentStatus, queuedMessage, sessionId, handleSent]);
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
@@ -1661,10 +1734,24 @@ export function SessionChatView({
                 </button>
               </div>
             )}
+            {/* Pending queued message pill — shown when user sent a message while agent was active */}
+            {queuedMessage && (
+              <div className="px-3 pt-2">
+                <PendingMessagePill
+                  text={queuedMessage.text}
+                  imageDataUrl={queuedMessage.imageDataUrl}
+                  onEdit={handleEditQueued}
+                  onCancel={handleCancelQueued}
+                />
+              </div>
+            )}
             <SessionMessageInput
               sessionId={sessionId}
               status={currentStatus as SessionStatus}
               onSent={handleSent}
+              onQueue={handleQueue}
+              restoredDraft={restoredDraft}
+              restoredImage={restoredImage}
               slashCommands={slashCommands}
               richSlashCommands={richSlashCommands}
               mcpServers={mcpServers}
