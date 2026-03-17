@@ -275,6 +275,109 @@ describe('CodexAppServerAdapter', () => {
     });
   });
 
+  describe('compaction cooldown', () => {
+    it('does not trigger compaction again within the cooldown period', () => {
+      const { onNotification, emitted, adapter } = setupAdapter();
+
+      // Set alive and threadId so triggerCompaction doesn't bail
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // First usage update at 85% — should trigger compaction
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      const compactEvents1 = emitted.filter((e) => e.type === 'as:compact-start');
+      expect(compactEvents1).toHaveLength(1);
+
+      // Simulate compaction completing (resets compacting flag)
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      // Second usage update IMMEDIATELY after — still 85%, but should NOT
+      // trigger compaction because of cooldown
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-2',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      const compactEvents2 = emitted.filter((e) => e.type === 'as:compact-start');
+      // Should still be just 1 (no second compaction)
+      expect(compactEvents2).toHaveLength(1);
+    });
+
+    it('allows compaction again after the cooldown period expires', () => {
+      vi.useFakeTimers();
+      const { onNotification, emitted, adapter } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // First compaction
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      // Complete the compaction
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      // Advance past cooldown (default 60s)
+      vi.advanceTimersByTime(61_000);
+
+      // Now another usage notification should trigger compaction
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-2',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
+      expect(compactEvents).toHaveLength(2);
+
+      vi.useRealTimers();
+    });
+
+    it('does not trigger compaction when usage is below 80%', () => {
+      const { onNotification, emitted, adapter } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 100000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
+      expect(compactEvents).toHaveLength(0);
+    });
+  });
+
   describe('server request handling (item/tool/call)', () => {
     it('responds to dynamic tool calls with error (not implemented)', () => {
       const adapter = new CodexAppServerAdapter();

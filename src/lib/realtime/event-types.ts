@@ -274,6 +274,7 @@ export type BrainstormEvent =
       text: string;
     })
   | (BrainstormEventBase & { type: 'room:converged'; wave: number })
+  | (BrainstormEventBase & { type: 'room:soft-converged'; wave: number })
   | (BrainstormEventBase & { type: 'room:max-waves'; wave: number })
   | (BrainstormEventBase & { type: 'room:synthesis'; synthesis: string })
   | (BrainstormEventBase & {

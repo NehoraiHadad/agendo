@@ -11,6 +11,7 @@ import {
   Users,
   Copy,
   Check,
+  ExternalLink,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -98,7 +99,7 @@ function EndedBanner() {
 // Synthesis panel
 // ============================================================================
 
-function SynthesisPanel({ synthesis }: { synthesis: string }) {
+function SynthesisPanel({ synthesis, taskId }: { synthesis: string; taskId: string | null }) {
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
 
@@ -112,6 +113,9 @@ function SynthesisPanel({ synthesis }: { synthesis: string }) {
     [synthesis],
   );
 
+  // Detect if the synthesis has the structured Decision Log format
+  const hasNextSteps = /^## Next Steps/m.test(synthesis);
+
   return (
     <div className="mx-4 my-3 rounded-xl border border-violet-500/20 bg-violet-950/15 overflow-hidden">
       <div className="w-full flex items-center gap-2.5 px-4 py-3">
@@ -124,7 +128,7 @@ function SynthesisPanel({ synthesis }: { synthesis: string }) {
         >
           <Sparkles className="size-3.5 text-violet-400/70 shrink-0" />
           <span className="text-xs font-semibold text-violet-300/90 flex-1 text-left">
-            Synthesis
+            Decision Log
           </span>
           {!expanded && (
             <span className="text-[10px] text-muted-foreground/35 mr-1">Click to expand</span>
@@ -152,11 +156,23 @@ function SynthesisPanel({ synthesis }: { synthesis: string }) {
       </div>
       {expanded && (
         <div className="px-4 pb-4 text-xs text-foreground/70 border-t border-violet-500/10">
-          <div dir="auto" className="pt-3">
+          <div dir="auto" className="pt-3 synthesis-decision-log">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={synthesisMdComponents}>
               {synthesis}
             </ReactMarkdown>
           </div>
+          {/* Link to parent task if next steps were created */}
+          {hasNextSteps && taskId && (
+            <div className="mt-3 pt-3 border-t border-violet-500/10">
+              <a
+                href={`/tasks/${taskId}`}
+                className="inline-flex items-center gap-1.5 text-[11px] text-violet-400/70 hover:text-violet-300 transition-colors"
+              >
+                <ExternalLink className="size-3" />
+                View created tasks on board
+              </a>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -317,6 +333,7 @@ export function RoomView({
   const participants = useBrainstormStore((s) => s.participants);
   const status = useBrainstormStore((s) => s.status);
   const synthesis = useBrainstormStore((s) => s.synthesis);
+  const task = useBrainstormStore((s) => s.task);
   const converged = useBrainstormStore((s) => s.converged);
   const maxWavesReached = useBrainstormStore((s) => s.maxWavesReached);
   const currentWave = useBrainstormStore((s) => s.currentWave);
@@ -383,7 +400,7 @@ export function RoomView({
         {status === 'ended' && <EndedBanner />}
 
         {/* Synthesis */}
-        {synthesis && <SynthesisPanel synthesis={synthesis} />}
+        {synthesis && <SynthesisPanel synthesis={synthesis} taskId={task?.id ?? null} />}
 
         <div ref={bottomRef} className="h-4" />
       </div>

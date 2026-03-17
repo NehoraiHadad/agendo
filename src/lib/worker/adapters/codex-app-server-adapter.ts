@@ -97,6 +97,11 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private tokenUsage: { used: number; limit: number } | null = null;
   /** Whether a context compaction is currently in progress. */
   private compacting = false;
+  /** Timestamp (ms) of the last compaction attempt. Used to enforce a cooldown. */
+  private lastCompactionAt = 0;
+  /** Minimum interval between compaction attempts (ms). Prevents compaction loops
+   *  when compaction doesn't actually free enough tokens. */
+  private static readonly COMPACTION_COOLDOWN_MS = 60_000;
   /** Whether the current turn is active (set on turn/started, cleared on turn/completed). */
   private turnActive = false;
   /** Interval handle for the MCP server health check (mcpServerStatus/list). */
@@ -903,7 +908,17 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
   private async triggerCompaction(): Promise<void> {
     if (this.compacting || !this.threadId) return;
+
+    // Enforce cooldown: don't compact again if we recently compacted.
+    // This prevents infinite compaction loops when compaction doesn't
+    // actually reduce token usage below the 80% threshold.
+    const now = Date.now();
+    if (now - this.lastCompactionAt < CodexAppServerAdapter.COMPACTION_COOLDOWN_MS) {
+      return;
+    }
+
     this.compacting = true;
+    this.lastCompactionAt = now;
     this.emitSynthetic({ type: 'as:compact-start' });
     await this.transport.call('thread/compact/start', { threadId: this.threadId }, 30000);
   }
