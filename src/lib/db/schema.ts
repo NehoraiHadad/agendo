@@ -543,12 +543,28 @@ export const brainstormParticipants = pgTable(
   ],
 );
 
-/** brainstorm_rooms.config */
+/** brainstorm_rooms.config — the "Playbook" schema for configuring brainstorm mechanics */
 export interface BrainstormConfig {
   /** Per-agent wave timeout in seconds (default 120) */
   waveTimeoutSec?: number;
+  /** Extra timeout for wave 0 / research wave in seconds (default 180) */
+  wave0ExtraTimeoutSec?: number;
+  /** Convergence mode: 'unanimous' = all must PASS, 'majority' = >50% PASS (default 'unanimous') */
+  convergenceMode?: 'unanimous' | 'majority';
+  /** Minimum waves before convergence can trigger (default 2) */
+  minWavesBeforePass?: number;
+  /** Number of required objections to block convergence (default 0) */
+  requiredObjections?: number;
+  /** Synthesis mode: 'single' = one agent, 'validated' = synthesize then validate (default 'single') */
+  synthesisMode?: 'single' | 'validated';
   /** Agent ID to use for synthesis (default: first participant) */
   synthesisAgentId?: string;
+  /** Language instruction injected into preamble (e.g. "Respond in Spanish") */
+  language?: string;
+  /** Role assignments: role label → agent slug (e.g. { critic: 'claude-code-1' }) */
+  roles?: Record<string, string>;
+  /** Startup timeout per participant in seconds (default 300) */
+  participantReadyTimeoutSec?: number;
 }
 
 // ============================================================================

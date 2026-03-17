@@ -28,6 +28,8 @@ import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
 import { deriveProvider } from '@/lib/utils/session-controls';
+import { PLAYBOOK_PRESETS, PLAYBOOK_DEFAULTS } from '@/lib/brainstorm/playbook';
+import type { BrainstormConfig } from '@/lib/db/schema';
 
 // ============================================================================
 // Types
@@ -74,6 +76,8 @@ interface DraftState {
   topic?: string;
   selectedProjectId?: string;
   maxWaves?: number;
+  presetId?: string;
+  config?: BrainstormConfig;
 }
 
 // ============================================================================
@@ -104,6 +108,8 @@ interface FormContentProps {
   setSelectedProjectId: (v: string) => void;
   maxWaves: number;
   setMaxWaves: (v: number) => void;
+  presetId: string;
+  onPresetChange: (presetId: string) => void;
   participants: ParticipantSelection[];
   toggleAgent: (agent: AgentOption) => void;
   isAgentSelected: (id: string) => boolean;
@@ -126,6 +132,8 @@ function FormContent({
   setSelectedProjectId,
   maxWaves,
   setMaxWaves,
+  presetId,
+  onPresetChange,
   participants,
   toggleAgent,
   isAgentSelected,
@@ -201,6 +209,29 @@ function FormContent({
 
       <SectionHeader>Configuration</SectionHeader>
 
+      {/* Preset selector */}
+      <div className="space-y-1.5">
+        <Label className="text-xs font-medium text-foreground/70">Preset</Label>
+        <Select value={presetId} onValueChange={onPresetChange}>
+          <SelectTrigger className="text-sm">
+            <SelectValue placeholder="Custom configuration" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="custom">Custom</SelectItem>
+            {PLAYBOOK_PRESETS.map((preset) => (
+              <SelectItem key={preset.id} value={preset.id}>
+                {preset.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {presetId !== 'custom' && (
+          <p className="text-[10px] text-muted-foreground/40">
+            {PLAYBOOK_PRESETS.find((p) => p.id === presetId)?.description}
+          </p>
+        )}
+      </div>
+
       {/* Max waves */}
       <div className="space-y-1.5">
         <Label htmlFor="max-waves" className="text-xs font-medium text-foreground/70">
@@ -216,7 +247,7 @@ function FormContent({
           className="text-sm w-24"
         />
         <p className="text-[10px] text-muted-foreground/40">
-          Maximum rounds of responses (default: 10)
+          Maximum rounds of responses (default: {PLAYBOOK_DEFAULTS.waveTimeoutSec}s per wave)
         </p>
       </div>
 
@@ -392,6 +423,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [topic, setTopic] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? '');
   const [maxWaves, setMaxWaves] = useState(10);
+  const [presetId, setPresetId] = useState('custom');
+  const [config, setConfig] = useState<BrainstormConfig>({});
   const [participants, setParticipants] = useState<ParticipantSelection[]>([]);
 
   // Loading states
@@ -411,9 +444,9 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   /** Save current form state as draft (called on every field change) */
   const persistDraft = useCallback(() => {
     if (!title && !topic) return;
-    const draft: DraftState = { title, topic, selectedProjectId, maxWaves };
+    const draft: DraftState = { title, topic, selectedProjectId, maxWaves, presetId, config };
     saveDraft(JSON.stringify(draft));
-  }, [title, topic, selectedProjectId, maxWaves, saveDraft]);
+  }, [title, topic, selectedProjectId, maxWaves, presetId, config, saveDraft]);
 
   // Auto-save draft whenever form fields change
   useEffect(() => {
@@ -431,6 +464,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (draft.topic) setTopic(draft.topic);
       if (draft.selectedProjectId && !projectId) setSelectedProjectId(draft.selectedProjectId);
       if (draft.maxWaves) setMaxWaves(draft.maxWaves);
+      if (draft.presetId) setPresetId(draft.presetId);
+      if (draft.config) setConfig(draft.config);
     } catch {
       // malformed draft — ignore
     }
@@ -480,6 +515,21 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
         .finally(() => setIsLoadingProjects(false));
     }
   }, [open, projectId]);
+
+  /** Handle preset selection — applies preset config and maxWaves */
+  const handlePresetChange = useCallback((newPresetId: string) => {
+    setPresetId(newPresetId);
+    if (newPresetId === 'custom') {
+      setConfig({});
+      setMaxWaves(10);
+      return;
+    }
+    const preset = PLAYBOOK_PRESETS.find((p) => p.id === newPresetId);
+    if (preset) {
+      setConfig(preset.config);
+      setMaxWaves(preset.maxWaves);
+    }
+  }, []);
 
   const isAgentSelected = useCallback(
     (agentId: string) => participants.some((p) => p.agentId === agentId),
@@ -548,6 +598,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
           topic: topic.trim(),
           projectId: resolvedProjectId,
           maxWaves,
+          config: Object.keys(config).length > 0 ? config : undefined,
           participants: participants.map((p) => ({
             agentId: p.agentId,
             model: p.model || undefined,
@@ -582,6 +633,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       setTopic('');
       setSelectedProjectId(projectId ?? '');
       setMaxWaves(10);
+      setPresetId('custom');
+      setConfig({});
       setParticipants([]);
 
       onOpenChange(false);
@@ -594,6 +647,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   }, [
     canSubmit,
     clearDraft,
+    config,
     projectId,
     selectedProjectId,
     title,
@@ -613,6 +667,8 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     setSelectedProjectId,
     maxWaves,
     setMaxWaves,
+    presetId,
+    onPresetChange: handlePresetChange,
     participants,
     toggleAgent,
     isAgentSelected,

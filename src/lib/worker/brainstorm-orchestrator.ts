@@ -7,7 +7,13 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { resolvePlaybook } from '@/lib/brainstorm/playbook';
+import type { BrainstormConfig } from '@/lib/db/schema';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
+import {
+  STRUCTURED_SYNTHESIS_PROMPT_SUFFIX,
+  createTasksFromSynthesis,
+} from '@/lib/worker/synthesis-decision-log';
 import { createLogger } from '@/lib/logger';
 import { brainstormEventListeners, addSessionEventListener } from '@/lib/worker/worker-sse';
 import { liveBrainstormHandlers } from '@/lib/worker/worker-http';
@@ -116,6 +122,18 @@ export class BrainstormOrchestrator {
   private participantReadyTimeoutSec: number;
   private stopped = false;
   private paused = false;
+  /** Extra timeout for wave 0 (research wave), from playbook config */
+  private wave0ExtraTimeoutSec: number = WAVE_0_EXTRA_TIMEOUT_SEC;
+  /** Convergence mode: 'unanimous' = all must pass; 'majority' = >50% must pass */
+  convergenceMode: 'unanimous' | 'majority' = 'unanimous';
+  /** Minimum wave number before PASS responses are honored. Default 2. */
+  minWavesBeforePass = 2;
+  /** Number of required objections to block convergence (default 0) */
+  requiredObjections = 0;
+  /** Synthesis mode: 'single' = one agent, 'validated' = synthesize then validate */
+  synthesisMode: 'single' | 'validated' = 'single';
+  /** Resolved playbook — holds optional fields like language, roles, synthesisAgentId */
+  private playbook!: ReturnType<typeof resolvePlaybook>;
   /** Steer messages received mid-wave, applied at the start of the next wave. */
   private pendingSteer: string[] = [];
   private unsubscribers: Array<() => void> = [];
@@ -125,17 +143,33 @@ export class BrainstormOrchestrator {
   private synthesisPending = false;
   /** Guards against double-subscription when subscribeToSession() is called twice for the same sessionId. */
   private subscribedSessionIds = new Set<string>();
+  /**
+   * Set to true when startWave() is called; reset to false when waitForWaveComplete() resolves.
+   * Prevents checkWaveComplete() from resolving during waitForAllParticipantsReady(),
+   * where evicted participants may have waveStatus='done' before any wave has started.
+   */
+  waveStarted = false;
 
-  constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120) {
+  constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
     this.maxWaves = maxWaves;
-    this.waveTimeoutSec = waveTimeoutSec;
-    // Default startup timeout: at least 5 minutes. Never less than the wave
+
+    // Resolve full playbook from config (applies defaults for missing fields)
+    this.playbook = resolvePlaybook(config);
+
+    // Apply playbook values to instance fields
+    this.waveTimeoutSec = config?.waveTimeoutSec ?? waveTimeoutSec;
+    this.wave0ExtraTimeoutSec = this.playbook.wave0ExtraTimeoutSec;
+    this.convergenceMode = this.playbook.convergenceMode;
+    this.minWavesBeforePass = this.playbook.minWavesBeforePass;
+    this.requiredObjections = this.playbook.requiredObjections;
+    this.synthesisMode = this.playbook.synthesisMode;
+
+    // Default startup timeout: at least 10 minutes. Never less than the wave
     // timeout itself (e.g. if waveTimeoutSec was increased significantly).
-    this.participantReadyTimeoutSec = Math.max(
-      MIN_PARTICIPANT_READY_TIMEOUT_SEC,
-      waveTimeoutSec * 2,
-    );
+    this.participantReadyTimeoutSec =
+      this.playbook.participantReadyTimeoutSec ??
+      Math.max(MIN_PARTICIPANT_READY_TIMEOUT_SEC, this.waveTimeoutSec * 2);
   }
 
   /** Main entry point — called by the worker job handler */
@@ -164,23 +198,20 @@ export class BrainstormOrchestrator {
         this.logWriter.open();
       }
 
-      // Use config-level wave timeout if specified (overrides constructor arg)
-      const roomConfig = room.config as {
-        waveTimeoutSec?: number;
-        participantReadyTimeoutSec?: number;
-      } | null;
-      if (roomConfig?.waveTimeoutSec !== undefined) {
-        this.waveTimeoutSec = roomConfig.waveTimeoutSec;
-        // Re-compute the default ready timeout based on the (potentially updated) wave timeout.
-        this.participantReadyTimeoutSec = Math.max(
-          MIN_PARTICIPANT_READY_TIMEOUT_SEC,
-          this.waveTimeoutSec * 2,
-        );
-      }
-      // Explicit override wins over the derived default.
-      if (roomConfig?.participantReadyTimeoutSec !== undefined) {
-        this.participantReadyTimeoutSec = roomConfig.participantReadyTimeoutSec;
-      }
+      // Re-resolve playbook from DB config (authoritative — may differ from
+      // what was passed to the constructor if the room was edited between
+      // creation and start).
+      const roomConfig = room.config as BrainstormConfig | null;
+      this.playbook = resolvePlaybook(roomConfig);
+      this.waveTimeoutSec = this.playbook.waveTimeoutSec;
+      this.wave0ExtraTimeoutSec = this.playbook.wave0ExtraTimeoutSec;
+      this.convergenceMode = this.playbook.convergenceMode;
+      this.minWavesBeforePass = this.playbook.minWavesBeforePass;
+      this.requiredObjections = this.playbook.requiredObjections;
+      this.synthesisMode = this.playbook.synthesisMode;
+      this.participantReadyTimeoutSec =
+        this.playbook.participantReadyTimeoutSec ??
+        Math.max(MIN_PARTICIPANT_READY_TIMEOUT_SEC, this.waveTimeoutSec * 2);
 
       // Build participant state from DB records
       this.participants = room.participants.map((p) => ({
@@ -619,12 +650,26 @@ export class BrainstormOrchestrator {
       // Emit wave:complete
       await this.emitEvent({ type: 'wave:complete', wave });
 
-      // Detect convergence: all participants passed
+      // Soft convergence hint: if all non-PASS responses are agreement-only,
+      // emit a hint event. This does NOT pause or stop — just informs the user.
+      if (this.detectSoftConvergence(responses)) {
+        log.info(
+          { roomId: this.roomId, wave },
+          'Soft convergence detected — all responses are agreement-only',
+        );
+        await this.emitEvent({ type: 'room:soft-converged', wave });
+      }
+
+      // Detect convergence: unanimity (all passed) or majority (≥2/3 passed)
       const activeResponses = responses.filter((r) => !r.isPass);
       const allPassed = activeResponses.length === 0;
+      const hasConverged = allPassed || this.hasMajorityConverged(responses);
 
-      if (allPassed) {
-        log.info({ roomId: this.roomId, wave }, 'All participants passed — converged');
+      if (hasConverged) {
+        log.info(
+          { roomId: this.roomId, wave, mode: this.convergenceMode, allPassed },
+          'Convergence detected',
+        );
         if (this.stopped) break;
         await updateBrainstormStatus(this.roomId, 'paused');
         await this.emitEvent({ type: 'room:converged', wave });
@@ -730,6 +775,7 @@ export class BrainstormOrchestrator {
 
   private async startWave(wave: number, content: string): Promise<void> {
     this.currentWave = wave;
+    this.waveStarted = true;
     await updateBrainstormWave(this.roomId, wave);
 
     log.info({ roomId: this.roomId, wave }, 'Starting wave');
@@ -775,7 +821,7 @@ export class BrainstormOrchestrator {
    * is marked as 'timeout' and treated as an implicit PASS.
    */
   private scheduleWaveTimeout(wave: number): void {
-    const extraSec = wave === 0 ? WAVE_0_EXTRA_TIMEOUT_SEC : 0;
+    const extraSec = wave === 0 ? this.wave0ExtraTimeoutSec : 0;
     const timeoutSec = this.waveTimeoutSec + extraSec;
     log.info({ roomId: this.roomId, wave, timeoutSec }, 'Wave timeout scheduled');
     setTimeout(() => {
@@ -805,17 +851,27 @@ export class BrainstormOrchestrator {
 
   /**
    * Wait until all active (non-hasPassed) participants have a terminal wave status.
+   * Resets waveStarted to false once the wave is complete, so that
+   * checkWaveComplete() won't fire between waves.
    */
-  private waitForWaveComplete(): Promise<void> {
+  waitForWaveComplete(): Promise<void> {
     return new Promise<void>((resolve) => {
-      this.waveCompleteResolve = resolve;
+      this.waveCompleteResolve = () => {
+        this.waveStarted = false;
+        resolve();
+      };
       // Check immediately in case all participants were already done
       this.checkWaveComplete();
     });
   }
 
   /** Called whenever a participant's waveStatus changes to a terminal state. */
-  private checkWaveComplete(): void {
+  checkWaveComplete(): void {
+    // Guard: only resolve if a wave has actually been started via startWave().
+    // During waitForAllParticipantsReady(), evicted participants may have
+    // waveStatus='done' which would otherwise trigger premature resolution.
+    if (!this.waveStarted) return;
+
     const activeParts = this.participants.filter((p) => !p.hasPassed);
     const allTerminal = activeParts.every(
       (p) => p.waveStatus === 'done' || p.waveStatus === 'passed' || p.waveStatus === 'timeout',
@@ -869,6 +925,24 @@ export class BrainstormOrchestrator {
 
       case 'session:state':
         if (event.status === 'awaiting_input') {
+          // Guard: if the participant was actively thinking on a wave but the
+          // responseBuffer is empty, this is a contentless turn (e.g. Codex
+          // context compaction). Skip turn-complete so we don't record a 0-word
+          // message and prematurely advance the wave.
+          if (
+            participant.waveStatus === 'thinking' &&
+            participant.responseBuffer.join('').trim().length === 0
+          ) {
+            log.warn(
+              {
+                roomId: this.roomId,
+                agentName: participant.agentName,
+                sessionId: participant.sessionId,
+              },
+              'Ignoring contentless awaiting_input (likely compaction turn)',
+            );
+            break;
+          }
           // Turn complete — process the response
           this.onParticipantTurnComplete(participant);
         } else if (event.status === 'idle' || event.status === 'ended') {
@@ -964,7 +1038,21 @@ export class BrainstormOrchestrator {
     }
 
     const rawResponse = participant.responseBuffer.join('').trim();
-    const isPass = rawResponse.toLowerCase().startsWith('[pass]');
+    const looksLikePass = rawResponse.toLowerCase().startsWith('[pass]');
+    // Enforce minWavesBeforePass: ignore PASS responses before the threshold wave
+    const isPass = looksLikePass && this.currentWave >= this.minWavesBeforePass;
+
+    if (looksLikePass && !isPass) {
+      log.info(
+        {
+          roomId: this.roomId,
+          wave: this.currentWave,
+          minWavesBeforePass: this.minWavesBeforePass,
+          agentName: participant.agentName,
+        },
+        'Ignoring early PASS — wave < minWavesBeforePass',
+      );
+    }
 
     participant.waveStatus = isPass ? 'passed' : 'done';
 
@@ -1118,12 +1206,11 @@ TOPIC: ${room.topic}
 DISCUSSION TRANSCRIPT:
 ${transcript}
 
-Your task: Write a clear, structured synthesis of the key insights, agreements, disagreements, and action items from this brainstorm. Be concise but comprehensive. Use sections and bullet points where helpful.`;
+Your task: Write a clear, structured synthesis of this brainstorm. Be concise but comprehensive.
+${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
 
-      // Determine synthesis agent: prefer config.synthesisAgentId, then first participant
-      const synthesisAgentId =
-        (room.config as { synthesisAgentId?: string } | null)?.synthesisAgentId ??
-        this.participants[0]?.agentId;
+      // Determine synthesis agent: prefer playbook.synthesisAgentId, then first participant
+      const synthesisAgentId = this.playbook.synthesisAgentId ?? this.participants[0]?.agentId;
 
       if (!synthesisAgentId) {
         throw new Error('No synthesis agent available');
@@ -1144,11 +1231,39 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
       const synthesisTextPromise = this.collectSingleTurnResponse(synthSession.id);
       await enqueueSession({ sessionId: synthSession.id });
 
-      // Wait for synthesis session to complete and collect the response
-      const synthesisText = await synthesisTextPromise;
+      // Wait for synthesis session to complete and collect the draft response
+      const draftSynthesis = await synthesisTextPromise;
+
+      // Check if validated synthesis mode is enabled
+      let synthesisText: string;
+      if (this.synthesisMode === 'validated') {
+        // Phase 2: Validation wave — send draft to all active participants for review
+        synthesisText = await this.runValidationWave(synthSession.id, draftSynthesis);
+      } else {
+        // Single mode — store the draft as-is
+        synthesisText = draftSynthesis;
+      }
 
       await setBrainstormSynthesis(this.roomId, synthesisText);
       await this.emitEvent({ type: 'room:synthesis', synthesis: synthesisText });
+
+      // Auto-create tasks from "Next Steps" if the brainstorm is linked to a task
+      if (room.taskId) {
+        try {
+          const taskIds = await createTasksFromSynthesis(synthesisText, {
+            parentTaskId: room.taskId,
+            projectId: room.projectId ?? undefined,
+          });
+          if (taskIds.length > 0) {
+            log.info(
+              { roomId: this.roomId, taskCount: taskIds.length },
+              'Created tasks from synthesis next steps',
+            );
+          }
+        } catch (err) {
+          log.error({ err, roomId: this.roomId }, 'Failed to create tasks from synthesis');
+        }
+      }
 
       log.info({ roomId: this.roomId }, 'Synthesis complete');
     } catch (err) {
@@ -1161,6 +1276,59 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
 
     await updateBrainstormStatus(this.roomId, 'ended');
     await this.emitEvent({ type: 'room:state', status: 'ended' });
+  }
+
+  /**
+   * Run validated synthesis phase 2: send draft to participants for review,
+   * collect corrections, then ask the synthesis agent to produce the final version.
+   */
+  private async runValidationWave(synthSessionId: string, draftSynthesis: string): Promise<string> {
+    log.info({ roomId: this.roomId }, 'Running validation wave');
+
+    const validationPrompt = `Review this brainstorm synthesis draft. Does it accurately represent your positions? Correct anything that's wrong or missing. If it's accurate, say so briefly.
+
+DRAFT SYNTHESIS:
+${draftSynthesis}`;
+
+    // Send draft to all active participants with sessions for review
+    const eligibleParticipants = this.participants.filter(
+      (p): p is ParticipantState & { sessionId: string } => !p.hasPassed && p.sessionId !== null,
+    );
+
+    // Inject validation prompt and collect responses in parallel
+    const validationResponses: Array<{ agentName: string; response: string }> = [];
+
+    if (eligibleParticipants.length > 0) {
+      const validationPromises = eligibleParticipants.map(async (p) => {
+        await this.injectMessage(p.sessionId, validationPrompt);
+        const response = await this.collectSingleTurnResponse(p.sessionId);
+        return { agentName: p.agentName, response };
+      });
+
+      const results = await Promise.allSettled(validationPromises);
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          validationResponses.push(result.value);
+        }
+      }
+    }
+
+    // Format corrections and send to synthesis agent for final version
+    const correctionsText =
+      validationResponses.length > 0
+        ? validationResponses.map((r) => `[${r.agentName}]:\n${r.response}`).join('\n\n---\n\n')
+        : 'No corrections were provided by participants.';
+
+    const finalPrompt = `Here are corrections/feedback from participants on your synthesis draft. Write the final synthesis incorporating any valid corrections.
+
+PARTICIPANT FEEDBACK:
+${correctionsText}`;
+
+    await this.injectMessage(synthSessionId, finalPrompt);
+    const finalSynthesis = await this.collectSingleTurnResponse(synthSessionId);
+
+    log.info({ roomId: this.roomId }, 'Validation wave complete');
+    return finalSynthesis;
   }
 
   /**
@@ -1246,6 +1414,55 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
     }
   }
 
+  /**
+   * Check if majority convergence threshold is met: ≥2/3 of responses are PASS.
+   * Only applies when convergenceMode is 'majority'. Returns false otherwise.
+   */
+  hasMajorityConverged(responses: Array<{ isPass: boolean }>): boolean {
+    if (this.convergenceMode !== 'majority') return false;
+    if (responses.length === 0) return false;
+    const passCount = responses.filter((r) => r.isPass).length;
+    return passCount / responses.length >= 2 / 3;
+  }
+
+  /**
+   * Detect "soft convergence": all non-PASS responses are agreement-only
+   * (short, start with agreement markers, no substantive new content).
+   * Returns true as a hint that synthesis may be appropriate.
+   */
+  detectSoftConvergence(responses: Array<{ content: string; isPass: boolean }>): boolean {
+    const nonPass = responses.filter((r) => !r.isPass);
+    // Need at least one non-PASS response to detect soft convergence
+    if (nonPass.length === 0) return false;
+
+    /** Agreement markers (case-insensitive) */
+    const AGREEMENT_PATTERNS = [
+      /^i agree/i,
+      /^agreed/i,
+      /^looks good/i,
+      /^sounds good/i,
+      /^that works/i,
+      /^makes sense/i,
+      /^good point/i,
+      /^exactly/i,
+      /^right/i,
+      /^yes/i,
+      /^מסכים/,
+      /^נכון/,
+      /^בסדר/,
+    ];
+
+    /** Max word count for a response to be considered "agreement-only" */
+    const MAX_AGREEMENT_WORDS = 40;
+
+    return nonPass.every((r) => {
+      const trimmed = r.content.trim();
+      const wordCount = trimmed.split(/\s+/).length;
+      if (wordCount > MAX_AGREEMENT_WORDS) return false;
+      return AGREEMENT_PATTERNS.some((pat) => pat.test(trimmed));
+    });
+  }
+
   /** Inject a message into a session via direct in-process delivery or PG NOTIFY fallback.
    *
    * Delivery priority:
@@ -1319,9 +1536,11 @@ Your task: Write a clear, structured synthesis of the key insights, agreements, 
    */
   private buildPreamble(room: BrainstormWithDetails, otherParticipantNames: string[]): string {
     const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
-    const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + WAVE_0_EXTRA_TIMEOUT_SEC) / 60);
+    const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + this.wave0ExtraTimeoutSec) / 60);
 
-    return `You are participating in a brainstorm room called "${room.title}".
+    const sections: string[] = [];
+
+    sections.push(`You are participating in a brainstorm room called "${room.title}".
 
 ## How This Works
 You are in a multi-agent discussion with other AI models and possibly a human moderator.
@@ -1340,8 +1559,26 @@ ends naturally. The moderator may also steer or end the discussion at any time.
 
 ## Participants
 ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
-- You
+- You`);
 
+    // Inject language instruction from playbook
+    if (this.playbook.language) {
+      sections.push(
+        `\n## Language\nRespond in **${this.playbook.language}**. All your responses must be written in this language.`,
+      );
+    }
+
+    // Inject role assignments from playbook
+    if (this.playbook.roles && Object.keys(this.playbook.roles).length > 0) {
+      const roleLines = Object.entries(this.playbook.roles).map(([role, agentSlug]) => {
+        const participant = room.participants.find((p) => p.agentSlug === agentSlug);
+        const name = participant ? participant.agentName : agentSlug;
+        return `- **${role}**: ${name}`;
+      });
+      sections.push(`\n## Assigned Roles\n${roleLines.join('\n')}`);
+    }
+
+    sections.push(`
 ## Discussion Rules
 1. **Think critically.** Disagree when you disagree. Build on good ideas. Challenge weak ones.
    The value is in genuine diverse perspectives and constructive disagreement.
@@ -1356,7 +1593,9 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
 5. **Keep responses focused.** 2-4 paragraphs max unless the topic demands more depth.
 6. **Do NOT write code** unless specifically asked. Focus on ideas and reasoning.
 
-TOPIC: ${room.topic}`;
+TOPIC: ${room.topic}`);
+
+    return sections.join('\n');
   }
 
   /** Emit a BrainstormEvent to the room's PG NOTIFY channel and write to the log file. */
@@ -1454,9 +1693,8 @@ TOPIC: ${room.topic}`;
  */
 export async function runBrainstorm(roomId: string): Promise<void> {
   const room = await getBrainstorm(roomId);
-  const config = room.config as { waveTimeoutSec?: number } | null;
-  const waveTimeoutSec = config?.waveTimeoutSec ?? 120;
+  const roomConfig = (room.config ?? {}) as BrainstormConfig;
 
-  const orchestrator = new BrainstormOrchestrator(room.id, room.maxWaves, waveTimeoutSec);
+  const orchestrator = new BrainstormOrchestrator(room.id, room.maxWaves, undefined, roomConfig);
   await orchestrator.run();
 }
