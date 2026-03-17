@@ -460,4 +460,75 @@ describe('handleBrainstormSSE', () => {
 
     expect(writtenData.join('')).toContain('wave:start');
   });
+
+  it('emits synthetic room:synthesis event when room has a stored synthesis', async () => {
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-5',
+      status: 'ended',
+      synthesis: 'The team concluded that approach A is best.',
+      logFilePath: null,
+      participants: [],
+    });
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    await handleBrainstormSSE(req, res, 'room-5', 0);
+
+    const allData = writtenData.join('');
+    expect(allData).toContain('room:synthesis');
+    expect(allData).toContain('The team concluded that approach A is best.');
+  });
+
+  it('does not emit room:synthesis event when synthesis is null', async () => {
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-6',
+      status: 'ended',
+      synthesis: null,
+      logFilePath: null,
+      participants: [],
+    });
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    await handleBrainstormSSE(req, res, 'room-6', 0);
+
+    const allData = writtenData.join('');
+    expect(allData).not.toContain('room:synthesis');
+  });
+
+  it('emits synthesis event before log catchup so it is not duplicated', async () => {
+    // The synthetic event is sent before log replay. Verify ordering: room:state,
+    // then room:synthesis, then any log events.
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-7',
+      status: 'ended',
+      synthesis: 'Synthesis content',
+      logFilePath: '/logs/room-7.log',
+      participants: [],
+    });
+
+    mockExistsSync.mockReturnValue(true);
+    const logEvent = {
+      id: 1,
+      roomId: 'room-7',
+      ts: 100,
+      type: 'wave:start',
+      wave: 1,
+    };
+    mockReadFileSync.mockReturnValue(`[system] [1|wave:start] ${JSON.stringify(logEvent)}\n`);
+
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    await handleBrainstormSSE(req, res, 'room-7', 0);
+
+    const allData = writtenData.join('');
+    const synthesisPos = allData.indexOf('room:synthesis');
+    const wavePos = allData.indexOf('wave:start');
+
+    expect(synthesisPos).toBeGreaterThan(-1);
+    expect(wavePos).toBeGreaterThan(-1);
+    // Synthesis synthetic event appears before log events
+    expect(synthesisPos).toBeLessThan(wavePos);
+  });
 });

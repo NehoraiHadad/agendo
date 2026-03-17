@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Mock heavy dependencies so we can instantiate CodexAppServerAdapter
@@ -375,6 +375,274 @@ describe('CodexAppServerAdapter', () => {
 
       const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
       expect(compactEvents).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Compaction watchdog tests
+  // -------------------------------------------------------------------------
+
+  describe('compaction watchdog', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('clears the watchdog when compaction completes normally via item/completed', async () => {
+      const { onNotification, adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // Trigger compaction by simulating high token usage
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      // At this point the compaction RPC is in-flight. compacting is true.
+      expect((adapter as any).compacting).toBe(true);
+
+      // Resolve the RPC successfully so the 60s watchdog gets started.
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequest).toBeDefined();
+      const req = JSON.parse(compactRequest!.trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+
+      // Yield so triggerCompaction() sets the watchdog
+      await Promise.resolve();
+
+      // Watchdog is running
+      expect((adapter as any).compactionWatchdog).not.toBeNull();
+
+      // Simulate compaction completing via item/completed notification (normal path).
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      // compacting should be reset to false and watchdog cleared.
+      expect((adapter as any).compacting).toBe(false);
+      expect((adapter as any).compactionWatchdog).toBeNull();
+
+      // Advance past the watchdog timeout — it should NOT fire because it was cleared.
+      vi.advanceTimersByTime(65_000);
+
+      // compacting should remain false (not flipped back by a spurious timer).
+      expect((adapter as any).compacting).toBe(false);
+    });
+
+    it('also clears the watchdog when compaction completes via item/started', async () => {
+      const { onNotification, adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      // Resolve the RPC so the watchdog starts
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequest).toBeDefined();
+      const req = JSON.parse(compactRequest!.trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+      await Promise.resolve();
+
+      expect((adapter as any).compacting).toBe(true);
+      expect((adapter as any).compactionWatchdog).not.toBeNull();
+
+      // item/started also calls normalizeThreadItem — compaction can arrive there too.
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-2' },
+      });
+
+      expect((adapter as any).compacting).toBe(false);
+      expect((adapter as any).compactionWatchdog).toBeNull();
+    });
+
+    it('fires the watchdog after 60s when compaction stalls', async () => {
+      const { onNotification, adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // Trigger compaction — fire-and-forget via .catch() in handleNotification
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      // The RPC is pending. compacting is true, but watchdog has NOT started yet
+      // (it starts only after the RPC resolves). Resolve the RPC successfully to
+      // simulate: "compact RPC succeeded but contextCompaction item never arrives."
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequest).toBeDefined();
+      const req = JSON.parse(compactRequest!.trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+
+      // Yield to the event loop so the async triggerCompaction() continues and
+      // sets the watchdog after receiving the RPC success response.
+      await Promise.resolve();
+
+      // compacting is still true (compaction item hasn't arrived), watchdog is running
+      expect((adapter as any).compacting).toBe(true);
+      expect((adapter as any).compactionWatchdog).not.toBeNull();
+
+      // Advance just under the watchdog threshold — should still be stalled.
+      vi.advanceTimersByTime(59_000);
+      expect((adapter as any).compacting).toBe(true);
+
+      // Advance past the 60s watchdog — it should fire and force-reset compacting.
+      vi.advanceTimersByTime(2_000);
+      expect((adapter as any).compacting).toBe(false);
+
+      // Watchdog handle should be null after it fires.
+      expect((adapter as any).compactionWatchdog).toBeNull();
+    });
+
+    it('resets compacting immediately when the compaction RPC fails', async () => {
+      const { adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // Directly call triggerCompaction to control the RPC response precisely.
+      const compactPromise = (adapter as any).triggerCompaction();
+
+      // Parse the RPC call for thread/compact/start
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequest).toBeDefined();
+      const req = JSON.parse(compactRequest!.trimEnd());
+
+      // Simulate an RPC error response
+      transport.processLine(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: req.id,
+          error: { code: -32603, message: 'Internal error during compaction' },
+        }),
+      );
+
+      await compactPromise;
+
+      // compacting must be reset to false — not stuck
+      expect((adapter as any).compacting).toBe(false);
+
+      // No watchdog should remain active
+      expect((adapter as any).compactionWatchdog).toBeNull();
+    });
+
+    it('does not start a watchdog when the RPC fails immediately', async () => {
+      const { adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      const compactPromise = (adapter as any).triggerCompaction();
+
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      const req = JSON.parse(compactRequest!.trimEnd());
+
+      transport.processLine(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: req.id,
+          error: { code: -32600, message: 'Bad request' },
+        }),
+      );
+
+      await compactPromise;
+
+      // Advance well past watchdog timeout — nothing should change
+      vi.advanceTimersByTime(120_000);
+
+      expect((adapter as any).compacting).toBe(false);
+    });
+
+    it('clears a pending watchdog when the process exits', async () => {
+      const { onNotification, adapter, transport, written } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      // Trigger compaction so a watchdog will be running once the RPC resolves
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 170000 },
+          modelContextWindow: 200000,
+        },
+      });
+
+      // Resolve the RPC successfully so the watchdog gets started
+      const compactRequest = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequest).toBeDefined();
+      const req = JSON.parse(compactRequest!.trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+
+      // Yield to let triggerCompaction() set the watchdog
+      await Promise.resolve();
+
+      expect((adapter as any).compactionWatchdog).not.toBeNull();
+
+      // Simulate process exit cleanup path
+      (adapter as any).alive = false;
+      (adapter as any).clearCompactionWatchdog();
+
+      expect((adapter as any).compactionWatchdog).toBeNull();
     });
   });
 

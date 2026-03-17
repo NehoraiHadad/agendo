@@ -76,6 +76,7 @@ function StatusLabel({ status }: { status: ParticipantState['status'] }) {
     passed: { text: 'passed', className: 'text-muted-foreground/35' },
     timeout: { text: 'timeout', className: 'text-amber-400' },
     left: { text: 'left', className: 'text-red-400' },
+    evicted: { text: 'evicted', className: 'text-red-500' },
     active: { text: 'active', className: 'text-blue-400' },
     pending: { text: 'pending', className: 'text-muted-foreground/35' },
   };

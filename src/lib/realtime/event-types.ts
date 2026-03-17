@@ -257,7 +257,7 @@ export type BrainstormEvent =
       type: 'participant:status';
       agentId: string;
       agentName: string;
-      status: 'thinking' | 'done' | 'passed' | 'timeout';
+      status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted';
     })
   | (BrainstormEventBase & {
       type: 'message';
@@ -275,6 +275,7 @@ export type BrainstormEvent =
     })
   | (BrainstormEventBase & { type: 'room:converged'; wave: number })
   | (BrainstormEventBase & { type: 'room:soft-converged'; wave: number })
+  | (BrainstormEventBase & { type: 'room:stalled'; wave: number })
   | (BrainstormEventBase & { type: 'room:max-waves'; wave: number })
   | (BrainstormEventBase & { type: 'room:synthesis'; synthesis: string })
   | (BrainstormEventBase & {

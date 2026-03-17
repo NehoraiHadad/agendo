@@ -351,6 +351,18 @@ export async function handleBrainstormSSE(
     }
   }
 
+  // 1c. Emit synthetic synthesis event if room already has one
+  if (room.synthesis) {
+    const synthesisEvent: BrainstormEvent = {
+      id: 0,
+      roomId: room.id,
+      ts: Date.now(),
+      type: 'room:synthesis',
+      synthesis: room.synthesis,
+    };
+    sendEvent(res, synthesisEvent);
+  }
+
   // 2. Catchup: replay historical events from log file
   if (room.logFilePath && existsSync(room.logFilePath)) {
     try {

@@ -253,6 +253,35 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     expect(wordCount).toBeLessThanOrEqual(510); // ~500 words + small margin for title/date line
   });
 
+  it('does NOT include the room topic in the preamble text', () => {
+    const room = makeRoom({ topic: 'How should we restructure the worker queue?' });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    const preamble = (
+      orchestrator as unknown as {
+        buildPreamble: (room: unknown, otherNames: string[]) => string;
+      }
+    ).buildPreamble(room, ['Gemini']);
+
+    expect(preamble).not.toContain('How should we restructure the worker queue?');
+  });
+
+  it('ends the preamble with an instruction to wait for the topic wave message', () => {
+    const room = makeRoom({ topic: 'Some topic that must not appear' });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    const preamble = (
+      orchestrator as unknown as {
+        buildPreamble: (room: unknown, otherNames: string[]) => string;
+      }
+    ).buildPreamble(room, ['Gemini']);
+
+    // Preamble should tell the agent to wait for the topic
+    expect(preamble.toLowerCase()).toMatch(/wait|first wave message/);
+  });
+
   it('limits to max 3 related brainstorms', async () => {
     const config = {
       relatedRoomIds: ['r1', 'r2', 'r3', 'r4'],

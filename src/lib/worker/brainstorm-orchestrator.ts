@@ -74,6 +74,8 @@ interface ParticipantState {
   deltaFlushTimer: ReturnType<typeof setTimeout> | null;
   /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
   waveResponseCount: number;
+  /** Number of consecutive waves this participant timed out without any response */
+  consecutiveTimeouts: number;
 }
 
 interface BrainstormControlMessage {
@@ -141,6 +143,7 @@ export class BrainstormOrchestrator {
   private pendingSteer: string[] = [];
   private unsubscribers: Array<() => void> = [];
   private waveCompleteResolve: (() => void) | null = null;
+  private waveTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
   private controlResolve: ((msg: BrainstormControlMessage) => void) | null = null;
   /** Set by the 'end' control message when synthesis was requested. */
   private synthesisPending = false;
@@ -158,6 +161,8 @@ export class BrainstormOrchestrator {
   maxResponsesPerWave = 2;
   /** Count of in-flight reactive injections — wave doesn't complete until this reaches 0 */
   pendingReactiveInjections = 0;
+  /** Consecutive timeout count required before a participant is auto-evicted (default 2) */
+  evictionThreshold = 2;
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
@@ -175,6 +180,7 @@ export class BrainstormOrchestrator {
     this.synthesisMode = this.playbook.synthesisMode;
     this.reactiveInjection = this.playbook.reactiveInjection;
     this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
+    this.evictionThreshold = this.playbook.evictionThreshold ?? 2;
 
     // Default startup timeout: at least 10 minutes. Never less than the wave
     // timeout itself (e.g. if waveTimeoutSec was increased significantly).
@@ -222,6 +228,7 @@ export class BrainstormOrchestrator {
       this.synthesisMode = this.playbook.synthesisMode;
       this.reactiveInjection = this.playbook.reactiveInjection;
       this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
+      this.evictionThreshold = this.playbook.evictionThreshold ?? 2;
       this.participantReadyTimeoutSec =
         this.playbook.participantReadyTimeoutSec ??
         Math.max(MIN_PARTICIPANT_READY_TIMEOUT_SEC, this.waveTimeoutSec * 2);
@@ -242,6 +249,7 @@ export class BrainstormOrchestrator {
         deltaBuffer: '',
         deltaFlushTimer: null,
         waveResponseCount: 0,
+        consecutiveTimeouts: 0,
       }));
 
       // Mark room as active
@@ -662,14 +670,18 @@ export class BrainstormOrchestrator {
       // Wait for all active participants to finish (or timeout)
       await this.waitForWaveComplete();
 
-      // Collect responses from this wave
+      // Collect responses from this wave.
+      // Include timed-out participants (isTimeout=true) so convergence counts them
+      // against the total — timeout attrition must not be mistaken for genuine PASS agreement.
+      // Exclude only hasPassed (permanent pass from a previous wave) and hasLeft (evicted).
       const responses = this.participants
-        .filter((p) => !p.hasPassed && p.waveStatus !== 'timeout')
+        .filter((p) => !p.hasPassed && !p.hasLeft)
         .map((p) => ({
           agentName: p.agentName,
           agentId: p.agentId,
           content: p.responseBuffer.join('').trim(),
           isPass: p.waveStatus === 'passed',
+          isTimeout: p.waveStatus === 'timeout',
         }));
 
       // Update hasPassed for participants who passed this wave
@@ -680,10 +692,29 @@ export class BrainstormOrchestrator {
         }
       }
 
+      // Track consecutive timeouts and auto-evict dead participants
+      await this.trackConsecutiveTimeouts();
+
       // Emit wave:complete
       await this.emitEvent({ type: 'wave:complete', wave });
 
-      // Soft convergence hint: if all non-PASS responses are agreement-only,
+      // Stalled room: all non-evicted, non-passed participants timed out — nobody is
+      // actively participating. Emit room:stalled instead of converging.
+      const passedCount = responses.filter((r) => r.isPass).length;
+      const timedOutCount = responses.filter((r) => r.isTimeout).length;
+      const totalParticipants = responses.length;
+      const allTimedOut = timedOutCount > 0 && timedOutCount === totalParticipants - passedCount;
+
+      if (allTimedOut && passedCount === 0) {
+        log.warn(
+          { roomId: this.roomId, wave, timedOutCount },
+          'All participants timed out — room stalled',
+        );
+        await this.emitEvent({ type: 'room:stalled', wave });
+        break;
+      }
+
+      // Soft convergence hint: if all non-PASS, non-timeout responses are agreement-only,
       // emit a hint event. This does NOT pause or stop — just informs the user.
       if (this.detectSoftConvergence(responses)) {
         log.info(
@@ -693,14 +724,14 @@ export class BrainstormOrchestrator {
         await this.emitEvent({ type: 'room:soft-converged', wave });
       }
 
-      // Detect convergence: unanimity (all passed) or majority (≥2/3 passed)
-      const activeResponses = responses.filter((r) => !r.isPass);
-      const allPassed = activeResponses.length === 0;
-      const hasConverged = allPassed || this.hasMajorityConverged(responses);
+      // Detect convergence: unanimity (all passed, no timeouts) or majority (≥2/3 passed
+      // counting timeouts in the denominator).
+      const unanimousConverged = passedCount === totalParticipants && timedOutCount === 0;
+      const hasConverged = unanimousConverged || this.hasMajorityConverged(responses);
 
       if (hasConverged) {
         log.info(
-          { roomId: this.roomId, wave, mode: this.convergenceMode, allPassed },
+          { roomId: this.roomId, wave, mode: this.convergenceMode, unanimousConverged },
           'Convergence detected',
         );
         if (this.stopped) break;
@@ -806,6 +837,42 @@ export class BrainstormOrchestrator {
   // Wave mechanics
   // ============================================================================
 
+  /**
+   * Update consecutive timeout counters after each wave and auto-evict participants
+   * that have timed out consecutively for `evictionThreshold` or more waves.
+   *
+   * Called once per wave, after all participants' waveStatus values are final.
+   */
+  async trackConsecutiveTimeouts(): Promise<void> {
+    for (const p of this.participants) {
+      if (p.hasLeft) continue;
+      if (p.waveStatus === 'timeout') {
+        p.consecutiveTimeouts++;
+        if (p.consecutiveTimeouts >= this.evictionThreshold) {
+          log.warn(
+            {
+              roomId: this.roomId,
+              agentName: p.agentName,
+              consecutiveTimeouts: p.consecutiveTimeouts,
+            },
+            'Auto-evicting participant after consecutive timeouts',
+          );
+          p.hasLeft = true;
+          p.hasPassed = true;
+          await this.emitEvent({
+            type: 'participant:status',
+            agentId: p.agentId,
+            agentName: p.agentName,
+            status: 'evicted',
+          });
+          await updateParticipantStatus(p.participantId, 'left');
+        }
+      } else if (p.waveStatus === 'done' || p.waveStatus === 'passed') {
+        p.consecutiveTimeouts = 0; // Reset on successful response
+      }
+    }
+  }
+
   private async startWave(wave: number, content: string): Promise<void> {
     this.currentWave = wave;
     this.waveStarted = true;
@@ -861,7 +928,8 @@ export class BrainstormOrchestrator {
     const extraSec = wave === 0 ? this.wave0ExtraTimeoutSec : 0;
     const timeoutSec = this.waveTimeoutSec + extraSec;
     log.info({ roomId: this.roomId, wave, timeoutSec }, 'Wave timeout scheduled');
-    setTimeout(() => {
+    this.waveTimeoutHandle = setTimeout(() => {
+      this.waveTimeoutHandle = null;
       if (this.currentWave !== wave) return; // Wave already moved on
       let timeoutFired = false;
       for (const p of this.participants) {
@@ -894,6 +962,10 @@ export class BrainstormOrchestrator {
   waitForWaveComplete(): Promise<void> {
     return new Promise<void>((resolve) => {
       this.waveCompleteResolve = () => {
+        if (this.waveTimeoutHandle) {
+          clearTimeout(this.waveTimeoutHandle);
+          this.waveTimeoutHandle = null;
+        }
         this.waveStarted = false;
         resolve();
       };
@@ -1064,6 +1136,15 @@ export class BrainstormOrchestrator {
   }
 
   onParticipantTurnComplete(participant: ParticipantState): void {
+    // Guard: if no wave has started yet, this is a pre-wave preamble acknowledgment.
+    // Suppress message emission — just mark the participant as ready so that
+    // waitForAllParticipantsReady() sees them as done and proceeds to wave 0.
+    if (!this.waveStarted) {
+      participant.waveStatus = 'done';
+      participant.responseBuffer = [];
+      return;
+    }
+
     // Flush any remaining buffered deltas before emitting the final complete message
     if (participant.deltaFlushTimer) {
       clearTimeout(participant.deltaFlushTimer);
@@ -1556,8 +1637,11 @@ ${correctionsText}`;
   /**
    * Check if majority convergence threshold is met: ≥2/3 of responses are PASS.
    * Only applies when convergenceMode is 'majority'. Returns false otherwise.
+   *
+   * Timed-out participants (isTimeout=true) count against the total — they are
+   * non-passing participants and must not silently inflate the PASS ratio.
    */
-  hasMajorityConverged(responses: Array<{ isPass: boolean }>): boolean {
+  hasMajorityConverged(responses: Array<{ isPass: boolean; isTimeout?: boolean }>): boolean {
     if (this.convergenceMode !== 'majority') return false;
     if (responses.length === 0) return false;
     const passCount = responses.filter((r) => r.isPass).length;
@@ -1565,13 +1649,18 @@ ${correctionsText}`;
   }
 
   /**
-   * Detect "soft convergence": all non-PASS responses are agreement-only
+   * Detect "soft convergence": all non-PASS, non-timeout responses are agreement-only
    * (short, start with agreement markers, no substantive new content).
    * Returns true as a hint that synthesis may be appropriate.
+   *
+   * Timed-out participants are excluded — they produce no content and must not
+   * satisfy the "all remaining responses are agreement-only" predicate.
    */
-  detectSoftConvergence(responses: Array<{ content: string; isPass: boolean }>): boolean {
-    const nonPass = responses.filter((r) => !r.isPass);
-    // Need at least one non-PASS response to detect soft convergence
+  detectSoftConvergence(
+    responses: Array<{ content: string; isPass: boolean; isTimeout?: boolean }>,
+  ): boolean {
+    const nonPass = responses.filter((r) => !r.isPass && !r.isTimeout);
+    // Need at least one non-PASS, non-timeout response to detect soft convergence
     if (nonPass.length === 0) return false;
 
     /** Agreement markers (case-insensitive) */
@@ -1644,14 +1733,15 @@ ${correctionsText}`;
   }
 
   /**
-   * Format wave broadcast: concatenate non-PASS responses for the next wave injection.
+   * Format wave broadcast: concatenate non-PASS, non-timeout responses for the next
+   * wave injection. Timed-out participants produce no content and are excluded.
    */
   private formatWaveBroadcast(
-    messages: Array<{ agentName: string; content: string; isPass: boolean }>,
+    messages: Array<{ agentName: string; content: string; isPass: boolean; isTimeout?: boolean }>,
   ): string {
-    const nonPass = messages.filter((m) => !m.isPass);
-    if (nonPass.length === 0) return '';
-    return nonPass.map((m) => `[${m.agentName}]:\n${m.content}`).join('\n\n---\n\n');
+    const active = messages.filter((m) => !m.isPass && !m.isTimeout);
+    if (active.length === 0) return '';
+    return active.map((m) => `[${m.agentName}]:\n${m.content}`).join('\n\n---\n\n');
   }
 
   /**
@@ -1659,7 +1749,12 @@ ${correctionsText}`;
    */
   private formatUserSteer(
     userText: string,
-    previousResponses: Array<{ agentName: string; content: string; isPass: boolean }>,
+    previousResponses: Array<{
+      agentName: string;
+      content: string;
+      isPass: boolean;
+      isTimeout?: boolean;
+    }>,
   ): string {
     const broadcast = this.formatWaveBroadcast(previousResponses);
     const parts: string[] = [];
@@ -1763,7 +1858,7 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
 5. **Keep responses focused.** 2-4 paragraphs max unless the topic demands more depth.
 6. **Do NOT write code** unless specifically asked. Focus on ideas and reasoning.
 
-TOPIC: ${room.topic}`);
+You will receive the discussion topic in your first wave message. Wait for it before responding.`);
 
     return sections.join('\n');
   }
@@ -1842,6 +1937,12 @@ TOPIC: ${room.topic}`);
 
     // Deregister the control handler from the Worker HTTP dispatch map.
     liveBrainstormHandlers.delete(this.roomId);
+
+    // Cancel the wave timeout to avoid stale timer fire after cleanup
+    if (this.waveTimeoutHandle) {
+      clearTimeout(this.waveTimeoutHandle);
+      this.waveTimeoutHandle = null;
+    }
 
     // Cancel any pending delta flush timers to avoid fire-after-cleanup emissions
     for (const p of this.participants) {

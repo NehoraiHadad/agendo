@@ -571,6 +571,8 @@ export interface BrainstormConfig {
   reactiveInjection?: boolean;
   /** Max responses per agent per wave when reactive injection is enabled (default 2) */
   maxResponsesPerWave?: number;
+  /** Number of consecutive timeouts before a participant is auto-evicted (default 2) */
+  evictionThreshold?: number;
 }
 
 // ============================================================================

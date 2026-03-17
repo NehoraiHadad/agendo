@@ -60,8 +60,6 @@ const mockUpdateBrainstormStatus = vi.fn().mockResolvedValue(undefined);
 const mockUpdateBrainstormWave = vi.fn().mockResolvedValue(undefined);
 const mockUpdateParticipantSession = vi.fn().mockResolvedValue(undefined);
 const mockUpdateParticipantStatus = vi.fn().mockResolvedValue(undefined);
-const mockAddMessage = vi.fn().mockResolvedValue({ id: 'msg-1' });
-const mockGetMessages = vi.fn().mockResolvedValue([]);
 const mockSetBrainstormSynthesis = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@/lib/services/brainstorm-service', () => ({
@@ -70,8 +68,6 @@ vi.mock('@/lib/services/brainstorm-service', () => ({
   updateBrainstormWave: mockUpdateBrainstormWave,
   updateParticipantSession: mockUpdateParticipantSession,
   updateParticipantStatus: mockUpdateParticipantStatus,
-  addMessage: mockAddMessage,
-  getMessages: mockGetMessages,
   setBrainstormSynthesis: mockSetBrainstormSynthesis,
 }));
 
@@ -142,8 +138,6 @@ beforeEach(() => {
   mockUpdateBrainstormWave.mockResolvedValue(undefined);
   mockUpdateParticipantSession.mockResolvedValue(undefined);
   mockUpdateParticipantStatus.mockResolvedValue(undefined);
-  mockAddMessage.mockResolvedValue({ id: 'msg-1' });
-  mockGetMessages.mockResolvedValue([]);
   mockSetBrainstormSynthesis.mockResolvedValue(undefined);
   mockEnqueueSession.mockResolvedValue(undefined);
   mockGetSessionProc.mockReturnValue(null);
@@ -762,6 +756,7 @@ describe('empty response guard (compaction-only turns)', () => {
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
     const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
+      waveStarted: boolean;
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -781,6 +776,9 @@ describe('empty response guard (compaction-only turns)', () => {
         event: unknown,
       ) => void;
     };
+
+    // This is an in-wave test — a wave has been started
+    orchestrator.waveStarted = true;
 
     const participant = {
       sessionId: 'session-compact-2',
@@ -960,11 +958,13 @@ describe('minWavesBeforePass enforcement', () => {
 
     const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as {
       currentWave: number;
+      waveStarted: boolean;
       minWavesBeforePass: number;
       handleSessionEvent: (participant: ParticipantState, event: unknown) => void;
     };
 
     orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
     orchestrator.minWavesBeforePass = 3; // PASS not allowed until wave 3
 
     const participant: ParticipantState = {
@@ -981,6 +981,7 @@ describe('minWavesBeforePass enforcement', () => {
       deltaBuffer: '',
       deltaFlushTimer: null,
       waveResponseCount: 0,
+      consecutiveTimeouts: 0,
     };
 
     // Agent sends [PASS] response
@@ -1016,11 +1017,13 @@ describe('minWavesBeforePass enforcement', () => {
 
     const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as {
       currentWave: number;
+      waveStarted: boolean;
       minWavesBeforePass: number;
       handleSessionEvent: (participant: ParticipantState, event: unknown) => void;
     };
 
     orchestrator.currentWave = 3;
+    orchestrator.waveStarted = true;
     orchestrator.minWavesBeforePass = 3; // PASS allowed from wave 3
 
     const participant: ParticipantState = {
@@ -1037,6 +1040,7 @@ describe('minWavesBeforePass enforcement', () => {
       deltaBuffer: '',
       deltaFlushTimer: null,
       waveResponseCount: 0,
+      consecutiveTimeouts: 0,
     };
 
     // Agent sends [PASS]
@@ -1229,6 +1233,7 @@ describe('validated synthesis (two-phase)', () => {
         deltaBuffer: '',
         deltaFlushTimer: null,
         waveResponseCount: 0,
+        consecutiveTimeouts: 0,
       },
       {
         participantId: 'part-b',
@@ -1244,6 +1249,7 @@ describe('validated synthesis (two-phase)', () => {
         deltaBuffer: '',
         deltaFlushTimer: null,
         waveResponseCount: 0,
+        consecutiveTimeouts: 0,
       },
     ];
 
@@ -1447,6 +1453,8 @@ type ParticipantState = {
   deltaFlushTimer: ReturnType<typeof setTimeout> | null;
   /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
   waveResponseCount: number;
+  /** Number of consecutive waves this participant timed out */
+  consecutiveTimeouts: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -1473,6 +1481,7 @@ describe('reactive injection', () => {
       deltaBuffer: '',
       deltaFlushTimer: null,
       waveResponseCount: 0,
+      consecutiveTimeouts: 0,
       ...overrides,
     };
   }
@@ -1492,6 +1501,7 @@ describe('reactive injection', () => {
     onParticipantTurnComplete: (participant: ParticipantState) => void;
     checkWaveComplete: () => void;
     injectMessage: (sessionId: string, text: string) => Promise<void>;
+    evictionThreshold: number;
   };
 
   it("when agent A finishes, injects A's response into agents still thinking", async () => {
@@ -1941,5 +1951,566 @@ describe('reactive injection', () => {
     expect(injectionCalls.length).toBe(1);
     expect(injectionCalls[0].text).toContain('[Claude]');
     expect(injectionCalls[0].text).toContain('My deep analysis.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave timeout handle resource leak fix
+// ---------------------------------------------------------------------------
+
+describe('wave timeout handle', () => {
+  /** Minimal participant suitable for wave-timeout tests */
+  function makeParticipant(overrides: {
+    agentId: string;
+    agentName: string;
+    sessionId: string;
+  }): ParticipantState {
+    return {
+      participantId: `part-${overrides.agentId}`,
+      agentSlug: `${overrides.agentName.toLowerCase()}-slug`,
+      waveStatus: 'thinking',
+      responseBuffer: [],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: Date.now(),
+      deltaBuffer: '',
+      deltaFlushTimer: null,
+      waveResponseCount: 0,
+      consecutiveTimeouts: 0,
+      ...overrides,
+    };
+  }
+
+  /**
+   * Minimal view of the orchestrator internals used by these tests.
+   */
+  type WaveTimeoutOrchestrator = {
+    participants: ParticipantState[];
+    currentWave: number;
+    waveStarted: boolean;
+    waveTimeoutHandle: ReturnType<typeof setTimeout> | null;
+    waveCompleteResolve: (() => void) | null;
+    checkWaveComplete: () => void;
+    waitForWaveComplete: () => Promise<void>;
+    scheduleWaveTimeout: (wave: number) => void;
+    cleanup: () => void;
+  };
+
+  it('wave completing early clears the pending timeout handle', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-wave-timeout-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      3,
+      60,
+    ) as unknown as WaveTimeoutOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    orchestrator.participants = [agentA];
+    orchestrator.currentWave = 0;
+    orchestrator.waveStarted = true;
+
+    // Schedule the wave timeout (60 s)
+    orchestrator.scheduleWaveTimeout(0);
+    expect(orchestrator.waveTimeoutHandle).not.toBeNull();
+
+    // Mark the participant done and let waitForWaveComplete resolve
+    const waveDone = orchestrator.waitForWaveComplete();
+    agentA.waveStatus = 'done';
+    orchestrator.checkWaveComplete();
+    await waveDone;
+
+    // Handle must be cleared after early completion
+    expect(orchestrator.waveTimeoutHandle).toBeNull();
+
+    // Advancing past the original timeout must not flip the participant back to 'timeout'
+    agentA.waveStatus = 'done'; // ensure it stays done
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(agentA.waveStatus).toBe('done');
+  });
+
+  it('cleanup() cancels a pending wave timeout handle', () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-wave-timeout-2';
+    const listenerSet = new Set<(event: unknown) => void>();
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      3,
+      120,
+    ) as unknown as WaveTimeoutOrchestrator;
+
+    const agentA = makeParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    orchestrator.participants = [agentA];
+    orchestrator.currentWave = 0;
+    orchestrator.waveStarted = true;
+
+    // Schedule the wave timeout (120 s) without completing the wave
+    orchestrator.scheduleWaveTimeout(0);
+    expect(orchestrator.waveTimeoutHandle).not.toBeNull();
+
+    // Cleanup should cancel the timer
+    orchestrator.cleanup();
+    expect(orchestrator.waveTimeoutHandle).toBeNull();
+
+    // Advancing past the timeout must NOT flip participant to 'timeout'
+    // because the timer was cleared
+    agentA.waveStatus = 'thinking';
+    vi.advanceTimersByTime(121_000);
+    expect(agentA.waveStatus).toBe('thinking');
+  });
+});
+
+// Wave 0 message deduplication (fix for preamble-topic double-response)
+// ---------------------------------------------------------------------------
+
+describe('wave 0 message deduplication', () => {
+  /** Helper: make a participant for dedup tests */
+  function makeDedupParticipant(
+    overrides: Partial<{
+      agentId: string;
+      agentName: string;
+      sessionId: string;
+      waveStatus: 'pending' | 'thinking' | 'done' | 'passed' | 'timeout';
+    }>,
+  ): ParticipantState {
+    return {
+      participantId: `part-${overrides.agentId ?? 'x'}`,
+      agentId: overrides.agentId ?? 'agent-x',
+      agentName: overrides.agentName ?? 'Agent',
+      agentSlug: 'agent-slug',
+      sessionId: overrides.sessionId ?? 'sess-x',
+      waveStatus: overrides.waveStatus ?? 'thinking',
+      responseBuffer: [],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: Date.now(),
+      deltaBuffer: '',
+      deltaFlushTimer: null,
+      waveResponseCount: 0,
+      consecutiveTimeouts: 0,
+    };
+  }
+
+  it('onParticipantTurnComplete suppresses message emission when waveStarted is false', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-dedup-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as {
+      participants: ParticipantState[];
+      currentWave: number;
+      waveStarted: boolean;
+      onParticipantTurnComplete: (p: ParticipantState) => void;
+    };
+
+    const agent = makeDedupParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    orchestrator.participants = [agent];
+    orchestrator.waveStarted = false;
+
+    agent.responseBuffer = ['Preamble acknowledgment response'];
+    orchestrator.onParticipantTurnComplete(agent);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    const messageEvents = capturedEvents.filter((e) => (e as { type: string }).type === 'message');
+    expect(messageEvents).toHaveLength(0);
+
+    vi.useRealTimers();
+  });
+
+  it('onParticipantTurnComplete marks participant waveStatus=done when waveStarted is false', () => {
+    const roomId = 'room-dedup-2';
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as {
+      participants: ParticipantState[];
+      currentWave: number;
+      waveStarted: boolean;
+      onParticipantTurnComplete: (p: ParticipantState) => void;
+    };
+
+    const agent = makeDedupParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    orchestrator.participants = [agent];
+    orchestrator.waveStarted = false;
+
+    agent.responseBuffer = ['Some preamble ack'];
+    orchestrator.onParticipantTurnComplete(agent);
+
+    expect(agent.waveStatus).toBe('done');
+    expect(agent.responseBuffer).toHaveLength(0);
+  });
+
+  it('after wave 0, exactly N message events are emitted for N agents (not 2N)', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-dedup-3';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as {
+      participants: ParticipantState[];
+      currentWave: number;
+      waveStarted: boolean;
+      onParticipantTurnComplete: (p: ParticipantState) => void;
+    };
+
+    const agentA = makeDedupParticipant({
+      agentId: 'agent-a',
+      agentName: 'Claude',
+      sessionId: 'sess-a',
+    });
+    const agentB = makeDedupParticipant({
+      agentId: 'agent-b',
+      agentName: 'Gemini',
+      sessionId: 'sess-b',
+    });
+    const agentC = makeDedupParticipant({
+      agentId: 'agent-c',
+      agentName: 'Codex',
+      sessionId: 'sess-c',
+    });
+    orchestrator.participants = [agentA, agentB, agentC];
+
+    // Phase 1: pre-wave preamble acknowledgment (waveStarted = false)
+    orchestrator.waveStarted = false;
+    agentA.responseBuffer = ['Sure, I understand the rules.'];
+    orchestrator.onParticipantTurnComplete(agentA);
+    agentB.responseBuffer = ['Got it.'];
+    orchestrator.onParticipantTurnComplete(agentB);
+    agentC.responseBuffer = ['Ready.'];
+    orchestrator.onParticipantTurnComplete(agentC);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    const preWaveMessages = capturedEvents.filter(
+      (e) => (e as { type: string }).type === 'message',
+    );
+    expect(preWaveMessages).toHaveLength(0);
+
+    // Phase 2: wave 0 actual responses (waveStarted = true)
+    orchestrator.waveStarted = true;
+    orchestrator.currentWave = 0;
+    agentA.waveStatus = 'thinking';
+    agentB.waveStatus = 'thinking';
+    agentC.waveStatus = 'thinking';
+    agentA.responseBuffer = ['My wave 0 response about the topic.'];
+    orchestrator.onParticipantTurnComplete(agentA);
+    agentB.responseBuffer = ['My wave 0 response.'];
+    orchestrator.onParticipantTurnComplete(agentB);
+    agentC.responseBuffer = ['My wave 0 response.'];
+    orchestrator.onParticipantTurnComplete(agentC);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    const waveMessages = capturedEvents.filter(
+      (e) =>
+        (e as { type: string }).type === 'message' &&
+        (e as { senderType?: string }).senderType === 'agent',
+    );
+    expect(waveMessages).toHaveLength(3);
+
+    vi.useRealTimers();
+  });
+});
+
+// Dead-participant detection (auto-eviction after consecutive timeouts)
+// ---------------------------------------------------------------------------
+
+describe('dead-participant detection', () => {
+  function makeEvictionParticipant(
+    overrides: Partial<ParticipantState> & {
+      agentId: string;
+      agentName: string;
+      sessionId: string;
+    },
+  ): ParticipantState {
+    return {
+      participantId: `part-${overrides.agentId}`,
+      agentSlug: `${overrides.agentName.toLowerCase()}-slug`,
+      waveStatus: 'thinking',
+      responseBuffer: [],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: Date.now(),
+      deltaBuffer: '',
+      deltaFlushTimer: null,
+      waveResponseCount: 0,
+      consecutiveTimeouts: 0,
+      ...overrides,
+    };
+  }
+
+  type EvictionTestOrchestrator = {
+    participants: ParticipantState[];
+    evictionThreshold: number;
+    trackConsecutiveTimeouts: () => Promise<void>;
+  };
+
+  it('timeout once → consecutiveTimeouts = 1, participant still active', async () => {
+    const roomId = 'room-evict-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      5,
+      120,
+    ) as unknown as EvictionTestOrchestrator;
+
+    const participant = makeEvictionParticipant({
+      agentId: 'agent-codex',
+      agentName: 'Codex',
+      sessionId: 'sess-codex',
+      waveStatus: 'timeout',
+    });
+
+    orchestrator.participants = [participant];
+
+    await orchestrator.trackConsecutiveTimeouts();
+
+    expect(participant.consecutiveTimeouts).toBe(1);
+    expect(participant.hasLeft).toBe(false);
+    expect(participant.hasPassed).toBe(false);
+  });
+
+  it('timeout twice → auto-evicted (hasLeft = true, hasPassed = true)', async () => {
+    const roomId = 'room-evict-2';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      5,
+      120,
+    ) as unknown as EvictionTestOrchestrator;
+
+    const participant = makeEvictionParticipant({
+      agentId: 'agent-codex',
+      agentName: 'Codex',
+      sessionId: 'sess-codex',
+      waveStatus: 'timeout',
+      consecutiveTimeouts: 1,
+    });
+
+    orchestrator.participants = [participant];
+
+    await orchestrator.trackConsecutiveTimeouts();
+
+    expect(participant.consecutiveTimeouts).toBe(2);
+    expect(participant.hasLeft).toBe(true);
+    expect(participant.hasPassed).toBe(true);
+
+    const evictionEvent = capturedEvents.find(
+      (e) =>
+        typeof e === 'object' &&
+        e !== null &&
+        (e as Record<string, unknown>).type === 'participant:status' &&
+        (e as Record<string, unknown>).status === 'evicted',
+    );
+    expect(evictionEvent).toBeDefined();
+    expect(mockUpdateParticipantStatus).toHaveBeenCalledWith('part-agent-codex', 'left');
+  });
+
+  it('timeout once then responds → consecutiveTimeouts reset to 0', async () => {
+    const roomId = 'room-evict-3';
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      5,
+      120,
+    ) as unknown as EvictionTestOrchestrator;
+
+    const participant = makeEvictionParticipant({
+      agentId: 'agent-codex',
+      agentName: 'Codex',
+      sessionId: 'sess-codex',
+      waveStatus: 'timeout',
+    });
+
+    orchestrator.participants = [participant];
+
+    await orchestrator.trackConsecutiveTimeouts();
+    expect(participant.consecutiveTimeouts).toBe(1);
+
+    participant.waveStatus = 'done';
+    await orchestrator.trackConsecutiveTimeouts();
+    expect(participant.consecutiveTimeouts).toBe(0);
+    expect(participant.hasLeft).toBe(false);
+  });
+
+  it('evicted participant is excluded from future tracking', async () => {
+    const roomId = 'room-evict-4';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(
+      roomId,
+      5,
+      120,
+    ) as unknown as EvictionTestOrchestrator;
+
+    const participant = makeEvictionParticipant({
+      agentId: 'agent-codex',
+      agentName: 'Codex',
+      sessionId: 'sess-codex',
+      waveStatus: 'timeout',
+      consecutiveTimeouts: 1,
+    });
+
+    orchestrator.participants = [participant];
+
+    await orchestrator.trackConsecutiveTimeouts();
+    expect(participant.hasLeft).toBe(true);
+
+    const prevEvictionCount = capturedEvents.filter(
+      (e) =>
+        typeof e === 'object' && e !== null && (e as Record<string, unknown>).status === 'evicted',
+    ).length;
+
+    participant.waveStatus = 'timeout';
+    await orchestrator.trackConsecutiveTimeouts();
+
+    const newEvictionCount = capturedEvents.filter(
+      (e) =>
+        typeof e === 'object' && e !== null && (e as Record<string, unknown>).status === 'evicted',
+    ).length;
+
+    expect(newEvictionCount).toBe(prevEvictionCount);
+  });
+
+  it('evictionThreshold defaults to 2', () => {
+    const orchestrator = new BrainstormOrchestrator(
+      'room-evict-default',
+      5,
+      120,
+    ) as unknown as EvictionTestOrchestrator;
+    expect(orchestrator.evictionThreshold).toBe(2);
+  });
+
+  it('evictionThreshold can be overridden via config', () => {
+    const orchestrator = new BrainstormOrchestrator('room-evict-config', 5, 120, {
+      evictionThreshold: 3,
+    }) as unknown as EvictionTestOrchestrator;
+    expect(orchestrator.evictionThreshold).toBe(3);
+  });
+});
+
+// Convergence timeout attrition — distinguish real PASS from timeout
+// ---------------------------------------------------------------------------
+
+describe('convergence timeout attrition', () => {
+  type ConvergenceOrchestrator = {
+    participants: ParticipantState[];
+    convergenceMode: string;
+    hasMajorityConverged: (responses: Array<{ isPass: boolean; isTimeout?: boolean }>) => boolean;
+  };
+
+  it('3 agents: 2 PASS + 1 timeout in unanimous mode does NOT converge', () => {
+    const orchestrator = new BrainstormOrchestrator('room-conv-1', 5, 120, {
+      convergenceMode: 'unanimous',
+    }) as unknown as ConvergenceOrchestrator;
+
+    const responses: Array<{ isPass: boolean; isTimeout: boolean }> = [
+      { isPass: true, isTimeout: false },
+      { isPass: true, isTimeout: false },
+      { isPass: false, isTimeout: true },
+    ];
+
+    const passedCount = responses.filter((r) => r.isPass).length;
+    const timedOutCount = responses.filter((r) => r.isTimeout).length;
+    const totalParticipants = responses.length;
+
+    const unanimousConverged = passedCount === totalParticipants && timedOutCount === 0;
+    const majorityConverged = orchestrator.hasMajorityConverged(responses);
+
+    expect(unanimousConverged).toBe(false);
+    expect(majorityConverged).toBe(false);
+  });
+
+  it('3 agents: 2 PASS + 1 timeout in majority mode DOES converge (2/3 >= 2/3)', () => {
+    const orchestrator = new BrainstormOrchestrator('room-conv-2', 5, 120, {
+      convergenceMode: 'majority',
+    }) as unknown as ConvergenceOrchestrator;
+
+    const responses: Array<{ isPass: boolean; isTimeout: boolean }> = [
+      { isPass: true, isTimeout: false },
+      { isPass: true, isTimeout: false },
+      { isPass: false, isTimeout: true },
+    ];
+
+    expect(orchestrator.hasMajorityConverged(responses)).toBe(true);
+  });
+
+  it('3 agents: 1 PASS + 2 timeout in majority mode does NOT converge (1/3 < 2/3)', () => {
+    const orchestrator = new BrainstormOrchestrator('room-conv-3', 5, 120, {
+      convergenceMode: 'majority',
+    }) as unknown as ConvergenceOrchestrator;
+
+    const responses: Array<{ isPass: boolean; isTimeout: boolean }> = [
+      { isPass: true, isTimeout: false },
+      { isPass: false, isTimeout: true },
+      { isPass: false, isTimeout: true },
+    ];
+
+    expect(orchestrator.hasMajorityConverged(responses)).toBe(false);
+  });
+
+  it('3 agents: 3 PASS + 0 timeout converges in both modes', () => {
+    const unanimousOrch = new BrainstormOrchestrator('room-conv-4a', 5, 120, {
+      convergenceMode: 'unanimous',
+    }) as unknown as ConvergenceOrchestrator;
+
+    const majorityOrch = new BrainstormOrchestrator('room-conv-4b', 5, 120, {
+      convergenceMode: 'majority',
+    }) as unknown as ConvergenceOrchestrator;
+
+    const responses: Array<{ isPass: boolean; isTimeout: boolean }> = [
+      { isPass: true, isTimeout: false },
+      { isPass: true, isTimeout: false },
+      { isPass: true, isTimeout: false },
+    ];
+
+    const passedCount = responses.filter((r) => r.isPass).length;
+    const timedOutCount = responses.filter((r) => r.isTimeout).length;
+    const totalParticipants = responses.length;
+
+    const unanimousConverged = passedCount === totalParticipants && timedOutCount === 0;
+    expect(unanimousConverged).toBe(true);
+    expect(unanimousOrch.hasMajorityConverged(responses)).toBe(false); // wrong mode
+    expect(majorityOrch.hasMajorityConverged(responses)).toBe(true);
   });
 });

@@ -26,6 +26,7 @@ export const PLAYBOOK_DEFAULTS: Required<
   synthesisMode: 'single',
   reactiveInjection: false,
   maxResponsesPerWave: 2,
+  evictionThreshold: 2,
 } as const;
 
 /** Default maxWaves (stored on the room row, not in config) */
@@ -104,6 +105,7 @@ export function resolvePlaybook(config: BrainstormConfig | null | undefined): Re
     synthesisMode: config?.synthesisMode ?? PLAYBOOK_DEFAULTS.synthesisMode,
     reactiveInjection: config?.reactiveInjection ?? PLAYBOOK_DEFAULTS.reactiveInjection,
     maxResponsesPerWave: config?.maxResponsesPerWave ?? PLAYBOOK_DEFAULTS.maxResponsesPerWave,
+    evictionThreshold: config?.evictionThreshold ?? PLAYBOOK_DEFAULTS.evictionThreshold,
     synthesisAgentId: config?.synthesisAgentId,
     language: config?.language,
     roles: config?.roles,

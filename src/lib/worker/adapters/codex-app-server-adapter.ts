@@ -104,6 +104,12 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private static readonly COMPACTION_COOLDOWN_MS = 60_000;
   /** Whether the current turn is active (set on turn/started, cleared on turn/completed). */
   private turnActive = false;
+  /**
+   * Watchdog timer for context compaction. Started after the `thread/compact/start`
+   * RPC succeeds. If no `contextCompaction` item arrives within 60 seconds the
+   * watchdog fires and force-resets `this.compacting` to prevent permanent stalls.
+   */
+  private compactionWatchdog: ReturnType<typeof setTimeout> | null = null;
   /** Interval handle for the MCP server health check (mcpServerStatus/list). */
   private mcpHealthCheckInterval: ReturnType<typeof setInterval> | null = null;
   /** Working directory for the session — stored for skills/list call and filesystem scan. */
@@ -330,6 +336,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         clearInterval(this.mcpHealthCheckInterval);
         this.mcpHealthCheckInterval = null;
       }
+      // Clear any pending compaction watchdog — the process is gone
+      this.clearCompactionWatchdog();
       // Reject all pending requests
       this._transport?.rejectAll('codex app-server exited');
       for (const cb of this.exitCallbacks) cb(code);
@@ -627,6 +635,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       case 'item/started': {
         const item = params.item as Record<string, unknown>;
         const normalized = normalizeThreadItem(item, () => {
+          this.clearCompactionWatchdog();
           this.compacting = false;
           this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
         });
@@ -637,6 +646,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       case 'item/completed': {
         const item = params.item as Record<string, unknown>;
         const normalized = normalizeThreadItem(item, () => {
+          this.clearCompactionWatchdog();
           this.compacting = false;
           this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
         });
@@ -920,7 +930,39 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     this.compacting = true;
     this.lastCompactionAt = now;
     this.emitSynthetic({ type: 'as:compact-start' });
-    await this.transport.call('thread/compact/start', { threadId: this.threadId }, 30000);
+
+    try {
+      await this.transport.call('thread/compact/start', { threadId: this.threadId }, 30000);
+    } catch (err) {
+      // RPC failed or timed out — reset compacting immediately so future turns
+      // are not blocked. No watchdog is needed because the operation is already done.
+      log.warn(
+        { err, threadId: this.threadId },
+        'Compaction RPC failed — resetting compacting flag',
+      );
+      this.compacting = false;
+      return;
+    }
+
+    // RPC succeeded — start a watchdog in case the `contextCompaction` item
+    // notification never arrives (e.g. Codex completed compaction silently or
+    // entered an inconsistent state). The watchdog fires after 60s and
+    // force-resets `this.compacting` so subsequent turns are not blocked.
+    this.compactionWatchdog = setTimeout(() => {
+      if (this.compacting) {
+        log.warn({ threadId: this.threadId }, 'Compaction stall detected — forcing recovery');
+        this.compacting = false;
+      }
+      this.compactionWatchdog = null;
+    }, 60_000);
+  }
+
+  /** Clear any pending compaction watchdog timer. Safe to call unconditionally. */
+  private clearCompactionWatchdog(): void {
+    if (this.compactionWatchdog) {
+      clearTimeout(this.compactionWatchdog);
+      this.compactionWatchdog = null;
+    }
   }
 
   // -------------------------------------------------------------------------

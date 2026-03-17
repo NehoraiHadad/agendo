@@ -14,7 +14,7 @@ export interface ParticipantState {
   agentSlug: string;
   sessionId: string | null;
   model: string | null;
-  status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout';
+  status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout' | 'evicted';
   /** Human-readable description of current activity, e.g. "Reading orchestrator.ts" */
   activity: string | null;
 }
@@ -143,12 +143,17 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       case 'participant:status': {
         const participants = new Map(state.participants);
         const existing = participants.get(event.agentId);
+        // 'evicted' is shown as 'left' in the UI (participant was removed due to consecutive timeouts)
+        const displayStatus =
+          event.status === 'evicted'
+            ? ('left' as const)
+            : (event.status as Exclude<typeof event.status, 'evicted'>);
         if (existing) {
-          // Clear activity when status changes to a terminal state (done/passed/timeout)
+          // Clear activity when status changes to a terminal state (done/passed/timeout/evicted)
           const clearActivity = event.status !== 'thinking';
           participants.set(event.agentId, {
             ...existing,
-            status: event.status,
+            status: displayStatus,
             activity: clearActivity ? null : existing.activity,
           });
         } else {
@@ -159,7 +164,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             agentSlug: '',
             sessionId: null,
             model: null,
-            status: event.status,
+            status: displayStatus,
             activity: null,
           });
         }
