@@ -375,6 +375,9 @@ export function buildDisplayItems(
       }
 
       case 'system:info': {
+        // Hide internal diagnostic messages from the chat view (still visible in event log)
+        if (ev.message.startsWith('History loaded from')) break;
+
         let infoText = ev.message;
         if (ev.compactMeta) {
           infoText = `Context compacted: ${ev.compactMeta.preTokens.toLocaleString()} tokens → summarized (${ev.compactMeta.trigger})`;

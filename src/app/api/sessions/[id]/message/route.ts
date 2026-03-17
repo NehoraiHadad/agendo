@@ -48,6 +48,7 @@ export const POST = withErrorBoundary(
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
         resumePrompt: message,
+        skipResumeContext: true,
       });
       return NextResponse.json({ data: { resuming: true } }, { status: 202 });
     }
@@ -85,6 +86,7 @@ export const POST = withErrorBoundary(
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
         resumePrompt: message,
+        skipResumeContext: true,
       });
       return NextResponse.json({ data: { resuming: true } }, { status: 202 });
     }

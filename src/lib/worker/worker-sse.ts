@@ -184,8 +184,11 @@ export async function handleSessionSSE(
   let catchupSent = false;
 
   // 2a. Try CLI-native history first (requires a live SessionProcess)
+  // Skip on reconnect (lastEventId > 0) — client already has conversation history.
+  // Re-sending CLI-native history with new sequential IDs causes message duplication
+  // because the client deduplicates by event ID only.
   const proc = getSessionProc(sessionId);
-  if (proc) {
+  if (proc && lastEventId === 0) {
     try {
       const historyEvents = await proc.getHistory();
       if (historyEvents && historyEvents.length > 0) {

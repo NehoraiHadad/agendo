@@ -151,6 +151,12 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
         // Don't reconnect if session has ended
         if (isDoneRef.current) return;
 
+        // Reset event state on reconnect to prevent duplicates from stale events.
+        // Also reset lastEventIdRef so the server knows to send full history again
+        // (server skips CLI-native history replay when lastEventId > 0).
+        dispatch({ type: 'RESET' });
+        lastEventIdRef.current = 0;
+
         const delay = retryDelayRef.current;
         retryDelayRef.current = Math.min(delay * 2, 30000);
         setTimeout(connect, delay);

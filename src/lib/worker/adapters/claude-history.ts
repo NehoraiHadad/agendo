@@ -22,6 +22,26 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 
 // ---------------------------------------------------------------------------
+// Preamble stripping — remove system context injected into the first user
+// message before displaying it in the chat UI. Matches:
+//   [Agendo Context: ...]  ...  ---\n
+//   [Previous Work Summary] ...  ---\n
+//   [Resume Context]        ...  ---\n
+//   [SYSTEM INSTRUCTIONS ...] ... ---\n
+// ---------------------------------------------------------------------------
+
+const PREAMBLE_RE =
+  /^\[(?:Agendo Context|Previous Work Summary|Resume Context|SYSTEM INSTRUCTIONS)[^\]]*\][\s\S]*?---\n/;
+
+/**
+ * Strip any Agendo system preamble from the beginning of a user message.
+ * Returns the cleaned text (or the original if no preamble found).
+ */
+function stripPreamble(text: string): string {
+  return text.replace(PREAMBLE_RE, '').trimStart();
+}
+
+// ---------------------------------------------------------------------------
 // Raw JSONL record types
 // ---------------------------------------------------------------------------
 
@@ -328,7 +348,9 @@ function mapJsonlUserRecord(record: RawUserRecord): AgendoEventPayload[] {
 
   // String content → simple text message
   if (typeof content === 'string') {
-    return [{ type: 'user:message', text: content }];
+    const cleaned = stripPreamble(content);
+    if (!cleaned) return [];
+    return [{ type: 'user:message', text: cleaned }];
   }
 
   // Array content → could be text + image, or tool_result blocks
@@ -350,7 +372,7 @@ function mapJsonlUserRecord(record: RawUserRecord): AgendoEventPayload[] {
       }
     }
 
-    const text = textParts.join('\n');
+    const text = stripPreamble(textParts.join('\n'));
     if (!text && !hasImage) return [];
 
     return [{ type: 'user:message', text, ...(hasImage ? { hasImage: true } : {}) }];
@@ -477,7 +499,9 @@ function mapSdkUserMessage(msg: SessionMessage): AgendoEventPayload[] {
 
   // String content → simple text message
   if (typeof content === 'string') {
-    return [{ type: 'user:message', text: content }];
+    const cleaned = stripPreamble(content);
+    if (!cleaned) return [];
+    return [{ type: 'user:message', text: cleaned }];
   }
 
   // Array content → could be text + image, or tool_result blocks
@@ -499,7 +523,7 @@ function mapSdkUserMessage(msg: SessionMessage): AgendoEventPayload[] {
       }
     }
 
-    const text = textParts.join('\n');
+    const text = stripPreamble(textParts.join('\n'));
     if (!text && !hasImage) return [];
 
     return [{ type: 'user:message', text, ...(hasImage ? { hasImage: true } : {}) }];
