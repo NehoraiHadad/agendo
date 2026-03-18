@@ -221,6 +221,21 @@ export class TeamInboxMonitor {
     return result;
   }
 
+  /**
+   * Read all outbox messages (lead → teammate) from all teammate inboxes.
+   * Returns array of { toAgent, message } entries.
+   */
+  readAllOutboxMessages(): Array<{ toAgent: string; message: TeamMessage }> {
+    const result: Array<{ toAgent: string; message: TeamMessage }> = [];
+    for (const { memberName, inboxPath } of this.listTeammateInboxPaths()) {
+      const msgs = this.readInboxFile(inboxPath);
+      for (const msg of msgs) {
+        result.push({ toAgent: memberName, message: msg });
+      }
+    }
+    return result;
+  }
+
   // ---------------------------------------------------------------------------
   // Outbox polling (lead → teammate messages)
   // ---------------------------------------------------------------------------

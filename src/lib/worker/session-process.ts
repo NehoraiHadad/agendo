@@ -612,6 +612,37 @@ export class SessionProcess {
   }
 
   /**
+   * Retrieve Agendo-specific state from live sources for SSE reconnect catchup.
+   *
+   * Returns events that CLI-native history (adapter.getHistory()) doesn't include:
+   *   - session:init (synthesized from DB fields)
+   *   - team:config, team:message, team:task-update, team:outbox-message (from filesystem)
+   *
+   * This replaces the previous approach of parsing the log file for these events.
+   * The log file remains as a fallback for ended sessions with no live process.
+   */
+  getLiveState(): AgendoEventPayload[] {
+    const events: AgendoEventPayload[] = [];
+
+    // 1. Synthesize session:init from DB fields + in-memory state
+    if (this.session.sessionRef || this.sessionRef) {
+      events.push({
+        type: 'session:init',
+        sessionRef: this.sessionRef ?? this.session.sessionRef ?? '',
+        model: this.session.model ?? undefined,
+        permissionMode: this.session.permissionMode ?? undefined,
+        slashCommands: [],
+        mcpServers: [],
+      });
+    }
+
+    // 2. Team state from live filesystem sources
+    events.push(...this.teamManager.getTeamState());
+
+    return events;
+  }
+
+  /**
    * Push a user message to the running agent process.
    * Only valid when the session is active or awaiting_input.
    */

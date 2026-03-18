@@ -9,8 +9,10 @@
  *   SessionProcess.emitEvent() → sessionEventListeners map → HTTP SSE stream
  *   BrainstormOrchestrator.emitEvent() → brainstormEventListeners map → HTTP SSE stream
  *
- * CLI-native history (adapter.getHistory()) is the primary source for SSE
- * reconnect catchup. Log files serve as fallback and audit trail.
+ * SSE reconnect catchup uses a 3-tier source hierarchy:
+ *   1. CLI-native history (adapter.getHistory()) — conversation content
+ *   2. Live state (proc.getLiveState()) — session:init from DB, team state from filesystem
+ *   3. Log file (fallback) — for ended sessions or agents without getHistory() support
  */
 
 import * as http from 'node:http';
@@ -164,20 +166,17 @@ export async function handleSessionSSE(
   };
   sendEvent(res, stateEvent);
 
-  // 2. Catchup: reconstruct conversation history for the reconnecting browser.
+  // 2. Catchup: reconstruct state for the reconnecting browser.
   //
-  //    Priority order:
-  //      (a) CLI-native history via adapter.getHistory() — the authoritative
-  //          source of conversation content. Reads directly from the CLI's own
-  //          storage (Claude JSONL, Codex thread/read).
-  //      (b) Log file — fallback for agents without getHistory() support
-  //          (Gemini, Copilot), for ended sessions with no live process, or
-  //          when getHistory() fails.
+  //    3-tier source hierarchy:
+  //      (a) CLI-native history via adapter.getHistory() — conversation content.
+  //      (b) Live state via proc.getLiveState() — session:init from DB, team
+  //          state from filesystem (inbox/config/task files).
+  //      (c) Log file — full fallback for ended sessions or agents without
+  //          getHistory() (Gemini, Copilot).
   //
-  //    The log file is an audit trail / write-ahead log. It captures
-  //    Agendo-specific events (approvals, team messages, state transitions)
-  //    that CLI-native history doesn't have, but the core conversation
-  //    content comes from the CLI.
+  //    Tiers (a) and (b) read from their respective sources of truth.
+  //    The log file is an audit trail, used only when live sources are unavailable.
   let catchupSent = false;
 
   // 3. Register in-memory listener BEFORE history send to avoid race condition.
@@ -254,35 +253,37 @@ export async function handleSessionSSE(
     }
   }
 
-  // 2b. Supplement or fallback from log file.
-  // CLI-native history only contains conversation events (user/agent/tool).
-  // Agendo-specific events (team:*, system:*, session:cost, etc.) only exist
-  // in the log file and must be replayed separately.
-  if (session.logFilePath && existsSync(session.logFilePath)) {
+  // 2b. Live state from sources of truth (DB + filesystem).
+  // CLI-native history only contains conversation content. Agendo-specific
+  // state (session:init, team:*) lives in the DB and filesystem respectively.
+  // Read from the actual sources rather than replaying stale log entries.
+  if (proc) {
+    const liveState = proc.getLiveState();
+    if (liveState.length > 0) {
+      let seq = catchupSent ? lastEventId + 1000 : lastEventId + 1;
+      log.info(
+        { sessionId, eventCount: liveState.length },
+        'Supplementing catchup with live state (DB + filesystem)',
+      );
+      for (const payload of liveState) {
+        const event: AgendoEvent = {
+          id: seq++,
+          sessionId: session.id,
+          ts: Date.now(),
+          ...payload,
+        } as AgendoEvent;
+        sendEvent(res, event);
+      }
+    }
+  }
+
+  // 2c. Log file fallback — only when no live process is available (ended
+  // sessions, agents without getHistory() support, worker just restarted).
+  if (!catchupSent && !proc && session.logFilePath && existsSync(session.logFilePath)) {
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
       const logEvents = readEventsFromLog(logContent, lastEventId);
-
-      if (catchupSent) {
-        // CLI history already sent conversation events — supplement with
-        // Agendo-only events that CLI history doesn't include.
-        const agendoOnlyEvents = logEvents.filter(
-          (ev) =>
-            ev.type.startsWith('team:') ||
-            ev.type.startsWith('session:') ||
-            ev.type === 'system:info',
-        );
-        if (agendoOnlyEvents.length > 0) {
-          log.info(
-            { sessionId, eventCount: agendoOnlyEvents.length },
-            'Supplementing CLI history with Agendo-only events from log',
-          );
-          for (const ev of agendoOnlyEvents) {
-            sendEvent(res, ev);
-          }
-        }
-      } else if (logEvents.length > 0) {
-        // Full fallback — CLI history unavailable, use log file for everything
+      if (logEvents.length > 0) {
         const fallbackEvent: AgendoEvent = {
           id: 0,
           sessionId: session.id,

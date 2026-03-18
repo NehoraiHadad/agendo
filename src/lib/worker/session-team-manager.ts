@@ -138,6 +138,66 @@ export class SessionTeamManager {
     }
   }
 
+  /**
+   * Build the current team state as AgendoEventPayload[] from live sources
+   * (filesystem inbox/config/tasks). Used for SSE reconnect catchup instead
+   * of replaying stale events from the log file.
+   *
+   * Returns an empty array if no team is active.
+   */
+  getTeamState(): AgendoEventPayload[] {
+    if (!this.monitor || !this.taskMonitor) return [];
+
+    const events: AgendoEventPayload[] = [];
+
+    // 1. Team config (members, team name)
+    const config = this.monitor.readConfig();
+    if (config) {
+      events.push({
+        type: 'team:config',
+        teamName: config.name,
+        members: config.members,
+      });
+    }
+
+    // 2. All inbox messages (teammate → lead)
+    for (const msg of this.monitor.readAllMessages()) {
+      events.push({
+        type: 'team:message',
+        fromAgent: msg.from,
+        text: msg.text,
+        summary: msg.summary,
+        color: msg.color,
+        sourceTimestamp: msg.timestamp,
+        isStructured: msg.isStructured,
+        structuredPayload: msg.structuredPayload,
+      });
+    }
+
+    // 3. All outbox messages (lead → teammates)
+    for (const { toAgent, message: msg } of this.monitor.readAllOutboxMessages()) {
+      events.push({
+        type: 'team:outbox-message',
+        toAgent,
+        fromAgent: msg.from,
+        text: msg.text,
+        summary: msg.summary,
+        color: msg.color,
+        sourceTimestamp: msg.timestamp,
+        isStructured: msg.isStructured,
+        structuredPayload: msg.structuredPayload,
+      });
+    }
+
+    // 4. Tasks snapshot
+    const tasks = this.taskMonitor.readAllTasks();
+    if (tasks.length > 0) {
+      events.push({ type: 'team:task-update', tasks });
+    }
+
+    return events;
+  }
+
   /** Stop polling and detach the monitor. Call on session exit or terminate. */
   stop(): void {
     this.detachMonitors();
