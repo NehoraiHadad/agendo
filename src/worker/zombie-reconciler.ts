@@ -168,6 +168,12 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
   // can give it a smarter resumePrompt that prevents restart loops.
   const restartInitiatorId = consumeRestartMarker();
 
+  // Find sessions that were still claimed by this worker when it died.
+  // Includes 'active' and 'awaiting_input' (obvious orphans), plus 'idle'
+  // sessions that still have our workerId — these were transitioned to idle
+  // by the shutdown handler (determineExitStatus) but the worker died before
+  // handleReEnqueue could fire. Without including 'idle' here, those sessions
+  // would never be auto-resumed after a planned worker restart.
   const orphaned = await db
     .select({
       id: sessions.id,
@@ -178,7 +184,10 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     })
     .from(sessions)
     .where(
-      and(eq(sessions.workerId, workerId), inArray(sessions.status, ['active', 'awaiting_input'])),
+      and(
+        eq(sessions.workerId, workerId),
+        inArray(sessions.status, ['active', 'awaiting_input', 'idle']),
+      ),
     );
 
   if (orphaned.length === 0) return;
@@ -204,37 +213,60 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     }
 
     // -----------------------------------------------------------------------
-    // active sessions: the agent is producing output that nobody is reading.
-    // Kill the process and optionally re-enqueue for auto-recovery.
+    // idle sessions (still claimed by this worker): the shutdown handler
+    // already transitioned these to idle via determineExitStatus, but
+    // handleReEnqueue didn't fire (terminateKilled sessions skip it to
+    // avoid double-enqueue races). Release the worker claim, then fall
+    // through to auto-recovery.
     // -----------------------------------------------------------------------
-    if (session.pid != null && session.pid !== 0 && isPidAlive(session.pid)) {
-      log.info({ sessionId: session.id, pid: session.pid }, 'Session PID still alive, killing');
-      try {
-        process.kill(-session.pid, 'SIGTERM');
-      } catch {
-        // Already dead between check and kill — fine, fall through
-      }
-      // Brief pause so the process can die before we update the DB
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    if (session.status === 'idle') {
+      await db
+        .update(sessions)
+        .set({ workerId: null })
+        .where(and(eq(sessions.id, session.id), eq(sessions.workerId, workerId)));
+
+      log.info(
+        { sessionId: session.id },
+        'Idle session still claimed by this worker, releasing claim',
+      );
+      // Fall through to auto-recovery below
     }
 
-    await db
-      .update(sessions)
-      .set({ status: 'idle', workerId: null, lastActiveAt: new Date() })
-      .where(
-        and(eq(sessions.id, session.id), inArray(sessions.status, ['active', 'awaiting_input'])),
+    // -----------------------------------------------------------------------
+    // active sessions: the agent is producing output that nobody is reading.
+    // Kill the process and transition to idle.
+    // -----------------------------------------------------------------------
+    if (session.status === 'active') {
+      if (session.pid != null && session.pid !== 0 && isPidAlive(session.pid)) {
+        log.info({ sessionId: session.id, pid: session.pid }, 'Session PID still alive, killing');
+        try {
+          process.kill(-session.pid, 'SIGTERM');
+        } catch {
+          // Already dead between check and kill — fine, fall through
+        }
+        // Brief pause so the process can die before we update the DB
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      await db
+        .update(sessions)
+        .set({ status: 'idle', workerId: null, lastActiveAt: new Date() })
+        .where(and(eq(sessions.id, session.id), eq(sessions.status, 'active')));
+
+      log.info(
+        { sessionId: session.id, wasStatus: session.status },
+        'Session marked idle after worker restart',
       );
+      notifySessionStatus(session.id, 'idle');
+    }
 
-    log.info(
-      { sessionId: session.id, wasStatus: session.status },
-      'Session marked idle after worker restart',
-    );
-    notifySessionStatus(session.id, 'idle');
-
-    // Auto-recovery: re-enqueue only if the session was active (mid-work),
-    // has a resumable sessionRef, and hasn't exceeded the durable recovery limit.
-    // The counter is stored in sessions.autoResumeCount (persisted in DB) so it
-    // survives worker restarts — unlike the old in-memory RecoveryCounter.
+    // -----------------------------------------------------------------------
+    // Auto-recovery: re-enqueue if the session has a resumable sessionRef
+    // and hasn't exceeded the durable recovery limit. Covers both 'active'
+    // sessions (crash recovery) and 'idle' sessions (planned restart where
+    // shutdown handler transitioned to idle but handleReEnqueue was skipped).
+    // The counter is stored in sessions.autoResumeCount (persisted in DB)
+    // so it survives worker restarts.
     if (session.sessionRef != null) {
       if ((session.autoResumeCount ?? 0) >= MAX_AUTO_RECOVERY_ATTEMPTS) {
         log.warn(

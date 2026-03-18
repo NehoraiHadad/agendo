@@ -488,20 +488,22 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
     });
   }
 
-  // Mid-turn interruption auto-resume: fires for both planned terminations
-  // (terminateKilled = worker/mode-change restart) and unexpected crashes
-  // (agendo restart, MCP drop, CLI crash, etc.).
-  // Only fires when the session was genuinely mid-work (active, not awaiting_input),
-  // has a resumable sessionRef, and no other re-enqueue path is already running.
-  // resumePrompt gives the agent context so it knows to continue rather than repeat.
-  // Guarded by a durable DB counter to prevent infinite restart loops.
+  // Mid-turn interruption auto-resume for UNEXPECTED crashes only.
+  // Covers: agendo restart (MCP drop), CLI crash, non-zero exit with no known reason.
+  //
+  // Planned worker restarts (terminateKilled) are NOT handled here — the
+  // zombie-reconciler on the next cold start handles those. Running both
+  // causes a double-enqueue race: handleReEnqueue fires during shutdown,
+  // zombie-reconciler fires on startup, and the session gets two resume
+  // prompts — the first without the "restart succeeded" context.
   const resumeRef = ctx.sessionRef ?? ctx.dbSessionRef ?? null;
   if (
     wasInterruptedMidTurn &&
     resumeRef &&
     !ctx.exitContext.cancelKilled &&
     !ctx.exitContext.clearContextRestart &&
-    !ctx.exitContext.modeChangeRestart
+    !ctx.exitContext.modeChangeRestart &&
+    !ctx.exitContext.terminateKilled
   ) {
     (async () => {
       try {
@@ -513,15 +515,8 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
           );
           return;
         }
-        // Note: when the worker is restarted via safe-restart-worker.sh, this
-        // code path races with pool.end() during shutdown and may not fire.
-        // The zombie-reconciler handles that case on cold start with a smarter
-        // resumePrompt (using the restart marker file). This path covers
-        // non-worker restarts (e.g. agendo/MCP drops, CLI crashes).
-        const resumePrompt = ctx.exitContext.terminateKilled
-          ? 'The worker restarted. Please continue where you left off.' +
-            '\n\nNote: If you need to restart the worker, use `./scripts/safe-restart-worker.sh` (never `pm2 restart agendo-worker` directly).'
-          : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
+        const resumePrompt =
+          'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
         await enqueueSession({
           sessionId: ctx.sessionId,
           resumeRef,
@@ -532,9 +527,8 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
           {
             sessionId: ctx.sessionId,
             attempt: count,
-            terminateKilled: ctx.exitContext.terminateKilled,
           },
-          'Session auto-resumed after mid-turn interruption',
+          'Session auto-resumed after unexpected interruption',
         );
       } catch (err) {
         log.error(
