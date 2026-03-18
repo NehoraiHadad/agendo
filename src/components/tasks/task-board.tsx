@@ -263,7 +263,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
         <h1 className="text-xl font-semibold sm:text-2xl">Tasks</h1>
         <TaskCreateDialog />
