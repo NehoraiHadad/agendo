@@ -32,7 +32,7 @@ export const PLAYBOOK_DEFAULTS: Required<
   minWavesBeforePass: 2,
   requiredObjections: 0,
   synthesisMode: 'single',
-  reactiveInjection: false,
+  reactiveInjection: true,
   maxResponsesPerWave: 2,
   evictionThreshold: 2,
   roleInstructions: {},

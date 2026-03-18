@@ -1826,13 +1826,13 @@ describe('reactive injection', () => {
     expect(agentA.waveResponseCount).toBe(2);
   });
 
-  it('reactiveInjection defaults to false (backward compatible)', () => {
+  it('reactiveInjection defaults to true', () => {
     const orchestrator = new BrainstormOrchestrator(
       'room-reactive-default',
       5,
       120,
     ) as unknown as TestOrchestrator;
-    expect(orchestrator.reactiveInjection).toBe(false);
+    expect(orchestrator.reactiveInjection).toBe(true);
   });
 
   it('does NOT inject reactively when reactiveInjection is disabled', async () => {
@@ -1844,8 +1844,10 @@ describe('reactive injection', () => {
     listenerSet.add((event) => capturedEvents.push(event));
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
-    // No reactiveInjection config — defaults to false
-    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120) as unknown as TestOrchestrator;
+    // Explicitly disable reactive injection for this test
+    const orchestrator = new BrainstormOrchestrator(roomId, 5, 120, {
+      reactiveInjection: false,
+    }) as unknown as TestOrchestrator;
 
     const agentA = makeParticipant({
       agentId: 'agent-a',

@@ -1123,12 +1123,15 @@ export class BrainstormOrchestrator {
       });
     }
 
-    // Inject the content into each active participant's session
+    // Inject the content into each active participant's session.
+    // Prepend a wave status header so agents know which wave they're in.
+    const waveHeader = this.buildWaveStatusHeader(null);
+    const contentWithHeader = content ? `${waveHeader}\n\n${content}` : waveHeader;
     const injectionPromises = this.participants
       .filter(
         (p): p is ParticipantState & { sessionId: string } => !p.hasPassed && p.sessionId !== null,
       )
-      .map((p) => this.injectMessage(p.sessionId, content));
+      .map((p) => this.injectMessage(p.sessionId, contentWithHeader));
 
     await Promise.allSettled(injectionPromises);
 
@@ -1444,7 +1447,7 @@ export class BrainstormOrchestrator {
    * Agents that have 'passed', 'hasLeft', or exhausted their response budget are skipped.
    */
   private async reactivelyInject(sender: ParticipantState, senderResponse: string): Promise<void> {
-    const formattedResponse = `[${sender.agentName}]:\n${senderResponse}`;
+    const formattedSenderResponse = `[${sender.agentName}]:\n${senderResponse}`;
 
     const targets = this.participants.filter((p) => {
       // Skip the sender itself
@@ -1505,7 +1508,10 @@ export class BrainstormOrchestrator {
         // sessionId is guaranteed non-null by the filter above (p.sessionId check)
         const targetSessionId = target.sessionId;
         if (targetSessionId) {
-          await this.injectMessage(targetSessionId, formattedResponse);
+          // Build a per-target status header (response count is specific to each recipient)
+          const statusHeader = this.buildWaveStatusHeader(target.agentId);
+          const messageWithHeader = `${statusHeader}\n\n${formattedSenderResponse}`;
+          await this.injectMessage(targetSessionId, messageWithHeader);
         }
       } catch (err) {
         log.warn(
@@ -1957,6 +1963,47 @@ ${correctionsText}`;
       'injectMessage: fallback to Worker HTTP delivery',
     );
     await sendSessionControl(sessionId, { type: 'message' as const, text });
+  }
+
+  /**
+   * Build a concise status header to prepend to injected messages so agents
+   * have situational awareness: which wave, how many responded, who is pending.
+   *
+   * @param forParticipantId - When set (reactive injection), include per-recipient
+   *   response-count line. When null (wave start), omit waiting-names (everyone is waiting).
+   */
+  private buildWaveStatusHeader(forParticipantId: string | null): string {
+    const wave1 = this.currentWave + 1;
+    const maxWaves = this.maxWaves;
+
+    const activeParticipants = this.participants.filter((p) => !p.hasPassed && !p.hasLeft);
+    const totalActive = activeParticipants.length;
+
+    if (forParticipantId === null) {
+      // Wave-start broadcast — everyone is starting, no "waiting" list needed
+      return `---\n📊 Wave ${wave1} of ${maxWaves} | Starting now — ${totalActive} participant${totalActive !== 1 ? 's' : ''}\n---`;
+    }
+
+    // Reactive injection — show full context
+    const respondedCount = activeParticipants.filter(
+      (p) => p.waveStatus === 'done' || p.waveStatus === 'passed',
+    ).length;
+
+    const waitingParticipants = activeParticipants.filter(
+      (p) => p.waveStatus === 'thinking' && p.agentId !== forParticipantId,
+    );
+    const waitingNames = waitingParticipants.map((p) => p.agentSlug).join(', ');
+
+    const recipient = activeParticipants.find((p) => p.agentId === forParticipantId);
+    const myResponseCount = recipient?.waveResponseCount ?? 0;
+
+    const lines: string[] = [
+      `---`,
+      `📊 Wave ${wave1} of ${maxWaves} | ${respondedCount}/${totalActive} responded${waitingNames ? ` | ${waitingNames} still thinking` : ''}`,
+      `You have responded ${myResponseCount} time(s) this wave (max: ${this.maxResponsesPerWave})`,
+      `---`,
+    ];
+    return lines.join('\n');
   }
 
   /**
