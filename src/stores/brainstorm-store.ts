@@ -4,6 +4,9 @@ import { create } from 'zustand';
 import type { BrainstormEvent, BrainstormRoomStatus } from '@/lib/realtime/event-types';
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 
+/** Re-export for convenient use in UI components */
+export type { WaveQualityScore } from '@/lib/worker/brainstorm-quality';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -34,6 +37,12 @@ export interface BrainstormMessageItem {
 // Store
 // ============================================================================
 
+/** Active review window state — present during the wave:review pause */
+export interface ReviewState {
+  wave: number;
+  timeoutSec: number;
+}
+
 interface BrainstormState {
   roomId: string | null;
   title: string;
@@ -58,6 +67,18 @@ interface BrainstormState {
   converged: boolean;
   maxWavesReached: boolean;
 
+  /**
+   * Active review window — set on wave:review, cleared on wave:start.
+   * When non-null, the UI should show feedback buttons on participant messages.
+   */
+  reviewState: ReviewState | null;
+
+  /** Quality scores indexed by wave number */
+  waveQualityScores: Map<number, import('@/lib/worker/brainstorm-quality').WaveQualityScore>;
+
+  /** Set of wave numbers that were reflection waves */
+  reflectionWaves: Set<number>;
+
   // Actions
   setRoom: (room: BrainstormWithDetails) => void;
   handleEvent: (event: BrainstormEvent) => void;
@@ -79,6 +100,9 @@ const initialState: Omit<BrainstormState, 'setRoom' | 'handleEvent' | 'reset'> =
   streamingText: new Map(),
   converged: false,
   maxWavesReached: false,
+  reviewState: null,
+  waveQualityScores: new Map(),
+  reflectionWaves: new Set(),
 };
 
 export const useBrainstormStore = create<BrainstormState>((set, get) => ({
@@ -129,7 +153,13 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       }
 
       case 'wave:start': {
-        set({ currentWave: event.wave });
+        // Clear the review window when the next wave begins
+        set({ currentWave: event.wave, reviewState: null });
+        break;
+      }
+
+      case 'wave:review': {
+        set({ reviewState: { wave: event.wave, timeoutSec: event.timeoutSec } });
         break;
       }
 
@@ -272,6 +302,20 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         break;
       }
 
+      case 'wave:quality': {
+        const newQualityScores = new Map(state.waveQualityScores);
+        newQualityScores.set(event.wave, event.score);
+        set({ waveQualityScores: newQualityScores });
+        break;
+      }
+
+      case 'wave:reflection': {
+        const newReflectionWaves = new Set(state.reflectionWaves);
+        newReflectionWaves.add(event.wave);
+        set({ reflectionWaves: newReflectionWaves });
+        break;
+      }
+
       case 'room:error': {
         // Errors are displayed via the UI — no state change needed
         break;
@@ -285,6 +329,9 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       participants: new Map(),
       messages: [],
       streamingText: new Map(),
+      reviewState: null,
+      waveQualityScores: new Map(),
+      reflectionWaves: new Set(),
     });
   },
 }));

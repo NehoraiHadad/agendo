@@ -19,25 +19,34 @@ import { MessageCard, StreamingCard, ThinkingCard } from './message-card';
 import { ComposeBar } from './compose-bar';
 import { synthesisMdComponents } from './markdown-components';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
-import type { BrainstormMessageItem, ParticipantState } from '@/stores/brainstorm-store';
+import type {
+  BrainstormMessageItem,
+  ParticipantState,
+  ReviewState,
+} from '@/stores/brainstorm-store';
 
 // ============================================================================
 // Wave divider
 // ============================================================================
 
-function WaveDivider({ wave }: { wave: number }) {
+function WaveDivider({ wave, isReflection }: { wave: number; isReflection?: boolean }) {
   // wave is 0-indexed internally; display as 1-indexed for humans
   const displayWave = wave + 1;
   return (
     <div
       className="flex items-center gap-3 py-3 px-1"
       role="separator"
-      aria-label={`Wave ${displayWave}`}
+      aria-label={isReflection ? `Reflection Wave ${displayWave}` : `Wave ${displayWave}`}
     >
       <div className="flex-1 h-px bg-white/[0.05]" />
       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/25 font-mono tracking-widest uppercase">
         <Waves className="size-3" />
         Wave {displayWave}
+        {isReflection && (
+          <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-400/70 border border-sky-500/20 normal-case tracking-normal">
+            Reflection
+          </span>
+        )}
       </div>
       <div className="flex-1 h-px bg-white/[0.05]" />
     </div>
@@ -213,12 +222,18 @@ const MessageList = memo(function MessageList({
   streamingText,
   participants,
   currentWave,
+  reflectionWaves,
+  reviewState,
+  roomId,
 }: {
   messages: BrainstormMessageItem[];
   slugMap: SlugMap;
   streamingText: Map<string, string>;
   participants: Map<string, ParticipantState>;
   currentWave: number;
+  reflectionWaves: Set<number>;
+  reviewState: ReviewState | null;
+  roomId: string;
 }) {
   const groups = groupMessagesByWave(messages);
   const streamingEntries = Array.from(streamingText.entries());
@@ -227,7 +242,9 @@ const MessageList = memo(function MessageList({
     <>
       {groups.map((group, idx) => (
         <div key={`wave-${group.wave}-${idx}`}>
-          {group.wave > 0 && <WaveDivider wave={group.wave} />}
+          {group.wave > 0 && (
+            <WaveDivider wave={group.wave} isReflection={reflectionWaves.has(group.wave)} />
+          )}
           <div className="px-4 space-y-3">
             {group.messages.map((msg) => {
               const agentInfo = msg.agentId ? slugMap[msg.agentId] : undefined;
@@ -237,6 +254,8 @@ const MessageList = memo(function MessageList({
                   message={msg}
                   agentSlug={agentInfo?.slug ?? ''}
                   agentIndex={agentInfo?.index ?? 0}
+                  reviewState={reviewState}
+                  roomId={roomId}
                 />
               );
             })}
@@ -337,6 +356,8 @@ export function RoomView({
   const converged = useBrainstormStore((s) => s.converged);
   const maxWavesReached = useBrainstormStore((s) => s.maxWavesReached);
   const currentWave = useBrainstormStore((s) => s.currentWave);
+  const reflectionWaves = useBrainstormStore((s) => s.reflectionWaves);
+  const reviewState = useBrainstormStore((s) => s.reviewState);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -390,6 +411,9 @@ export function RoomView({
               streamingText={streamingText}
               participants={participants}
               currentWave={currentWave}
+              reflectionWaves={reflectionWaves}
+              reviewState={reviewState}
+              roomId={roomId}
             />
           </div>
         )}

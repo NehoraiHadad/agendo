@@ -8,6 +8,12 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolvePlaybook } from '@/lib/brainstorm/playbook';
+import {
+  computeWaveQuality,
+  shouldTriggerReflection,
+  REFLECTION_PROMPT,
+} from '@/lib/worker/brainstorm-quality';
+import type { WaveQualityScore } from '@/lib/worker/brainstorm-quality';
 import { DEFAULT_ROLE_INSTRUCTIONS, AUTO_ROLE_ASSIGNMENTS } from '@/lib/brainstorm/role-templates';
 import type { BrainstormConfig } from '@/lib/db/schema';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
@@ -19,7 +25,7 @@ import {
 } from '@/lib/worker/synthesis-decision-log';
 import { createLogger } from '@/lib/logger';
 import { brainstormEventListeners, addSessionEventListener } from '@/lib/worker/worker-sse';
-import { liveBrainstormHandlers } from '@/lib/worker/worker-http';
+import { liveBrainstormHandlers, liveBrainstormFeedbackHandlers } from '@/lib/worker/worker-http';
 import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { getSessionProc } from '@/lib/worker/session-runner';
 import { createSession, getSessionStatus } from '@/lib/services/session-service';
@@ -53,6 +59,13 @@ const DELTA_FLUSH_INTERVAL_MS = 150;
 // ============================================================================
 
 type WaveStatus = 'pending' | 'thinking' | 'done' | 'passed' | 'timeout';
+
+/** Feedback signal submitted by a user on behalf of a participant after a wave */
+interface WaveFeedback {
+  agentId: string;
+  signal: 'thumbs_up' | 'thumbs_down' | 'focus';
+  receivedAt: Date;
+}
 
 interface ParticipantState {
   /** DB primary key of the brainstorm_participants row */
@@ -166,6 +179,24 @@ export class BrainstormOrchestrator {
   pendingReactiveInjections = 0;
   /** Consecutive timeout count required before a participant is auto-evicted (default 2) */
   evictionThreshold = 2;
+  /** Seconds to pause after each wave for user feedback signals (0 = no pause) */
+  reviewPauseSec = 0;
+  /** Feedback submitted by users per wave: wave → list of feedback entries */
+  feedbackMap = new Map<number, WaveFeedback[]>();
+  /** Resolve function to unblock waitForFeedback() when all participants respond early */
+  private feedbackResolve: (() => void) | null = null;
+  /** Current wave being reviewed (used to match incoming feedback to the right window) */
+  private reviewingWave: number | null = null;
+  /** Whether to automatically inject reflection waves when discussion stalls */
+  autoReflection = true;
+  /** Minimum waves between consecutive reflection injections */
+  reflectionInterval = 3;
+  /** Quality scores collected after each wave */
+  private waveQualityScores: WaveQualityScore[] = [];
+  /** Concatenated non-PASS response text from each prior wave (for repeat detection) */
+  private previousWaveTexts: string[] = [];
+  /** Wave number of the most recent reflection injection, or undefined if none */
+  private lastReflectionWave: number | undefined = undefined;
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
@@ -184,6 +215,9 @@ export class BrainstormOrchestrator {
     this.reactiveInjection = this.playbook.reactiveInjection;
     this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
     this.evictionThreshold = this.playbook.evictionThreshold ?? 2;
+    this.reviewPauseSec = this.playbook.reviewPauseSec ?? 0;
+    this.autoReflection = this.playbook.autoReflection;
+    this.reflectionInterval = this.playbook.reflectionInterval;
 
     // Default startup timeout: at least 10 minutes. Never less than the wave
     // timeout itself (e.g. if waveTimeoutSec was increased significantly).
@@ -232,6 +266,9 @@ export class BrainstormOrchestrator {
       this.reactiveInjection = this.playbook.reactiveInjection;
       this.maxResponsesPerWave = this.playbook.maxResponsesPerWave;
       this.evictionThreshold = this.playbook.evictionThreshold ?? 2;
+      this.reviewPauseSec = this.playbook.reviewPauseSec ?? 0;
+      this.autoReflection = this.playbook.autoReflection;
+      this.reflectionInterval = this.playbook.reflectionInterval;
       this.participantReadyTimeoutSec =
         this.playbook.participantReadyTimeoutSec ??
         Math.max(MIN_PARTICIPANT_READY_TIMEOUT_SEC, this.waveTimeoutSec * 2);
@@ -608,6 +645,106 @@ export class BrainstormOrchestrator {
     this.unsubscribers.push(unsub);
   }
 
+  // ============================================================================
+  // Feedback signals
+  // ============================================================================
+
+  /**
+   * Store a user feedback signal for the given wave.
+   * If all active participants have now submitted feedback during an active review
+   * window, resolve the waitForFeedback() promise early.
+   */
+  receiveFeedback(
+    wave: number,
+    agentId: string,
+    signal: 'thumbs_up' | 'thumbs_down' | 'focus',
+  ): void {
+    const entry: WaveFeedback = { agentId, signal, receivedAt: new Date() };
+    const existing = this.feedbackMap.get(wave) ?? [];
+    existing.push(entry);
+    this.feedbackMap.set(wave, existing);
+
+    log.info({ roomId: this.roomId, wave, agentId, signal }, 'Feedback received');
+
+    // Early resolution: if we are currently waiting for feedback on this wave,
+    // check whether all active participants have now submitted.
+    if (this.reviewingWave === wave && this.feedbackResolve) {
+      const activeParticipants = this.participants.filter((p) => !p.hasLeft && !p.hasPassed);
+      const activeIds = new Set(activeParticipants.map((p) => p.agentId));
+      const respondedIds = new Set(existing.map((f) => f.agentId));
+      const allResponded = [...activeIds].every((id) => respondedIds.has(id));
+
+      if (allResponded) {
+        log.info({ roomId: this.roomId, wave }, 'All participants responded — ending review early');
+        const resolve = this.feedbackResolve;
+        this.feedbackResolve = null;
+        this.reviewingWave = null;
+        resolve();
+      }
+    }
+  }
+
+  /**
+   * Wait for user feedback signals, resolving after `timeoutMs` or when all
+   * active participants have submitted feedback (whichever comes first).
+   * Resolves immediately when timeoutMs is 0.
+   */
+  waitForFeedback(timeoutMs: number, _participantCount: number): Promise<void> {
+    if (timeoutMs <= 0) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      this.feedbackResolve = resolve;
+
+      const timer = setTimeout(() => {
+        if (this.feedbackResolve === resolve) {
+          this.feedbackResolve = null;
+          this.reviewingWave = null;
+          resolve();
+        }
+      }, timeoutMs);
+
+      // If already all responded (race: feedback arrived before this method was called),
+      // resolve immediately and cancel the timer.
+      const activeParticipants = this.participants.filter((p) => !p.hasLeft && !p.hasPassed);
+      if (activeParticipants.length > 0 && this.reviewingWave !== null) {
+        const existing = this.feedbackMap.get(this.reviewingWave) ?? [];
+        const respondedIds = new Set(existing.map((f) => f.agentId));
+        const allResponded = activeParticipants.every((p) => respondedIds.has(p.agentId));
+        if (allResponded) {
+          clearTimeout(timer);
+          this.feedbackResolve = null;
+          this.reviewingWave = null;
+          resolve();
+        }
+      }
+    });
+  }
+
+  /**
+   * Format accumulated feedback for wave N as a moderator note to inject into
+   * the next wave broadcast. Returns null if no feedback was received.
+   */
+  formatFeedbackNote(wave: number): string | null {
+    const feedback = this.feedbackMap.get(wave);
+    if (!feedback || feedback.length === 0) return null;
+
+    const agentNameMap = new Map(this.participants.map((p) => [p.agentId, p.agentName]));
+
+    const lines = feedback.map((f) => {
+      const name = agentNameMap.get(f.agentId) ?? f.agentId;
+      switch (f.signal) {
+        case 'thumbs_up':
+          return `- ${name}: 👍 (on track)`;
+        case 'thumbs_down':
+          return `- ${name}: 👎 (off topic)`;
+        case 'focus':
+          return `- ${name}: 🎯 Focus (dig deeper here)`;
+      }
+    });
+
+    return `## Moderator Feedback (Wave ${wave})\n${lines.join('\n')}`;
+  }
+
   /** Register the control message handler in the Worker HTTP dispatch map. */
   private subscribeToControl(): void {
     const handler = (rawPayload: string) => {
@@ -727,6 +864,33 @@ export class BrainstormOrchestrator {
 
       // Emit wave:complete
       await this.emitEvent({ type: 'wave:complete', wave });
+
+      // Compute wave quality and emit wave:quality event
+      const qualityScore = computeWaveQuality(wave, responses, this.previousWaveTexts);
+      this.waveQualityScores.push(qualityScore);
+      await this.emitEvent({ type: 'wave:quality', wave, score: qualityScore });
+
+      // Accumulate this wave's non-PASS response texts for future repeat detection
+      const currentWaveText = responses
+        .filter((r) => !r.isPass && !r.isTimeout && r.content)
+        .map((r) => r.content)
+        .join(' ');
+      if (currentWaveText) {
+        this.previousWaveTexts.push(currentWaveText);
+      }
+
+      // Review pause: if configured, emit wave:review and wait for feedback
+      if (this.reviewPauseSec > 0 && !this.stopped) {
+        this.reviewingWave = wave;
+        await this.emitEvent({ type: 'wave:review', wave, timeoutSec: this.reviewPauseSec });
+        // Register feedback handler so the Worker HTTP endpoint can deliver signals
+        liveBrainstormFeedbackHandlers.set(this.roomId, (w, agentId, signal) => {
+          this.receiveFeedback(w, agentId, signal);
+        });
+        const activeCount = this.participants.filter((p) => !p.hasLeft && !p.hasPassed).length;
+        await this.waitForFeedback(this.reviewPauseSec * 1000, activeCount);
+        liveBrainstormFeedbackHandlers.delete(this.roomId);
+      }
 
       // Stalled room: all non-evicted, non-passed participants timed out — nobody is
       // actively participating. Emit room:stalled instead of converging.
@@ -849,8 +1013,33 @@ export class BrainstormOrchestrator {
         continue;
       }
 
+      // Check for automatic reflection injection (stall detection)
+      if (
+        shouldTriggerReflection(this.waveQualityScores, {
+          autoReflection: this.autoReflection,
+          reflectionInterval: this.reflectionInterval,
+          lastReflectionWave: this.lastReflectionWave,
+        })
+      ) {
+        log.info(
+          { roomId: this.roomId, wave, reflectionInterval: this.reflectionInterval },
+          'Stall detected — injecting reflection wave',
+        );
+        this.lastReflectionWave = wave + 1;
+        await this.emitEvent({ type: 'wave:reflection', wave: wave + 1 });
+        waveContent = REFLECTION_PROMPT;
+        await this.resetPassedParticipants();
+        wave++;
+        continue;
+      }
+
       // Normal continuation — broadcast this wave's responses to everyone
       waveContent = this.formatWaveBroadcast(responses);
+      // Prepend moderator feedback note if any signals were received this wave
+      const feedbackNote = this.formatFeedbackNote(wave);
+      if (feedbackNote) {
+        waveContent = feedbackNote + '\n\n---\n\n' + waveContent;
+      }
       await this.resetPassedParticipants();
       wave++;
     }
@@ -2010,8 +2199,9 @@ You will receive the discussion topic in your first wave message. Wait for it be
     this.unsubscribers = [];
     this.subscribedSessionIds.clear();
 
-    // Deregister the control handler from the Worker HTTP dispatch map.
+    // Deregister the control and feedback handlers from the Worker HTTP dispatch map.
     liveBrainstormHandlers.delete(this.roomId);
+    liveBrainstormFeedbackHandlers.delete(this.roomId);
 
     // Cancel the wave timeout to avoid stale timer fire after cleanup
     if (this.waveTimeoutHandle) {

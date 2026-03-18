@@ -294,7 +294,21 @@ export type BrainstormEvent =
       agentId: string;
       agentName: string;
     })
-  | (BrainstormEventBase & { type: 'room:error'; message: string });
+  | (BrainstormEventBase & { type: 'room:error'; message: string })
+  | (BrainstormEventBase & { type: 'wave:review'; wave: number; timeoutSec: number })
+  | (BrainstormEventBase & {
+      type: 'wave:quality';
+      wave: number;
+      score: {
+        wave: number;
+        newIdeasCount: number;
+        avgResponseLength: number;
+        repeatRatio: number;
+        passCount: number;
+        agreementRatio: number;
+      };
+    })
+  | (BrainstormEventBase & { type: 'wave:reflection'; wave: number });
 
 export type BrainstormRoomStatus = 'waiting' | 'active' | 'paused' | 'synthesizing' | 'ended';
 

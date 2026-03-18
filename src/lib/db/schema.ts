@@ -575,6 +575,8 @@ export interface BrainstormConfig {
   evictionThreshold?: number;
   /** Custom role instructions overriding defaults: role label → instruction text */
   roleInstructions?: Record<string, string>;
+  /** Seconds to pause after each wave for user feedback (0 = no pause, default 0) */
+  reviewPauseSec?: number;
   /** What specific outcome is expected from this brainstorm */
   goal?: string;
   /** Constraints that apply: time, scope, tech stack, etc */
@@ -583,6 +585,10 @@ export interface BrainstormConfig {
   deliverableType?: 'decision' | 'options_list' | 'action_plan' | 'risk_assessment' | 'exploration';
   /** Who will use the output — affects language/depth in synthesis */
   targetAudience?: string;
+  /** Enable automatic reflection waves when discussion stalls (default true) */
+  autoReflection?: boolean;
+  /** Minimum waves between reflection injections (default 3) */
+  reflectionInterval?: number;
 }
 
 // ============================================================================
