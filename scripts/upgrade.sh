@@ -143,7 +143,20 @@ TARGET_VERSION="${TARGET_TAG#v}"
 TARGET_SHA=$(git rev-parse "$TARGET_TAG")
 
 if [ "$CURRENT_SHA" = "$TARGET_SHA" ]; then
-  info "Already at ${TARGET_TAG} (${TARGET_SHA:0:7}). Nothing to do."
+  # Code is at the right SHA — but the running process might still report an old
+  # version (e.g. dev server started before the release was cut).  Restart if needed.
+  RUNNING_VERSION=$(curl -sf --max-time 5 "${BASE_URL}/api/health" 2>/dev/null | jq -r '.version // ""' 2>/dev/null || echo "")
+  if [ "$RUNNING_VERSION" = "$TARGET_VERSION" ]; then
+    info "Already at ${TARGET_TAG} and running v${RUNNING_VERSION}. Nothing to do."
+    exit 0
+  fi
+  info "Code is at ${TARGET_TAG} but process reports v${RUNNING_VERSION} — restarting to pick up new version."
+  rm -f /tmp/agendo-version-check.json
+  if command -v pm2 &>/dev/null; then
+    pm2 restart agendo --update-env 2>/dev/null || true
+    pm2 save --force 2>/dev/null || true
+  fi
+  info "Restart triggered. Version will update to ${TARGET_TAG} on next request."
   exit 0
 fi
 
@@ -240,21 +253,29 @@ pnpm db:migrate 2>&1 | tail -3
 echo ""
 info "Restarting services..."
 
+# Clear version check cache so the newly restarted process reports the correct version
+rm -f /tmp/agendo-version-check.json
+
 if [ -x "$SCRIPT_DIR/safe-restart-worker.sh" ]; then
   "$SCRIPT_DIR/safe-restart-worker.sh" --no-build 2>&1 | tail -3
 else
   pm2 restart agendo-worker --update-env 2>/dev/null || true
 fi
 
-if [ -x "$SCRIPT_DIR/safe-restart-agendo.sh" ]; then
-  "$SCRIPT_DIR/safe-restart-agendo.sh" --force 2>&1 | tail -3
+if command -v pm2 &>/dev/null; then
+  # Restart directly via PM2 (safe-restart-agendo.sh may deadlock when called
+  # from within an active session — the upgrade API endpoint itself keeps the
+  # session alive).  We use a short background delay so the SSE stream has time
+  # to flush its final events before the process is killed.
+  (sleep 1 && pm2 restart agendo --update-env && pm2 save --force >/dev/null 2>&1) &
+  disown $!
+  info "agendo restart queued (background)"
 else
-  pm2 restart agendo --update-env 2>/dev/null || true
+  warn "pm2 not found — manual restart required"
 fi
 
 # Restart terminal server if running
 pm2 restart agendo-terminal --update-env 2>/dev/null || true
-
 pm2 save --force 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
