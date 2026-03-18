@@ -1,1 +1,0 @@
-ALTER TABLE "sessions" ADD COLUMN "mcp_server_ids" jsonb;

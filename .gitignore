@@ -49,8 +49,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# drizzle
-drizzle/meta/
+# drizzle (meta must be committed so db:generate produces deltas, not full regenerations)
+# drizzle/meta/ — intentionally tracked in git
 
 # repo-sync
 .repo-sync-manifest.json

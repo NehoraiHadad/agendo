@@ -157,9 +157,11 @@ pnpm build:all
 ### 6. Set up the database
 
 ```bash
-pnpm db:setup       # Push schema via drizzle-kit
+pnpm db:setup       # Push schema via drizzle-kit (fresh install — ignores migration files)
 pnpm db:seed        # Seed agents, capabilities, and config
 ```
+
+> **How it works:** `db:setup` uses `drizzle-kit push` which directly syncs `schema.ts` to the database. It does **not** use migration files. Migration files (`drizzle/*.sql`) are only used by `db:migrate` during upgrades.
 
 ### 7. Set up PM2 (optional but recommended)
 
@@ -438,6 +440,17 @@ Options:
 - `--force` — skip active session check
 - `--backup-db` — run pg_dump before upgrading
 
+### Database Migration Model
+
+| Path          | Command           | When to use                                                                            |
+| ------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| Fresh install | `pnpm db:setup`   | New installation — creates all tables directly from `schema.ts` via drizzle-kit push   |
+| Upgrade       | `pnpm db:migrate` | Existing installation — applies only new migration files added since the last baseline |
+
+**Rule:** A new migration file is only created when `src/lib/db/schema.ts` changes between releases. Run `pnpm db:generate --name <description>` after the schema change, then commit the generated file. Never create migration files manually.
+
+The baseline (`drizzle/0000_baseline.sql`) represents the full schema at project inception. All migrations after it are additive changes.
+
 ### Manual
 
 ```bash
@@ -445,7 +458,7 @@ git fetch --tags origin
 git checkout v{version}
 pnpm install --frozen-lockfile
 pnpm build:all
-pnpm db:migrate
+pnpm db:migrate   # no-op if schema hasn't changed since last release
 ./scripts/safe-restart-worker.sh
 ./scripts/safe-restart-agendo.sh
 ```
@@ -457,7 +470,7 @@ pnpm db:migrate
 ./scripts/rollback.sh v0.1.0   # rollback to specific tag
 ```
 
-> **Note:** Database migrations are forward-only. If a migration was applied during the upgrade, manual DB intervention may be needed.
+> **Note:** Database migrations are forward-only. Rollback restores code only — if a migration was applied, the DB schema change remains.
 
 ### Version Check
 

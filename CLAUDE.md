@@ -217,6 +217,7 @@ Adapters expose a standard interface: they parse stdout into `AgendoEventPayload
 10. **Strip `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`** env vars before spawning agent subprocesses
 11. **Version tags** — always use `scripts/release.sh` to create releases (never manual `npm version` or `git tag`)
 12. **Upgrades** — always use `scripts/upgrade.sh` (never raw `git pull` in production)
+13. **Migrations** — only run `pnpm db:generate --name <description>` when `schema.ts` actually changes between releases. Never create migration files manually. One migration file per release at most. Fresh installs use `pnpm db:setup` (push, ignores migration files); upgrades use `pnpm db:migrate` (applies only new files since the baseline).
 
 ## Service Patterns
 
