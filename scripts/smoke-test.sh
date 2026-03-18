@@ -121,6 +121,7 @@ check_api GET "/api/agents" "List agents"
 check_api GET "/api/tasks" "List tasks"
 check_api GET "/api/dashboard" "Dashboard stats"
 check_api GET "/api/workers/status" "Worker status"
+check_api GET "/api/version" "Version check"
 
 # -----------------------------------------------------------------------
 # 4. Agent binary checks

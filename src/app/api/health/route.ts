@@ -4,6 +4,8 @@ import { eq, desc, sql } from 'drizzle-orm';
 import { statfs } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { config } from '@/lib/config';
+import { getCurrentVersion } from '@/lib/version';
+import { checkForUpdates } from '@/lib/services/version-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +15,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const detailed = url.searchParams.get('detailed') === 'true';
 
-  const version = process.env.npm_package_version ?? '0.1.0';
+  const version = getCurrentVersion();
   const uptime = Math.floor((Date.now() - startTime) / 1000);
 
   if (!detailed) {
@@ -139,6 +141,18 @@ export async function GET(req: Request) {
     exists: mcpPath ? existsSync(mcpPath) : false,
   };
 
+  // Version update check (uses cache, non-blocking)
+  let update: { available: boolean; latestVersion: string | null } | undefined;
+  try {
+    const versionInfo = await checkForUpdates();
+    update = {
+      available: versionInfo.updateAvailable,
+      latestVersion: versionInfo.latestVersion,
+    };
+  } catch {
+    // Non-critical — skip update check
+  }
+
   // Derive top-level status
   if (database?.status === 'error') {
     topStatus = 'error';
@@ -152,6 +166,7 @@ export async function GET(req: Request) {
       status: topStatus,
       version,
       uptime,
+      update,
       checks: {
         database,
         worker,

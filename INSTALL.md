@@ -424,15 +424,48 @@ For HTTPS (needed for PWA push notifications on mobile), use [Tailscale Funnel](
 
 ## Upgrading
 
+### Automatic (recommended)
+
 ```bash
-git pull
-pnpm install           # install any new/updated dependencies
-pnpm build:all         # rebuild app + worker + MCP server
-pnpm db:migrate        # apply any new database migrations
-pm2 restart all        # restart services
+./scripts/upgrade.sh
 ```
 
-If there are new environment variables, check `.env.example` and add them to your `.env.local`.
+This safely: checks for active sessions, pulls latest tag, installs deps, builds, runs migrations, restarts services, and validates health.
+
+Options:
+
+- `--to v0.3.0` — upgrade to a specific version
+- `--force` — skip active session check
+- `--backup-db` — run pg_dump before upgrading
+
+### Manual
+
+```bash
+git fetch --tags origin
+git checkout v{version}
+pnpm install --frozen-lockfile
+pnpm build:all
+pnpm db:migrate
+./scripts/safe-restart-worker.sh
+./scripts/safe-restart-agendo.sh
+```
+
+### Rollback
+
+```bash
+./scripts/rollback.sh          # reverts to pre-upgrade state
+./scripts/rollback.sh v0.1.0   # rollback to specific tag
+```
+
+> **Note:** Database migrations are forward-only. If a migration was applied during the upgrade, manual DB intervention may be needed.
+
+### Version Check
+
+The app checks for updates daily. You can also check manually:
+
+- UI: click the version badge in the sidebar footer
+- API: `GET /api/version` or `POST /api/version` (force refresh)
+- CLI: `curl -s localhost:4100/api/version | jq`
 
 ---
 

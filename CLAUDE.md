@@ -46,6 +46,13 @@ pnpm db:seed                    # seed database (runs seed.ts + seed-repo-integr
 
 # Worker dev (hot-reload, no build needed)
 pnpm worker:dev                 # tsx watch for local dev
+
+# Release & upgrade management
+./scripts/release.sh patch|minor|major  # bump version, tag, changelog
+./scripts/release.sh minor --push       # bump + push to remote
+./scripts/upgrade.sh                    # safe upgrade to latest version
+./scripts/upgrade.sh --to v0.3.0        # upgrade to specific version
+./scripts/rollback.sh                   # rollback to pre-upgrade state
 ```
 
 ## Tech Stack
@@ -208,6 +215,8 @@ Adapters expose a standard interface: they parse stdout into `AgendoEventPayload
 8. **Worker build uses esbuild** (not `tsc` — OOMs). Use `pnpm worker:build`.
 9. **MCP server**: no `@/` path aliases — bundled separately with esbuild (`pnpm build:mcp`)
 10. **Strip `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`** env vars before spawning agent subprocesses
+11. **Version tags** — always use `scripts/release.sh` to create releases (never manual `npm version` or `git tag`)
+12. **Upgrades** — always use `scripts/upgrade.sh` (never raw `git pull` in production)
 
 ## Service Patterns
 

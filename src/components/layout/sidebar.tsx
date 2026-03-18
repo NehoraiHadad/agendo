@@ -18,6 +18,7 @@ import {
   Lightbulb,
   HelpCircle,
 } from 'lucide-react';
+import { VersionBadge } from '@/components/version-badge';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -375,12 +376,7 @@ export function Sidebar({ onMobileClose, onSupportOpen }: SidebarProps) {
 
         {!isCollapsed ? (
           <div className="space-y-2 px-1">
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/60 animate-pulse shrink-0" />
-              <span className="text-[9px] text-muted-foreground/25 uppercase tracking-widest">
-                v0.1 · Online
-              </span>
-            </div>
+            <VersionBadge />
             {sysStats && (
               <Link href="/" className="block group">
                 <div className="space-y-1.5 rounded-lg px-1 py-1 hover:bg-white/[0.03] transition-colors">
