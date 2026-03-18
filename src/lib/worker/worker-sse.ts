@@ -16,6 +16,7 @@
 import * as http from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { createLogger } from '@/lib/logger';
+import { SSE_HEADERS } from '@/lib/sse/constants';
 import { getSession } from '@/lib/services/session-service';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { readEventsFromLog, readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
@@ -105,12 +106,7 @@ export function addBrainstormEventListener(
 // ============================================================================
 
 function setSseHeaders(res: http.ServerResponse): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
+  res.writeHead(200, SSE_HEADERS);
   // Flush headers immediately so the proxy doesn't buffer them
   res.flushHeaders();
 }
@@ -258,22 +254,44 @@ export async function handleSessionSSE(
     }
   }
 
-  // 2b. Fallback to log file when CLI-native history is unavailable
-  if (!catchupSent && session.logFilePath && existsSync(session.logFilePath)) {
+  // 2b. Supplement or fallback from log file.
+  // CLI-native history only contains conversation events (user/agent/tool).
+  // Agendo-specific events (team:*, system:*, session:cost, etc.) only exist
+  // in the log file and must be replayed separately.
+  if (session.logFilePath && existsSync(session.logFilePath)) {
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
-      const catchupEvents = readEventsFromLog(logContent, lastEventId);
-      if (catchupEvents.length > 0) {
-        // Emit a system:info marker so the UI knows the source
+      const logEvents = readEventsFromLog(logContent, lastEventId);
+
+      if (catchupSent) {
+        // CLI history already sent conversation events — supplement with
+        // Agendo-only events that CLI history doesn't include.
+        const agendoOnlyEvents = logEvents.filter(
+          (ev) =>
+            ev.type.startsWith('team:') ||
+            ev.type.startsWith('session:') ||
+            ev.type === 'system:info',
+        );
+        if (agendoOnlyEvents.length > 0) {
+          log.info(
+            { sessionId, eventCount: agendoOnlyEvents.length },
+            'Supplementing CLI history with Agendo-only events from log',
+          );
+          for (const ev of agendoOnlyEvents) {
+            sendEvent(res, ev);
+          }
+        }
+      } else if (logEvents.length > 0) {
+        // Full fallback — CLI history unavailable, use log file for everything
         const fallbackEvent: AgendoEvent = {
           id: 0,
           sessionId: session.id,
           ts: Date.now(),
           type: 'system:info',
-          message: `History loaded from log file (${catchupEvents.length} events)`,
+          message: `History loaded from log file (${logEvents.length} events)`,
         };
         sendEvent(res, fallbackEvent);
-        for (const ev of catchupEvents) {
+        for (const ev of logEvents) {
           sendEvent(res, ev);
         }
         catchupSent = true;
