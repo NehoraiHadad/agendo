@@ -1966,44 +1966,37 @@ ${correctionsText}`;
   }
 
   /**
-   * Build a concise status header to prepend to injected messages so agents
-   * have situational awareness: which wave, how many responded, who is pending.
+   * Build a one-line status header to prepend to injected messages.
+   * Format: [Wave N/M · responded/total responded · Name, Name pending]
    *
-   * @param forParticipantId - When set (reactive injection), include per-recipient
-   *   response-count line. When null (wave start), omit waiting-names (everyone is waiting).
+   * @param forParticipantId - When set (reactive injection), show response/pending counts.
+   *   When null (wave start), omit pending list (everyone is starting).
    */
   private buildWaveStatusHeader(forParticipantId: string | null): string {
     const wave1 = this.currentWave + 1;
-    const maxWaves = this.maxWaves;
-
     const activeParticipants = this.participants.filter((p) => !p.hasPassed && !p.hasLeft);
     const totalActive = activeParticipants.length;
 
     if (forParticipantId === null) {
-      // Wave-start broadcast — everyone is starting, no "waiting" list needed
-      return `---\n📊 Wave ${wave1} of ${maxWaves} | Starting now — ${totalActive} participant${totalActive !== 1 ? 's' : ''}\n---`;
+      return `[Wave ${wave1}/${this.maxWaves} · ${totalActive} participants]`;
     }
 
-    // Reactive injection — show full context
     const respondedCount = activeParticipants.filter(
       (p) => p.waveStatus === 'done' || p.waveStatus === 'passed',
     ).length;
 
-    const waitingParticipants = activeParticipants.filter(
+    const pendingParticipants = activeParticipants.filter(
       (p) => p.waveStatus === 'thinking' && p.agentId !== forParticipantId,
     );
-    const waitingNames = waitingParticipants.map((p) => p.agentSlug).join(', ');
+    const pendingNames = pendingParticipants.map((p) => p.agentSlug).join(', ');
 
     const recipient = activeParticipants.find((p) => p.agentId === forParticipantId);
     const myResponseCount = recipient?.waveResponseCount ?? 0;
 
-    const lines: string[] = [
-      `---`,
-      `📊 Wave ${wave1} of ${maxWaves} | ${respondedCount}/${totalActive} responded${waitingNames ? ` | ${waitingNames} still thinking` : ''}`,
-      `You have responded ${myResponseCount} time(s) this wave (max: ${this.maxResponsesPerWave})`,
-      `---`,
-    ];
-    return lines.join('\n');
+    const parts = [`Wave ${wave1}/${this.maxWaves}`, `${respondedCount}/${totalActive} responded`];
+    if (pendingNames) parts.push(`${pendingNames} pending`);
+    parts.push(`you: ${myResponseCount}/${this.maxResponsesPerWave}`);
+    return `[${parts.join(' · ')}]`;
   }
 
   /**
