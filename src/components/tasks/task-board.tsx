@@ -11,6 +11,8 @@ import {
   type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
+  type DropAnimation,
+  defaultDropAnimationSideEffects,
 } from '@dnd-kit/core';
 import { DragOverlay } from '@dnd-kit/core';
 import { useTaskBoardStore, BOARD_COLUMNS } from '@/lib/store/task-board-store';
@@ -60,6 +62,16 @@ const COLUMN_LABELS: Record<TaskStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+const dropAnimation: DropAnimation = {
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: {
+      active: {
+        opacity: '0.5',
+      },
+    },
+  }),
+};
+
 /** Extract column status from a droppable id like "column-todo" or a task id */
 function resolveColumnStatus(
   overId: string,
@@ -76,7 +88,6 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
   const hydrate = useTaskBoardStore((s) => s.hydrate);
   const hydrateProjects = useTaskBoardStore((s) => s.hydrateProjects);
   const selectedTaskId = useTaskBoardStore((s) => s.selectedTaskId);
-  const tasksById = useTaskBoardStore((s) => s.tasksById);
   const columns = useTaskBoardStore((s) => s.columns);
   const optimisticReorder = useTaskBoardStore((s) => s.optimisticReorder);
   const settleOptimistic = useTaskBoardStore((s) => s.settleOptimistic);
@@ -251,24 +262,6 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
     [columns],
   );
 
-  // Pre-compute filtered task IDs per column to avoid inline filter on every render
-  const filteredColumnTaskIds = useMemo<Record<string, string[] | undefined>>(
-    () =>
-      Object.fromEntries(
-        BOARD_COLUMNS.map((status) => [
-          status,
-          selectedProjectIds.length === 0
-            ? undefined
-            : columns[status].filter(
-                (id) =>
-                  tasksById[id]?.projectId != null &&
-                  selectedProjectIds.includes(tasksById[id].projectId as string),
-              ),
-        ]),
-      ),
-    [columns, tasksById, selectedProjectIds],
-  );
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
@@ -334,13 +327,12 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
                 key={status}
                 status={status}
                 label={COLUMN_LABELS[status]}
-                filteredTaskIds={filteredColumnTaskIds[status]}
                 dragSourceStatus={dragSourceStatus}
               />
             ))}
           </div>
 
-          <DragOverlay dropAnimation={null}>
+          <DragOverlay dropAnimation={dropAnimation}>
             {activeId ? <TaskDragOverlay taskId={activeId} /> : null}
           </DragOverlay>
         </DndContext>

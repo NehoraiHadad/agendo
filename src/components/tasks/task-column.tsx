@@ -22,7 +22,6 @@ const VALID_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
 interface TaskColumnProps {
   status: TaskStatus;
   label: string;
-  filteredTaskIds?: string[];
   /** Status of the task currently being dragged (null when not dragging) */
   dragSourceStatus?: TaskStatus | null;
 }
@@ -209,17 +208,30 @@ interface GroupedItem {
 export const TaskColumn = memo(function TaskColumn({
   status,
   label,
-  filteredTaskIds,
   dragSourceStatus,
 }: TaskColumnProps) {
   const allTaskIds = useTaskBoardStore((s) => s.columns[status]);
+  const tasksById = useTaskBoardStore((s) => s.tasksById);
+  const selectedProjectIds = useTaskBoardStore((s) => s.selectedProjectIds);
+
   // Determine if this column is a valid drop target for the currently dragged task
   const isInvalidDrop =
     dragSourceStatus != null &&
     dragSourceStatus !== status &&
     !VALID_TRANSITIONS[dragSourceStatus].has(status);
-  const taskIds = filteredTaskIds ?? allTaskIds;
-  const tasksById = useTaskBoardStore((s) => s.tasksById);
+
+  // Filter task IDs based on selected projects. Memoized to prevent re-filtering on every render.
+  const taskIds = useMemo(() => {
+    if (selectedProjectIds.length === 0) {
+      return allTaskIds;
+    }
+    return allTaskIds.filter(
+      (id) =>
+        tasksById[id]?.projectId != null &&
+        selectedProjectIds.includes(tasksById[id].projectId as string),
+    );
+  }, [allTaskIds, tasksById, selectedProjectIds]);
+
   const cursor = useTaskBoardStore((s) => s.cursors[status]);
   const isLoading = useTaskBoardStore((s) => s.loading[status]);
   const appendToColumn = useTaskBoardStore((s) => s.appendToColumn);
