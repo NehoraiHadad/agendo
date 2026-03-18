@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, CheckCircle, XCircle, Key, FileKey, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { AiProviderPreference } from './ai-provider-preference';
 
 interface EnvVarDetail {
   name: string;
@@ -213,43 +214,54 @@ export function ProviderStatusTab() {
   const total = providers.length;
 
   return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-[12px] text-muted-foreground/50">
-            {authenticated.length}/{total} providers connected
-          </span>
-          <div className="flex gap-1">
-            {providers.map((p) => (
-              <span
-                key={p.binaryName}
-                className={cn(
-                  'h-2 w-2 rounded-full',
-                  p.isAuthenticated ? 'bg-emerald-400/60' : 'bg-white/[0.08]',
-                )}
-                title={`${p.displayName}: ${p.isAuthenticated ? 'connected' : 'not connected'}`}
-              />
-            ))}
-          </div>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void refresh()}
-          disabled={loading}
-          className="h-7 text-[12px]"
-        >
-          <RefreshCw className={cn('h-3 w-3 mr-1.5', loading && 'animate-spin')} />
-          Refresh
-        </Button>
+    <div className="space-y-6">
+      {/* AI Provider Preference */}
+      <div
+        className="rounded-lg border border-white/[0.06] p-4"
+        style={{ background: 'oklch(0.09 0 0)' }}
+      >
+        <AiProviderPreference />
       </div>
 
-      {/* Provider cards grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {providers.map((provider) => (
-          <ProviderCard key={provider.binaryName} provider={provider} />
-        ))}
+      {/* Provider Status */}
+      <div className="space-y-4">
+        {/* Summary */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-[12px] text-muted-foreground/50">
+              {authenticated.length}/{total} providers connected
+            </span>
+            <div className="flex gap-1">
+              {providers.map((p) => (
+                <span
+                  key={p.binaryName}
+                  className={cn(
+                    'h-2 w-2 rounded-full',
+                    p.isAuthenticated ? 'bg-emerald-400/60' : 'bg-white/[0.08]',
+                  )}
+                  title={`${p.displayName}: ${p.isAuthenticated ? 'connected' : 'not connected'}`}
+                />
+              ))}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void refresh()}
+            disabled={loading}
+            className="h-7 text-[12px]"
+          >
+            <RefreshCw className={cn('h-3 w-3 mr-1.5', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
+
+        {/* Provider cards grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {providers.map((provider) => (
+            <ProviderCard key={provider.binaryName} provider={provider} />
+          ))}
+        </div>
       </div>
     </div>
   );

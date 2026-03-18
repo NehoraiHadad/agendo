@@ -11,6 +11,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { readClaudeOAuthToken, readCodexToken, readGeminiOAuthToken } from './credential-reader';
+import { getAiProviderPreference } from './settings-service';
 
 const log = createLogger('ai-call');
 
@@ -258,10 +259,17 @@ export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
     throw new Error('No AI provider credentials found (checked CLI credentials and env API keys)');
   }
 
-  // Reorder if preferred provider is specified and available
+  // Determine effective preferred provider:
+  // 1. Explicit per-call preference takes highest priority
+  // 2. Persisted system-wide preference from settings
+  // 3. Default priority order (Anthropic > OpenAI > Gemini)
+  const systemPreference = getAiProviderPreference();
+  const effectivePreferred =
+    opts.preferredProvider ?? (systemPreference !== 'auto' ? systemPreference : undefined);
+
   const ordered =
-    opts.preferredProvider && available.includes(opts.preferredProvider)
-      ? [opts.preferredProvider, ...available.filter((p) => p !== opts.preferredProvider)]
+    effectivePreferred && available.includes(effectivePreferred)
+      ? [effectivePreferred, ...available.filter((p) => p !== effectivePreferred)]
       : [...available];
 
   const errors: Error[] = [];
