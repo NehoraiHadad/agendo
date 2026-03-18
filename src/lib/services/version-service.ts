@@ -9,14 +9,16 @@
 
 import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { getCurrentVersion, parseVersion, compareVersions } from '@/lib/version';
+import { parseChangelog, type ChangelogEntry } from './changelog-parser';
 
 export interface VersionCheckResult {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
   checkedAt: string;
+  changelog: ChangelogEntry[];
 }
 
 const CACHE_PATH = '/tmp/agendo-version-check.json';
@@ -80,6 +82,20 @@ function findHighestVersion(tags: string[]): string | null {
   return highest;
 }
 
+const CHANGELOG_LIMIT = 3;
+
+/** Read and parse CHANGELOG.md from project root. */
+function readChangelog(): ChangelogEntry[] {
+  try {
+    const changelogPath = resolve(process.cwd(), 'CHANGELOG.md');
+    if (!existsSync(changelogPath)) return [];
+    const content = readFileSync(changelogPath, 'utf-8');
+    return parseChangelog(content, { limit: CHANGELOG_LIMIT });
+  } catch {
+    return [];
+  }
+}
+
 export interface CheckOptions {
   /** Bypass cache and perform a fresh check. */
   forceRefresh?: boolean;
@@ -124,11 +140,14 @@ export async function checkForUpdates(opts?: CheckOptions): Promise<VersionCheck
   const updateAvailable =
     latestVersion !== null && compareVersions(latestVersion, currentVersion) === 1;
 
+  const changelog = readChangelog();
+
   const result: VersionCheckResult = {
     currentVersion,
     latestVersion,
     updateAvailable,
     checkedAt: new Date().toISOString(),
+    changelog,
   };
 
   writeCache(result);

@@ -117,6 +117,7 @@ describe('version-service', () => {
       latestVersion: '0.2.0',
       updateAvailable: true,
       checkedAt: new Date().toISOString(),
+      changelog: [],
     };
 
     mockExistsSync.mockReturnValue(true);
@@ -136,6 +137,7 @@ describe('version-service', () => {
       latestVersion: '0.1.0',
       updateAvailable: false,
       checkedAt: staleDate,
+      changelog: [],
     };
 
     mockExistsSync.mockReturnValue(true);
@@ -184,6 +186,7 @@ describe('version-service', () => {
       latestVersion: '0.1.0',
       updateAvailable: false,
       checkedAt: new Date().toISOString(), // fresh
+      changelog: [],
     };
 
     mockExistsSync.mockReturnValue(true);

@@ -2,11 +2,23 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+export interface ChangelogSection {
+  title: string;
+  items: string[];
+}
+
+export interface ChangelogEntry {
+  version: string;
+  date: string;
+  sections: ChangelogSection[];
+}
+
 interface VersionCheckResult {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
   checkedAt: string;
+  changelog: ChangelogEntry[];
 }
 
 interface UseVersionCheckReturn {
@@ -14,6 +26,7 @@ interface UseVersionCheckReturn {
   latestVersion: string | null;
   updateAvailable: boolean;
   checkedAt: string | null;
+  changelog: ChangelogEntry[];
   isLoading: boolean;
   refresh: () => Promise<void>;
 }
@@ -65,6 +78,7 @@ export function useVersionCheck(): UseVersionCheckReturn {
     latestVersion: data?.latestVersion ?? null,
     updateAvailable: data?.updateAvailable ?? false,
     checkedAt: data?.checkedAt ?? null,
+    changelog: data?.changelog ?? [],
     isLoading,
     refresh,
   };
