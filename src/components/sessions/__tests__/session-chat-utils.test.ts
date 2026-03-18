@@ -233,6 +233,63 @@ describe('buildDisplayItems', () => {
     }
   });
 
+  describe('protocol XML stripping', () => {
+    it('strips Claude Code slash command XML from agent:text events', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: '<local-command-stdout>Bye!</local-command-stdout>//<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      // All protocol XML → empty text → event should be skipped entirely
+      expect(items).toHaveLength(0);
+    });
+
+    it('preserves normal text that has no protocol XML', () => {
+      const events: AgendoEvent[] = [
+        { ...base, id: 1, type: 'agent:text', text: 'Hello <b>world</b>' },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(1);
+      if (items[0].kind === 'assistant') {
+        expect(items[0].parts[0]).toEqual({ kind: 'text', text: 'Hello <b>world</b>' });
+      }
+    });
+
+    it('strips protocol XML but keeps surrounding real text', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: 'Before <command-name>/help</command-name> After',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(1);
+      if (items[0].kind === 'assistant') {
+        expect(items[0].parts[0]).toEqual({ kind: 'text', text: 'Before  After' });
+      }
+    });
+
+    it('strips local-command-stdout tags and their content', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: '<local-command-stdout>some output</local-command-stdout>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      // Complete <tag>content</tag> pair is stripped → empty → skipped
+      expect(items).toHaveLength(0);
+    });
+  });
+
   describe('team:message events', () => {
     it('creates a team-message item for team:message event', () => {
       const events: AgendoEvent[] = [

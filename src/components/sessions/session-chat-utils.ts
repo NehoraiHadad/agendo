@@ -96,6 +96,45 @@ export type DisplayItem =
 // Pure utility functions
 // ---------------------------------------------------------------------------
 
+/**
+ * Claude Code internal protocol XML tags that leak into assistant text.
+ * These come from slash commands (/exit, /help, etc.) and should be stripped
+ * from the chat UI while remaining in raw event logs for debugging.
+ *
+ * Known tags:
+ *   <local-command-stdout>...</local-command-stdout>
+ *   <local-command-stderr>...</local-command-stderr>
+ *   <command-name>...</command-name>
+ *   <command-message>...</command-message>
+ *   <command-args>...</command-args>
+ *   <command-result>...</command-result>
+ */
+const PROTOCOL_XML_TAG_NAMES = [
+  'local-command-stdout',
+  'local-command-stderr',
+  'command-name',
+  'command-message',
+  'command-args',
+  'command-result',
+];
+// Match complete <tag>content</tag> pairs (content may be empty or multi-line)
+const PROTOCOL_XML_PAIR_RE = new RegExp(
+  `<(${PROTOCOL_XML_TAG_NAMES.join('|')})\\b[^>]*>[\\s\\S]*?<\\/\\1>`,
+  'g',
+);
+
+/** Strip Claude Code internal protocol XML from text. Returns cleaned text (may be empty). */
+function stripProtocolXml(text: string): string {
+  if (!text.includes('<')) return text; // fast path — no XML at all
+  // Check if any protocol tag is present before running the regex
+  const hasProtocol = PROTOCOL_XML_TAG_NAMES.some((tag) => text.includes(`<${tag}`));
+  if (!hasProtocol) return text;
+  // Strip complete <tag>content</tag> pairs
+  const stripped = text.replace(PROTOCOL_XML_PAIR_RE, '');
+  // Clean up leftover "//" separators between stripped blocks (only on own line, not URLs)
+  return stripped.replace(/^\s*\/\/\s*$/gm, '').trim();
+}
+
 /** Map a Claude result error subtype to a human-readable label. */
 function errorSubtypeLabel(subtype?: string): string {
   switch (subtype) {
@@ -167,25 +206,29 @@ export function buildDisplayItems(
   for (const ev of events) {
     switch (ev.type) {
       case 'agent:text': {
+        // Strip Claude Code internal protocol XML (slash command output, /exit, etc.)
+        const cleanText = stripProtocolXml(ev.text);
+        if (!cleanText) break; // pure protocol noise — skip entirely
+
         const last = items[items.length - 1];
         if (last && last.kind === 'assistant') {
           const lastPart = last.parts[last.parts.length - 1];
           if (lastPart && lastPart.kind === 'text' && lastPart.fromDelta) {
             // Replace the delta-accumulated text with the complete text.
-            lastPart.text = ev.text;
+            lastPart.text = cleanText;
             lastPart.fromDelta = false;
           } else if (lastPart && lastPart.kind === 'text') {
             // Append to existing non-delta text (consecutive assistant messages)
-            lastPart.text += ev.text;
+            lastPart.text += cleanText;
           } else {
-            last.parts.push({ kind: 'text', text: ev.text });
+            last.parts.push({ kind: 'text', text: cleanText });
           }
         } else {
           items.push({
             kind: 'assistant',
             id: ev.id,
             ts: ev.ts,
-            parts: [{ kind: 'text', text: ev.text }],
+            parts: [{ kind: 'text', text: cleanText }],
           });
         }
         break;
