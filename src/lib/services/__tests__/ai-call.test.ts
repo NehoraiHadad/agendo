@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { aiCall, getAvailableProviders } from '../ai-call';
+import { readFileSync } from 'node:fs';
+
+vi.mock('node:fs', () => ({
+  readFileSync: vi.fn(),
+}));
+
+const mockReadFileSync = vi.mocked(readFileSync);
 
 // Mock global fetch
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+
+// Must import AFTER mocks are set up
+const { aiCall, getAvailableProviders } = await import('../ai-call');
 
 describe('ai-call', () => {
   const originalEnv = { ...process.env };
@@ -15,6 +24,10 @@ describe('ai-call', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GOOGLE_API_KEY;
+    // Default: credential files throw (not found)
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
   });
 
   afterEach(() => {
@@ -22,27 +35,60 @@ describe('ai-call', () => {
   });
 
   describe('getAvailableProviders', () => {
-    it('returns empty when no keys configured', () => {
+    it('returns empty when no keys or credentials', () => {
       expect(getAvailableProviders()).toEqual([]);
     });
 
-    it('detects Anthropic key', () => {
+    it('detects Anthropic from env API key', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
       expect(getAvailableProviders()).toContain('anthropic');
     });
 
-    it('detects OpenAI key', () => {
+    it('detects Anthropic from Claude CLI OAuth credentials', () => {
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        if (String(p).includes('.claude/.credentials.json')) {
+          return JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } });
+        }
+        throw new Error('ENOENT');
+      });
+
+      expect(getAvailableProviders()).toContain('anthropic');
+    });
+
+    it('detects OpenAI from env API key', () => {
       process.env.OPENAI_API_KEY = 'sk-test';
       expect(getAvailableProviders()).toContain('openai');
     });
 
-    it('detects Gemini key from GEMINI_API_KEY', () => {
+    it('detects OpenAI from Codex CLI credentials', () => {
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        if (String(p).includes('.codex/auth.json')) {
+          return JSON.stringify({ token: 'codex-oauth-token' });
+        }
+        throw new Error('ENOENT');
+      });
+
+      expect(getAvailableProviders()).toContain('openai');
+    });
+
+    it('detects Gemini from GEMINI_API_KEY', () => {
       process.env.GEMINI_API_KEY = 'test-key';
       expect(getAvailableProviders()).toContain('gemini');
     });
 
-    it('detects Gemini key from GOOGLE_API_KEY', () => {
+    it('detects Gemini from GOOGLE_API_KEY', () => {
       process.env.GOOGLE_API_KEY = 'test-key';
+      expect(getAvailableProviders()).toContain('gemini');
+    });
+
+    it('detects Gemini from CLI OAuth credentials', () => {
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        if (String(p).includes('.gemini/oauth_creds.json')) {
+          return JSON.stringify({ access_token: 'gemini-oauth' });
+        }
+        throw new Error('ENOENT');
+      });
+
       expect(getAvailableProviders()).toContain('gemini');
     });
 
@@ -58,12 +104,10 @@ describe('ai-call', () => {
 
   describe('aiCall', () => {
     it('throws when no providers available', async () => {
-      await expect(aiCall({ prompt: 'test' })).rejects.toThrow(
-        'No AI provider API keys configured',
-      );
+      await expect(aiCall({ prompt: 'test' })).rejects.toThrow('No AI provider credentials found');
     });
 
-    it('calls Anthropic API when key is available', async () => {
+    it('calls Anthropic with API key auth', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
 
       mockFetch.mockResolvedValueOnce({
@@ -82,16 +126,63 @@ describe('ai-call', () => {
       expect(result.model).toBe('claude-sonnet-4-20250514');
       expect(result.tokens).toEqual({ input: 10, output: 5 });
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.anthropic.com/v1/messages',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'x-api-key': 'sk-ant-test',
-            'anthropic-version': '2023-06-01',
-          }),
+      // Should use x-api-key header for API key auth
+      const headers = mockFetch.mock.calls[0][1].headers;
+      expect(headers['x-api-key']).toBe('sk-ant-test');
+      expect(headers['authorization']).toBeUndefined();
+    });
+
+    it('calls Anthropic with OAuth Bearer auth from CLI credentials', async () => {
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        if (String(p).includes('.claude/.credentials.json')) {
+          return JSON.stringify({ claudeAiOauth: { accessToken: 'my-oauth-token' } });
+        }
+        throw new Error('ENOENT');
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          content: [{ type: 'text', text: 'Hello via OAuth' }],
+          model: 'claude-sonnet-4-20250514',
+          usage: { input_tokens: 10, output_tokens: 5 },
         }),
-      );
+      });
+
+      const result = await aiCall({ prompt: 'Say hello' });
+
+      expect(result.text).toBe('Hello via OAuth');
+      expect(result.provider).toBe('anthropic');
+
+      // Should use Bearer authorization for OAuth
+      const headers = mockFetch.mock.calls[0][1].headers;
+      expect(headers['authorization']).toBe('Bearer my-oauth-token');
+      expect(headers['x-api-key']).toBeUndefined();
+    });
+
+    it('prefers OAuth credentials over env API key', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        if (String(p).includes('.claude/.credentials.json')) {
+          return JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-preferred' } });
+        }
+        throw new Error('ENOENT');
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          content: [{ type: 'text', text: 'OAuth wins' }],
+          model: 'claude-sonnet-4-20250514',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      });
+
+      await aiCall({ prompt: 'test' });
+
+      // Should use OAuth, not API key
+      const headers = mockFetch.mock.calls[0][1].headers;
+      expect(headers['authorization']).toBe('Bearer oauth-preferred');
     });
 
     it('calls OpenAI API when Anthropic is unavailable', async () => {

@@ -1,17 +1,23 @@
 /**
  * Lightweight single AI API call service.
  *
- * Discovers available provider credentials and makes a direct HTTP fetch
- * to the provider API. No pg-boss, no CLI subprocess, no session overhead.
+ * Discovers available credentials — first from local CLI credential files
+ * (e.g. ~/.claude/.credentials.json, ~/.codex/auth.json, ~/.gemini/oauth_creds.json),
+ * then from env var API keys as fallback.
  *
+ * No pg-boss, no CLI subprocess, no session overhead.
  * Priority order: Anthropic -> OpenAI -> Gemini (with fallback on failure).
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('ai-call');
 
 export type AiProvider = 'anthropic' | 'openai' | 'gemini';
+type AuthMethod = 'oauth' | 'api-key';
 
 export interface AiCallOptions {
   prompt: string;
@@ -26,59 +32,135 @@ export interface AiCallResult {
   tokens: { input: number; output: number };
 }
 
-interface ProviderConfig {
+interface ResolvedCredential {
   provider: AiProvider;
-  apiKey: string;
+  authMethod: AuthMethod;
+  /** For api-key: the raw key. For oauth: the Bearer token. */
+  secret: string;
 }
 
 const DEFAULT_MAX_TOKENS = 256;
+
+// ─── Credential readers ────────────────────────────────────────
+
+/** Read Claude OAuth token from ~/.claude/.credentials.json */
+function readClaudeOAuthToken(): string | null {
+  try {
+    const credPath = join(homedir(), '.claude', '.credentials.json');
+    const raw = readFileSync(credPath, 'utf-8');
+    const creds = JSON.parse(raw) as {
+      claudeAiOauth?: { accessToken?: string };
+    };
+    return creds.claudeAiOauth?.accessToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read Codex auth token from ~/.codex/auth.json */
+function readCodexToken(): string | null {
+  try {
+    const authPath = join(homedir(), '.codex', 'auth.json');
+    const raw = readFileSync(authPath, 'utf-8');
+    const auth = JSON.parse(raw) as { token?: string; access_token?: string };
+    return auth.token ?? auth.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read Gemini OAuth token from ~/.gemini/oauth_creds.json */
+function readGeminiOAuthToken(): string | null {
+  try {
+    const credPath = join(homedir(), '.gemini', 'oauth_creds.json');
+    const raw = readFileSync(credPath, 'utf-8');
+    const creds = JSON.parse(raw) as { access_token?: string; token?: string };
+    return creds.access_token ?? creds.token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Credential resolution ─────────────────────────────────────
+
+function resolveCredential(provider: AiProvider): ResolvedCredential | null {
+  switch (provider) {
+    case 'anthropic': {
+      // 1. Try local OAuth credentials (Claude CLI login)
+      const oauthToken = readClaudeOAuthToken();
+      if (oauthToken) {
+        return { provider, authMethod: 'oauth', secret: oauthToken };
+      }
+      // 2. Fall back to env API key
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        return { provider, authMethod: 'api-key', secret: apiKey };
+      }
+      return null;
+    }
+    case 'openai': {
+      // 1. Try Codex CLI credentials
+      const codexToken = readCodexToken();
+      if (codexToken) {
+        return { provider, authMethod: 'oauth', secret: codexToken };
+      }
+      // 2. Fall back to env API key
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (apiKey) {
+        return { provider, authMethod: 'api-key', secret: apiKey };
+      }
+      return null;
+    }
+    case 'gemini': {
+      // 1. Try Gemini CLI OAuth credentials
+      const oauthToken = readGeminiOAuthToken();
+      if (oauthToken) {
+        return { provider, authMethod: 'oauth', secret: oauthToken };
+      }
+      // 2. Fall back to env API key
+      const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      if (apiKey) {
+        return { provider, authMethod: 'api-key', secret: apiKey };
+      }
+      return null;
+    }
+  }
+}
 
 /** Return list of available providers in priority order. */
 export function getAvailableProviders(): AiProvider[] {
   const providers: AiProvider[] = [];
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    providers.push('anthropic');
-  }
-  if (process.env.OPENAI_API_KEY) {
-    providers.push('openai');
-  }
-  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
-    providers.push('gemini');
-  }
+  if (resolveCredential('anthropic')) providers.push('anthropic');
+  if (resolveCredential('openai')) providers.push('openai');
+  if (resolveCredential('gemini')) providers.push('gemini');
 
   return providers;
 }
 
-function getProviderConfig(provider: AiProvider): ProviderConfig | null {
-  switch (provider) {
-    case 'anthropic': {
-      const key = process.env.ANTHROPIC_API_KEY;
-      return key ? { provider, apiKey: key } : null;
-    }
-    case 'openai': {
-      const key = process.env.OPENAI_API_KEY;
-      return key ? { provider, apiKey: key } : null;
-    }
-    case 'gemini': {
-      const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-      return key ? { provider, apiKey: key } : null;
-    }
-  }
-}
+// ─── Provider API calls ────────────────────────────────────────
 
 async function callAnthropic(
-  apiKey: string,
+  cred: ResolvedCredential,
   prompt: string,
   maxTokens: number,
 ): Promise<AiCallResult> {
+  const headers: Record<string, string> =
+    cred.authMethod === 'oauth'
+      ? {
+          'content-type': 'application/json',
+          authorization: `Bearer ${cred.secret}`,
+          'anthropic-version': '2023-06-01',
+        }
+      : {
+          'content-type': 'application/json',
+          'x-api-key': cred.secret,
+          'anthropic-version': '2023-06-01',
+        };
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
+    headers,
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: maxTokens,
@@ -111,7 +193,7 @@ async function callAnthropic(
 }
 
 async function callOpenAI(
-  apiKey: string,
+  cred: ResolvedCredential,
   prompt: string,
   maxTokens: number,
 ): Promise<AiCallResult> {
@@ -119,7 +201,7 @@ async function callOpenAI(
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
+      authorization: `Bearer ${cred.secret}`,
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
@@ -148,16 +230,26 @@ async function callOpenAI(
 }
 
 async function callGemini(
-  apiKey: string,
+  cred: ResolvedCredential,
   prompt: string,
   maxTokens: number,
 ): Promise<AiCallResult> {
   const model = 'gemini-2.0-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  // OAuth uses Authorization header; API key uses query param
+  const url =
+    cred.authMethod === 'api-key'
+      ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cred.secret}`
+      : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (cred.authMethod === 'oauth') {
+    headers['authorization'] = `Bearer ${cred.secret}`;
+  }
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { maxOutputTokens: maxTokens },
@@ -188,8 +280,14 @@ async function callGemini(
   };
 }
 
+// ─── Main entry point ──────────────────────────────────────────
+
 /**
  * Make a single AI API call with automatic provider fallback.
+ *
+ * Credential resolution per provider:
+ *   1. Local CLI credentials (OAuth tokens from ~/.claude, ~/.codex, ~/.gemini)
+ *   2. Env var API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
  *
  * Tries providers in priority order (Anthropic > OpenAI > Gemini),
  * falling back to the next on failure.
@@ -199,7 +297,7 @@ export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
   const available = getAvailableProviders();
 
   if (available.length === 0) {
-    throw new Error('No AI provider API keys configured');
+    throw new Error('No AI provider credentials found (checked CLI credentials and env API keys)');
   }
 
   // Reorder if preferred provider is specified and available
@@ -211,21 +309,24 @@ export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
   const errors: Error[] = [];
 
   for (const provider of ordered) {
-    const config = getProviderConfig(provider);
-    if (!config) continue;
+    const cred = resolveCredential(provider);
+    if (!cred) continue;
 
     try {
-      switch (config.provider) {
+      switch (cred.provider) {
         case 'anthropic':
-          return await callAnthropic(config.apiKey, opts.prompt, maxTokens);
+          return await callAnthropic(cred, opts.prompt, maxTokens);
         case 'openai':
-          return await callOpenAI(config.apiKey, opts.prompt, maxTokens);
+          return await callOpenAI(cred, opts.prompt, maxTokens);
         case 'gemini':
-          return await callGemini(config.apiKey, opts.prompt, maxTokens);
+          return await callGemini(cred, opts.prompt, maxTokens);
       }
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      log.warn({ provider, err: error.message }, 'AI provider call failed, trying next');
+      log.warn(
+        { provider, authMethod: cred.authMethod, err: error.message },
+        'AI provider call failed, trying next',
+      );
       errors.push(error);
     }
   }
