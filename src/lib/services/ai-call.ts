@@ -9,10 +9,8 @@
  * Priority order: Anthropic -> OpenAI -> Gemini (with fallback on failure).
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { createLogger } from '@/lib/logger';
+import { readClaudeOAuthToken, readCodexToken, readGeminiOAuthToken } from './credential-reader';
 
 const log = createLogger('ai-call');
 
@@ -40,46 +38,6 @@ interface ResolvedCredential {
 }
 
 const DEFAULT_MAX_TOKENS = 256;
-
-// ─── Credential readers ────────────────────────────────────────
-
-/** Read Claude OAuth token from ~/.claude/.credentials.json */
-function readClaudeOAuthToken(): string | null {
-  try {
-    const credPath = join(homedir(), '.claude', '.credentials.json');
-    const raw = readFileSync(credPath, 'utf-8');
-    const creds = JSON.parse(raw) as {
-      claudeAiOauth?: { accessToken?: string };
-    };
-    return creds.claudeAiOauth?.accessToken ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Read Codex auth token from ~/.codex/auth.json */
-function readCodexToken(): string | null {
-  try {
-    const authPath = join(homedir(), '.codex', 'auth.json');
-    const raw = readFileSync(authPath, 'utf-8');
-    const auth = JSON.parse(raw) as { token?: string; access_token?: string };
-    return auth.token ?? auth.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Read Gemini OAuth token from ~/.gemini/oauth_creds.json */
-function readGeminiOAuthToken(): string | null {
-  try {
-    const credPath = join(homedir(), '.gemini', 'oauth_creds.json');
-    const raw = readFileSync(credPath, 'utf-8');
-    const creds = JSON.parse(raw) as { access_token?: string; token?: string };
-    return creds.access_token ?? creds.token ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ─── Credential resolution ─────────────────────────────────────
 

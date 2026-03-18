@@ -1,18 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-
-interface OAuthCredentials {
-  claudeAiOauth?: {
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: number;
-    subscriptionType?: string;
-    rateLimitTier?: string;
-  };
-}
+import { readClaudeCredentials } from '@/lib/services/credential-reader';
 
 interface UsagePeriod {
   utilization: number;
@@ -33,28 +21,8 @@ interface ClaudeUsageResponse {
   } | null;
 }
 
-function readOAuthToken(): {
-  token: string;
-  subscriptionType?: string;
-  rateLimitTier?: string;
-} | null {
-  try {
-    const credPath = join(homedir(), '.claude', '.credentials.json');
-    const raw = readFileSync(credPath, 'utf-8');
-    const creds: OAuthCredentials = JSON.parse(raw);
-    if (!creds.claudeAiOauth?.accessToken) return null;
-    return {
-      token: creds.claudeAiOauth.accessToken,
-      subscriptionType: creds.claudeAiOauth.subscriptionType,
-      rateLimitTier: creds.claudeAiOauth.rateLimitTier,
-    };
-  } catch {
-    return null;
-  }
-}
-
 export const GET = withErrorBoundary(async () => {
-  const auth = readOAuthToken();
+  const auth = readClaudeCredentials();
   if (!auth) {
     return NextResponse.json(
       { error: { code: 'NO_CREDENTIALS', message: 'Claude OAuth credentials not found' } },
