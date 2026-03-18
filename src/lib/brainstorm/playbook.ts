@@ -15,7 +15,15 @@ import type { BrainstormConfig } from '@/lib/db/schema';
 export const PLAYBOOK_DEFAULTS: Required<
   Omit<
     BrainstormConfig,
-    'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec' | 'relatedRoomIds'
+    | 'synthesisAgentId'
+    | 'language'
+    | 'roles'
+    | 'participantReadyTimeoutSec'
+    | 'relatedRoomIds'
+    | 'goal'
+    | 'constraints'
+    | 'deliverableType'
+    | 'targetAudience'
   >
 > = {
   waveTimeoutSec: 120,
@@ -89,13 +97,25 @@ export const PLAYBOOK_PRESETS: PlaybookPreset[] = [
 export function resolvePlaybook(config: BrainstormConfig | null | undefined): Required<
   Omit<
     BrainstormConfig,
-    'synthesisAgentId' | 'language' | 'roles' | 'participantReadyTimeoutSec' | 'relatedRoomIds'
+    | 'synthesisAgentId'
+    | 'language'
+    | 'roles'
+    | 'participantReadyTimeoutSec'
+    | 'relatedRoomIds'
+    | 'goal'
+    | 'constraints'
+    | 'deliverableType'
+    | 'targetAudience'
   >
 > & {
   synthesisAgentId?: string;
   language?: string;
   roles?: Record<string, string>;
   participantReadyTimeoutSec?: number;
+  goal?: string;
+  constraints?: string[];
+  deliverableType?: BrainstormConfig['deliverableType'];
+  targetAudience?: string;
 } {
   return {
     waveTimeoutSec: config?.waveTimeoutSec ?? PLAYBOOK_DEFAULTS.waveTimeoutSec,
@@ -112,6 +132,10 @@ export function resolvePlaybook(config: BrainstormConfig | null | undefined): Re
     language: config?.language,
     roles: config?.roles,
     participantReadyTimeoutSec: config?.participantReadyTimeoutSec,
+    goal: config?.goal,
+    constraints: config?.constraints,
+    deliverableType: config?.deliverableType,
+    targetAudience: config?.targetAudience,
   };
 }
 

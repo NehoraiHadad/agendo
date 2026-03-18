@@ -727,9 +727,32 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   /** Save current form state as draft (called on every field change) */
   const persistDraft = useCallback(() => {
     if (!title && !topic) return;
-    const draft: DraftState = { title, topic, selectedProjectId, maxWaves, presetId, config };
+    const draft: DraftState = {
+      title,
+      topic,
+      selectedProjectId,
+      maxWaves,
+      presetId,
+      config,
+      goal: goal || undefined,
+      constraints: constraints.length > 0 ? constraints : undefined,
+      deliverableType,
+      targetAudience: targetAudience || undefined,
+    };
     saveDraft(JSON.stringify(draft));
-  }, [title, topic, selectedProjectId, maxWaves, presetId, config, saveDraft]);
+  }, [
+    title,
+    topic,
+    selectedProjectId,
+    maxWaves,
+    presetId,
+    config,
+    goal,
+    constraints,
+    deliverableType,
+    targetAudience,
+    saveDraft,
+  ]);
 
   // Auto-save draft whenever form fields change
   useEffect(() => {
@@ -749,6 +772,10 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (draft.maxWaves) setMaxWaves(draft.maxWaves);
       if (draft.presetId) setPresetId(draft.presetId);
       if (draft.config) setConfig(draft.config);
+      if (draft.goal) setGoal(draft.goal);
+      if (draft.constraints) setConstraints(draft.constraints);
+      if (draft.deliverableType) setDeliverableType(draft.deliverableType);
+      if (draft.targetAudience) setTargetAudience(draft.targetAudience);
     } catch {
       // malformed draft — ignore
     }
@@ -899,11 +926,15 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
 
     setIsSubmitting(true);
     try {
-      // Merge relatedRoomIds into config if any are selected
-      const finalConfig = { ...config };
+      // Merge relatedRoomIds and setup fields into config
+      const finalConfig: BrainstormConfig = { ...config };
       if (selectedRelatedIds.length > 0) {
         finalConfig.relatedRoomIds = selectedRelatedIds;
       }
+      if (goal.trim()) finalConfig.goal = goal.trim();
+      if (constraints.length > 0) finalConfig.constraints = constraints;
+      if (deliverableType) finalConfig.deliverableType = deliverableType;
+      if (targetAudience.trim()) finalConfig.targetAudience = targetAudience.trim();
       const hasConfig = Object.keys(finalConfig).length > 0;
 
       const createRes = await fetch('/api/brainstorms', {
@@ -953,6 +984,10 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       setConfig({});
       setParticipants([]);
       setSelectedRelatedIds([]);
+      setGoal('');
+      setConstraints([]);
+      setDeliverableType(undefined);
+      setTargetAudience('');
 
       onOpenChange(false);
       router.push(`/brainstorms/${room.id}`);
@@ -965,9 +1000,13 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     canSubmit,
     clearDraft,
     config,
+    constraints,
+    deliverableType,
+    goal,
     projectId,
     selectedProjectId,
     selectedRelatedIds,
+    targetAudience,
     title,
     topic,
     maxWaves,
