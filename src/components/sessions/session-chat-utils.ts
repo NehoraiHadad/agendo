@@ -98,8 +98,9 @@ export type DisplayItem =
 
 /**
  * Claude Code internal protocol XML tags that leak into assistant text.
- * These come from slash commands (/exit, /help, etc.) and should be stripped
- * from the chat UI while remaining in raw event logs for debugging.
+ * These come from slash commands (/exit, /help, etc.) and team protocol
+ * messages and should be stripped from the chat UI while remaining in raw
+ * event logs for debugging.
  *
  * Known tags:
  *   <local-command-stdout>...</local-command-stdout>
@@ -108,9 +109,11 @@ export type DisplayItem =
  *   <command-message>...</command-message>
  *   <command-args>...</command-args>
  *   <command-result>...</command-result>
+ *   <teammate-message teammate_id="..." color="...">...</teammate-message>
  *
  * local-command-stderr content is extracted and surfaced as an error pill
  * so the user sees command failures without the raw XML noise.
+ * teammate-message events are already handled by the Team Panel (useTeamState).
  */
 const PROTOCOL_XML_TAG_NAMES = [
   'local-command-stdout',
@@ -119,6 +122,7 @@ const PROTOCOL_XML_TAG_NAMES = [
   'command-message',
   'command-args',
   'command-result',
+  'teammate-message',
 ];
 // Match complete <tag>content</tag> pairs (content may be empty or multi-line)
 const PROTOCOL_XML_PAIR_RE = new RegExp(

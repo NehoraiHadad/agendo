@@ -331,6 +331,49 @@ describe('buildDisplayItems', () => {
         });
       }
     });
+
+    it('strips teammate-message tags with attributes', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: '<teammate-message teammate_id="auditor-events" color="green">\n{"type":"idle_notification","from":"auditor-events"}\n</teammate-message>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(0);
+    });
+
+    it('strips multiple consecutive teammate-message tags', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: '<teammate-message teammate_id="a" color="green">{"type":"idle_notification"}</teammate-message>\n\n<teammate-message teammate_id="a" color="green">{"type":"shutdown_response"}</teammate-message>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(0);
+    });
+
+    it('preserves real text mixed with teammate-message tags', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: 'Starting work now. <teammate-message teammate_id="x" color="blue">{"type":"idle_notification"}</teammate-message>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(1);
+      expect(items[0].kind).toBe('assistant');
+      if (items[0].kind === 'assistant') {
+        expect(items[0].parts[0]).toEqual({ kind: 'text', text: 'Starting work now.' });
+      }
+    });
   });
 
   describe('team:message events', () => {
