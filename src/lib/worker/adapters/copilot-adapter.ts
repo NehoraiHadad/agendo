@@ -112,7 +112,11 @@ export class CopilotAdapter extends BaseAgentAdapter implements AgentAdapter {
     return this.sessionId;
   }
 
-  async sendMessage(message: string, image?: ImageContent): Promise<void> {
+  async sendMessage(
+    message: string,
+    image?: ImageContent,
+    _priority?: import('@/lib/realtime/events').MessagePriority,
+  ): Promise<void> {
     if (!this.sessionId) throw new Error('No active Copilot ACP session');
     await this.currentTurn;
     this.pendingImage = image ?? null;

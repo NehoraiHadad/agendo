@@ -14,9 +14,10 @@ export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
     assertUUID(id, 'Session');
-    const { message, image } = (await req.json()) as {
+    const { message, image, priority } = (await req.json()) as {
       message: string;
       image?: { mimeType: string; data: string };
+      priority?: 'now' | 'next' | 'later';
     };
 
     const session = await getSession(id);
@@ -69,6 +70,7 @@ export const POST = withErrorBoundary(
       type: 'message',
       text: message,
       ...(imageRef && { imageRef }),
+      ...(priority && { priority }),
     };
     const result = await sendSessionControl(id, control);
 

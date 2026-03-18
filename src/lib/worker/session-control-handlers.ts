@@ -53,7 +53,11 @@ export interface SessionControlCtx {
   emitEvent(payload: AgendoEventPayload): Promise<AgendoEvent>;
   transitionTo(status: SessionStatus): Promise<void>;
   exitContext: ExitContext;
-  pushMessage(text: string, image?: ImageContent): Promise<void>;
+  pushMessage(
+    text: string,
+    image?: ImageContent,
+    priority?: import('@/lib/realtime/events').MessagePriority,
+  ): Promise<void>;
   /** Build a fresh SessionControlCtx — needed when scheduling a delayed handleSetPermissionMode. */
   makeCtrl(): SessionControlCtx;
 }
@@ -222,7 +226,7 @@ export async function handleMessage(
       log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
     }
   }
-  await ctx.pushMessage(control.text, image);
+  await ctx.pushMessage(control.text, image, control.priority);
 }
 
 /**

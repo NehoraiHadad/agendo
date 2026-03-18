@@ -172,7 +172,11 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     return this.threadId;
   }
 
-  async sendMessage(message: string): Promise<void> {
+  async sendMessage(
+    message: string,
+    _image?: import('@/lib/worker/adapters/types').ImageContent,
+    _priority?: import('@/lib/realtime/events').MessagePriority,
+  ): Promise<void> {
     if (!this.threadId) {
       throw new Error('No Codex thread ID — cannot send follow-up message');
     }

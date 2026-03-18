@@ -33,7 +33,7 @@ import {
   mapSdkMessageToAgendoEvents,
   type SdkEventMapperCallbacks,
 } from '@/lib/worker/adapters/sdk-event-mapper';
-import type { AgendoEventPayload } from '@/lib/realtime/events';
+import type { AgendoEventPayload, MessagePriority } from '@/lib/realtime/events';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('claude-sdk-adapter');
@@ -130,7 +130,11 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     return null;
   }
 
-  async sendMessage(message: string, image?: ImageContent): Promise<void> {
+  async sendMessage(
+    message: string,
+    image?: ImageContent,
+    priority?: MessagePriority,
+  ): Promise<void> {
     if (!this.alive || this.inputQueue.isDone) {
       throw new Error('SDK query is not active');
     }
@@ -162,6 +166,9 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       // method also passes '' here (see sdk.mjs). Safe to leave empty.
       session_id: '',
       parent_tool_use_id: null,
+      // Priority controls the SDK's internal message queue ordering:
+      // 'now' = dequeued first, 'next' = default FIFO, 'later' = dequeued last.
+      ...(priority && { priority }),
     });
   }
 

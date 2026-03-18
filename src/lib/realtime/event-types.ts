@@ -309,8 +309,16 @@ export type BrainstormEventPayload = BrainstormEvent extends infer E
 // AgendoControl — sent by the frontend to the worker via PG NOTIFY
 // ============================================================================
 
+/** Priority for messages pushed to the Claude SDK's internal queue. */
+export type MessagePriority = 'now' | 'next' | 'later';
+
 export type AgendoControl =
-  | { type: 'message'; text: string; imageRef?: { path: string; mimeType: string } }
+  | {
+      type: 'message';
+      text: string;
+      imageRef?: { path: string; mimeType: string };
+      priority?: MessagePriority;
+    }
   | { type: 'cancel' }
   | { type: 'interrupt' }
   | { type: 'redirect'; newPrompt: string }

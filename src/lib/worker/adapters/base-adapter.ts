@@ -48,7 +48,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
   abstract resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
   abstract extractSessionId(output: string): string | null;
-  abstract sendMessage(message: string, image?: ImageContent): Promise<void>;
+  abstract sendMessage(
+    message: string,
+    image?: ImageContent,
+    priority?: import('@/lib/realtime/events').MessagePriority,
+  ): Promise<void>;
   abstract interrupt(): Promise<void>;
   abstract isAlive(): boolean;
 

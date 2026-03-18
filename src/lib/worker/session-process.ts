@@ -15,6 +15,7 @@ import type {
   AgendoEventPayload,
   AgendoControl,
   SessionStatus,
+  MessagePriority,
 } from '@/lib/realtime/events';
 import { FileLogWriter } from '@/lib/worker/log-writer';
 import { sendPushToAll } from '@/lib/services/notification-service';
@@ -614,13 +615,19 @@ export class SessionProcess {
    * Push a user message to the running agent process.
    * Only valid when the session is active or awaiting_input.
    */
-  async pushMessage(text: string, image?: ImageContent): Promise<void> {
+  async pushMessage(text: string, image?: ImageContent, priority?: MessagePriority): Promise<void> {
     if (!['active', 'awaiting_input'].includes(this.status)) {
       log.warn(
         { sessionId: this.session.id, status: this.status },
         'pushMessage ignored — wrong session status',
       );
       return;
+    }
+    // If priority is 'now', interrupt the current turn first so the message
+    // is processed immediately. The SDK dequeues 'now' messages first, but
+    // interruption is needed to stop the in-flight turn.
+    if (priority === 'now') {
+      await this.adapter.interrupt();
     }
     // Emit user message and transition to 'active' BEFORE calling sendMessage.
     // This is critical for the Gemini ACP adapter, whose sendMessage() blocks
@@ -636,7 +643,7 @@ export class SessionProcess {
     }
     await this.transitionTo('active');
     this.activityTracker.recordActivity();
-    await this.adapter.sendMessage(text, image);
+    await this.adapter.sendMessage(text, image, priority);
   }
 
   // ---------------------------------------------------------------------------
@@ -655,7 +662,7 @@ export class SessionProcess {
       emitEvent: (p) => this.emitEvent(p),
       transitionTo: (s) => this.transitionTo(s),
       exitContext: this.exitCtx,
-      pushMessage: (text, image) => this.pushMessage(text, image),
+      pushMessage: (text, image, priority) => this.pushMessage(text, image, priority),
       makeCtrl: () => this.makeCtrl(),
     };
   }

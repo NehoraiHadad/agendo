@@ -167,7 +167,11 @@ export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
   extractSessionId(output: string): string | null;
-  sendMessage(message: string, image?: ImageContent): Promise<void>;
+  sendMessage(
+    message: string,
+    image?: ImageContent,
+    priority?: import('@/lib/realtime/events').MessagePriority,
+  ): Promise<void>;
   /** Send a tool_result NDJSON message for a pending tool_use (e.g. AskUserQuestion). Optional — only Claude supports this. */
   sendToolResult?(toolUseId: string, content: string): Promise<void>;
   interrupt(): Promise<void>;
