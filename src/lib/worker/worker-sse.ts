@@ -20,6 +20,7 @@ import { getSession } from '@/lib/services/session-service';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { readEventsFromLog, readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import { getSessionProc } from '@/lib/worker/session-runner';
+import { getBrainstormHistoryFromSessions } from '@/lib/worker/brainstorm-history';
 import type {
   AgendoEvent,
   BrainstormEvent,
@@ -363,13 +364,43 @@ export async function handleBrainstormSSE(
     sendEvent(res, synthesisEvent);
   }
 
-  // 2. Catchup: replay historical events from log file
-  if (room.logFilePath && existsSync(room.logFilePath)) {
+  // 2. Catchup: participant getHistory() (primary) → log file (fallback)
+  //
+  //    Priority order:
+  //      (a) Participant session getHistory() — the authoritative source.
+  //          Calls each participant's live SessionProcess.getHistory(), which
+  //          delegates to the adapter (Claude JSONL, Codex thread/read, etc.)
+  //          and maps agent:text turns to brainstorm message events by wave.
+  //      (b) Log file — fallback when no live procs are available (e.g. ended
+  //          brainstorms with Gemini/Copilot participants, or after worker restart).
+  let catchupSent = false;
+
+  if (lastEventId === 0) {
+    try {
+      const historyEvents = await getBrainstormHistoryFromSessions(room);
+      if (historyEvents.length > 0) {
+        log.info(
+          { roomId, eventCount: historyEvents.length },
+          'Brainstorm catchup from participant session histories',
+        );
+        for (const ev of historyEvents) {
+          sendEvent(res, ev);
+        }
+        catchupSent = true;
+      }
+    } catch (err) {
+      log.debug({ err, roomId }, 'Participant history catchup failed, falling back to log');
+    }
+  }
+
+  if (!catchupSent && room.logFilePath && existsSync(room.logFilePath)) {
     try {
       const logContent = readFileSync(room.logFilePath, 'utf-8');
       const catchupEvents = readBrainstormEventsFromLog(logContent, lastEventId);
-      for (const ev of catchupEvents) {
-        sendEvent(res, ev);
+      if (catchupEvents.length > 0) {
+        for (const ev of catchupEvents) {
+          sendEvent(res, ev);
+        }
       }
     } catch {
       // Log file unreadable — skip catchup

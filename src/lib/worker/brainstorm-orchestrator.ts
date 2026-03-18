@@ -42,6 +42,7 @@ import {
 } from '@/lib/services/brainstorm-service';
 import { FileLogWriter, resolveBrainstormLogPath } from '@/lib/worker/log-writer';
 import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
+import { buildTranscriptFromSessions } from '@/lib/worker/brainstorm-history';
 import type {
   BrainstormEvent,
   BrainstormEventPayload,
@@ -1623,26 +1624,44 @@ export class BrainstormOrchestrator {
     await this.emitEvent({ type: 'room:state', status: 'synthesizing' });
 
     try {
-      // Build transcript from log file events.
-      const allEvents =
-        this.logFilePath && existsSync(this.logFilePath)
-          ? readBrainstormEventsFromLog(readFileSync(this.logFilePath, 'utf-8'), 0)
-          : [];
+      // Build transcript: participant session getHistory() (primary) → log file (fallback).
+      //
+      // getHistory() gives us the authoritative agent responses directly from the
+      // CLI's native storage (Claude JSONL, Codex thread/read). The log file is the
+      // fallback for agents without getHistory() support (Gemini, Copilot) or ended
+      // sessions where the process has already exited.
+      let transcript = await buildTranscriptFromSessions(room);
 
-      const messageEvents = allEvents.filter((e) => e.type === 'message');
+      if (transcript === null) {
+        log.info(
+          { roomId: this.roomId },
+          'No session history available, falling back to log file for synthesis transcript',
+        );
+        const allEvents =
+          this.logFilePath && existsSync(this.logFilePath)
+            ? readBrainstormEventsFromLog(readFileSync(this.logFilePath, 'utf-8'), 0)
+            : [];
 
-      const transcript = messageEvents
-        .map((e) => {
-          if (e.type !== 'message') return '';
-          const sender =
-            e.senderType === 'user'
-              ? '[User]'
-              : `[${this.participants.find((p) => p.agentId === e.agentId)?.agentName ?? 'Agent'}]`;
-          const passNote = e.isPass ? ' [PASSED]' : '';
-          return `Wave ${e.wave} — ${sender}${passNote}:\n${e.content}`;
-        })
-        .filter(Boolean)
-        .join('\n\n---\n\n');
+        const messageEvents = allEvents.filter((e) => e.type === 'message');
+
+        transcript = messageEvents
+          .map((e) => {
+            if (e.type !== 'message') return '';
+            const sender =
+              e.senderType === 'user'
+                ? '[User]'
+                : `[${this.participants.find((p) => p.agentId === e.agentId)?.agentName ?? 'Agent'}]`;
+            const passNote = e.isPass ? ' [PASSED]' : '';
+            return `Wave ${e.wave} — ${sender}${passNote}:\n${e.content}`;
+          })
+          .filter(Boolean)
+          .join('\n\n---\n\n');
+      } else {
+        log.info(
+          { roomId: this.roomId },
+          'Synthesis transcript built from participant session histories',
+        );
+      }
 
       const roomConfig = room.config as BrainstormConfig | undefined;
       const synthesisTemplate = roomConfig?.deliverableType
