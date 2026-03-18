@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Settings, Bot, Server, FileCode, Zap } from 'lucide-react';
+import { Settings, Bot, Server, FileCode, Zap, ShieldCheck, MonitorCog } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AgentCards } from '@/components/settings/agent-cards';
 import { McpServerCards } from '@/components/settings/mcp-server-cards';
 import { TokenUsageTab } from '@/components/settings/token-usage-tab';
+import { ProviderStatusTab } from '@/components/settings/provider-status-tab';
+import { SystemInfoTab } from '@/components/settings/system-info-tab';
 import { ConfigEditorClient } from '../config/config-editor-client';
 import type { Agent, McpServer } from '@/lib/types';
 
@@ -18,9 +20,11 @@ interface SettingsClientProps {
 
 const tabs = [
   { id: 'agents', label: 'Agents', icon: Bot },
+  { id: 'providers', label: 'Providers', icon: ShieldCheck },
   { id: 'mcp', label: 'MCP Servers', icon: Server },
   { id: 'config', label: 'Config Files', icon: FileCode },
   { id: 'token-usage', label: 'Token Usage', icon: Zap },
+  { id: 'system', label: 'System', icon: MonitorCog },
 ] as const;
 
 type TabId = (typeof tabs)[number]['id'];
@@ -92,9 +96,11 @@ export function SettingsClient({ agents, mcpServers, projects }: SettingsClientP
       {/* Tab content */}
       <div className="flex-1 min-h-0">
         {activeTab === 'agents' && <AgentCards initialAgents={agents} />}
+        {activeTab === 'providers' && <ProviderStatusTab />}
         {activeTab === 'mcp' && <McpServerCards initialServers={mcpServers} />}
         {activeTab === 'config' && <ConfigEditorClient projects={projects} />}
         {activeTab === 'token-usage' && <TokenUsageTab />}
+        {activeTab === 'system' && <SystemInfoTab />}
       </div>
     </div>
   );
