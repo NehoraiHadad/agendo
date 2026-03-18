@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { db } from '../lib/db/index';
 import { sessions, brainstormRooms } from '../lib/db/schema';
-import { eq, and, inArray, lt, sql } from 'drizzle-orm';
+import { eq, and, or, inArray, lt, gt, sql } from 'drizzle-orm';
 import { enqueueSession, SESSION_QUEUE_NAME } from '../lib/worker/queue';
 import { enqueueBrainstorm, BRAINSTORM_QUEUE_NAME } from '../lib/worker/brainstorm-queue';
 import { createLogger } from '@/lib/logger';
@@ -169,11 +169,13 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
   const restartInitiatorId = consumeRestartMarker();
 
   // Find sessions that were still claimed by this worker when it died.
-  // Includes 'active' and 'awaiting_input' (obvious orphans), plus 'idle'
-  // sessions that still have our workerId — these were transitioned to idle
-  // by the shutdown handler (determineExitStatus) but the worker died before
-  // handleReEnqueue could fire. Without including 'idle' here, those sessions
-  // would never be auto-resumed after a planned worker restart.
+  // Two categories:
+  //   1. 'active'/'awaiting_input' — obvious orphans (shutdown didn't finish)
+  //   2. 'idle' with recent lastActiveAt — shutdown handler transitioned these
+  //      to idle but handleReEnqueue was skipped (terminateKilled). Only include
+  //      idle sessions updated in the last 5 minutes to avoid resurrecting old
+  //      sessions that legitimately went idle long ago.
+  const recentThreshold = new Date(Date.now() - 5 * 60 * 1000);
   const orphaned = await db
     .select({
       id: sessions.id,
@@ -186,7 +188,10 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
     .where(
       and(
         eq(sessions.workerId, workerId),
-        inArray(sessions.status, ['active', 'awaiting_input', 'idle']),
+        or(
+          inArray(sessions.status, ['active', 'awaiting_input']),
+          and(eq(sessions.status, 'idle'), gt(sessions.lastActiveAt, recentThreshold)),
+        ),
       ),
     );
 

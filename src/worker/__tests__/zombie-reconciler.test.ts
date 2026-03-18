@@ -56,8 +56,10 @@ vi.mock('../../lib/worker/worker-sse', () => ({
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn((_col, val) => ({ type: 'eq', val })),
   and: vi.fn((...args) => ({ type: 'and', args })),
+  or: vi.fn((...args) => ({ type: 'or', args })),
   inArray: vi.fn((_col, vals) => ({ type: 'inArray', vals })),
   lt: vi.fn((_col, val) => ({ type: 'lt', val })),
+  gt: vi.fn((_col, val) => ({ type: 'gt', val })),
   sql: vi.fn((strings, ...values) => ({ type: 'sql', strings, values })),
 }));
 
