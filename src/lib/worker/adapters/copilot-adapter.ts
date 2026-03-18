@@ -209,6 +209,21 @@ export class CopilotAdapter extends BaseAgentAdapter implements AgentAdapter {
     return mapCopilotJsonToEvents(parsed as CopilotEvent);
   }
 
+  /**
+   * Retrieve conversation history from the in-memory accumulator.
+   *
+   * Available while the ACP process is alive. If the worker restarts and
+   * the ACP process is gone, the buffer is lost and the caller falls back
+   * to the Agendo log file.
+   *
+   * @param _sessionRef - Unused for ACP adapters (no CLI-native storage API)
+   * @returns AgendoEventPayload[] or null if no history has been accumulated
+   */
+  async getHistory(_sessionRef: string): Promise<AgendoEventPayload[] | null> {
+    const history = this.transport.getMessageHistory();
+    return history.length > 0 ? history : null;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     this.storedOpts = opts;
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -346,9 +361,38 @@ export class CopilotAdapter extends BaseAgentAdapter implements AgentAdapter {
    * Emit a synthetic NDJSON line to all dataCallbacks. session-process.ts
    * parses these through the standard NDJSON pipeline and delegates to
    * mapJsonToEvents (copilot-event-mapper.ts).
+   *
+   * Also pushes structural events (agent:text, agent:tool-start,
+   * agent:tool-end, agent:result) to the transport history accumulator for
+   * use by getHistory().
    */
   private emitNdjson(event: CopilotEvent): void {
     const line = JSON.stringify(event) + '\n';
     for (const cb of this.dataCallbacks) cb(line);
+
+    // Accumulate structural events for getHistory() fallback.
+    // Exclude high-volume streaming events (text-delta, thinking-delta) and
+    // non-conversation events (mode-change, usage, session-info, init).
+    const HISTORY_TYPES = new Set([
+      'copilot:text',
+      'copilot:tool-start',
+      'copilot:tool-end',
+      'copilot:turn-complete',
+      'copilot:turn-error',
+    ]);
+    if (HISTORY_TYPES.has(event.type)) {
+      const payloads = mapCopilotJsonToEvents(event);
+      for (const payload of payloads) {
+        // Only store agent:text, agent:tool-start, agent:tool-end, agent:result
+        if (
+          payload.type === 'agent:text' ||
+          payload.type === 'agent:tool-start' ||
+          payload.type === 'agent:tool-end' ||
+          payload.type === 'agent:result'
+        ) {
+          this.transport.pushToHistory(payload);
+        }
+      }
+    }
   }
 }

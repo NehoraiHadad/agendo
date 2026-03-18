@@ -318,6 +318,21 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     return mapGeminiJsonToEvents(parsed as GeminiEvent);
   }
 
+  /**
+   * Retrieve conversation history from the in-memory accumulator.
+   *
+   * Available while the ACP process is alive. If the worker restarts and
+   * the ACP process is gone, the buffer is lost and the caller falls back
+   * to the Agendo log file.
+   *
+   * @param _sessionRef - Unused for ACP adapters (no CLI-native storage API)
+   * @returns AgendoEventPayload[] or null if no history has been accumulated
+   */
+  async getHistory(_sessionRef: string): Promise<AgendoEventPayload[] | null> {
+    const history = this.transport.getMessageHistory();
+    return history.length > 0 ? history : null;
+  }
+
   private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
     this.storedOpts = opts;
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -464,6 +479,10 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
    *
    * For `gemini:commands` events, merges ACP commands with locally-scanned
    * custom TOML commands. ACP commands take priority on name collision.
+   *
+   * Also pushes structural events (agent:text, agent:tool-start,
+   * agent:tool-end, agent:result) to the transport history accumulator for
+   * use by getHistory().
    */
   private emitNdjson(event: GeminiEvent): void {
     let finalEvent = event;
@@ -480,5 +499,30 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     }
     const line = JSON.stringify(finalEvent) + '\n';
     for (const cb of this.dataCallbacks) cb(line);
+
+    // Accumulate structural events for getHistory() fallback.
+    // Exclude high-volume streaming events (text-delta, thinking-delta) and
+    // non-conversation events (mode-change, usage, commands, session-info, init).
+    const HISTORY_TYPES = new Set([
+      'gemini:text',
+      'gemini:tool-start',
+      'gemini:tool-end',
+      'gemini:turn-complete',
+      'gemini:turn-error',
+    ]);
+    if (HISTORY_TYPES.has(finalEvent.type)) {
+      const payloads = mapGeminiJsonToEvents(finalEvent);
+      for (const payload of payloads) {
+        // Only store agent:text, agent:tool-start, agent:tool-end, agent:result
+        if (
+          payload.type === 'agent:text' ||
+          payload.type === 'agent:tool-start' ||
+          payload.type === 'agent:tool-end' ||
+          payload.type === 'agent:result'
+        ) {
+          this.transport.pushToHistory(payload);
+        }
+      }
+    }
   }
 }

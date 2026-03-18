@@ -8,6 +8,7 @@ import {
   type Client,
 } from '@agentclientprotocol/sdk';
 import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
+import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 const log = createLogger('acp-transport');
 
@@ -44,6 +45,29 @@ export interface SessionOpts {
  */
 export class AcpTransport {
   private connection: ClientSideConnection | null = null;
+
+  /** In-memory accumulator for structural conversation events.
+   *  Populated via pushToHistory() from the client handlers.
+   *  Used by getHistory() on GeminiAdapter and CopilotAdapter as a
+   *  fallback when the Agendo log file is missing or empty. */
+  private messageHistory: AgendoEventPayload[] = [];
+
+  /** Append a structural event to the history buffer.
+   *  Only call for agent:text, agent:tool-start, agent:tool-end, agent:result.
+   *  Do NOT call for agent:text-delta (high-volume streaming) or agent:thinking. */
+  pushToHistory(event: AgendoEventPayload): void {
+    this.messageHistory.push(event);
+  }
+
+  /** Return a shallow copy of all accumulated history events. */
+  getMessageHistory(): AgendoEventPayload[] {
+    return [...this.messageHistory];
+  }
+
+  /** Clear the in-memory history buffer (e.g. on session end or restart). */
+  clearHistory(): void {
+    this.messageHistory = [];
+  }
 
   /** Create an ACP ClientSideConnection for the given child process stdio. */
   createConnection(
