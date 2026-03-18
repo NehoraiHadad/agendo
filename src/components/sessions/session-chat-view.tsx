@@ -1423,6 +1423,16 @@ export function SessionChatView({
     setQueuedMessage(null);
   }, []);
 
+  // Send Now from pill: abort in-flight queue POST and re-send with priority:'now'
+  const handleSendNowFromPill = useCallback(() => {
+    if (!queuedMessage) return;
+    queueAbortRef.current?.abort();
+    queueAbortRef.current = null;
+    const { text, imageDataUrl, imagePayload } = queuedMessage;
+    setQueuedMessage(null);
+    void handleSendNow(text, imageDataUrl, imagePayload);
+  }, [queuedMessage, handleSendNow]);
+
   // Sync queuedMessage to sessionStorage so it survives page refresh
   useEffect(() => {
     persistQueue(queuedMessage);
@@ -1891,6 +1901,7 @@ export function SessionChatView({
                   isSending={queuedMessage.isSending}
                   onEdit={handleEditQueued}
                   onCancel={handleCancelQueued}
+                  onSendNow={handleSendNowFromPill}
                 />
               </div>
             )}

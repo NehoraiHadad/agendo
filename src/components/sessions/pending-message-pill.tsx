@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Clock, Loader2, Pencil, X } from 'lucide-react';
+import { Clock, Loader2, Pencil, X, Zap } from 'lucide-react';
 
 interface PendingMessagePillProps {
   text: string;
@@ -10,6 +10,8 @@ interface PendingMessagePillProps {
   isSending?: boolean;
   onEdit: () => void;
   onCancel: () => void;
+  /** When provided, shows a ⚡ button to promote this queued message to an interrupt. */
+  onSendNow?: () => void;
 }
 
 const PREVIEW_LEN = 80;
@@ -20,6 +22,7 @@ export function PendingMessagePill({
   isSending,
   onEdit,
   onCancel,
+  onSendNow,
 }: PendingMessagePillProps) {
   const [hovered, setHovered] = useState(false);
   const isLong = text.length > PREVIEW_LEN;
@@ -53,6 +56,18 @@ export function PendingMessagePill({
       <span className="shrink-0 text-[10px] text-muted-foreground/40">
         {hovered ? '' : isSending ? 'Sending…' : 'Queued'}
       </span>
+
+      {onSendNow && (
+        <button
+          type="button"
+          onClick={onSendNow}
+          className="shrink-0 rounded-md p-1 text-amber-500/60 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
+          aria-label="Send now — interrupt agent"
+          title="Send now (interrupt)"
+        >
+          <Zap className="size-3" />
+        </button>
+      )}
 
       {!isSending && (
         <button
