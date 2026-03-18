@@ -1225,13 +1225,15 @@ export function SessionChatView({
   // user:message display items (which only carry hasImage:boolean, not the URL).
   const imageUrlsQueueRef = useRef<string[]>([]);
 
-  // Queued message: held client-side while agent is active, auto-sent on awaiting_input.
+  // Queued message: shown as a pill while the POST with priority:'next' is in flight.
   // Persisted to sessionStorage so it survives page refresh.
   const QUEUE_KEY = `queued-msg:${sessionId}`;
   type QueuedMessage = {
     text: string;
     imageDataUrl?: string;
     imagePayload?: { mimeType: string; data: string };
+    /** True while the POST is in flight */
+    isSending?: boolean;
   };
 
   function persistQueue(msg: QueuedMessage | null) {
@@ -1248,8 +1250,8 @@ export function SessionChatView({
       return null;
     }
   });
-  const prevStatusRef = useRef<string | null>(null);
-  const sendingQueuedRef = useRef(false);
+  // AbortController for in-flight queued message POST
+  const queueAbortRef = useRef<AbortController | null>(null);
   // restoreKey increments on every edit-queued action to ensure the useEffect
   // in SessionMessageInput re-fires even if the text is the same.
   const restoreKeyRef = useRef(0);
@@ -1327,18 +1329,56 @@ export function SessionChatView({
     [effectiveInitialPrompt, currentStatus],
   );
 
-  // Queue a message client-side when agent is mid-turn (status === 'active').
-  // Replaces any existing queued message (only one at a time).
+  // Queue a message and POST immediately with priority:'next'.
+  // Shows pill in "sending" state; on success clears pill and shows optimistic bubble.
+  // On failure reverts pill to editable state. Edit/cancel abort the in-flight request.
   const handleQueue = useCallback(
-    (text: string, imageDataUrl?: string, imagePayload?: { mimeType: string; data: string }) => {
-      setQueuedMessage({ text, imageDataUrl, imagePayload });
+    async (
+      text: string,
+      imageDataUrl?: string,
+      imagePayload?: { mimeType: string; data: string },
+    ) => {
+      // Abort any previous in-flight queued POST
+      queueAbortRef.current?.abort();
+
+      const controller = new AbortController();
+      queueAbortRef.current = controller;
+
+      // Show pill in sending state immediately
+      setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: true });
+
+      const body: Record<string, unknown> = { message: text, priority: 'next' };
+      if (imagePayload) {
+        body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
+      }
+
+      try {
+        await apiFetch(`/api/sessions/${sessionId}/message`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        // Success — clear pill, show optimistic bubble
+        queueAbortRef.current = null;
+        setQueuedMessage(null);
+        handleSent(text, imageDataUrl);
+      } catch (err: unknown) {
+        // If aborted (edit/cancel), don't touch state — the abort handler already did
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // POST failed — revert pill to editable state (not sending)
+        queueAbortRef.current = null;
+        setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: false });
+      }
     },
-    [],
+    [sessionId, handleSent],
   );
 
-  // Edit: move queued message back to the textarea
+  // Edit: abort in-flight POST (if any) and move queued message back to the textarea
   const handleEditQueued = useCallback(() => {
     if (!queuedMessage) return;
+    queueAbortRef.current?.abort();
+    queueAbortRef.current = null;
     setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
     setRestoredImage(
       queuedMessage.imageDataUrl && queuedMessage.imagePayload
@@ -1352,8 +1392,10 @@ export function SessionChatView({
     setQueuedMessage(null);
   }, [queuedMessage]);
 
-  // Cancel: discard the queued message
+  // Cancel: abort in-flight POST (if any) and discard the queued message
   const handleCancelQueued = useCallback(() => {
+    queueAbortRef.current?.abort();
+    queueAbortRef.current = null;
     setQueuedMessage(null);
   }, []);
 
@@ -1363,39 +1405,23 @@ export function SessionChatView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queuedMessage]);
 
-  // Auto-send: whenever agent is ready for input and there is a queued message, fire it.
-  // Uses a ref guard to prevent double-send (e.g. rapid re-renders, SSE reconnects).
-  // Does NOT require a specific status transition — fires on any INPUT_READY state.
+  // Recovery: if there's a queued message from sessionStorage (page refresh) and
+  // the agent is ready for input, POST it now.
   useEffect(() => {
-    prevStatusRef.current = currentStatus ?? null;
-
     if (
       !queuedMessage ||
+      queuedMessage.isSending ||
       !currentStatus ||
-      !INPUT_READY.has(currentStatus) ||
-      sendingQueuedRef.current
+      !INPUT_READY.has(currentStatus)
     )
       return;
 
-    sendingQueuedRef.current = true;
+    // Re-send the recovered queued message through handleQueue (which POSTs with priority)
     const msg = queuedMessage;
     setQueuedMessage(null);
-
-    // Feed through handleSent for optimistic message baseline tracking
-    handleSent(msg.text, msg.imageDataUrl);
-
-    // POST to server
-    const body: Record<string, unknown> = { message: msg.text };
-    if (msg.imagePayload) {
-      body.image = { mimeType: msg.imagePayload.mimeType, data: msg.imagePayload.data };
-    }
-    void apiFetch(`/api/sessions/${sessionId}/message`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }).finally(() => {
-      sendingQueuedRef.current = false;
-    });
-  }, [currentStatus, queuedMessage, sessionId, handleSent]);
+    void handleQueue(msg.text, msg.imageDataUrl, msg.imagePayload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStatus]);
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
@@ -1406,13 +1432,25 @@ export function SessionChatView({
     currentUserMsgCountRef.current = stream.events.filter((e) => e.type === 'user:message').length;
   }, [stream.events]);
 
-  // Clear optimistic messages once new user:message events arrive beyond the baseline
+  // Clear optimistic messages once the real user:message SSE event with matching text arrives.
+  // This prevents the "disappearing message" bug where the optimistic bubble cleared
+  // before the real message was rendered.
   useEffect(() => {
-    const userMessageCount = stream.events.filter((e) => e.type === 'user:message').length;
-    if (optimisticMessages.length > 0 && userMessageCount > baseUserMsgCountRef.current) {
-      setOptimisticMessages([]);
+    if (optimisticMessages.length === 0) return;
+    const userMessages = stream.events.filter((e) => e.type === 'user:message');
+    // Only consider messages beyond the baseline count
+    const newMessages = userMessages.slice(baseUserMsgCountRef.current);
+    if (newMessages.length === 0) return;
+
+    // Remove optimistic messages whose text matches a real SSE user:message
+    const newTexts = new Set(newMessages.map((e) => ('text' in e ? (e.text as string) : '')));
+    const remaining = optimisticMessages.filter((m) => !newTexts.has(m.text));
+    if (remaining.length < optimisticMessages.length) {
+      setOptimisticMessages(remaining);
+      // Advance baseline so we don't re-check the same events
+      baseUserMsgCountRef.current = userMessages.length;
     }
-  }, [stream.events, optimisticMessages.length]);
+  }, [stream.events, optimisticMessages]);
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -1826,6 +1864,7 @@ export function SessionChatView({
                 <PendingMessagePill
                   text={queuedMessage.text}
                   imageDataUrl={queuedMessage.imageDataUrl}
+                  isSending={queuedMessage.isSending}
                   onEdit={handleEditQueued}
                   onCancel={handleCancelQueued}
                 />

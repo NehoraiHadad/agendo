@@ -145,8 +145,12 @@ interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
   onSent?: (text: string, imageDataUrl?: string) => void;
-  /** Called instead of onSent when status is 'active' — queues the message client-side. */
-  onQueue?: (text: string, imageDataUrl?: string, imagePayload?: QueuedImagePayload) => void;
+  /** Called when a message is queued while agent is active — shows pill + POSTs with priority. */
+  onQueue?: (
+    text: string,
+    imageDataUrl?: string,
+    imagePayload?: QueuedImagePayload,
+  ) => Promise<void>;
   /** Text to restore into the textarea when the user edits a queued message.
    *  Wrapped in an object with a monotonic key so the effect re-fires even if the text is identical. */
   restoredDraft?: { text: string; key: number } | null;
@@ -376,19 +380,19 @@ export function SessionMessageInput({
       return;
     }
 
-    // Queue path: when the agent is mid-turn, hold the message client-side
-    // instead of sending immediately. The parent component will auto-send
-    // when the agent transitions to awaiting_input.
+    // Queue path: when the agent is mid-turn, show the pill and POST immediately
+    // with priority: 'next'. The backend queues it for delivery after the current turn.
     if (status === 'active' && onQueue) {
       const imgPayload = pendingImage
         ? { mimeType: pendingImage.mimeType, data: pendingImage.data }
         : undefined;
-      onQueue(trimmed, pendingImage?.dataUrl, imgPayload);
       setMessage('');
       clearDraft();
       setPendingImage(null);
       setSuppressedSuggestion(promptSuggestion ?? null);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      // onQueue handles pill display, POST with priority, and abort on edit/cancel
+      void onQueue(trimmed, pendingImage?.dataUrl, imgPayload);
       return;
     }
 

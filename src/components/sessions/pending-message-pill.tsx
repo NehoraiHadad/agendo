@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Clock, Pencil, X } from 'lucide-react';
+import { Clock, Loader2, Pencil, X } from 'lucide-react';
 
 interface PendingMessagePillProps {
   text: string;
   imageDataUrl?: string;
+  /** When true, the message POST is in flight — show spinner, disable Edit. */
+  isSending?: boolean;
   onEdit: () => void;
   onCancel: () => void;
 }
@@ -15,6 +17,7 @@ const PREVIEW_LEN = 80;
 export function PendingMessagePill({
   text,
   imageDataUrl,
+  isSending,
   onEdit,
   onCancel,
 }: PendingMessagePillProps) {
@@ -28,7 +31,11 @@ export function PendingMessagePill({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <Clock className="size-3.5 shrink-0 text-primary/50 animate-pulse" />
+      {isSending ? (
+        <Loader2 className="size-3.5 shrink-0 text-primary/50 animate-spin" />
+      ) : (
+        <Clock className="size-3.5 shrink-0 text-primary/50 animate-pulse" />
+      )}
 
       {imageDataUrl && (
         // eslint-disable-next-line @next/next/no-img-element
@@ -44,18 +51,20 @@ export function PendingMessagePill({
       </span>
 
       <span className="shrink-0 text-[10px] text-muted-foreground/40">
-        {hovered ? '' : 'Queued'}
+        {hovered ? '' : isSending ? 'Sending…' : 'Queued'}
       </span>
 
-      <button
-        type="button"
-        onClick={onEdit}
-        className="shrink-0 rounded-md p-1 text-muted-foreground/50 hover:text-primary hover:bg-primary/10 transition-colors"
-        aria-label="Edit queued message"
-        title="Edit"
-      >
-        <Pencil className="size-3" />
-      </button>
+      {!isSending && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="shrink-0 rounded-md p-1 text-muted-foreground/50 hover:text-primary hover:bg-primary/10 transition-colors"
+          aria-label="Edit queued message"
+          title="Edit"
+        >
+          <Pencil className="size-3" />
+        </button>
+      )}
 
       <button
         type="button"
