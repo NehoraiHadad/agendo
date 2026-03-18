@@ -13,6 +13,8 @@ import type { BrainstormConfig } from '@/lib/db/schema';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 import {
   STRUCTURED_SYNTHESIS_PROMPT_SUFFIX,
+  SYNTHESIS_TEMPLATES,
+  DEFAULT_SYNTHESIS_TEMPLATE,
   createTasksFromSynthesis,
 } from '@/lib/worker/synthesis-decision-log';
 import { createLogger } from '@/lib/logger';
@@ -1447,6 +1449,11 @@ export class BrainstormOrchestrator {
         .filter(Boolean)
         .join('\n\n---\n\n');
 
+      const roomConfig = room.config as BrainstormConfig | undefined;
+      const synthesisTemplate = roomConfig?.deliverableType
+        ? (SYNTHESIS_TEMPLATES[roomConfig.deliverableType] ?? DEFAULT_SYNTHESIS_TEMPLATE)
+        : DEFAULT_SYNTHESIS_TEMPLATE;
+
       const synthesisPrompt = `You are synthesizing a brainstorm discussion.
 
 TOPIC: ${room.topic}
@@ -1455,6 +1462,9 @@ DISCUSSION TRANSCRIPT:
 ${transcript}
 
 Your task: Write a clear, structured synthesis of this brainstorm. Be concise but comprehensive.
+
+${synthesisTemplate}
+
 ${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
 
       // Determine synthesis agent: prefer playbook.synthesisAgentId, then first participant
@@ -1867,6 +1877,28 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
           `Your assigned role is: ${myRole}`;
         sections.push(`\n## Your Role\n${instructions}`);
       }
+    }
+
+    // Inject setup context if configured
+    const cfg = room.config as BrainstormConfig | undefined;
+    if (cfg?.goal || cfg?.deliverableType || cfg?.constraints?.length || cfg?.targetAudience) {
+      const DELIVERABLE_LABELS: Record<string, string> = {
+        decision: 'Make a clear decision with rationale',
+        options_list: 'Produce a ranked list of options with pros/cons',
+        action_plan: 'Produce a prioritized action plan with owners',
+        risk_assessment: 'Produce a risk matrix with mitigations',
+        exploration: 'Explore the space, document findings and open questions',
+      };
+      const briefLines: string[] = [];
+      if (cfg.goal) briefLines.push(`**Goal:** ${cfg.goal}`);
+      if (cfg.deliverableType && DELIVERABLE_LABELS[cfg.deliverableType]) {
+        briefLines.push(`**Expected Output:** ${DELIVERABLE_LABELS[cfg.deliverableType]}`);
+      }
+      if (cfg.constraints?.length) {
+        briefLines.push(`**Constraints:**\n${cfg.constraints.map((c) => `- ${c}`).join('\n')}`);
+      }
+      if (cfg.targetAudience) briefLines.push(`**Target Audience:** ${cfg.targetAudience}`);
+      sections.push(`\n## Discussion Brief\n${briefLines.join('\n')}`);
     }
 
     // Inject context from related brainstorm syntheses (max 3)

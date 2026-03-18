@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useDraft } from '@/hooks/use-draft';
-import { Loader2, Send, Paperclip, X, ExternalLink } from 'lucide-react';
+import { Loader2, Send, Paperclip, X, ExternalLink, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -151,6 +151,12 @@ interface SessionMessageInputProps {
     imageDataUrl?: string,
     imagePayload?: QueuedImagePayload,
   ) => Promise<void>;
+  /** Called on Shift+Enter while agent is active — POSTs with priority:'now' to interrupt. */
+  onSendNow?: (
+    text: string,
+    imageDataUrl?: string,
+    imagePayload?: QueuedImagePayload,
+  ) => Promise<void>;
   /** Text to restore into the textarea when the user edits a queued message.
    *  Wrapped in an object with a monotonic key so the effect re-fires even if the text is identical. */
   restoredDraft?: { text: string; key: number } | null;
@@ -204,6 +210,7 @@ export function SessionMessageInput({
   status,
   onSent,
   onQueue,
+  onSendNow,
   restoredDraft,
   restoredImage,
   slashCommands,
@@ -215,6 +222,7 @@ export function SessionMessageInput({
 }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isSendingNow, setIsSendingNow] = useState(false);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -428,6 +436,30 @@ export function SessionMessageInput({
     }
   }
 
+  async function submitNow(text: string) {
+    const trimmed = text.trim();
+    if ((!trimmed && !pendingImage) || isSendingNow) return;
+    if (!onSendNow) return;
+
+    const imgPayload = pendingImage
+      ? { mimeType: pendingImage.mimeType, data: pendingImage.data }
+      : undefined;
+    const imageDataUrl = pendingImage?.dataUrl;
+
+    setIsSendingNow(true);
+    setMessage('');
+    clearDraft();
+    setPendingImage(null);
+    setSuppressedSuggestion(promptSuggestion ?? null);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
+    try {
+      await onSendNow(trimmed, imageDataUrl, imgPayload);
+    } finally {
+      setIsSendingNow(false);
+    }
+  }
+
   async function submitMessage() {
     setShowPicker(false);
     await submitText(message);
@@ -544,6 +576,12 @@ export function SessionMessageInput({
       setSuppressedSuggestion(activeSuggestion);
       return;
     }
+    if (e.key === 'Enter' && e.shiftKey && status === 'active' && onSendNow) {
+      e.preventDefault();
+      setShowPicker(false);
+      void submitNow(message);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void submitMessage();
@@ -613,7 +651,9 @@ export function SessionMessageInput({
     ? 'Start a conversation…'
     : isIdle
       ? 'Resume session…'
-      : 'Message agent… or / for commands';
+      : status === 'active' && onSendNow
+        ? 'Enter to queue · Shift+Enter to interrupt'
+        : 'Message agent… or / for commands';
 
   return (
     <>
@@ -742,11 +782,28 @@ export function SessionMessageInput({
             />
           </div>
 
+          {/* Send Now button — only shown when agent is active and onSendNow is provided */}
+          {status === 'active' && onSendNow && (
+            <button
+              type="button"
+              onClick={() => void submitNow(message)}
+              disabled={(!message.trim() && !pendingImage) || isSendingNow}
+              aria-label="Send Now — interrupt agent (Shift+Enter)"
+              title="Send Now — interrupt agent (Shift+Enter)"
+              className="shrink-0 flex items-center justify-center h-[44px] w-[44px] rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/50 hover:text-amber-300 active:scale-95 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
+            >
+              {isSendingNow ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Zap className="size-4" />
+              )}
+            </button>
+          )}
           <Button
             type="submit"
             size="icon"
             className="shrink-0 h-[44px] w-[44px] rounded-xl shadow-[0_2px_8px_oklch(0.7_0.18_280/0.2)] hover:shadow-[0_4px_16px_oklch(0.7_0.18_280/0.35)] active:scale-95 transition-all duration-150 disabled:shadow-none"
-            disabled={(!message.trim() && !pendingImage) || isSending}
+            disabled={(!message.trim() && !pendingImage) || isSending || isSendingNow}
             aria-label="Send message"
           >
             {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}

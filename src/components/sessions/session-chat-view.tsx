@@ -1374,6 +1374,30 @@ export function SessionChatView({
     [sessionId, handleSent],
   );
 
+  // Send a message immediately with priority:'now' to interrupt an active agent.
+  const handleSendNow = useCallback(
+    async (
+      text: string,
+      imageDataUrl?: string,
+      imagePayload?: { mimeType: string; data: string },
+    ) => {
+      const body: Record<string, unknown> = { message: text, priority: 'now' };
+      if (imagePayload) {
+        body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
+      }
+      try {
+        await apiFetch(`/api/sessions/${sessionId}/message`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        handleSent(text, imageDataUrl);
+      } catch {
+        // Silently ignore — the agent is still running and will continue
+      }
+    },
+    [sessionId, handleSent],
+  );
+
   // Edit: abort in-flight POST (if any) and move queued message back to the textarea
   const handleEditQueued = useCallback(() => {
     if (!queuedMessage) return;
@@ -1875,6 +1899,7 @@ export function SessionChatView({
               status={currentStatus as SessionStatus}
               onSent={handleSent}
               onQueue={handleQueue}
+              onSendNow={handleSendNow}
               restoredDraft={restoredDraft}
               restoredImage={restoredImage}
               slashCommands={slashCommands}

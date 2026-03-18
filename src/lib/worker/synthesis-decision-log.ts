@@ -26,6 +26,74 @@ export interface NextStep {
 // ---------------------------------------------------------------------------
 
 /**
+ * Deliverable-type-specific synthesis templates.
+ *
+ * Each template instructs the synthesis agent how to structure its output
+ * based on the discussion goal. Select via `room.config.deliverableType`.
+ */
+export const SYNTHESIS_TEMPLATES: Record<string, string> = {
+  decision: `Structure your synthesis as:
+## Decision
+[What was decided — one clear sentence]
+## Rationale
+[Key arguments from the discussion that support this decision]
+## Objections Addressed
+[Key disagreements and how they were resolved or overruled]
+## Next Steps
+- [ ] [Action] — Owner: [agent/person/team]`,
+
+  options_list: `Structure your synthesis as:
+## Options Evaluated
+### Option 1: [Name]
+**Pros:** ...
+**Cons:** ...
+**Advocates:** [who argued for this in the discussion]
+### Option 2: [Name]
+...
+## Recommendation
+[Which option to pursue and why, citing specific discussion arguments]
+## Open Questions
+[What remains unresolved]`,
+
+  action_plan: `Structure your synthesis as:
+## Objective
+[What we're trying to achieve]
+## Action Items (prioritized)
+1. [ ] [Action] — Owner: [agent/person] — Depends on: [nothing or item N]
+2. [ ] [Action] — Owner: [agent/person] — Depends on: [item 1]
+...
+## Risks & Mitigations
+- Risk: [X] → Mitigation: [Y]
+## Timeline
+[Rough phases or milestones if discussed]`,
+
+  risk_assessment: `Structure your synthesis as:
+## Risks Identified
+| Risk | Impact | Likelihood | Severity | Mitigation |
+|------|--------|-----------|----------|------------|
+| ...  | High/Med/Low | High/Med/Low | Critical/High/Med/Low | ... |
+## Key Discussion Points
+[How agents evaluated each risk — major agreements/disagreements]
+## Recommended Actions
+- [ ] [Immediate action for critical risks]
+- [ ] [Monitoring for lower-severity risks]`,
+
+  exploration: `Structure your synthesis as:
+## Topics Explored
+[What ground the discussion covered]
+## Key Findings
+- [Finding 1]: [supporting evidence from discussion]
+- [Finding 2]: ...
+## Open Questions
+- [Question not fully resolved]
+## Potential Next Steps
+[Ideas for follow-up — not commitments]`,
+};
+
+/** Fall-back template used when no deliverableType is set */
+export const DEFAULT_SYNTHESIS_TEMPLATE = SYNTHESIS_TEMPLATES['decision'];
+
+/**
  * Append this to the synthesis prompt to request structured output.
  * The synthesis agent should produce markdown with these exact section headers.
  */

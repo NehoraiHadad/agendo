@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useDraft } from '@/hooks/use-draft';
 import { toast } from 'sonner';
 import {
@@ -86,6 +86,11 @@ interface DraftState {
   maxWaves?: number;
   presetId?: string;
   config?: BrainstormConfig;
+  // Setup fields
+  goal?: string;
+  constraints?: string[];
+  deliverableType?: BrainstormConfig['deliverableType'];
+  targetAudience?: string;
 }
 
 // ============================================================================
@@ -133,6 +138,15 @@ interface FormContentProps {
   selectedRelatedIds: string[];
   toggleRelatedRoom: (roomId: string) => void;
   isLoadingCompletedRooms: boolean;
+  // Setup fields
+  goal: string;
+  setGoal: (v: string) => void;
+  constraints: string[];
+  setConstraints: (v: string[]) => void;
+  deliverableType: BrainstormConfig['deliverableType'];
+  setDeliverableType: (v: BrainstormConfig['deliverableType']) => void;
+  targetAudience: string;
+  setTargetAudience: (v: string) => void;
 }
 
 function FormContent({
@@ -161,7 +175,56 @@ function FormContent({
   selectedRelatedIds,
   toggleRelatedRoom,
   isLoadingCompletedRooms,
+  goal,
+  setGoal,
+  constraints,
+  setConstraints,
+  deliverableType,
+  setDeliverableType,
+  targetAudience,
+  setTargetAudience,
 }: FormContentProps) {
+  const [setupOpen, setSetupOpen] = useState(false);
+  const constraintInputRef = useRef<HTMLInputElement>(null);
+  const [constraintDraft, setConstraintDraft] = useState('');
+
+  const addConstraint = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      if (!constraints.includes(trimmed)) {
+        setConstraints([...constraints, trimmed]);
+      }
+      setConstraintDraft('');
+    },
+    [constraints, setConstraints],
+  );
+
+  const removeConstraint = useCallback(
+    (tag: string) => {
+      setConstraints(constraints.filter((c) => c !== tag));
+    },
+    [constraints, setConstraints],
+  );
+
+  const handleConstraintKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        addConstraint(constraintDraft);
+      } else if (e.key === 'Backspace' && constraintDraft === '' && constraints.length > 0) {
+        setConstraints(constraints.slice(0, -1));
+      }
+    },
+    [addConstraint, constraintDraft, constraints, setConstraints],
+  );
+
+  const hasSetupValues =
+    goal.trim().length > 0 ||
+    constraints.length > 0 ||
+    deliverableType !== undefined ||
+    targetAudience.trim().length > 0;
+
   return (
     <div className="space-y-5">
       <SectionHeader>Details</SectionHeader>
@@ -195,6 +258,134 @@ function FormContent({
           rows={3}
           className="text-sm resize-none"
         />
+      </div>
+
+      {/* Setup (optional) — collapsible */}
+      <div className="rounded-md border border-white/[0.06] overflow-hidden">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 hover:bg-white/[0.02] transition-colors"
+          onClick={() => setSetupOpen((v) => !v)}
+          aria-expanded={setupOpen}
+        >
+          <span className="font-medium">
+            Setup <span className="text-muted-foreground/35 font-normal">(optional)</span>
+            {hasSetupValues && !setupOpen && (
+              <span className="ml-1.5 inline-flex items-center rounded-full bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-blue-400">
+                configured
+              </span>
+            )}
+          </span>
+          {setupOpen ? (
+            <ChevronUp className="size-3.5 shrink-0" />
+          ) : (
+            <ChevronDown className="size-3.5 shrink-0" />
+          )}
+        </button>
+
+        {setupOpen && (
+          <div className="px-3 pb-3 pt-1 space-y-3 border-t border-white/[0.06]">
+            {/* Deliverable type */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-foreground/70">Deliverable Type</Label>
+              <Select
+                value={deliverableType ?? '__none__'}
+                onValueChange={(v) =>
+                  setDeliverableType(
+                    v === '__none__' ? undefined : (v as BrainstormConfig['deliverableType']),
+                  )
+                }
+              >
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  <SelectItem value="decision">Decision</SelectItem>
+                  <SelectItem value="options_list">Options List</SelectItem>
+                  <SelectItem value="action_plan">Action Plan</SelectItem>
+                  <SelectItem value="risk_assessment">Risk Assessment</SelectItem>
+                  <SelectItem value="exploration">Exploration</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Goal */}
+            <div className="space-y-1.5">
+              <Label htmlFor="brainstorm-goal" className="text-xs font-medium text-foreground/70">
+                Goal
+              </Label>
+              <Textarea
+                dir="auto"
+                id="brainstorm-goal"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder="What should the outcome be?"
+                rows={2}
+                className="text-sm resize-none"
+              />
+            </div>
+
+            {/* Constraints tag input */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-foreground/70">Constraints</Label>
+              <div
+                className="flex flex-wrap gap-1.5 min-h-[36px] rounded-md border border-input bg-transparent px-3 py-1.5 text-sm cursor-text focus-within:ring-1 focus-within:ring-ring"
+                onClick={() => constraintInputRef.current?.focus()}
+              >
+                {constraints.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 rounded-full bg-white/[0.08] px-2 py-0.5 text-[11px] text-foreground/80"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeConstraint(tag);
+                      }}
+                      className="text-muted-foreground/50 hover:text-foreground/80 transition-colors"
+                      aria-label={`Remove ${tag}`}
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  ref={constraintInputRef}
+                  value={constraintDraft}
+                  onChange={(e) => setConstraintDraft(e.target.value)}
+                  onKeyDown={handleConstraintKeyDown}
+                  onBlur={() => addConstraint(constraintDraft)}
+                  placeholder={constraints.length === 0 ? 'Type and press Enter or comma...' : ''}
+                  className="flex-1 min-w-[120px] bg-transparent text-[11px] outline-none placeholder:text-muted-foreground/35"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground/35">
+                e.g. &quot;must use TypeScript&quot;, &quot;no breaking changes&quot;
+              </p>
+            </div>
+
+            {/* Target audience */}
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="brainstorm-audience"
+                className="text-xs font-medium text-foreground/70"
+              >
+                Target Audience
+              </Label>
+              <Input
+                dir="auto"
+                id="brainstorm-audience"
+                value={targetAudience}
+                onChange={(e) => setTargetAudience(e.target.value)}
+                placeholder="Who will use the output?"
+                className="text-sm"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Project selector */}
@@ -523,6 +714,13 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [selectedRelatedIds, setSelectedRelatedIds] = useState<string[]>([]);
   const [isLoadingCompletedRooms, setIsLoadingCompletedRooms] = useState(false);
 
+  // Setup / goal fields
+  const [goal, setGoal] = useState('');
+  const [constraints, setConstraints] = useState<string[]>([]);
+  const [deliverableType, setDeliverableType] =
+    useState<BrainstormConfig['deliverableType']>(undefined);
+  const [targetAudience, setTargetAudience] = useState('');
+
   // Draft persistence via existing useDraft hook (debounced localStorage)
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:brainstorm:new');
 
@@ -804,6 +1002,14 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     selectedRelatedIds,
     toggleRelatedRoom,
     isLoadingCompletedRooms,
+    goal,
+    setGoal,
+    constraints,
+    setConstraints,
+    deliverableType,
+    setDeliverableType,
+    targetAudience,
+    setTargetAudience,
   };
 
   const footerProps: FooterContentProps = {
