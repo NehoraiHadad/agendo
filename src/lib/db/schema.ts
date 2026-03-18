@@ -573,6 +573,8 @@ export interface BrainstormConfig {
   maxResponsesPerWave?: number;
   /** Number of consecutive timeouts before a participant is auto-evicted (default 2) */
   evictionThreshold?: number;
+  /** Custom role instructions overriding defaults: role label → instruction text */
+  roleInstructions?: Record<string, string>;
 }
 
 // ============================================================================

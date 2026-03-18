@@ -8,6 +8,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolvePlaybook } from '@/lib/brainstorm/playbook';
+import { DEFAULT_ROLE_INSTRUCTIONS, AUTO_ROLE_ASSIGNMENTS } from '@/lib/brainstorm/role-templates';
 import type { BrainstormConfig } from '@/lib/db/schema';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 import {
@@ -318,6 +319,28 @@ export class BrainstormOrchestrator {
       }
     }
 
+    // Auto-assign roles when none are explicitly configured.
+    // Uses AUTO_ROLE_ASSIGNMENTS to map role labels to participant slugs based
+    // on active participant count. The assignment is stored on this.playbook so
+    // buildPreamble() can inject personalized instructions per participant.
+    if (!roomConfig.roles || Object.keys(roomConfig.roles).length === 0) {
+      const activeParticipants = this.participants.filter((p) => !p.hasLeft);
+      const autoRoles = AUTO_ROLE_ASSIGNMENTS[activeParticipants.length];
+      if (autoRoles) {
+        const autoRolesMap: Record<string, string> = {};
+        autoRoles.forEach((role, i) => {
+          if (activeParticipants[i]) {
+            autoRolesMap[role] = activeParticipants[i].agentSlug;
+          }
+        });
+        this.playbook = { ...this.playbook, roles: autoRolesMap };
+        log.info(
+          { roomId: this.roomId, roles: autoRolesMap },
+          'Auto-assigned roles based on participant count',
+        );
+      }
+    }
+
     // Create/resume all participant sessions in parallel — each is independent.
     // Parallelizing means Codex, Claude, and Copilot all start their ACP/SDK
     // handshakes at the same time instead of waiting for each other.
@@ -355,7 +378,12 @@ export class BrainstormOrchestrator {
         }
 
         const otherNames = allNames.filter((n) => n !== participant.agentName);
-        const preamble = this.buildPreamble(room, otherNames, relatedSyntheses);
+        const preamble = this.buildPreamble(
+          room,
+          otherNames,
+          participant.agentSlug,
+          relatedSyntheses,
+        );
 
         log.info(
           { roomId: this.roomId, agentId: participant.agentId, agentName: participant.agentName },
@@ -1781,6 +1809,7 @@ ${correctionsText}`;
   private buildPreamble(
     room: BrainstormWithDetails,
     otherParticipantNames: string[],
+    currentParticipantSlug: string,
     relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
   ): string {
     const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
@@ -1824,6 +1853,20 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
         return `- **${role}**: ${name}`;
       });
       sections.push(`\n## Assigned Roles\n${roleLines.join('\n')}`);
+
+      // Inject personalized role instructions for this participant
+      const roleInstructions = (room.config as BrainstormConfig)?.roleInstructions;
+      const myRole = Object.entries(this.playbook.roles).find(
+        ([, slug]) => slug === currentParticipantSlug,
+      )?.[0];
+
+      if (myRole) {
+        const instructions =
+          roleInstructions?.[myRole] ??
+          DEFAULT_ROLE_INSTRUCTIONS[myRole] ??
+          `Your assigned role is: ${myRole}`;
+        sections.push(`\n## Your Role\n${instructions}`);
+      }
     }
 
     // Inject context from related brainstorm syntheses (max 3)

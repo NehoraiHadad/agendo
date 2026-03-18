@@ -1,8 +1,11 @@
 /**
- * Tests for BrainstormOrchestrator.buildPreamble — cross-brainstorm memory (context linking)
+ * Tests for BrainstormOrchestrator.buildPreamble
  *
- * Verifies that when relatedRoomIds are present in room.config, buildPreamble()
- * fetches syntheses from those rooms and injects them into the preamble.
+ * Covers:
+ * - Cross-brainstorm memory (context linking via relatedRoomIds)
+ * - Per-participant role instructions (critic, optimist, pragmatist, architect)
+ * - Auto-assignment of roles when none are explicitly configured
+ * - Backward compatibility: agents without a role get a generic preamble
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -81,6 +84,23 @@ vi.mock('@/lib/worker/synthesis-decision-log', () => ({
 // ---------------------------------------------------------------------------
 
 const { BrainstormOrchestrator } = await import('../brainstorm-orchestrator');
+
+// ---------------------------------------------------------------------------
+// Type alias for the private buildPreamble method
+// ---------------------------------------------------------------------------
+
+type BuildPreambleFn = (
+  room: unknown,
+  otherNames: string[],
+  currentParticipantSlug: string,
+  relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
+) => string;
+
+function getPreambleBuilder(orchestrator: InstanceType<typeof BrainstormOrchestrator>) {
+  return (orchestrator as unknown as { buildPreamble: BuildPreambleFn }).buildPreamble.bind(
+    orchestrator,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -165,32 +185,20 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     ]);
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    // Access the private method via type assertion
-    const preamble = await (
-      orchestrator as unknown as {
-        buildPreamble: (
-          room: unknown,
-          otherNames: string[],
-          relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
-        ) => string;
-      }
-    ).buildPreamble(
-      room,
-      ['Gemini'],
-      [
-        {
-          title: 'Architecture Discussion',
-          synthesis: 'We decided to use microservices with event-driven communication.',
-          createdAt: new Date('2026-03-10'),
-        },
-        {
-          title: 'API Design',
-          synthesis: 'REST API with versioned endpoints was chosen.',
-          createdAt: new Date('2026-03-12'),
-        },
-      ],
-    );
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1', [
+      {
+        title: 'Architecture Discussion',
+        synthesis: 'We decided to use microservices with event-driven communication.',
+        createdAt: new Date('2026-03-10'),
+      },
+      {
+        title: 'API Design',
+        synthesis: 'REST API with versioned endpoints was chosen.',
+        createdAt: new Date('2026-03-12'),
+      },
+    ]);
 
     expect(preamble).toContain('Context from Previous Discussions');
     expect(preamble).toContain('Architecture Discussion');
@@ -203,16 +211,9 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     const room = makeRoom();
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    const preamble = (
-      orchestrator as unknown as {
-        buildPreamble: (
-          room: unknown,
-          otherNames: string[],
-          relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
-        ) => string;
-      }
-    ).buildPreamble(room, ['Gemini']);
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
     expect(preamble).not.toContain('Context from Previous Discussions');
   });
@@ -223,26 +224,15 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     const room = makeRoom({ config });
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    const preamble = (
-      orchestrator as unknown as {
-        buildPreamble: (
-          room: unknown,
-          otherNames: string[],
-          relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
-        ) => string;
-      }
-    ).buildPreamble(
-      room,
-      ['Gemini'],
-      [
-        {
-          title: 'Long Discussion',
-          synthesis: longSynthesis,
-          createdAt: new Date('2026-03-10'),
-        },
-      ],
-    );
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1', [
+      {
+        title: 'Long Discussion',
+        synthesis: longSynthesis,
+        createdAt: new Date('2026-03-10'),
+      },
+    ]);
 
     // Should contain truncation indicator
     expect(preamble).toContain('...');
@@ -257,12 +247,9 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     const room = makeRoom({ topic: 'How should we restructure the worker queue?' });
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    const preamble = (
-      orchestrator as unknown as {
-        buildPreamble: (room: unknown, otherNames: string[]) => string;
-      }
-    ).buildPreamble(room, ['Gemini']);
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
     expect(preamble).not.toContain('How should we restructure the worker queue?');
   });
@@ -271,12 +258,9 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     const room = makeRoom({ topic: 'Some topic that must not appear' });
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    const preamble = (
-      orchestrator as unknown as {
-        buildPreamble: (room: unknown, otherNames: string[]) => string;
-      }
-    ).buildPreamble(room, ['Gemini']);
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
     // Preamble should tell the agent to wait for the topic
     expect(preamble.toLowerCase()).toMatch(/wait|first wave message/);
@@ -296,21 +280,300 @@ describe('buildPreamble — cross-brainstorm memory', () => {
     ];
 
     const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
 
-    const preamble = (
-      orchestrator as unknown as {
-        buildPreamble: (
-          room: unknown,
-          otherNames: string[],
-          relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
-        ) => string;
-      }
-    ).buildPreamble(room, ['Gemini'], fourSyntheses);
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1', fourSyntheses);
 
     // Should contain only 3, not 4
     expect(preamble).toContain('Room 1');
     expect(preamble).toContain('Room 2');
     expect(preamble).toContain('Room 3');
     expect(preamble).not.toContain('Room 4');
+  });
+});
+
+describe('buildPreamble — role instructions', () => {
+  it('injects critic role instructions for the agent assigned the critic role', () => {
+    const config = {
+      roles: { critic: 'claude-code-1', pragmatist: 'gemini-cli-1' },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('CRITIC');
+  });
+
+  it('injects pragmatist role instructions for the agent assigned the pragmatist role', () => {
+    const config = {
+      roles: { critic: 'claude-code-1', pragmatist: 'gemini-cli-1' },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Claude'], 'gemini-cli-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('PRAGMATIST');
+  });
+
+  it('does not inject role instructions for an agent with no assigned role', () => {
+    // No roles configured — backward compatible generic preamble
+    const room = makeRoom();
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).not.toContain('Your Role');
+    expect(preamble).not.toContain('CRITIC');
+    expect(preamble).not.toContain('PRAGMATIST');
+  });
+
+  it('does not inject role section when roles are configured but current agent has no role', () => {
+    // Only gemini is assigned a role; claude gets none
+    const config = {
+      roles: { critic: 'gemini-cli-1' },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    // Assigned Roles section is present (global list), but no "Your Role" block
+    expect(preamble).toContain('Assigned Roles');
+    expect(preamble).not.toContain('Your Role');
+  });
+
+  it('uses custom roleInstructions from config when provided', () => {
+    const config = {
+      roles: { critic: 'claude-code-1' },
+      roleInstructions: {
+        critic: 'You are the custom critic — challenge everything aggressively.',
+      },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('custom critic — challenge everything aggressively');
+    // Default instructions must NOT appear
+    expect(preamble).not.toContain('Challenge assumptions others make');
+  });
+
+  it('falls back to default instructions when roleInstructions does not cover the role', () => {
+    const config = {
+      roles: { optimist: 'claude-code-1' },
+      // roleInstructions only covers critic, not optimist
+      roleInstructions: { critic: 'Custom critic text' },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('OPTIMIST');
+  });
+
+  it('falls back to generic role label when role is unknown and no custom instructions', () => {
+    const config = {
+      roles: { 'devil-advocate': 'claude-code-1' },
+    };
+    const room = makeRoom({ config });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, config);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('devil-advocate');
+  });
+});
+
+describe('buildPreamble — auto-assignment', () => {
+  it('assigns critic role to first participant when 2 agents have no explicit roles', () => {
+    const room = makeRoom(); // 2 participants: claude-code-1 (p1), gemini-cli-1 (p2)
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    // Simulate auto-assignment that createParticipantSessions would do
+    (orchestrator as unknown as { playbook: { roles?: Record<string, string> } }).playbook.roles = {
+      critic: 'claude-code-1',
+      pragmatist: 'gemini-cli-1',
+    };
+
+    const buildPreamble = getPreambleBuilder(orchestrator);
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('CRITIC');
+  });
+
+  it('assigns pragmatist role to second participant when 2 agents have no explicit roles', () => {
+    const room = makeRoom(); // 2 participants: claude-code-1 (p1), gemini-cli-1 (p2)
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    // Simulate auto-assignment
+    (orchestrator as unknown as { playbook: { roles?: Record<string, string> } }).playbook.roles = {
+      critic: 'claude-code-1',
+      pragmatist: 'gemini-cli-1',
+    };
+
+    const buildPreamble = getPreambleBuilder(orchestrator);
+    const preamble = buildPreamble(room, ['Claude'], 'gemini-cli-1');
+
+    expect(preamble).toContain('PRAGMATIST');
+  });
+
+  it('assigns 3 roles for 3 participants (critic, optimist, pragmatist)', () => {
+    const threeParticipantRoom = makeRoom({
+      participants: [
+        {
+          id: 'p1',
+          roomId: 'room-1',
+          agentId: 'agent-1',
+          agentName: 'Claude',
+          agentSlug: 'claude-code-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p2',
+          roomId: 'room-1',
+          agentId: 'agent-2',
+          agentName: 'Gemini',
+          agentSlug: 'gemini-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p3',
+          roomId: 'room-1',
+          agentId: 'agent-3',
+          agentName: 'Codex',
+          agentSlug: 'codex-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+      ],
+    });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    // Simulate auto-assignment for 3 agents
+    (orchestrator as unknown as { playbook: { roles?: Record<string, string> } }).playbook.roles = {
+      critic: 'claude-code-1',
+      optimist: 'gemini-cli-1',
+      pragmatist: 'codex-cli-1',
+    };
+
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    // Each participant gets their role
+    const claudePreamble = buildPreamble(
+      threeParticipantRoom,
+      ['Gemini', 'Codex'],
+      'claude-code-1',
+    );
+    expect(claudePreamble).toContain('CRITIC');
+
+    const geminiPreamble = buildPreamble(threeParticipantRoom, ['Claude', 'Codex'], 'gemini-cli-1');
+    expect(geminiPreamble).toContain('OPTIMIST');
+
+    const codexPreamble = buildPreamble(threeParticipantRoom, ['Claude', 'Gemini'], 'codex-cli-1');
+    expect(codexPreamble).toContain('PRAGMATIST');
+  });
+
+  it('assigns 4 roles for 4 participants including architect', () => {
+    const fourParticipantRoom = makeRoom({
+      participants: [
+        {
+          id: 'p1',
+          roomId: 'room-1',
+          agentId: 'a1',
+          agentName: 'Claude',
+          agentSlug: 'claude-code-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p2',
+          roomId: 'room-1',
+          agentId: 'a2',
+          agentName: 'Gemini',
+          agentSlug: 'gemini-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p3',
+          roomId: 'room-1',
+          agentId: 'a3',
+          agentName: 'Codex',
+          agentSlug: 'codex-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p4',
+          roomId: 'room-1',
+          agentId: 'a4',
+          agentName: 'Copilot',
+          agentSlug: 'github-copilot-cli',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+      ],
+    });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+
+    // Simulate auto-assignment for 4 agents
+    (orchestrator as unknown as { playbook: { roles?: Record<string, string> } }).playbook.roles = {
+      critic: 'claude-code-1',
+      optimist: 'gemini-cli-1',
+      pragmatist: 'codex-cli-1',
+      architect: 'github-copilot-cli',
+    };
+
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const copilotPreamble = buildPreamble(
+      fourParticipantRoom,
+      ['Claude', 'Gemini', 'Codex'],
+      'github-copilot-cli',
+    );
+    expect(copilotPreamble).toContain('ARCHITECT');
   });
 });
