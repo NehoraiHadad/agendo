@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronUp, ChevronsRight, Copy, Check } from 'lucide-react';
 import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
-import type { BrainstormMessageItem } from '@/stores/brainstorm-store';
+import type { BrainstormMessageItem, ReviewState } from '@/stores/brainstorm-store';
 import { brainstormMdComponents } from './markdown-components';
 
 // ============================================================================
@@ -211,6 +211,69 @@ function UserMessage({ content, ts }: { content: string; ts: number }) {
 }
 
 // ============================================================================
+// Feedback Buttons
+// ============================================================================
+
+type FeedbackSignal = 'thumbs_up' | 'thumbs_down' | 'focus';
+
+interface FeedbackButtonsProps {
+  roomId: string;
+  wave: number;
+  agentId: string;
+}
+
+function FeedbackButtons({ roomId, wave, agentId }: FeedbackButtonsProps) {
+  const [submitted, setSubmitted] = useState<FeedbackSignal | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const submit = useCallback(
+    async (signal: FeedbackSignal) => {
+      if (submitted || pending) return;
+      setPending(true);
+      try {
+        await fetch(`/api/brainstorms/${roomId}/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wave, agentId, signal }),
+        });
+        setSubmitted(signal);
+      } finally {
+        setPending(false);
+      }
+    },
+    [roomId, wave, agentId, submitted, pending],
+  );
+
+  const buttons: Array<{ signal: FeedbackSignal; emoji: string; label: string }> = [
+    { signal: 'thumbs_up', emoji: '👍', label: 'On track' },
+    { signal: 'thumbs_down', emoji: '👎', label: 'Off topic' },
+    { signal: 'focus', emoji: '🎯', label: 'Dig deeper' },
+  ];
+
+  return (
+    <div className="flex items-center gap-1 mt-1.5" role="group" aria-label="Wave feedback">
+      {buttons.map(({ signal, emoji, label }) => (
+        <button
+          key={signal}
+          type="button"
+          onClick={() => void submit(signal)}
+          disabled={submitted !== null || pending}
+          aria-pressed={submitted === signal}
+          aria-label={label}
+          title={label}
+          className={`text-sm px-1.5 py-0.5 rounded transition-opacity
+            ${submitted === signal ? 'opacity-100' : 'opacity-30 hover:opacity-70'}
+            ${submitted !== null && submitted !== signal ? 'opacity-10' : ''}
+            disabled:cursor-not-allowed`}
+        >
+          {emoji}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
 // Agent Message Card
 // ============================================================================
 
@@ -218,11 +281,20 @@ interface AgentMessageProps {
   message: BrainstormMessageItem;
   agentSlug: string;
   agentIndex: number;
+  /** Active review window — when set, shows feedback buttons */
+  reviewState?: ReviewState | null;
+  roomId?: string;
 }
 
 const COLLAPSE_LINE_COUNT = 20;
 
-function AgentMessageCard({ message, agentSlug, agentIndex }: AgentMessageProps) {
+function AgentMessageCard({
+  message,
+  agentSlug,
+  agentIndex,
+  reviewState,
+  roomId,
+}: AgentMessageProps) {
   const colors = getAgentColor(agentSlug, agentIndex);
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -312,6 +384,11 @@ function AgentMessageCard({ message, agentSlug, agentIndex }: AgentMessageProps)
               )}
             </button>
           )}
+
+          {/* Feedback buttons — only shown during an active review window */}
+          {reviewState && reviewState.wave === message.wave && message.agentId && roomId && (
+            <FeedbackButtons roomId={roomId} wave={message.wave} agentId={message.agentId} />
+          )}
         </div>
       </div>
     </div>
@@ -328,12 +405,18 @@ export interface MessageCardProps {
   agentSlug?: string;
   /** Index in participant list for color rotation fallback */
   agentIndex?: number;
+  /** Active review window state — when set, shows feedback buttons on agent messages */
+  reviewState?: ReviewState | null;
+  /** Brainstorm room ID — required for posting feedback */
+  roomId?: string;
 }
 
 export const MessageCard = memo(function MessageCard({
   message,
   agentSlug = '',
   agentIndex = 0,
+  reviewState,
+  roomId,
 }: MessageCardProps) {
   if (message.senderType === 'user') {
     return <UserMessage content={message.content} ts={message.ts} />;
@@ -349,5 +432,13 @@ export const MessageCard = memo(function MessageCard({
     );
   }
 
-  return <AgentMessageCard message={message} agentSlug={agentSlug} agentIndex={agentIndex} />;
+  return (
+    <AgentMessageCard
+      message={message}
+      agentSlug={agentSlug}
+      agentIndex={agentIndex}
+      reviewState={reviewState}
+      roomId={roomId}
+    />
+  );
 });

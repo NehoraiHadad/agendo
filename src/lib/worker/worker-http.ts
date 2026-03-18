@@ -12,6 +12,15 @@ const log = createLogger('worker-http');
  */
 export const liveBrainstormHandlers = new Map<string, (payload: string) => void>();
 
+/**
+ * Feedback handlers: roomId → callback invoked when a feedback signal arrives.
+ * Registered by BrainstormOrchestrator during active review windows.
+ */
+export const liveBrainstormFeedbackHandlers = new Map<
+  string,
+  (wave: number, agentId: string, signal: 'thumbs_up' | 'thumbs_down' | 'focus') => void
+>();
+
 let server: http.Server | null = null;
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -165,6 +174,43 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
     handler(body);
+    ok(res, { dispatched: true });
+    return;
+  }
+
+  if (method === 'POST' && resource === 'brainstorms' && action === 'feedback') {
+    const body = await readBody(req);
+    if (!body) {
+      badRequest(res, 'Missing request body');
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      badRequest(res, 'Invalid JSON body');
+      return;
+    }
+    const { wave, agentId, signal } = parsed as {
+      wave?: unknown;
+      agentId?: unknown;
+      signal?: unknown;
+    };
+    if (
+      typeof wave !== 'number' ||
+      typeof agentId !== 'string' ||
+      !['thumbs_up', 'thumbs_down', 'focus'].includes(signal as string)
+    ) {
+      badRequest(res, 'Invalid feedback payload');
+      return;
+    }
+    const feedbackHandler = liveBrainstormFeedbackHandlers.get(id);
+    if (!feedbackHandler) {
+      log.warn({ roomId: id }, 'No live brainstorm feedback handler found');
+      ok(res, { dispatched: false, reason: 'brainstorm not found on this worker' });
+      return;
+    }
+    feedbackHandler(wave, agentId, signal as 'thumbs_up' | 'thumbs_down' | 'focus');
     ok(res, { dispatched: true });
     return;
   }
