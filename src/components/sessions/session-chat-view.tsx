@@ -42,6 +42,8 @@ import { PendingMessagePill } from '@/components/sessions/pending-message-pill';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { TeamMessageCard } from '@/components/sessions/team-message-card';
+import { hasTaskNotifications, parseTaskNotifications } from '@/lib/utils/task-notification-parser';
+import { TaskNotificationCard } from '@/components/sessions/task-notification-card';
 import { ArtifactCard } from '@/components/sessions/artifact-card';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { deriveProvider } from '@/lib/utils/session-controls';
@@ -677,24 +679,56 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
     const part = parts[i];
 
     if (part.kind === 'text') {
-      const guideSteps = parseGuideMarker(part.text);
-      const displayText = guideSteps ? stripGuideMarkers(part.text) : part.text;
-      result.push(
-        <div
-          key={`t-${startIdx}`}
-          className="group/textbubble relative rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
-          style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-            {displayText}
-          </ReactMarkdown>
-          {guideSteps && <GuideBreadcrumb steps={guideSteps} />}
-          <CopyButton
-            text={part.text}
-            className="absolute top-1 right-1 opacity-0 group-hover/textbubble:opacity-100 transition-opacity"
-          />
-        </div>,
-      );
+      // Check for <task-notification> XML blocks in text
+      if (hasTaskNotifications(part.text)) {
+        const segments = parseTaskNotifications(part.text);
+        for (let si = 0; si < segments.length; si++) {
+          const seg = segments[si];
+          if (seg.kind === 'notification') {
+            result.push(
+              <TaskNotificationCard key={`tn-${startIdx}-${si}`} notification={seg.notification} />,
+            );
+          } else {
+            const guideSteps = parseGuideMarker(seg.content);
+            const displayText = guideSteps ? stripGuideMarkers(seg.content) : seg.content;
+            result.push(
+              <div
+                key={`t-${startIdx}-${si}`}
+                className="group/textbubble relative rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
+                style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {displayText}
+                </ReactMarkdown>
+                {guideSteps && <GuideBreadcrumb steps={guideSteps} />}
+                <CopyButton
+                  text={seg.content}
+                  className="absolute top-1 right-1 opacity-0 group-hover/textbubble:opacity-100 transition-opacity"
+                />
+              </div>,
+            );
+          }
+        }
+      } else {
+        const guideSteps = parseGuideMarker(part.text);
+        const displayText = guideSteps ? stripGuideMarkers(part.text) : part.text;
+        result.push(
+          <div
+            key={`t-${startIdx}`}
+            className="group/textbubble relative rounded-2xl rounded-tl-sm bg-white/[0.04] text-foreground border border-white/[0.06] px-3.5 py-2.5 text-sm break-words overflow-x-auto leading-relaxed"
+            style={{ borderLeft: '2px solid oklch(0.7 0.18 280 / 0.18)' }}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {displayText}
+            </ReactMarkdown>
+            {guideSteps && <GuideBreadcrumb steps={guideSteps} />}
+            <CopyButton
+              text={part.text}
+              className="absolute top-1 right-1 opacity-0 group-hover/textbubble:opacity-100 transition-opacity"
+            />
+          </div>,
+        );
+      }
       i++;
     } else {
       // Collect consecutive regular tool parts (break at AskUserQuestion)
@@ -1010,11 +1044,26 @@ function UserBubble({
               <span>Image attached</span>
             </div>
           ) : null}
-          {text && (
+          {text && hasTaskNotifications(text) ? (
+            <div className="space-y-1.5 w-full">
+              {parseTaskNotifications(text).map((seg, si) =>
+                seg.kind === 'notification' ? (
+                  <TaskNotificationCard key={si} notification={seg.notification} />
+                ) : (
+                  <span
+                    key={si}
+                    className="whitespace-pre-wrap break-words block text-foreground/90 pr-5"
+                  >
+                    {seg.content}
+                  </span>
+                ),
+              )}
+            </div>
+          ) : text ? (
             <span className="whitespace-pre-wrap break-words block text-foreground/90 pr-5">
               {text}
             </span>
-          )}
+          ) : null}
           {text && (
             <CopyButton
               text={text}
