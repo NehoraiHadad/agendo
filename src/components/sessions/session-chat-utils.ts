@@ -108,6 +108,9 @@ export type DisplayItem =
  *   <command-message>...</command-message>
  *   <command-args>...</command-args>
  *   <command-result>...</command-result>
+ *
+ * local-command-stderr content is extracted and surfaced as an error pill
+ * so the user sees command failures without the raw XML noise.
  */
 const PROTOCOL_XML_TAG_NAMES = [
   'local-command-stdout',
@@ -122,17 +125,35 @@ const PROTOCOL_XML_PAIR_RE = new RegExp(
   `<(${PROTOCOL_XML_TAG_NAMES.join('|')})\\b[^>]*>[\\s\\S]*?<\\/\\1>`,
   'g',
 );
+// Extract content from <local-command-stderr>...</local-command-stderr>
+const STDERR_EXTRACT_RE = /<local-command-stderr\b[^>]*>([\s\S]*?)<\/local-command-stderr>/g;
 
-/** Strip Claude Code internal protocol XML from text. Returns cleaned text (may be empty). */
-function stripProtocolXml(text: string): string {
-  if (!text.includes('<')) return text; // fast path — no XML at all
-  // Check if any protocol tag is present before running the regex
+interface ProtocolXmlResult {
+  /** Cleaned text with all protocol XML removed (may be empty). */
+  cleanText: string;
+  /** Extracted stderr messages from local-command-stderr tags. */
+  stderrMessages: string[];
+}
+
+/** Strip Claude Code internal protocol XML from text, extracting stderr for display. */
+function stripProtocolXml(text: string): ProtocolXmlResult {
+  if (!text.includes('<')) return { cleanText: text, stderrMessages: [] };
   const hasProtocol = PROTOCOL_XML_TAG_NAMES.some((tag) => text.includes(`<${tag}`));
-  if (!hasProtocol) return text;
-  // Strip complete <tag>content</tag> pairs
+  if (!hasProtocol) return { cleanText: text, stderrMessages: [] };
+
+  // Extract stderr content before stripping
+  const stderrMessages: string[] = [];
+  for (const match of text.matchAll(STDERR_EXTRACT_RE)) {
+    const content = match[1].trim();
+    if (content) stderrMessages.push(content);
+  }
+
+  // Strip all protocol XML pairs
   const stripped = text.replace(PROTOCOL_XML_PAIR_RE, '');
   // Clean up leftover "//" separators between stripped blocks (only on own line, not URLs)
-  return stripped.replace(/^\s*\/\/\s*$/gm, '').trim();
+  const cleanText = stripped.replace(/^\s*\/\/\s*$/gm, '').trim();
+
+  return { cleanText, stderrMessages };
 }
 
 /** Map a Claude result error subtype to a human-readable label. */
@@ -207,8 +228,15 @@ export function buildDisplayItems(
     switch (ev.type) {
       case 'agent:text': {
         // Strip Claude Code internal protocol XML (slash command output, /exit, etc.)
-        const cleanText = stripProtocolXml(ev.text);
-        if (!cleanText) break; // pure protocol noise — skip entirely
+        // stderr content is extracted and surfaced as error pills.
+        const { cleanText, stderrMessages } = stripProtocolXml(ev.text);
+
+        // Surface any stderr as error pills so command failures are visible
+        for (const stderr of stderrMessages) {
+          items.push({ kind: 'error', id: ev.id, text: stderr });
+        }
+
+        if (!cleanText) break; // pure protocol noise — skip text bubble
 
         const last = items[items.length - 1];
         if (last && last.kind === 'assistant') {

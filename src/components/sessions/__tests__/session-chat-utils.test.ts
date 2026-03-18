@@ -288,6 +288,49 @@ describe('buildDisplayItems', () => {
       // Complete <tag>content</tag> pair is stripped → empty → skipped
       expect(items).toHaveLength(0);
     });
+
+    it('surfaces local-command-stderr content as error pill', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: '<local-command-stderr>Unknown command: /foobar</local-command-stderr>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(1);
+      expect(items[0].kind).toBe('error');
+      if (items[0].kind === 'error') {
+        expect(items[0].text).toBe('Unknown command: /foobar');
+      }
+    });
+
+    it('surfaces stderr as error while still showing remaining clean text', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'agent:text',
+          text: 'Real output <local-command-stderr>warning: something</local-command-stderr> more text',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      // Should have error pill + assistant bubble with clean text
+      const errorItems = items.filter((i) => i.kind === 'error');
+      const assistantItems = items.filter((i) => i.kind === 'assistant');
+      expect(errorItems).toHaveLength(1);
+      expect(assistantItems).toHaveLength(1);
+      if (errorItems[0].kind === 'error') {
+        expect(errorItems[0].text).toBe('warning: something');
+      }
+      if (assistantItems[0].kind === 'assistant') {
+        expect(assistantItems[0].parts[0]).toEqual({
+          kind: 'text',
+          text: 'Real output  more text',
+        });
+      }
+    });
   });
 
   describe('team:message events', () => {
