@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { db } from '../lib/db/index';
 import { sessions, brainstormRooms } from '../lib/db/schema';
 import { eq, and, inArray, lt, sql } from 'drizzle-orm';
@@ -75,6 +76,54 @@ class RecoveryCounter {
 const brainstormRecoveryCounter = new RecoveryCounter();
 
 // ============================================================================
+// Restart marker file
+// ============================================================================
+
+/**
+ * Path to the restart marker file written by `safe-restart-worker.sh`.
+ * Contains `{ sessionId, ts }` identifying the session that triggered the
+ * restart. The zombie-reconciler uses this to give that session a smarter
+ * resumePrompt ("restart succeeded, do NOT restart again") instead of the
+ * generic "continue where you left off" — which would cause the agent to
+ * re-attempt the restart in an infinite loop.
+ */
+const RESTART_MARKER_PATH = '/tmp/agendo-restart-marker.json';
+
+interface RestartMarker {
+  sessionId: string;
+  ts: number;
+}
+
+/**
+ * Read and consume the restart marker file (if present).
+ * Returns the sessionId that triggered the restart, or null.
+ * The file is deleted after reading to prevent stale markers.
+ */
+function consumeRestartMarker(): string | null {
+  if (!existsSync(RESTART_MARKER_PATH)) return null;
+  try {
+    const raw = readFileSync(RESTART_MARKER_PATH, 'utf-8');
+    const marker: RestartMarker = JSON.parse(raw);
+    unlinkSync(RESTART_MARKER_PATH);
+    // Ignore markers older than 5 minutes (stale from a previous crash)
+    if (Date.now() / 1000 - marker.ts > 300) {
+      log.info({ marker }, 'Ignoring stale restart marker (>5 min old)');
+      return null;
+    }
+    log.info({ sessionId: marker.sessionId }, 'Consumed restart marker');
+    return marker.sessionId;
+  } catch (err) {
+    log.warn({ err }, 'Failed to read restart marker file');
+    try {
+      unlinkSync(RESTART_MARKER_PATH);
+    } catch {
+      // best-effort cleanup
+    }
+    return null;
+  }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -114,6 +163,11 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
   // Expire stale active pg-boss session jobs from crashed workers
   await expireStalePgBossJobs(SESSION_QUEUE_NAME, 30 * 60 * 1000); // 30 min
 
+  // Read the restart marker BEFORE processing sessions. If present, it tells
+  // us which session triggered the restart (via safe-restart-worker.sh) so we
+  // can give it a smarter resumePrompt that prevents restart loops.
+  const restartInitiatorId = consumeRestartMarker();
+
   const orphaned = await db
     .select({
       id: sessions.id,
@@ -129,7 +183,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
 
   if (orphaned.length === 0) return;
 
-  log.info({ count: orphaned.length }, 'Found orphaned sessions, reconciling');
+  log.info({ count: orphaned.length, restartInitiatorId }, 'Found orphaned sessions, reconciling');
 
   for (const session of orphaned) {
     // -----------------------------------------------------------------------
@@ -202,15 +256,26 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
         .set({ autoResumeCount: sql`auto_resume_count + 1` })
         .where(eq(sessions.id, session.id));
 
+      // Choose resumePrompt based on whether this session triggered the restart.
+      // The initiator session gets a prompt that explicitly says "restart succeeded,
+      // do NOT restart again" — preventing the infinite restart loop. Other sessions
+      // get the standard "continue" prompt.
+      const isInitiator = session.id === restartInitiatorId;
+      const resumePrompt = isInitiator
+        ? 'The worker restart you initiated completed successfully. The new code is now running. ' +
+          'Do NOT attempt to restart the worker again. Continue your work from where you left off.'
+        : 'The worker restarted. Please continue where you left off.';
+
       await enqueueSession({
         sessionId: session.id,
         resumeRef: session.sessionRef,
-        resumePrompt: 'The worker restarted. Please continue where you left off.',
+        resumePrompt,
         skipResumeContext: true,
       });
       log.info(
         {
           sessionId: session.id,
+          isInitiator,
           attempt: (session.autoResumeCount ?? 0) + 1,
           maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS,
         },

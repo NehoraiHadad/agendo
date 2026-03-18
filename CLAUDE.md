@@ -18,8 +18,7 @@ agendo is a Next.js 16 application for managing AI coding agents (Claude, Codex,
 ```bash
 # Development (never run pnpm dev directly — use PM2)
 ./scripts/safe-restart-worker.sh  # ✅ ALWAYS use this to restart the worker (safe from inside sessions)
-./scripts/safe-restart-agendo.sh  # restart Next.js app SAFELY (waits for sessions to end)
-pm2 restart agendo              # ⚠ DANGER during active sessions — kills MCP connection
+pm2 restart agendo --update-env   # restart Next.js app (active sessions auto-resume)
 
 # Build
 pnpm build:all                  # build everything (app + worker + MCP)
@@ -81,12 +80,11 @@ Worker reads env from `ecosystem.config.js` (NOT `.env.local`). The Next.js app 
 
 ### Safe Restart Patterns
 
-`agendo-worker` **never** hosts the MCP server, but **does host agent sessions**.
-
-⚠️ **NEVER run `pm2 restart agendo-worker` directly from an agent session** — it kills your own process and triggers an infinite restart loop. Always use the safe script:
+`agendo-worker` **hosts agent sessions**. Restarting it kills active sessions.
 
 ```bash
-# From inside an agent session (auto-disables resume before restarting):
+# From inside an agent session — writes a marker file so the agent auto-resumes
+# with a "restart succeeded" prompt (prevents restart loops):
 ./scripts/safe-restart-worker.sh              # build + restart
 ./scripts/safe-restart-worker.sh --no-build   # restart only
 
@@ -94,17 +92,11 @@ Worker reads env from `ecosystem.config.js` (NOT `.env.local`). The Next.js app 
 pm2 restart agendo-worker --update-env
 ```
 
-`agendo` (Next.js) **hosts the MCP server**. Restarting it drops any live agent MCP connection:
+`agendo` (Next.js) **hosts the MCP server**. Restarting it drops MCP connections, but active sessions auto-resume via the worker's `handleReEnqueue` logic:
 
 ```bash
-# SAFE: waits for active sessions to end first (up to 5 min), then restarts
-./scripts/safe-restart-agendo.sh
-
-# IMMEDIATE: skips the wait (use only when no sessions are active)
-./scripts/safe-restart-agendo.sh --force
+pm2 restart agendo --update-env
 ```
-
-`pm2 restart agendo` directly is safe only when you are certain no agent sessions are active.
 
 ## Required Environment Variables
 

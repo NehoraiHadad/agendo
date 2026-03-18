@@ -513,12 +513,15 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
           );
           return;
         }
-        const selfRestartWarning =
-          '\n\nCRITICAL: Do NOT run `pm2 restart agendo-worker` directly — you are running inside the worker and it will kill your own session. Use `./scripts/safe-restart-worker.sh` instead.';
+        // Note: when the worker is restarted via safe-restart-worker.sh, this
+        // code path races with pool.end() during shutdown and may not fire.
+        // The zombie-reconciler handles that case on cold start with a smarter
+        // resumePrompt (using the restart marker file). This path covers
+        // non-worker restarts (e.g. agendo/MCP drops, CLI crashes).
         const resumePrompt = ctx.exitContext.terminateKilled
-          ? 'The worker restarted. Please continue where you left off.' + selfRestartWarning
-          : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.' +
-            selfRestartWarning;
+          ? 'The worker restarted. Please continue where you left off.' +
+            '\n\nNote: If you need to restart the worker, use `./scripts/safe-restart-worker.sh` (never `pm2 restart agendo-worker` directly).'
+          : 'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
         await enqueueSession({
           sessionId: ctx.sessionId,
           resumeRef,

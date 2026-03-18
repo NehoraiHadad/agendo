@@ -4,18 +4,18 @@
 # Safely restarts agendo-worker, even when called FROM an agent session
 # running on that very worker.
 #
-# THE PROBLEM
-# -----------
-# Running `pm2 restart agendo-worker` from inside a session kills the agent
-# mid-turn. The auto-resume logic re-enqueues the session, the agent wakes up,
-# tries the same restart, and loops forever.
+# HOW IT WORKS
+# ------------
+# When called from inside an agent session ($AGENDO_SESSION_ID is set),
+# the script writes a marker file listing the calling session's ID.
+# On cold start, the zombie-reconciler reads this file and uses a smarter
+# resumePrompt that tells the agent "the restart succeeded — do NOT restart
+# again". This prevents the infinite restart loop without blocking auto-resume.
 #
-# THE FIX
-# -------
-# Before restarting, this script sets auto_resume_count to 999 for the calling
-# session (identified by $AGENDO_SESSION_ID). The re-enqueue logic sees
-# count > MAX (3) and skips auto-resume. The session stays idle. The user (or
-# agent in another session) can manually continue it later.
+# For sessions NOT in the marker file (other active sessions at the time of
+# restart), the zombie-reconciler uses the standard "continue where you left
+# off" prompt — which is correct because those sessions weren't trying to
+# restart anything.
 #
 # USAGE
 # -----
@@ -25,12 +25,12 @@
 #
 # ENVIRONMENT
 #   AGENDO_SESSION_ID   — set automatically inside agent sessions
-#   DATABASE_URL        — PostgreSQL connection string
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+MARKER_FILE="/tmp/agendo-restart-marker.json"
 
 DO_BUILD=true
 
@@ -41,25 +41,11 @@ for arg in "$@"; do
   esac
 done
 
-# Step 1: If running inside an agent session, prevent auto-resume
+# Step 1: If running inside an agent session, write marker file
 if [ -n "${AGENDO_SESSION_ID:-}" ]; then
-  echo "⚠ Running inside session $AGENDO_SESSION_ID — disabling auto-resume..."
-
-  if [ -z "${DATABASE_URL:-}" ]; then
-    # Try to load from .env.local
-    if [ -f "$PROJECT_DIR/.env.local" ]; then
-      DATABASE_URL=$(grep '^DATABASE_URL=' "$PROJECT_DIR/.env.local" | cut -d= -f2- | tr -d '"' | tr -d "'")
-    fi
-  fi
-
-  if [ -n "${DATABASE_URL:-}" ]; then
-    psql "$DATABASE_URL" -q -c \
-      "UPDATE sessions SET auto_resume_count = 999 WHERE id = '$AGENDO_SESSION_ID';" \
-      2>/dev/null || echo "⚠ Failed to update auto_resume_count (non-fatal)"
-    echo "✓ Auto-resume disabled for this session"
-  else
-    echo "⚠ DATABASE_URL not found — cannot disable auto-resume. Proceeding anyway."
-  fi
+  echo "Writing restart marker for session $AGENDO_SESSION_ID"
+  echo "{\"sessionId\":\"$AGENDO_SESSION_ID\",\"ts\":$(date +%s)}" > "$MARKER_FILE"
+  echo "✓ Marker written: $MARKER_FILE"
 else
   echo "ℹ Not running inside an agent session (no AGENDO_SESSION_ID)"
 fi
