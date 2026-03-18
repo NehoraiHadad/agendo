@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { Loader2, Send, Paperclip, X, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -180,6 +180,13 @@ interface SessionMessageInputProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Returns true if the first significant character of text is RTL (Hebrew, Arabic, etc.) */
+function isRTLText(text: string): boolean {
+  const rtlRe = /[\u0591-\u07FF\u200F\u202B\u202E\uFB1D-\uFDFD\uFE70-\uFEFC]/;
+  const firstChar = text.trimStart().charAt(0);
+  return rtlRe.test(firstChar);
+}
+
 function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 128) + 'px';
@@ -240,6 +247,18 @@ export function SessionMessageInput({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Track swipe animation state for visual feedback
+  const [isSwipeAccepting, setIsSwipeAccepting] = useState(false);
+  // Detect touch-primary device (mobile/tablet) for hint badge
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    setIsTouchDevice(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsTouchDevice(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session:${sessionId}`);
 
@@ -525,6 +544,63 @@ export function SessionMessageInput({
     return () => document.removeEventListener('paste', onDocPaste);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---------------------------------------------------------------------------
+  // Suggestion acceptance (shared by Tab key + swipe gesture)
+  // ---------------------------------------------------------------------------
+
+  const acceptSuggestion = useCallback(() => {
+    if (!activeSuggestion) return;
+    setMessage(activeSuggestion);
+    setSuppressedSuggestion(null);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        autoGrow(textareaRef.current);
+        const len = activeSuggestion.length;
+        textareaRef.current.setSelectionRange(len, len);
+        textareaRef.current.focus();
+      }
+    });
+  }, [activeSuggestion]);
+
+  // ---------------------------------------------------------------------------
+  // Touch swipe-to-accept handlers (mobile UX)
+  // Swipe direction is RTL-aware: → for LTR text, ← for RTL text (e.g. Hebrew)
+  // ---------------------------------------------------------------------------
+
+  function handleTouchStart(e: React.TouchEvent<HTMLTextAreaElement>) {
+    // Only track swipe when there's an active suggestion and the input is empty
+    if (!activeSuggestion || message) return;
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function handleTouchEnd(e: React.TouchEvent<HTMLTextAreaElement>) {
+    if (!touchStartRef.current || !activeSuggestion || message) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartRef.current.x;
+    const dy = t.clientY - touchStartRef.current.y;
+    touchStartRef.current = null;
+
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    // Require at least 55px horizontal, and more horizontal than vertical (< 45° angle)
+    if (absDx < 55 || absDy > absDx * 0.75) return;
+
+    const suggestionIsRTL = isRTLText(activeSuggestion);
+    // RTL: accept on left-swipe (dx < 0); LTR: accept on right-swipe (dx > 0)
+    const isAcceptSwipe = suggestionIsRTL ? dx < 0 : dx > 0;
+
+    if (isAcceptSwipe) {
+      // Brief visual flash before accepting
+      setIsSwipeAccepting(true);
+      requestAnimationFrame(() => {
+        setIsSwipeAccepting(false);
+        acceptSuggestion();
+      });
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (showPicker && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -554,15 +630,7 @@ export function SessionMessageInput({
     // Accept inline ghost suggestion with Tab (when input is empty and no picker is open)
     if (e.key === 'Tab' && activeSuggestion && !message && !showPicker && !showModelPicker) {
       e.preventDefault();
-      setMessage(activeSuggestion);
-      setSuppressedSuggestion(null);
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          autoGrow(textareaRef.current);
-          const len = activeSuggestion.length;
-          textareaRef.current.setSelectionRange(len, len);
-        }
-      });
+      acceptSuggestion();
       return;
     }
     // Dismiss ghost suggestion with Escape (when no other picker is open)
@@ -749,15 +817,18 @@ export function SessionMessageInput({
                 <div
                   aria-hidden="true"
                   dir="auto"
-                  className="pointer-events-none absolute inset-0 rounded-xl px-3 py-[11px] text-sm leading-tight text-primary/45 overflow-hidden whitespace-pre-wrap break-words select-none animate-in fade-in duration-300"
+                  className={`pointer-events-none absolute inset-0 rounded-xl px-3 py-[11px] text-sm leading-tight overflow-hidden whitespace-pre-wrap break-words select-none animate-in fade-in duration-300 transition-all ${
+                    isSwipeAccepting ? 'text-primary/80 scale-[1.01]' : 'text-primary/45'
+                  }`}
                 >
                   {activeSuggestion}
                 </div>
+                {/* Hint badge — shows Tab on desktop, swipe arrow on touch devices */}
                 <span
                   aria-hidden="true"
                   className="pointer-events-none absolute bottom-1.5 right-2 text-[10px] font-medium text-primary/40 bg-primary/8 border border-primary/20 rounded px-1 py-0.5 leading-none select-none animate-in fade-in duration-300"
                 >
-                  Tab ↵
+                  {isTouchDevice ? (isRTLText(activeSuggestion) ? '← החלק' : 'swipe →') : 'Tab ↵'}
                 </span>
               </>
             )}
@@ -766,6 +837,8 @@ export function SessionMessageInput({
               value={message}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
               placeholder={activeSuggestion ? '' : placeholder}
               rows={1}
               dir="auto"
