@@ -289,10 +289,12 @@ export function SessionInfoPanel({
         )}
 
       {/* Git Context */}
-      <GitContextSection
-        snapshot={gitContext?.snapshot ?? null}
-        capturedAt={gitContext?.capturedAt}
-      />
+      <div id="git-context-section">
+        <GitContextSection
+          snapshot={gitContext?.snapshot ?? null}
+          capturedAt={gitContext?.capturedAt}
+        />
+      </div>
 
       {/* Usage Stats (aggregated from result events) */}
       {stats.count > 0 && (stats.totalInputTokens > 0 || stats.totalApiMs > 0) && (

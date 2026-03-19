@@ -5,6 +5,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { cn } from '@/lib/utils';
+import type { TaskContention } from '@/lib/store/contention-store';
 
 interface TaskCardProps {
   taskId: string;
@@ -14,6 +15,8 @@ interface TaskCardProps {
   hasGroupedChildren?: boolean;
   /** This task is the next ready-to-execute task */
   isNextUp?: boolean;
+  /** File contention indicator from active sessions */
+  contention?: TaskContention;
 }
 
 /* ─── Priority config ──────────────────────────────────────── */
@@ -71,6 +74,7 @@ export const TaskCard = memo(function TaskCard({
   isGroupChild,
   hasGroupedChildren,
   isNextUp,
+  contention,
 }: TaskCardProps) {
   const task = useTaskBoardStore((s) => s.tasksById[taskId]);
   const selectTask = useTaskBoardStore((s) => s.selectTask);
@@ -126,6 +130,18 @@ export const TaskCard = memo(function TaskCard({
         <span className="absolute top-1.5 right-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.08] border border-white/[0.1] text-[10px] font-semibold tabular-nums text-muted-foreground/60 px-1">
           {task.executionOrder}
         </span>
+      )}
+
+      {/* File contention dot */}
+      {contention && (
+        <span
+          className={cn(
+            'absolute z-10 size-2 rounded-full',
+            task.executionOrder != null ? 'top-1.5 right-8' : 'top-1.5 right-1.5',
+            contention.severity === 'critical' ? 'bg-red-400 animate-pulse' : 'bg-amber-400',
+          )}
+          title={contention.tooltip ?? 'File conflict detected'}
+        />
       )}
 
       {/* "Next up" label */}

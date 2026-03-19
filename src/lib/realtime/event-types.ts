@@ -139,7 +139,8 @@ export type AgendoEvent =
     })
   | (EventBase & { type: 'agent:usage'; used: number; size: number; costUsd?: number })
   | (EventBase & { type: 'session:info'; title?: string | null })
-  | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean })
+  | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean; clientId?: string })
+  | (EventBase & { type: 'user:message-cancelled'; clientId: string })
   | (EventBase & {
       type: 'system:info';
       message: string;
@@ -266,7 +267,7 @@ export type AgendoEvent =
       snapshot: GitContextSnapshot;
       /** ISO timestamp when the snapshot was captured */
       capturedAt: string;
-      trigger: 'start' | 'turn_end' | 'exit';
+      trigger: 'start' | 'turn_end' | 'exit' | 'reconnect';
     })
   /** File contention warning when multiple sessions touch the same files */
   | (EventBase & {
@@ -381,6 +382,8 @@ export type AgendoControl =
       text: string;
       imageRef?: { path: string; mimeType: string };
       priority?: MessagePriority;
+      /** Client-generated UUID nonce for dedup matching on the frontend. */
+      clientId?: string;
     }
   | { type: 'cancel' }
   | { type: 'interrupt' }
@@ -451,6 +454,11 @@ export type AgendoControl =
       type: 'rewind-files';
       userMessageId: string;
       dryRun?: boolean;
+    }
+  | {
+      /** Cancel a queued message before the agent consumes it. */
+      type: 'cancel-queued';
+      clientId: string;
     };
 
 // ============================================================================

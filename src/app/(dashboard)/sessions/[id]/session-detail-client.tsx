@@ -53,6 +53,7 @@ import { BtwModal } from '@/components/sessions/btw-modal';
 import { FileContentionAlert } from '@/components/sessions/file-contention-alert';
 import { useGitContext } from '@/hooks/use-git-context';
 import { useFileContention } from '@/hooks/use-file-contention';
+import { useContentionStore, type ContentionInfo } from '@/lib/store/contention-store';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
@@ -161,7 +162,22 @@ export function SessionDetailClient({
 }: SessionDetailClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const defaultTab = searchParams.get('tab') ?? 'chat';
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') ?? 'chat');
+
+  // Sync tab when searchParams change (e.g. client-side navigation between sessions)
+  useEffect(() => {
+    setActiveTab(searchParams.get('tab') ?? 'chat');
+  }, [searchParams]);
+  const scrollToGitSection = useCallback(() => {
+    setActiveTab('info');
+    setTimeout(
+      () =>
+        document
+          .getElementById('git-context-section')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      80,
+    );
+  }, []);
   const stream = useSessionStream(session.id);
   const parentStream = useSessionStream(session.parentSessionId ?? null);
   const currentStatus = stream.sessionStatus ?? session.status;
@@ -169,6 +185,34 @@ export function SessionDetailClient({
   const teamState = useTeamState(stream.events);
   const gitContext = useGitContext(stream.events);
   const contention = useFileContention(stream.events);
+  const setContention = useContentionStore((s) => s.setContention);
+  const clearContention = useContentionStore((s) => s.clearContention);
+
+  // Sync file contention to the global store so Kanban cards can show dots
+  useEffect(() => {
+    const taskId = session.taskId;
+    if (!taskId) return;
+
+    if (contention) {
+      const next: ContentionInfo = {
+        severity: contention.severity,
+        conflictingFiles: contention.conflictingFiles,
+        sessions: contention.sessions.map((s) => ({
+          sessionId: s.sessionId,
+          agentName: s.agentName,
+          branch: s.branch,
+        })),
+      };
+      setContention(taskId, next);
+    } else {
+      clearContention(taskId);
+    }
+
+    return () => {
+      clearContention(taskId);
+    };
+  }, [session.taskId, contention, setContention, clearContention]);
+
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [showTeamSheet, setShowTeamSheet] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
@@ -595,7 +639,7 @@ export function SessionDetailClient({
               {gitContext && (
                 <>
                   <span className="text-muted-foreground/20">·</span>
-                  <GitBranchBadge snapshot={gitContext.snapshot} />
+                  <GitBranchBadge snapshot={gitContext.snapshot} onClick={scrollToGitSection} />
                 </>
               )}
             </div>
@@ -625,7 +669,7 @@ export function SessionDetailClient({
             {gitContext && (
               <>
                 <span className="text-muted-foreground/25 shrink-0">·</span>
-                <GitBranchBadge snapshot={gitContext.snapshot} />
+                <GitBranchBadge snapshot={gitContext.snapshot} onClick={scrollToGitSection} />
               </>
             )}
           </div>
@@ -1022,7 +1066,11 @@ export function SessionDetailClient({
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Tabs section */}
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <Tabs defaultValue={defaultTab} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="flex-1 min-h-0 flex flex-col overflow-hidden"
+          >
             <TabsList className="flex w-full overflow-x-auto shrink-0">
               <TabsTrigger value="chat" className="shrink-0">
                 Chat

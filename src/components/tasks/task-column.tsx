@@ -4,6 +4,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
+import { useContentionStore } from '@/lib/store/contention-store';
 import { TaskCard } from './task-card';
 import { TaskQuickAdd } from './task-quick-add';
 import { Button } from '@/components/ui/button';
@@ -238,6 +239,18 @@ export const TaskColumn = memo(function TaskColumn({
   const setColumnLoading = useTaskBoardStore((s) => s.setColumnLoading);
   const collapsedParents = useTaskBoardStore((s) => s.collapsedParents);
   const toggleCollapsed = useTaskBoardStore((s) => s.toggleCollapsed);
+  const contentionByTaskId = useContentionStore((s) => s.contentionByTaskId);
+
+  /** Build contention prop for a TaskCard, or undefined if no contention */
+  const getContentionProp = useCallback(
+    (taskId: string) => {
+      const info = contentionByTaskId[taskId];
+      if (!info) return undefined;
+      const tooltip = `File conflict: ${info.conflictingFiles.slice(0, 3).join(', ')}${info.conflictingFiles.length > 3 ? ` (+${info.conflictingFiles.length - 3} more)` : ''}`;
+      return { severity: info.severity, tooltip };
+    },
+    [contentionByTaskId],
+  );
 
   const { setNodeRef, isOver } = useDroppable({ id: `column-${status}` });
 
@@ -374,6 +387,7 @@ export const TaskColumn = memo(function TaskColumn({
                       taskId={item.taskId}
                       hasGroupedChildren
                       isNextUp={item.taskId === nextUpTaskId}
+                      contention={getContentionProp(item.taskId)}
                     />
                   </CardStack>
                 );
@@ -397,6 +411,7 @@ export const TaskColumn = memo(function TaskColumn({
                           taskId={item.taskId}
                           isGroupChild
                           isNextUp={item.taskId === nextUpTaskId}
+                          contention={getContentionProp(item.taskId)}
                         />
                         <button
                           onClick={() => toggleCollapsed(item.taskId)}
@@ -419,6 +434,7 @@ export const TaskColumn = memo(function TaskColumn({
                         taskId={item.taskId}
                         isGroupChild
                         isNextUp={item.taskId === nextUpTaskId}
+                        contention={getContentionProp(item.taskId)}
                       />
                     )}
                   </div>
@@ -430,6 +446,7 @@ export const TaskColumn = memo(function TaskColumn({
                   key={item.taskId}
                   taskId={item.taskId}
                   isNextUp={item.taskId === nextUpTaskId}
+                  contention={getContentionProp(item.taskId)}
                 />
               );
             })}

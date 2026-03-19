@@ -32,6 +32,7 @@ import {
   handleToolResult,
   handleSteer,
   handleRollback,
+  handleCancelQueued,
   handleReEnqueue,
   type SessionControlCtx,
 } from '@/lib/worker/session-control-handlers';
@@ -123,6 +124,10 @@ export class SessionProcess {
   private policyFilePath: string | null = null;
   /** Git commit hash at session start, used to compute commitsSinceStart on subsequent snapshots. */
   private initialGitHash: string | null = null;
+  /** Latest git context snapshot — included in getLiveState() so SSE reconnects restore the badge. */
+  private lastGitSnapshot: import('@/lib/realtime/event-types').GitContextSnapshot | null = null;
+  /** ISO timestamp when lastGitSnapshot was captured — preserved for accurate reconnect replays. */
+  private lastGitSnapshotAt: string | null = null;
   /** Debounce timer for flushing eventSeq to DB. */
   private seqFlushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last eventSeq value that was persisted to DB. */
@@ -308,10 +313,12 @@ export class SessionProcess {
     const gitSnapshot = await captureGitContext(this.spawnCwd);
     if (gitSnapshot) {
       this.initialGitHash = gitSnapshot.commitHash;
+      this.lastGitSnapshot = this.toEventSnapshot(gitSnapshot);
+      this.lastGitSnapshotAt = new Date().toISOString();
       await this.emitEvent({
         type: 'system:git-context',
-        snapshot: this.toEventSnapshot(gitSnapshot),
-        capturedAt: new Date().toISOString(),
+        snapshot: this.lastGitSnapshot,
+        capturedAt: this.lastGitSnapshotAt,
         trigger: 'start',
       });
     }
@@ -573,6 +580,8 @@ export class SessionProcess {
       await handleSteer(control, ctrl);
     } else if (control.type === 'rollback') {
       await handleRollback(control, ctrl);
+    } else if (control.type === 'cancel-queued') {
+      await handleCancelQueued(control, ctrl);
     } else if (control.type === 'mcp-set-servers') {
       if (ctrl.adapter.setMcpServers) {
         const result = await ctrl.adapter.setMcpServers(control.servers);
@@ -656,6 +665,16 @@ export class SessionProcess {
     // 2. Team state from live filesystem sources
     events.push(...this.teamManager.getTeamState());
 
+    // 3. Latest git context snapshot (persists across SSE reconnects)
+    if (this.lastGitSnapshot && this.lastGitSnapshotAt) {
+      events.push({
+        type: 'system:git-context',
+        snapshot: this.lastGitSnapshot,
+        capturedAt: this.lastGitSnapshotAt,
+        trigger: 'reconnect',
+      });
+    }
+
     return events;
   }
 
@@ -663,7 +682,11 @@ export class SessionProcess {
    * Push a user message to the running agent process.
    * Only valid when the session is active or awaiting_input.
    */
-  async pushMessage(text: string, image?: ImageContent, priority?: MessagePriority): Promise<void> {
+  async pushMessage(
+    text: string,
+    opts?: { image?: ImageContent; priority?: MessagePriority; clientId?: string },
+  ): Promise<void> {
+    const { image, priority, clientId } = opts ?? {};
     if (!['active', 'awaiting_input'].includes(this.status)) {
       log.warn(
         { sessionId: this.session.id, status: this.status },
@@ -683,7 +706,12 @@ export class SessionProcess {
     // thinkingCallback(false) that fires inside sendMessage would see status
     // still as 'awaiting_input' and the transitionTo('awaiting_input') would
     // be a no-op — leaving the session stuck in 'active' forever.
-    await this.emitEvent({ type: 'user:message', text, hasImage: !!image });
+    await this.emitEvent({
+      type: 'user:message',
+      text,
+      hasImage: !!image,
+      ...(clientId && { clientId }),
+    });
     // Emit a compact-start indicator when the user manually triggers /compact.
     // Claude's stream gives no start signal — only a compact_boundary at the end.
     if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
@@ -691,7 +719,7 @@ export class SessionProcess {
     }
     await this.transitionTo('active');
     this.activityTracker.recordActivity();
-    await this.adapter.sendMessage(text, image, priority);
+    await this.adapter.sendMessage(text, image, priority, clientId);
   }
 
   // ---------------------------------------------------------------------------
@@ -710,7 +738,7 @@ export class SessionProcess {
       emitEvent: (p) => this.emitEvent(p),
       transitionTo: (s) => this.transitionTo(s),
       exitContext: this.exitCtx,
-      pushMessage: (text, image, priority) => this.pushMessage(text, image, priority),
+      pushMessage: (text, opts) => this.pushMessage(text, opts),
       makeCtrl: () => this.makeCtrl(),
     };
   }
@@ -786,10 +814,12 @@ export class SessionProcess {
                   this.spawnCwd ?? process.cwd(),
                 );
               }
+              this.lastGitSnapshot = eventSnap;
+              this.lastGitSnapshotAt = new Date().toISOString();
               void this.emitEvent({
                 type: 'system:git-context',
                 snapshot: eventSnap,
-                capturedAt: new Date().toISOString(),
+                capturedAt: this.lastGitSnapshotAt,
                 trigger: 'turn_end',
               });
             }
