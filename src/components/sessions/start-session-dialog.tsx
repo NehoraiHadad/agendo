@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, McpServer, Task } from '@/lib/types';
 import { deriveProvider } from '@/lib/utils/session-controls';
@@ -450,7 +451,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
             </div>
           </DialogBody>
 
-          {error && <p className="shrink-0 text-sm text-destructive">{error}</p>}
+          <ErrorAlert message={error} className="shrink-0" />
 
           <DialogFooter>
             <Button type="submit" disabled={!canSubmit}>

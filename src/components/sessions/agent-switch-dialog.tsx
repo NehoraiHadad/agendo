@@ -14,6 +14,7 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { agentColorKey, agentPillClass } from '@/lib/utils/agent-switch-colors';
 import { getErrorMessage } from '@/lib/utils/error-utils';
@@ -413,7 +414,7 @@ export function AgentSwitchDialog({
         )}
 
         {/* Error */}
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        <ErrorAlert message={error} />
 
         <DialogFooter>
           {pickerMode && pickedAgent ? (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { QueryParams } from '@/lib/query-params';
 import { listProjects, createProject } from '@/lib/services/project-service';
 import { ValidationError } from '@/lib/errors';
 
@@ -18,12 +19,13 @@ const createProjectSchema = z.object({
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
-  const url = new URL(req.url);
-  const isActiveParam = url.searchParams.get('isActive');
+  const qp = new QueryParams(req);
+  const isActiveRaw = qp.getString('isActive');
 
-  let isActive: boolean | undefined = true; // default: active only
-  if (isActiveParam === 'false') isActive = false;
-  else if (isActiveParam === 'all') isActive = undefined;
+  // 'all' returns every project; 'false' returns inactive; default is active-only
+  let isActive: boolean | undefined = true;
+  if (isActiveRaw === 'false') isActive = false;
+  else if (isActiveRaw === 'all') isActive = undefined;
 
   const data = await listProjects(isActive);
   return NextResponse.json({ data });

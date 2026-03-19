@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { createTask, updateTask, deleteTask } from '@/lib/services/task-service';
 import { addDependency, removeDependency } from '@/lib/services/dependency-service';
 import { taskStatusEnum } from '@/lib/db/schema';
-import { getErrorMessage } from '@/lib/utils/error-utils';
+import { withAction, withValidatedAction, type ActionResult } from './action-utils';
 
 // --- Schemas ---
 
@@ -38,111 +38,59 @@ const dependencySchema = z.object({
 
 // --- Actions ---
 
-type ActionResult<T = unknown> = { success: true; data: T } | { success: false; error: string };
+export const createTaskAction: (input: z.input<typeof createTaskSchema>) => Promise<ActionResult> =
+  withValidatedAction(createTaskSchema, (validated) => createTask(validated));
 
-export async function createTaskAction(
-  input: z.input<typeof createTaskSchema>,
-): Promise<ActionResult> {
-  try {
-    const validated = createTaskSchema.parse(input);
-    const task = await createTask(validated);
-    return { success: true, data: task };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return { success: false, error: error.issues[0].message };
-    }
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+const _updateTask = withValidatedAction(
+  z.object({ id: z.string(), data: updateTaskSchema }),
+  ({ id, data }) => updateTask(id, data),
+);
 
 export async function updateTaskAction(
   id: string,
   input: z.input<typeof updateTaskSchema>,
 ): Promise<ActionResult> {
-  try {
-    const validated = updateTaskSchema.parse(input);
-    const task = await updateTask(id, validated);
-    return { success: true, data: task };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return { success: false, error: error.issues[0].message };
-    }
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
+  return _updateTask({ id, data: input });
 }
 
-export async function deleteTaskAction(id: string): Promise<ActionResult> {
-  try {
-    await deleteTask(id);
-    return { success: true, data: null };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+export const deleteTaskAction: (id: string) => Promise<ActionResult> = withAction((id: string) =>
+  deleteTask(id),
+);
+
+const _updateTaskStatus = withAction(({ id, status }: { id: string; status: string }) => {
+  const validatedStatus = z.enum(taskStatusEnum.enumValues).parse(status);
+  return updateTask(id, { status: validatedStatus });
+});
 
 export async function updateTaskStatusAction(id: string, status: string): Promise<ActionResult> {
-  try {
-    const validatedStatus = z.enum(taskStatusEnum.enumValues).parse(status);
-    const task = await updateTask(id, { status: validatedStatus });
-    return { success: true, data: task };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
+  return _updateTaskStatus({ id, status });
 }
+
+const _assignAgent = withAction(({ taskId, agentId }: { taskId: string; agentId: string | null }) =>
+  updateTask(taskId, { assigneeAgentId: agentId }),
+);
 
 export async function assignAgentAction(
   taskId: string,
   agentId: string | null,
 ): Promise<ActionResult> {
-  try {
-    const task = await updateTask(taskId, { assigneeAgentId: agentId });
-    return { success: true, data: task };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
+  return _assignAgent({ taskId, agentId });
 }
 
-export async function addDependencyAction(
+export const addDependencyAction: (
   input: z.input<typeof dependencySchema>,
-): Promise<ActionResult> {
-  try {
-    const validated = dependencySchema.parse(input);
-    const dep = await addDependency(validated.taskId, validated.dependsOnTaskId);
-    return { success: true, data: dep };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+) => Promise<ActionResult> = withValidatedAction(dependencySchema, ({ taskId, dependsOnTaskId }) =>
+  addDependency(taskId, dependsOnTaskId),
+);
+
+const _removeDependency = withAction(
+  ({ taskId, dependsOnTaskId }: { taskId: string; dependsOnTaskId: string }) =>
+    removeDependency(taskId, dependsOnTaskId),
+);
 
 export async function removeDependencyAction(
   taskId: string,
   dependsOnTaskId: string,
 ): Promise<ActionResult> {
-  try {
-    await removeDependency(taskId, dependsOnTaskId);
-    return { success: true, data: null };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
+  return _removeDependency({ taskId, dependsOnTaskId });
 }

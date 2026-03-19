@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getSnapshot, updateSnapshot, deleteSnapshot } from '@/lib/services/snapshot-service';
 import { z } from 'zod';
+import { createGetByIdRoute, createPatchRoute, createDeleteRoute } from '@/lib/api-routes';
+import { getSnapshot, updateSnapshot, deleteSnapshot } from '@/lib/services/snapshot-service';
 
 const keyFindingsSchema = z.object({
   filesExplored: z.array(z.string()),
@@ -16,33 +15,8 @@ const patchSchema = z.object({
   keyFindings: keyFindingsSchema.optional(),
 });
 
-export const GET = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'ContextSnapshot');
+export const GET = createGetByIdRoute(getSnapshot, 'ContextSnapshot');
 
-    const snapshot = await getSnapshot(id);
-    return NextResponse.json({ data: snapshot });
-  },
-);
+export const PATCH = createPatchRoute(updateSnapshot, patchSchema, 'ContextSnapshot');
 
-export const PATCH = withErrorBoundary(
-  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'ContextSnapshot');
-
-    const body = patchSchema.parse(await req.json());
-    const snapshot = await updateSnapshot(id, body);
-    return NextResponse.json({ data: snapshot });
-  },
-);
-
-export const DELETE = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'ContextSnapshot');
-
-    await deleteSnapshot(id);
-    return NextResponse.json({ data: { id } });
-  },
-);
+export const DELETE = createDeleteRoute(deleteSnapshot, 'ContextSnapshot');

@@ -1,6 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { createGetByIdRoute, createPatchRoute, createDeleteRoute } from '@/lib/api-routes';
 import { getPlan, updatePlan, archivePlan } from '@/lib/services/plan-service';
 
 const patchPlanSchema = z.object({
@@ -15,33 +14,8 @@ const patchPlanSchema = z.object({
     .optional(),
 });
 
-export const GET = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Plan');
+export const GET = createGetByIdRoute(getPlan, 'Plan');
 
-    const plan = await getPlan(id);
-    return NextResponse.json({ data: plan });
-  },
-);
+export const PATCH = createPatchRoute(updatePlan, patchPlanSchema, 'Plan');
 
-export const PATCH = withErrorBoundary(
-  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Plan');
-
-    const body = patchPlanSchema.parse(await req.json());
-    const updated = await updatePlan(id, body);
-    return NextResponse.json({ data: updated });
-  },
-);
-
-export const DELETE = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Plan');
-
-    await archivePlan(id);
-    return NextResponse.json({ data: { id } });
-  },
-);
+export const DELETE = createDeleteRoute(archivePlan, 'Plan');

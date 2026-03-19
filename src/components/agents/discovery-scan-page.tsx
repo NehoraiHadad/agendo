@@ -26,7 +26,7 @@ export function DiscoveryScanPage() {
     startTransition(async () => {
       setScanError(null);
       const result = await triggerScan(extraTargets.length > 0 ? extraTargets : undefined);
-      if (result.success && result.data) {
+      if (result.success) {
         setTools(result.data);
       } else {
         setScanError(result.error ?? 'Scan failed');

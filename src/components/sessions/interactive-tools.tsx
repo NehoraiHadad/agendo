@@ -34,6 +34,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { PlanAnnotator } from '@/components/sessions/plan-annotator';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -383,11 +384,7 @@ function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: Int
           })}
         </div>
 
-        {error && (
-          <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded px-2 py-1">
-            {error}
-          </p>
-        )}
+        <ErrorAlert message={error} />
 
         {/* Navigation footer */}
         <div className="flex items-center gap-2 pt-0.5">
@@ -809,11 +806,7 @@ function ExitPlanModeRenderer({
           isSending={pending === 'revise'}
         />
 
-        {error && (
-          <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded px-2 py-1">
-            {error}
-          </p>
-        )}
+        <ErrorAlert message={error} />
       </div>
 
       {/* ── Plan preview ───────────────────────────────────────────────── */}

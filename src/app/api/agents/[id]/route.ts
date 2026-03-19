@@ -1,6 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { createGetByIdRoute, createPatchRoute, createDeleteRoute } from '@/lib/api-routes';
 import { getAgentById, updateAgent, deleteAgent } from '@/lib/services/agent-service';
 
 const updateAgentSchema = z
@@ -14,31 +13,8 @@ const updateAgentSchema = z
   })
   .strict();
 
-export const GET = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Agent');
-    const agent = await getAgentById(id);
-    return NextResponse.json({ data: agent });
-  },
-);
+export const GET = createGetByIdRoute(getAgentById, 'Agent');
 
-export const PATCH = withErrorBoundary(
-  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Agent');
-    const body = await req.json();
-    const validated = updateAgentSchema.parse(body);
-    const agent = await updateAgent(id, validated);
-    return NextResponse.json({ data: agent });
-  },
-);
+export const PATCH = createPatchRoute(updateAgent, updateAgentSchema, 'Agent');
 
-export const DELETE = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'Agent');
-    await deleteAgent(id);
-    return NextResponse.json({ success: true });
-  },
-);
+export const DELETE = createDeleteRoute(deleteAgent, 'Agent');

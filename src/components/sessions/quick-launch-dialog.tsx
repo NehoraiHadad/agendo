@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent, McpServer } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
@@ -342,7 +343,7 @@ export function QuickLaunchDialog({
           </div>
         </DialogBody>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        <ErrorAlert message={error} />
 
         <Button
           onClick={() => void handleLaunch()}

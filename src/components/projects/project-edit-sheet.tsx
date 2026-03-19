@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import {
   Sheet,
   SheetContent,
@@ -316,7 +317,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
             />
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          <ErrorAlert message={error} />
 
           <SheetFooter className="flex-col gap-2 mt-auto p-0">
             <Button

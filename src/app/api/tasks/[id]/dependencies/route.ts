@@ -44,6 +44,6 @@ export const DELETE = withErrorBoundary(
     const body = await req.json();
     const { dependsOnTaskId } = deleteSchema.parse(body);
     await removeDependency(id, dependsOnTaskId);
-    return NextResponse.json({ data: null });
+    return new NextResponse(null, { status: 204 });
   },
 );

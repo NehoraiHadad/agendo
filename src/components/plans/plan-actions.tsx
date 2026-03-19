@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import type { Agent } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -247,11 +248,7 @@ export function PlanActions({
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {error && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
+            <ErrorAlert message={error} />
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground font-medium">Agent</label>
               {loadingAgents ? (
@@ -318,11 +315,7 @@ export function PlanActions({
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {error && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
+            <ErrorAlert message={error} />
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground font-medium">Agent</label>
               {loadingAgents ? (
@@ -388,11 +381,7 @@ export function PlanActions({
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {error && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
+            <ErrorAlert message={error} />
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground font-medium">Agent</label>
               {loadingAgents ? (

@@ -48,6 +48,7 @@ import {
   deriveProvider,
 } from '@/lib/utils/session-controls';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { ErrorAlert } from '@/components/ui/error-alert';
 
 // ---------------------------------------------------------------------------
 // Mode config (icon references are component-level)
@@ -634,11 +635,7 @@ export function PlanConversationPanel({
               plan via ExitPlanMode when ready.
             </p>
 
-            {agentError && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {agentError}
-              </p>
-            )}
+            <ErrorAlert message={agentError} />
 
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground/70 font-medium">Agent</label>
@@ -668,11 +665,7 @@ export function PlanConversationPanel({
               )}
             </div>
 
-            {startError && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {startError}
-              </p>
-            )}
+            <ErrorAlert message={startError} />
 
             <Button
               size="sm"

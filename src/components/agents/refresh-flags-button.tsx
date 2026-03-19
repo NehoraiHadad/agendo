@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import type { ParsedFlag } from '@/lib/db/schema';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -52,7 +53,7 @@ export function RefreshFlagsButton({ agentId, initialFlags }: RefreshFlagsButton
         <Badge variant="secondary">{flags.length} flags</Badge>
       </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <ErrorAlert message={error} />
 
       {flags.length === 0 ? (
         <p className="text-sm text-muted-foreground">

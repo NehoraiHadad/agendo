@@ -29,6 +29,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { ContextSnapshot, SnapshotFindings, Agent } from '@/lib/types';
@@ -133,7 +134,7 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
             )}
           </div>
 
-          {error && <p className="text-xs text-destructive pt-2">{error}</p>}
+          <ErrorAlert message={error} className="mt-2" />
         </div>
 
         <DialogFooter>

@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withErrorBoundary, assertUUID, requireFound } from '@/lib/api-handler';
+import { requireFound } from '@/lib/api-handler';
+import { createGetByIdRoute, createPatchRoute, createDeleteRoute } from '@/lib/api-routes';
 import { getMcpServer, updateMcpServer, deleteMcpServer } from '@/lib/services/mcp-server-service';
 
 const updateMcpServerSchema = z
@@ -18,32 +18,13 @@ const updateMcpServerSchema = z
   })
   .strict();
 
-export const GET = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'McpServer');
-    const server = await getMcpServer(id);
-    requireFound(server, 'McpServer', id);
-    return NextResponse.json({ data: server });
-  },
-);
+async function getMcpServerOrThrow(id: string) {
+  const server = await getMcpServer(id);
+  return requireFound(server, 'McpServer', id);
+}
 
-export const PATCH = withErrorBoundary(
-  async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'McpServer');
-    const body = await req.json();
-    const validated = updateMcpServerSchema.parse(body);
-    const server = await updateMcpServer(id, validated);
-    return NextResponse.json({ data: server });
-  },
-);
+export const GET = createGetByIdRoute(getMcpServerOrThrow, 'McpServer');
 
-export const DELETE = withErrorBoundary(
-  async (_req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
-    const { id } = await params;
-    assertUUID(id, 'McpServer');
-    await deleteMcpServer(id);
-    return NextResponse.json({ success: true });
-  },
-);
+export const PATCH = createPatchRoute(updateMcpServer, updateMcpServerSchema, 'McpServer');
+
+export const DELETE = createDeleteRoute(deleteMcpServer, 'McpServer');

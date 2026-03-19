@@ -1,23 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { QueryParams } from '@/lib/query-params';
 import { createTask, listTasksByStatus } from '@/lib/services/task-service';
 import { taskStatusEnum } from '@/lib/db/schema';
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
-  const url = new URL(req.url);
-  const status = url.searchParams.get('status') as
-    | (typeof taskStatusEnum.enumValues)[number]
-    | null;
-  const cursor = url.searchParams.get('cursor') ?? undefined;
-  const limitParam = url.searchParams.get('limit');
-  const limit = limitParam ? parseInt(limitParam, 10) : 50;
-  const parentTaskId = url.searchParams.get('parentTaskId') ?? undefined;
-  const q = url.searchParams.get('q') ?? undefined;
-  const projectId = url.searchParams.get('projectId') ?? undefined;
+  const qp = new QueryParams(req);
+  const status = qp.getEnum('status', taskStatusEnum.enumValues);
+  const cursor = qp.getString('cursor');
+  const limit = qp.getNumber('limit', 50) ?? 50;
+  const parentTaskId = qp.getString('parentTaskId');
+  const q = qp.getString('q');
+  const projectId = qp.getString('projectId');
 
   const result = await listTasksByStatus({
-    status: status ?? undefined,
+    status,
     cursor,
     limit,
     parentTaskId,

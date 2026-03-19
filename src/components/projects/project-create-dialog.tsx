@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
@@ -366,7 +367,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
               />
             </div>
 
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            <ErrorAlert message={error} />
           </DialogBody>
 
           <DialogFooter>

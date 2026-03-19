@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { confirmTool } from '@/lib/actions/discovery-actions';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import type { DiscoveredTool } from '@/lib/discovery';
 
 const TYPE_COLORS: Record<string, string> = {
@@ -69,7 +70,7 @@ export function DiscoveredToolCard({ tool, onConfirmed, onDismissed }: Discovere
         {tool.version && <p className="mt-1 text-xs text-muted-foreground/60">v{tool.version}</p>}
       </CardContent>
       <CardFooter className="flex-col items-start gap-2 p-0 pt-3">
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        <ErrorAlert message={error} />
         {!tool.isConfirmed && (
           <>
             <Button

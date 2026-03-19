@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { addDependencyAction, removeDependencyAction } from '@/lib/actions/task-actions';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { X as XIcon } from 'lucide-react';
 
 interface Dep {
@@ -117,7 +118,7 @@ export function TaskDependenciesPanel({ taskId }: TaskDependenciesPanelProps) {
           </Button>
         </div>
 
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        <ErrorAlert message={error} />
 
         {dependencies.map((dep) => (
           <div key={dep.id} className="flex items-center justify-between rounded border px-3 py-2">

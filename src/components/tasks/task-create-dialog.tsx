@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { createTaskAction } from '@/lib/actions/task-actions';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { Plus } from 'lucide-react';
 import type { Task } from '@/lib/types';
@@ -151,7 +152,7 @@ export function TaskCreateDialog() {
             )}
           </DialogBody>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          <ErrorAlert message={error} />
 
           <Button type="submit" disabled={isPending || !title.trim()}>
             {isPending ? 'Creating...' : 'Create Task'}

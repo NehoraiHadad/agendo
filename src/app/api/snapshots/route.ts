@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { QueryParams } from '@/lib/query-params';
 import { createSnapshot, listSnapshots } from '@/lib/services/snapshot-service';
 
 const createSnapshotSchema = z.object({
@@ -19,10 +20,9 @@ const createSnapshotSchema = z.object({
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
-  const url = new URL(req.url);
-  const projectId = url.searchParams.get('projectId') ?? undefined;
-  const limitParam = url.searchParams.get('limit');
-  const limit = limitParam ? Number(limitParam) : undefined;
+  const qp = new QueryParams(req);
+  const projectId = qp.getString('projectId');
+  const limit = qp.getNumber('limit');
 
   const data = await listSnapshots({ projectId, limit });
   return NextResponse.json({ data });

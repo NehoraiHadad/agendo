@@ -40,6 +40,6 @@ export const DELETE = withErrorBoundary(
     const { id } = await params;
     assertUUID(id, 'Task');
     await deleteTask(id);
-    return NextResponse.json({ data: null }, { status: 200 });
+    return new NextResponse(null, { status: 204 });
   },
 );

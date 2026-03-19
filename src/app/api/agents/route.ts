@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { QueryParams } from '@/lib/query-params';
 import { listAgents, createAgent, getAgentBySlug } from '@/lib/services/agent-service';
 
 const createAgentSchema = z.object({
@@ -13,8 +14,8 @@ const createAgentSchema = z.object({
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
-  const url = new URL(req.url);
-  const slug = url.searchParams.get('slug');
+  const qp = new QueryParams(req);
+  const slug = qp.getString('slug');
 
   if (slug) {
     const agent = await getAgentBySlug(slug);

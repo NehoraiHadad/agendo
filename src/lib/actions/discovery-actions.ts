@@ -1,51 +1,27 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
-import { runDiscovery } from '@/lib/discovery';
 import type { DiscoveredTool } from '@/lib/discovery';
+import { runDiscovery } from '@/lib/discovery';
 import {
   getExistingSlugs,
   getExistingBinaryPaths,
   createFromDiscovery,
 } from '@/lib/services/agent-service';
 import type { Agent } from '@/lib/types';
-import { getErrorMessage } from '@/lib/utils/error-utils';
+import { withAction, type ActionResult } from './action-utils';
 
-export async function triggerScan(extraTargets?: string[]): Promise<{
-  success: boolean;
-  data?: DiscoveredTool[];
-  error?: string;
-}> {
-  try {
+export const confirmTool: (tool: DiscoveredTool) => Promise<ActionResult<Agent>> = withAction(
+  (tool: DiscoveredTool) => createFromDiscovery(tool),
+  { revalidate: '/agents' },
+);
+
+export const triggerScan: (extraTargets?: string[]) => Promise<ActionResult<DiscoveredTool[]>> =
+  withAction(async (extraTargets?: string[]) => {
     const [existingSlugs, existingBinaryPaths] = await Promise.all([
       getExistingSlugs(),
       getExistingBinaryPaths(),
     ]);
     const schemaTargets =
       extraTargets && extraTargets.length > 0 ? new Set(extraTargets) : undefined;
-    const tools = await runDiscovery(schemaTargets, existingSlugs, existingBinaryPaths);
-    return { success: true, data: tools };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
-
-export async function confirmTool(tool: DiscoveredTool): Promise<{
-  success: boolean;
-  data?: Agent;
-  error?: string;
-}> {
-  try {
-    const agent = await createFromDiscovery(tool);
-    revalidatePath('/agents');
-    return { success: true, data: agent };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+    return runDiscovery(schemaTargets, existingSlugs, existingBinaryPaths);
+  });

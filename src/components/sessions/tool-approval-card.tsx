@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, Check, X, Loader2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ErrorAlert } from '@/components/ui/error-alert';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -272,16 +273,12 @@ export function ToolApprovalCard({
                 className="w-full text-[11px] font-mono bg-black/40 border border-white/[0.08] rounded-lg px-2.5 py-2 text-foreground/80 focus:outline-none focus:border-white/20 resize-y"
               />
             )}
-            {editError && <p className="text-xs text-red-400">{editError}</p>}
+            <ErrorAlert message={editError} />
           </div>
         )}
 
         {/* Error message */}
-        {error && (
-          <p className="text-xs text-red-400 bg-red-500/[0.08] border border-red-800/30 rounded-lg px-2.5 py-1.5">
-            {error}
-          </p>
-        )}
+        <ErrorAlert message={error} />
 
         {/* Action buttons */}
         <div className="flex gap-2 flex-wrap">

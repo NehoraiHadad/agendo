@@ -1,9 +1,8 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { createAgent, updateAgent, deleteAgent } from '@/lib/services/agent-service';
 import type { Agent } from '@/lib/types';
-import { getErrorMessage } from '@/lib/utils/error-utils';
+import { withAction, type ActionResult } from './action-utils';
 
 interface CreateAgentInput {
   name: string;
@@ -22,55 +21,22 @@ interface UpdateAgentInput {
   mcpEnabled?: boolean;
 }
 
-export async function createAgentAction(data: CreateAgentInput): Promise<{
-  success: boolean;
-  data?: Agent;
-  error?: string;
-}> {
-  try {
-    const agent = await createAgent(data);
-    revalidatePath('/agents');
-    return { success: true, data: agent };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+export const createAgentAction: (data: CreateAgentInput) => Promise<ActionResult<Agent>> =
+  withAction((data: CreateAgentInput) => createAgent(data), { revalidate: '/agents' });
+
+const _updateAgent = withAction(
+  ({ id, data }: { id: string; data: UpdateAgentInput }) => updateAgent(id, data),
+  { revalidate: '/agents' },
+);
 
 export async function updateAgentAction(
   id: string,
   data: UpdateAgentInput,
-): Promise<{
-  success: boolean;
-  data?: Agent;
-  error?: string;
-}> {
-  try {
-    const agent = await updateAgent(id, data);
-    revalidatePath('/agents');
-    return { success: true, data: agent };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
+): Promise<ActionResult<Agent>> {
+  return _updateAgent({ id, data });
 }
 
-export async function deleteAgentAction(id: string): Promise<{
-  success: boolean;
-  error?: string;
-}> {
-  try {
-    await deleteAgent(id);
-    revalidatePath('/agents');
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: getErrorMessage(error),
-    };
-  }
-}
+export const deleteAgentAction: (id: string) => Promise<ActionResult<void>> = withAction(
+  (id: string) => deleteAgent(id),
+  { revalidate: '/agents' },
+);
