@@ -23,16 +23,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
+import { EmptyState } from '@/components/ui/empty-state';
 import { KeyValueEditor } from '@/components/mcp/key-value-editor';
 import { cn } from '@/lib/utils';
 import type { McpServer } from '@/lib/types';
@@ -255,22 +247,27 @@ export function McpServerCards({ initialServers }: McpServerCardsProps) {
       </div>
 
       {servers.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/[0.08] p-12 text-center">
-          <Server className="h-10 w-10 mx-auto text-muted-foreground/20 mb-3" />
-          <p className="text-sm text-muted-foreground mb-4">
-            No MCP servers registered. Add one or import from installed CLI configs.
-          </p>
-          <div className="flex items-center justify-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleImport} disabled={importing}>
+        <EmptyState
+          icon={Server}
+          title="No MCP servers registered"
+          description="Add one or import from installed CLI configs."
+          actions={[
+            <Button
+              key="import"
+              variant="outline"
+              size="sm"
+              onClick={handleImport}
+              disabled={importing}
+            >
               <Download className="h-3.5 w-3.5 mr-1.5" />
               Import
-            </Button>
-            <Button size="sm" onClick={openAdd}>
+            </Button>,
+            <Button key="add" size="sm" onClick={openAdd}>
               <Plus className="h-3.5 w-3.5 mr-1.5" />
               Add Server
-            </Button>
-          </div>
-        </div>
+            </Button>,
+          ]}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {servers.map((server) => (
@@ -531,27 +528,13 @@ export function McpServerCards({ initialServers }: McpServerCardsProps) {
       </Dialog>
 
       {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete MCP Server</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete{' '}
-              <span className="font-medium text-foreground">{deleteTarget?.name}</span>? This will
-              also remove it from all project configurations.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete MCP Server"
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ''}"? This will also remove it from all project configurations.`}
+        onConfirm={() => void handleDelete()}
+      />
     </div>
   );
 }

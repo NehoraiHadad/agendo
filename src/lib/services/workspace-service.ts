@@ -3,6 +3,7 @@ import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { agentWorkspaces } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import type { AgentWorkspace, WorkspaceLayout } from '@/lib/types';
 
 export interface CreateWorkspaceInput {
@@ -30,12 +31,7 @@ export async function createWorkspace(input: CreateWorkspaceInput): Promise<Agen
 }
 
 export async function getWorkspace(id: string): Promise<AgentWorkspace> {
-  const [workspace] = await db
-    .select()
-    .from(agentWorkspaces)
-    .where(eq(agentWorkspaces.id, id))
-    .limit(1);
-  return requireFound(workspace, 'AgentWorkspace', id);
+  return getById(agentWorkspaces, id, 'AgentWorkspace');
 }
 
 export async function listWorkspaces(filters?: { projectId?: string }): Promise<AgentWorkspace[]> {

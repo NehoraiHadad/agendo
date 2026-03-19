@@ -5,30 +5,9 @@ import { homedir, tmpdir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { findMeasurePy } from '../_shared';
 
 const execFileAsync = promisify(execFile);
-
-const MEASURE_PY_PATHS = [
-  path.join(homedir(), '.claude', 'skills', 'token-optimizer', 'scripts', 'measure.py'),
-  path.join(
-    homedir(),
-    '.claude',
-    'plugins',
-    'cache',
-    'token-optimizer',
-    'skills',
-    'token-optimizer',
-    'scripts',
-    'measure.py',
-  ),
-];
-
-function findMeasurePy(): string | null {
-  for (const p of MEASURE_PY_PATHS) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 /**
  * GET /api/token-usage/dashboard

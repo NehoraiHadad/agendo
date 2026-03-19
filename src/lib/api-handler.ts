@@ -8,7 +8,7 @@ const log = createLogger('api-handler');
 type RouteHandler = (
   request: NextRequest,
   context: { params: Promise<Record<string, string>> },
-) => Promise<NextResponse>;
+) => Promise<NextResponse | Response>;
 
 /**
  * Wraps an API route handler with consistent error handling.

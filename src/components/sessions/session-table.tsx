@@ -4,16 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatDistanceStrict, formatDistanceToNow } from 'date-fns';
-import {
-  Activity,
-  MessageSquare,
-  MinusCircle,
-  Pause,
-  Play,
-  Trash2,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react';
+import { Play, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -32,61 +23,17 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui/table';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { Session, SessionStatus } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { SESSION_STATUS_CONFIG } from '@/lib/utils/session-status-config';
 
 // ---------------------------------------------------------------------------
 // SessionStatusBadge
 // ---------------------------------------------------------------------------
-
-interface StatusConfig {
-  label: string;
-  icon: React.ElementType;
-  className: string;
-  pulse?: boolean;
-}
-
-const SESSION_STATUS_CONFIG: Record<SessionStatus, StatusConfig> = {
-  active: {
-    label: 'Active',
-    icon: Activity,
-    className:
-      'bg-blue-500/15 text-blue-400 border border-blue-500/30 text-xs px-2.5 py-1 rounded-full font-medium gap-1.5',
-    pulse: true,
-  },
-  awaiting_input: {
-    label: 'Your Turn',
-    icon: MessageSquare,
-    className:
-      'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs px-2.5 py-1 rounded-full font-medium gap-1.5',
-    pulse: true,
-  },
-  idle: {
-    label: 'Idle',
-    icon: Pause,
-    className:
-      'bg-zinc-500/15 text-zinc-400 border border-zinc-500/25 text-xs px-2.5 py-1 rounded-full font-medium gap-1.5',
-  },
-  ended: {
-    label: 'Ended',
-    icon: MinusCircle,
-    className:
-      'bg-zinc-600/15 text-zinc-500 border border-zinc-600/20 text-xs px-2.5 py-1 rounded-full font-medium gap-1.5',
-  },
-};
 
 interface SessionStatusBadgeProps {
   status: SessionStatus;
@@ -98,12 +45,12 @@ export function SessionStatusBadge({ status, className }: SessionStatusBadgeProp
   const Icon = config.icon;
 
   return (
-    <Badge className={cn(config.className, className)}>
+    <Badge className={cn(config.badgeClassName, className)}>
       {config.pulse ? (
         <span
           className={cn(
             'inline-block h-1.5 w-1.5 rounded-full shrink-0 animate-pulse',
-            status === 'active' ? 'bg-blue-400' : 'bg-emerald-400',
+            config.dotBg,
           )}
         />
       ) : (
@@ -635,28 +582,14 @@ export function SessionTable({ taskId }: SessionTableProps) {
       )}
 
       {/* Delete confirmation dialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove{' '}
-              {deleteTarget?.ids.length === 1 ? 'this session' : 'these sessions'} and associated
-              log files. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.label ?? ''}?`}
+        description={`This will permanently remove ${deleteTarget?.ids.length === 1 ? 'this session' : 'these sessions'} and associated log files. This action cannot be undone.`}
+        onConfirm={() => void confirmDelete()}
+        isLoading={isDeleting}
+      />
     </div>
   );
 }

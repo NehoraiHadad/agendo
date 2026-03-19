@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { eq, and } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { mcpServers, projectMcpServers } from '@/lib/db/schema';
 import type { McpServer, NewMcpServer, ProjectMcpServer } from '@/lib/types';
@@ -9,11 +10,8 @@ import { getErrorMessage } from '@/lib/utils/error-utils';
 // --- CRUD ---
 
 export async function listMcpServers(filters?: { enabled?: boolean }): Promise<McpServer[]> {
-  const query = db.select().from(mcpServers);
-  if (filters?.enabled !== undefined) {
-    return query.where(eq(mcpServers.enabled, filters.enabled));
-  }
-  return query;
+  const where = buildFilters({ enabled: filters?.enabled }, { enabled: mcpServers.enabled });
+  return db.select().from(mcpServers).where(where);
 }
 
 export async function getMcpServer(id: string): Promise<McpServer | null> {

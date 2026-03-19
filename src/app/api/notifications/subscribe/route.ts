@@ -1,4 +1,5 @@
 import { withErrorBoundary } from '@/lib/api-handler';
+import { BadRequestError } from '@/lib/errors';
 import { db } from '@/lib/db';
 import { pushSubscriptions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -16,7 +17,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = (await req.json()) as PushSubscriptionBody;
 
   if (!body?.endpoint || !body?.keys?.p256dh || !body?.keys?.auth) {
-    return NextResponse.json({ error: 'Invalid subscription object' }, { status: 400 });
+    throw new BadRequestError('Invalid subscription object');
   }
 
   await db
@@ -35,7 +36,7 @@ export const DELETE = withErrorBoundary(async (req: NextRequest) => {
   const body = (await req.json()) as { endpoint: string };
 
   if (!body?.endpoint) {
-    return NextResponse.json({ error: 'Missing endpoint' }, { status: 400 });
+    throw new BadRequestError('Missing endpoint');
   }
 
   await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, body.endpoint));

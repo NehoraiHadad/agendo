@@ -11,13 +11,9 @@ import {
   Lightbulb,
   ArrowRight,
   Loader2,
-  Bot,
-  Sparkles,
-  Brain,
-  Code,
   Pencil,
-  type LucideIcon,
 } from 'lucide-react';
+import { getAgentIcon } from '@/lib/utils/agent-icon';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,22 +30,6 @@ import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { ContextSnapshot, SnapshotFindings, Agent } from '@/lib/types';
-
-const LUCIDE_ICONS: Record<string, LucideIcon> = {
-  sparkles: Sparkles,
-  brain: Brain,
-  code: Code,
-  bot: Bot,
-};
-
-function getAgentIcon(agent: Agent): React.ReactNode {
-  const meta = agent.metadata as { icon?: string; color?: string } | null;
-  const iconName = meta?.icon?.toLowerCase();
-  const color = meta?.color;
-  const Icon = iconName ? LUCIDE_ICONS[iconName] : undefined;
-  if (Icon) return <Icon className="size-4" style={color ? { color } : undefined} />;
-  return <Bot className="size-4 text-muted-foreground" />;
-}
 
 interface ResumeDialogProps {
   open: boolean;

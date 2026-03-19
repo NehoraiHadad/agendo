@@ -29,6 +29,57 @@ export interface UsageResult {
   error?: string;
 }
 
+// ─── Shared fetch helper ────────────────────────────────────────
+
+/**
+ * Generic provider usage fetcher.
+ *
+ * Handles the common pattern for all three providers:
+ * 1. Read credential — early return if missing
+ * 2. Fetch URL with provider-specific headers
+ * 3. Check res.ok — return error result if not
+ * 4. Parse JSON — map to UsageResult fields
+ * 5. Catch any error — return error result
+ */
+async function fetchProviderUsage<TCred, TData>(opts: {
+  provider: UsageResult['provider'];
+  getCredential: () => TCred | null;
+  url: string;
+  buildHeaders: (cred: TCred) => Record<string, string>;
+  mapResult: (cred: TCred, data: TData) => Pick<UsageResult, 'account' | 'usage' | 'note'>;
+}): Promise<UsageResult> {
+  const { provider, getCredential, url, buildHeaders, mapResult } = opts;
+
+  const cred = getCredential();
+  if (!cred) {
+    return { provider, status: 'no_credentials', account: null, usage: null };
+  }
+
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json', ...buildHeaders(cred) },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        provider,
+        status: 'error',
+        account: null,
+        usage: null,
+        error: `${provider} API ${res.status}: ${text}`,
+      };
+    }
+
+    const data: TData = await res.json();
+    const mapped = mapResult(cred, data);
+    return { provider, status: 'ok', ...mapped };
+  } catch (err) {
+    return { provider, status: 'error', account: null, usage: null, error: getErrorMessage(err) };
+  }
+}
+
 // ─── Claude ────────────────────────────────────────────────────
 
 interface ClaudeUsagePeriod {
@@ -40,7 +91,7 @@ interface ClaudeUsageApiResponse {
   five_hour: ClaudeUsagePeriod | null;
   seven_day: ClaudeUsagePeriod | null;
   seven_day_opus: ClaudeUsagePeriod | null;
-  seven_day_sonnet: ClauseUsagePeriod | null;
+  seven_day_sonnet: ClaudeUsagePeriod | null;
   seven_day_cowork: ClaudeUsagePeriod | null;
   extra_usage: {
     is_enabled: boolean;
@@ -50,42 +101,19 @@ interface ClaudeUsageApiResponse {
   } | null;
 }
 
-// Fix the typo — both should be ClaudeUsagePeriod
-type ClauseUsagePeriod = ClaudeUsagePeriod;
+type ClaudeCredentials = NonNullable<ReturnType<typeof readClaudeCredentials>>;
 
-export async function fetchClaudeUsage(): Promise<UsageResult> {
-  const auth = readClaudeCredentials();
-  if (!auth) {
-    return { provider: 'claude', status: 'no_credentials', account: null, usage: null };
-  }
-
-  try {
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${auth.token}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-      },
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      return {
-        provider: 'claude',
-        status: 'error',
-        account: null,
-        usage: null,
-        error: `Anthropic API ${res.status}: ${text}`,
-      };
-    }
-
-    const data: ClaudeUsageApiResponse = await res.json();
-
-    return {
-      provider: 'claude',
-      status: 'ok',
+export function fetchClaudeUsage(): Promise<UsageResult> {
+  return fetchProviderUsage<ClaudeCredentials, ClaudeUsageApiResponse>({
+    provider: 'claude',
+    getCredential: readClaudeCredentials,
+    url: 'https://api.anthropic.com/api/oauth/usage',
+    buildHeaders: (auth) => ({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${auth.token}`,
+      'anthropic-beta': 'oauth-2025-04-20',
+    }),
+    mapResult: (auth, data) => ({
       account: {
         subscriptionType: auth.subscriptionType ?? null,
         rateLimitTier: auth.rateLimitTier ?? null,
@@ -98,16 +126,8 @@ export async function fetchClaudeUsage(): Promise<UsageResult> {
         sevenDayCowork: data.seven_day_cowork,
         extraUsage: data.extra_usage,
       },
-    };
-  } catch (err) {
-    return {
-      provider: 'claude',
-      status: 'error',
-      account: null,
-      usage: null,
-      error: getErrorMessage(err),
-    };
-  }
+    }),
+  });
 }
 
 // ─── OpenAI ────────────────────────────────────────────────────
@@ -126,37 +146,13 @@ interface OpenAIMeResponse {
   };
 }
 
-export async function fetchOpenAIUsage(): Promise<UsageResult> {
-  const token = readCodexOAuthToken();
-  if (!token) {
-    return { provider: 'openai', status: 'no_credentials', account: null, usage: null };
-  }
-
-  try {
-    const res = await fetch('https://api.openai.com/v1/me', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      return {
-        provider: 'openai',
-        status: 'error',
-        account: null,
-        usage: null,
-        error: `OpenAI API ${res.status}: ${text}`,
-      };
-    }
-
-    const data: OpenAIMeResponse = await res.json();
-
-    return {
-      provider: 'openai',
-      status: 'ok',
+export function fetchOpenAIUsage(): Promise<UsageResult> {
+  return fetchProviderUsage<string, OpenAIMeResponse>({
+    provider: 'openai',
+    getCredential: readCodexOAuthToken,
+    url: 'https://api.openai.com/v1/me',
+    buildHeaders: (token) => ({ Authorization: `Bearer ${token}` }),
+    mapResult: (_token, data) => ({
       account: {
         userId: data.id,
         name: data.name,
@@ -170,16 +166,8 @@ export async function fetchOpenAIUsage(): Promise<UsageResult> {
       },
       usage: null,
       note: 'Usage/billing data requires an Admin API key from platform.openai.com. CLI OAuth tokens can only access account info.',
-    };
-  } catch (err) {
-    return {
-      provider: 'openai',
-      status: 'error',
-      account: null,
-      usage: null,
-      error: getErrorMessage(err),
-    };
-  }
+    }),
+  });
 }
 
 // ─── Gemini ────────────────────────────────────────────────────
@@ -192,37 +180,13 @@ interface GoogleUserInfoResponse {
   picture?: string;
 }
 
-export async function fetchGeminiUsage(): Promise<UsageResult> {
-  const token = readGeminiOAuthToken();
-  if (!token) {
-    return { provider: 'gemini', status: 'no_credentials', account: null, usage: null };
-  }
-
-  try {
-    const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      return {
-        provider: 'gemini',
-        status: 'error',
-        account: null,
-        usage: null,
-        error: `Google API ${res.status}: ${text}`,
-      };
-    }
-
-    const data: GoogleUserInfoResponse = await res.json();
-
-    return {
-      provider: 'gemini',
-      status: 'ok',
+export function fetchGeminiUsage(): Promise<UsageResult> {
+  return fetchProviderUsage<string, GoogleUserInfoResponse>({
+    provider: 'gemini',
+    getCredential: readGeminiOAuthToken,
+    url: 'https://www.googleapis.com/oauth2/v3/userinfo',
+    buildHeaders: (token) => ({ Authorization: `Bearer ${token}` }),
+    mapResult: (_token, data) => ({
       account: {
         userId: data.sub,
         name: data.name,
@@ -230,16 +194,8 @@ export async function fetchGeminiUsage(): Promise<UsageResult> {
       },
       usage: null,
       note: 'Google does not expose a usage API for Gemini CLI OAuth credentials. Usage can be viewed at console.cloud.google.com.',
-    };
-  } catch (err) {
-    return {
-      provider: 'gemini',
-      status: 'error',
-      account: null,
-      usage: null,
-      error: getErrorMessage(err),
-    };
-  }
+    }),
+  });
 }
 
 // ─── Unified ───────────────────────────────────────────────────

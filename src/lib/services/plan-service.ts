@@ -3,6 +3,7 @@ import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { plans, planVersions, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import { createArtifact } from '@/lib/services/artifact-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { getAgentById } from '@/lib/services/agent-service';
@@ -77,8 +78,7 @@ export async function createPlan(input: CreatePlanInput): Promise<Plan> {
 }
 
 export async function getPlan(id: string): Promise<Plan> {
-  const [plan] = await db.select().from(plans).where(eq(plans.id, id)).limit(1);
-  return requireFound(plan, 'Plan', id);
+  return getById(plans, id, 'Plan');
 }
 
 export async function listPlans(filters?: {

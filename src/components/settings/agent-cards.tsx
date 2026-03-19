@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Bot, ChevronRight, Search as SearchIcon, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import type { Agent } from '@/lib/types';
@@ -199,15 +200,16 @@ export function AgentCards({ initialAgents }: AgentCardsProps) {
       </div>
 
       {agents.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/[0.08] p-12 text-center">
-          <Bot className="h-10 w-10 mx-auto text-muted-foreground/20 mb-3" />
-          <p className="text-sm text-muted-foreground mb-4">
-            No AI agents registered. Run a discovery scan to find Claude, Codex, and Gemini.
-          </p>
-          <Button size="sm" asChild>
-            <Link href="/agents/discovery">Discover Agents</Link>
-          </Button>
-        </div>
+        <EmptyState
+          icon={Bot}
+          title="No agents registered"
+          description="Run a discovery scan to find Claude, Codex, and Gemini."
+          action={
+            <Button size="sm" asChild>
+              <Link href="/agents/discovery">Discover Agents</Link>
+            </Button>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {agents.map((agent) => (

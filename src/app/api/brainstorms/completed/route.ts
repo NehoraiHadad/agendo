@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { BadRequestError } from '@/lib/errors';
 import { getCompletedRoomsForProject } from '@/lib/services/brainstorm-service';
 
 /**
@@ -13,7 +14,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   const projectId = url.searchParams.get('projectId');
 
   if (!projectId) {
-    return NextResponse.json({ error: 'projectId query parameter is required' }, { status: 400 });
+    throw new BadRequestError('projectId query parameter is required');
   }
 
   const rooms = await getCompletedRoomsForProject(projectId);

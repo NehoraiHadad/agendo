@@ -15,9 +15,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { z, ZodError } from 'zod';
-import { AppError } from '@/lib/errors';
+import { z } from 'zod';
 import { BadRequestError } from '@/lib/errors';
+import { withErrorBoundary } from '@/lib/api-handler';
 import { spawnGeminiHeadless, runGeminiPrompt } from '@/lib/gemini/headless';
 import { SSE_HEADERS } from '@/lib/sse/constants';
 import { encodeSSE } from '@/lib/sse/encoder';
@@ -30,50 +30,28 @@ const bodySchema = z.object({
   timeoutMs: z.number().int().min(1_000).max(300_000).optional(),
 });
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  try {
-    const stream = req.nextUrl.searchParams.get('stream') === 'true';
-    const body = bodySchema.parse(await req.json());
+export const POST = withErrorBoundary(async (req: NextRequest) => {
+  const stream = req.nextUrl.searchParams.get('stream') === 'true';
+  const body = bodySchema.parse(await req.json());
 
-    if (stream) {
-      return streamingResponse(req, body);
-    }
-
-    // One-shot: wait for the full result and return JSON
-    try {
-      const result = await runGeminiPrompt({
-        prompt: body.prompt,
-        model: body.model,
-        cwd: body.cwd,
-        timeoutMs: body.timeoutMs,
-        signal: req.signal,
-      });
-      return NextResponse.json({ data: result });
-    } catch (err) {
-      throw new BadRequestError(getErrorMessage(err));
-    }
-  } catch (error) {
-    if (error instanceof AppError) {
-      return NextResponse.json(error.toJSON(), { status: error.statusCode });
-    }
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Request validation failed',
-            context: { issues: error.issues },
-          },
-        },
-        { status: 422 },
-      );
-    }
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+  if (stream) {
+    return streamingResponse(req, body);
   }
-}
+
+  // One-shot: wait for the full result and return JSON
+  try {
+    const result = await runGeminiPrompt({
+      prompt: body.prompt,
+      model: body.model,
+      cwd: body.cwd,
+      timeoutMs: body.timeoutMs,
+      signal: req.signal,
+    });
+    return NextResponse.json({ data: result });
+  } catch (err) {
+    throw new BadRequestError(getErrorMessage(err));
+  }
+});
 
 function streamingResponse(req: NextRequest, body: z.infer<typeof bodySchema>): NextResponse {
   const readable = new ReadableStream({

@@ -3,6 +3,7 @@ import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { contextSnapshots } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import type { ContextSnapshot, SnapshotFindings } from '@/lib/types';
 
@@ -40,12 +41,7 @@ export async function createSnapshot(input: CreateSnapshotInput): Promise<Contex
 }
 
 export async function getSnapshot(id: string): Promise<ContextSnapshot> {
-  const [snapshot] = await db
-    .select()
-    .from(contextSnapshots)
-    .where(eq(contextSnapshots.id, id))
-    .limit(1);
-  return requireFound(snapshot, 'ContextSnapshot', id);
+  return getById(contextSnapshots, id, 'ContextSnapshot');
 }
 
 export async function listSnapshots(filters?: {

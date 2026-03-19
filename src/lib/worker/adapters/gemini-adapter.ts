@@ -1,21 +1,13 @@
-import { createLogger } from '@/lib/logger';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename, extname, relative } from 'node:path';
 import { homedir } from 'node:os';
 
-const log = createLogger('gemini-adapter');
-import { AsyncLock } from '@/lib/utils/async-lock';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/gemini-event-mapper';
 import { extractMessage, GeminiClientHandler } from '@/lib/worker/adapters/gemini-client-handler';
-import { AcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
-import type {
-  AgentAdapter,
-  ImageContent,
-  ManagedProcess,
-  SpawnOpts,
-} from '@/lib/worker/adapters/types';
+import { AbstractAcpAdapter } from '@/lib/worker/adapters/base-acp-adapter';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import type { SpawnOpts } from '@/lib/worker/adapters/types';
 
 /** Slash command entry returned from TOML scanning. */
 interface SlashCommand {
@@ -91,44 +83,31 @@ function loadGeminiCustomCommands(cwd: string): SlashCommand[] {
   return Array.from(commandsMap.values());
 }
 
-export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
-  private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
-  private transport = new AcpTransport();
-  private clientHandler: GeminiClientHandler | null = null;
-  private sessionId: string | null = null;
-  private currentTurn: Promise<void> = Promise.resolve();
-  private lock = new AsyncLock();
-  /** Stored image for the next sendPrompt call. */
-  private pendingImage: ImageContent | null = null;
-  /** Data callbacks from the ManagedProcess — used to emit synthetic NDJSON. */
-  private dataCallbacks: Array<(chunk: string) => void> = [];
-  /** Exit callbacks from the ManagedProcess — stored for model-switch re-wiring. */
-  private exitCallbacks: Array<(code: number | null) => void> = [];
-  /** Spawn opts stored for process restart during model switch. */
-  private storedOpts: SpawnOpts | null = null;
+export class GeminiAdapter extends AbstractAcpAdapter<GeminiEvent> {
   /** When true, suppresses exit callbacks during model-switch process restart. */
   private modelSwitching = false;
-  /** Active tool call IDs from `tool_call` events (yolo mode).
-   *  Used to pair `tool_call_update` with its start event and avoid
-   *  emitting orphaned tool-end events in default mode (where tools are
-   *  tracked via the permission handler instead). */
-  private activeToolCalls = new Set<string>();
   /** Cached custom TOML commands for ACP-command merging. */
   private customTomlCommands: SlashCommand[] = [];
 
-  /** Timeout for session/prompt ACP requests (10 minutes). */
-  static readonly PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;
+  protected get binaryName(): string {
+    return 'gemini';
+  }
+  protected get agentLabel(): string {
+    return 'Gemini';
+  }
+  protected get agentPrefix(): string {
+    return 'gemini';
+  }
+  protected get acpModeMap(): Record<string, string> {
+    return {
+      default: 'default',
+      acceptEdits: 'autoEdit',
+      bypassPermissions: 'yolo',
+      dontAsk: 'yolo',
+    };
+  }
 
-  /**
-   * Build Gemini CLI args from SpawnOpts.
-   *
-   * Flags:
-   *  --experimental-acp           — ACP mode (required)
-   *  -m <model>                   — model override
-   *  --approval-mode yolo         — skip all permission prompts when bypassPermissions
-   *  --allowed-mcp-server-names   — restrict global MCP to only injected servers
-   */
-  private static buildArgs(opts: SpawnOpts): string[] {
+  protected buildArgs(opts: SpawnOpts, _resumeSessionId: string | null): string[] {
     const args = ['--experimental-acp'];
     if (opts.model) {
       args.push('-m', opts.model);
@@ -154,104 +133,43 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
     return args;
   }
 
-  /** Create an ACP connection for the given child process via the transport. */
-  private createTransportConnection(cp: ReturnType<typeof BaseAgentAdapter.spawnDetached>): void {
-    if (!cp.stdin || !cp.stdout) throw new Error('Child process has no stdio');
-    if (!this.clientHandler) throw new Error('clientHandler not initialized');
-    this.transport.createConnection(
-      cp.stdin as NodeJS.WritableStream,
-      cp.stdout as NodeJS.ReadableStream,
-      this.clientHandler,
+  protected createClientHandler(): GeminiClientHandler {
+    return new GeminiClientHandler(
+      (event) => this.emitNdjson(event),
+      () => this.approvalHandler,
+      this.activeToolCalls,
     );
   }
 
-  spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
-    return this.launch(prompt, opts, null);
+  mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
+    return mapGeminiJsonToEvents(parsed as GeminiEvent);
   }
 
-  resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
-    this.sessionId = sessionRef;
-    return this.launch(prompt, opts, sessionRef);
+  protected suppressExit(): boolean {
+    return this.modelSwitching;
   }
 
-  extractSessionId(_output: string): string | null {
-    return this.sessionId;
-  }
-
-  async sendMessage(
-    message: string,
-    image?: ImageContent,
-    _priority?: import('@/lib/realtime/events').MessagePriority,
-  ): Promise<void> {
-    if (!this.sessionId) throw new Error('No active Gemini ACP session');
-    await this.currentTurn;
-    this.pendingImage = image ?? null;
-    this.currentTurn = this.lock.acquire(() => this.sendPrompt(message));
-    await this.currentTurn;
-  }
-
-  async interrupt(): Promise<void> {
-    // Step 1: Send ACP session/cancel notification
-    const conn = this.transport.getConnection();
-    if (this.sessionId && conn) {
-      conn.cancel({ sessionId: this.sessionId }).catch(() => {
-        // Ignore errors — process may already be exiting
-      });
+  protected async onAfterInit(opts: SpawnOpts): Promise<void> {
+    // Load custom TOML commands and emit them (merged with any future ACP commands)
+    this.customTomlCommands = loadGeminiCustomCommands(opts.cwd);
+    if (this.customTomlCommands.length > 0) {
+      this.emitNdjson({ type: 'gemini:commands', commands: this.customTomlCommands });
     }
+  }
 
-    // Step 2: Wait 2s, then SIGINT
-    await new Promise<void>((r) => setTimeout(r, 2000));
-    if (!this.isAlive()) return;
-    if (this.childProcess?.pid) {
-      try {
-        process.kill(-this.childProcess.pid, 'SIGINT');
-      } catch {
-        // Process group already dead
+  protected transformEvent(event: GeminiEvent): GeminiEvent {
+    if (event.type === 'gemini:commands' && this.customTomlCommands.length > 0) {
+      // Merge: start with TOML commands, overwrite with ACP commands (ACP takes priority)
+      const merged = new Map<string, SlashCommand>();
+      for (const cmd of this.customTomlCommands) {
+        merged.set(cmd.name, cmd);
       }
-    }
-
-    // Step 3: Wait 2s, then SIGTERM (escalation)
-    await new Promise<void>((r) => setTimeout(r, 2000));
-    if (!this.isAlive()) return;
-    if (this.childProcess?.pid) {
-      try {
-        process.kill(-this.childProcess.pid, 'SIGTERM');
-      } catch {
-        // Process group already dead
+      for (const cmd of (event as { type: string; commands: SlashCommand[] }).commands) {
+        merged.set(cmd.name, cmd);
       }
+      return { type: 'gemini:commands', commands: Array.from(merged.values()) };
     }
-
-    // Step 4: Wait 5s, then SIGKILL (final escalation)
-    await new Promise<void>((r) => setTimeout(r, 5000));
-    if (!this.isAlive()) return;
-    if (this.childProcess?.pid) {
-      try {
-        process.kill(-this.childProcess.pid, 'SIGKILL');
-      } catch {
-        // Process group already dead
-      }
-    }
-  }
-
-  isAlive(): boolean {
-    return this.childProcess?.stdin?.writable ?? false;
-  }
-
-  async setPermissionMode(mode: string): Promise<boolean> {
-    const conn = this.transport.getConnection();
-    if (!this.sessionId || !conn) return false;
-    // ACP mode IDs: "default", "autoEdit", "yolo".
-    // "plan" is NOT a valid ACP mode (rejected with -32603).
-    const modeMap: Record<string, string> = {
-      default: 'default',
-      acceptEdits: 'autoEdit',
-      bypassPermissions: 'yolo',
-      dontAsk: 'yolo',
-    };
-    const geminiMode = modeMap[mode];
-    if (!geminiMode) return false;
-    await conn.setSessionMode({ sessionId: this.sessionId, modeId: geminiMode });
-    return true;
+    return event;
   }
 
   async setModel(model: string): Promise<boolean> {
@@ -276,7 +194,7 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
     // Spawn new process with updated model
     const opts = this.storedOpts;
-    const geminiArgs = GeminiAdapter.buildArgs(opts);
+    const geminiArgs = this.buildArgs(opts, null);
     const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
     this.childProcess = cp;
 
@@ -285,9 +203,11 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
       for (const cb of this.dataCallbacks) cb(chunk.toString('utf-8'));
     });
 
-    // Wire exit → same exitCallbacks (respecting modelSwitching flag)
+    // Wire exit → same exitCallbacks (respecting modelSwitching flag, at-most-once guard)
+    let exitFired = false;
     cp.on('exit', (code) => {
-      if (!this.modelSwitching) {
+      if (!exitFired && !this.modelSwitching) {
+        exitFired = true;
         for (const cb of this.exitCallbacks) cb(code);
       }
     });
@@ -312,217 +232,5 @@ export class GeminiAdapter extends BaseAgentAdapter implements AgentAdapter {
 
     this.modelSwitching = false;
     return true;
-  }
-
-  mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
-    return mapGeminiJsonToEvents(parsed as GeminiEvent);
-  }
-
-  /**
-   * Retrieve conversation history from the in-memory accumulator.
-   *
-   * Available while the ACP process is alive. If the worker restarts and
-   * the ACP process is gone, the buffer is lost and the caller falls back
-   * to the Agendo log file.
-   *
-   * @param _sessionRef - Unused for ACP adapters (no CLI-native storage API)
-   * @returns AgendoEventPayload[] or null if no history has been accumulated
-   */
-  async getHistory(_sessionRef: string): Promise<AgendoEventPayload[] | null> {
-    const history = this.transport.getMessageHistory();
-    return history.length > 0 ? history : null;
-  }
-
-  private launch(prompt: string, opts: SpawnOpts, resumeSessionId: string | null): ManagedProcess {
-    this.storedOpts = opts;
-    const dataCallbacks: Array<(chunk: string) => void> = [];
-    const exitCallbacks: Array<(code: number | null) => void> = [];
-    this.dataCallbacks = dataCallbacks;
-    this.exitCallbacks = exitCallbacks;
-
-    // Set up the client handler (shared across model-switch restarts via this.clientHandler)
-    this.activeToolCalls = new Set<string>();
-    this.clientHandler = new GeminiClientHandler(
-      (event) => this.emitNdjson(event),
-      () => this.approvalHandler,
-      this.activeToolCalls,
-    );
-
-    const geminiArgs = GeminiAdapter.buildArgs(opts);
-    const cp = BaseAgentAdapter.spawnDetached('gemini', geminiArgs, opts);
-    this.childProcess = cp;
-
-    // Create ACP connection via transport
-    this.createTransportConnection(cp);
-
-    cp.stderr?.on('data', (chunk: Buffer) => {
-      for (const cb of dataCallbacks) cb(chunk.toString('utf-8'));
-    });
-
-    let exitFired = false;
-    cp.on('exit', (code) => {
-      if (!exitFired && !this.modelSwitching) {
-        exitFired = true;
-        for (const cb of exitCallbacks) cb(code);
-      }
-    });
-
-    // Async init chain — catch rejections to prevent unhandled promise crashes.
-    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
-      log.error({ err }, 'init failed');
-      if (!exitFired) {
-        exitFired = true;
-        for (const cb of exitCallbacks) cb(0);
-      }
-      // Kill the entire process group
-      if (cp.pid) {
-        try {
-          process.kill(-cp.pid, 'SIGTERM');
-        } catch {
-          try {
-            cp.kill('SIGTERM');
-          } catch {
-            /* already dead */
-          }
-        }
-        const pid = cp.pid;
-        setTimeout(() => {
-          try {
-            process.kill(-pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }, 2000);
-      } else {
-        cp.kill('SIGKILL');
-      }
-    });
-
-    return {
-      pid: cp.pid ?? null,
-      tmuxSession: '',
-      stdin: null,
-      kill: BaseAgentAdapter.buildKill(() => this.childProcess),
-      onData: (cb) => dataCallbacks.push(cb),
-      onExit: (cb) => exitCallbacks.push(cb),
-    };
-  }
-
-  private async initAndRun(
-    prompt: string,
-    opts: SpawnOpts,
-    resumeSessionId: string | null,
-  ): Promise<void> {
-    // 1–2: Handshake + session creation
-    try {
-      const initResult = await this.transport.initialize();
-      this.sessionId = await this.transport.loadOrCreateSession(
-        initResult.agentCapabilities,
-        { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
-        resumeSessionId,
-      );
-      if (!resumeSessionId && this.sessionId) {
-        this.sessionRefCallback?.(this.sessionId);
-      }
-    } catch (err) {
-      const message = extractMessage(err);
-      this.emitNdjson({ type: 'gemini:turn-error', message: `Init failed: ${message}` });
-      throw err;
-    }
-
-    // Emit init event with model and sessionId
-    if (this.sessionId && opts.model) {
-      this.emitNdjson({ type: 'gemini:init', model: opts.model, sessionId: this.sessionId });
-    }
-
-    // Load custom TOML commands and emit them (merged with any future ACP commands)
-    this.customTomlCommands = loadGeminiCustomCommands(opts.cwd);
-    if (this.customTomlCommands.length > 0) {
-      // Emit TOML-only commands immediately; ACP update (if it arrives) will also be merged
-      this.emitNdjson({ type: 'gemini:commands', commands: this.customTomlCommands });
-    }
-
-    // 3. First prompt
-    await this.sendPrompt(prompt);
-  }
-
-  private async sendPrompt(text: string): Promise<void> {
-    if (!this.sessionId) throw new Error('No active session');
-    this.thinkingCallback?.(true);
-
-    const image = this.pendingImage ?? undefined;
-    this.pendingImage = null;
-
-    try {
-      const promptResponse = await this.transport.sendPrompt(this.sessionId, text, image);
-      // Emit synthetic result event so session-process emits agent:result
-      this.emitNdjson({
-        type: 'gemini:turn-complete',
-        result: promptResponse,
-      });
-    } catch (err) {
-      const message = extractMessage(err);
-      // Don't emit error for process exit — onExit handles that
-      if (!message.includes('Gemini process exited') && !message.includes('Connection closed')) {
-        this.emitNdjson({ type: 'gemini:turn-error', message });
-      }
-      throw err;
-    } finally {
-      this.thinkingCallback?.(false);
-    }
-  }
-
-  /**
-   * Emit a synthetic NDJSON line to all dataCallbacks. session-process.ts
-   * parses these through the standard NDJSON pipeline and delegates to
-   * mapJsonToEvents (gemini-event-mapper.ts).
-   *
-   * For `gemini:commands` events, merges ACP commands with locally-scanned
-   * custom TOML commands. ACP commands take priority on name collision.
-   *
-   * Also pushes structural events (agent:text, agent:tool-start,
-   * agent:tool-end, agent:result) to the transport history accumulator for
-   * use by getHistory().
-   */
-  private emitNdjson(event: GeminiEvent): void {
-    let finalEvent = event;
-    if (event.type === 'gemini:commands' && this.customTomlCommands.length > 0) {
-      // Merge: start with TOML commands, overwrite with ACP commands (ACP takes priority)
-      const merged = new Map<string, SlashCommand>();
-      for (const cmd of this.customTomlCommands) {
-        merged.set(cmd.name, cmd);
-      }
-      for (const cmd of event.commands) {
-        merged.set(cmd.name, cmd);
-      }
-      finalEvent = { type: 'gemini:commands', commands: Array.from(merged.values()) };
-    }
-    const line = JSON.stringify(finalEvent) + '\n';
-    for (const cb of this.dataCallbacks) cb(line);
-
-    // Accumulate structural events for getHistory() fallback.
-    // Exclude high-volume streaming events (text-delta, thinking-delta) and
-    // non-conversation events (mode-change, usage, commands, session-info, init).
-    const HISTORY_TYPES = new Set([
-      'gemini:text',
-      'gemini:tool-start',
-      'gemini:tool-end',
-      'gemini:turn-complete',
-      'gemini:turn-error',
-    ]);
-    if (HISTORY_TYPES.has(finalEvent.type)) {
-      const payloads = mapGeminiJsonToEvents(finalEvent);
-      for (const payload of payloads) {
-        // Only store agent:text, agent:tool-start, agent:tool-end, agent:result
-        if (
-          payload.type === 'agent:text' ||
-          payload.type === 'agent:tool-start' ||
-          payload.type === 'agent:tool-end' ||
-          payload.type === 'agent:result'
-        ) {
-          this.transport.pushToHistory(payload);
-        }
-      }
-    }
   }
 }

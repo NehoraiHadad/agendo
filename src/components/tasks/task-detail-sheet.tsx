@@ -5,16 +5,7 @@ import { useFetch } from '@/hooks/use-fetch';
 import { Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { deleteTaskAction } from '@/lib/actions/task-actions';
 import { TaskDetailHeader } from './task-detail-header';
@@ -176,25 +167,13 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
         </SheetContent>
       </Sheet>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this task?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove the task and all its executions.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete this task?"
+        description="This will permanently remove the task and all its executions."
+        onConfirm={() => void handleDelete()}
+      />
     </>
   );
 }

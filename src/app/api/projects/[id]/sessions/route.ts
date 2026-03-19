@@ -24,29 +24,9 @@ export const POST = withErrorBoundary(
     // Validate project exists
     await getProject(id);
 
-    if (body.kind === 'conversation') {
-      // Conversation mode: create session directly with projectId, no task
-      const session = await createSession({
-        projectId: id,
-        kind: 'conversation',
-        agentId: body.agentId,
-        initialPrompt: body.initialPrompt,
-        permissionMode: 'bypassPermissions',
-        mcpServerIds: body.mcpServerIds,
-        useWorktree: body.useWorktree,
-      });
-
-      if (body.initialPrompt) {
-        await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
-      }
-
-      return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });
-    }
-
-    // Execution mode: session without a task — user links it to a task manually if needed
     const session = await createSession({
       projectId: id,
-      kind: 'execution',
+      kind: body.kind,
       agentId: body.agentId,
       initialPrompt: body.initialPrompt,
       permissionMode: 'bypassPermissions',

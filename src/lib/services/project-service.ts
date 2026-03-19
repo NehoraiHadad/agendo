@@ -1,6 +1,7 @@
 import { eq, and, or, ilike } from 'drizzle-orm';
 import { access, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { allowedWorkingDirs } from '@/lib/config';
 import { projects, tasks } from '@/lib/db/schema';
@@ -33,11 +34,8 @@ export interface UpdateProjectInput {
 // --- Implementation ---
 
 export async function listProjects(isActive?: boolean): Promise<Project[]> {
-  const query = db.select().from(projects);
-  if (isActive !== undefined) {
-    return query.where(eq(projects.isActive, isActive));
-  }
-  return query;
+  const where = buildFilters({ isActive }, { isActive: projects.isActive });
+  return db.select().from(projects).where(where);
 }
 
 export async function getProject(id: string): Promise<Project> {

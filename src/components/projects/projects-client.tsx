@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import type { Project } from '@/lib/types';
 import { ProjectCard } from './project-card';
 import { ProjectCreateDialog } from './project-create-dialog';
@@ -70,11 +71,11 @@ export function ProjectsClient({ initialProjects, initialDeletedProjects }: Proj
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-12 text-center">
-          <p className="text-muted-foreground">
-            No projects yet. Create one to start organizing your tasks by codebase.
-          </p>
-        </div>
+        <EmptyState
+          icon={FolderOpen}
+          title="No projects yet"
+          description="Create one to start organizing your tasks by codebase."
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (

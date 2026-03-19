@@ -4,19 +4,8 @@ import { useState, useEffect } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
 import { useFormSubmit } from '@/hooks/use-form-submit';
-import {
-  ChevronDown,
-  GitBranch,
-  Loader2,
-  MessageSquare,
-  Server,
-  Terminal,
-  Sparkles,
-  Brain,
-  Code,
-  Bot,
-  type LucideIcon,
-} from 'lucide-react';
+import { ChevronDown, GitBranch, Loader2, MessageSquare, Server, Terminal } from 'lucide-react';
+import { getAgentIcon } from '@/lib/utils/agent-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -32,22 +21,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent, McpServer } from '@/lib/types';
-
-const LUCIDE_ICONS: Record<string, LucideIcon> = {
-  sparkles: Sparkles,
-  brain: Brain,
-  code: Code,
-  bot: Bot,
-};
-
-function getAgentIcon(agent: Agent): React.ReactNode {
-  const meta = agent.metadata as { icon?: string; color?: string } | null;
-  const iconName = meta?.icon?.toLowerCase();
-  const color = meta?.color;
-  const Icon = iconName ? LUCIDE_ICONS[iconName] : undefined;
-  if (Icon) return <Icon className="size-4" style={color ? { color } : undefined} />;
-  return <Bot className="size-4 text-muted-foreground" />;
-}
 
 interface QuickLaunchDialogProps {
   projectId: string;

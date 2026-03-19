@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { withErrorBoundary, assertUUID, requireFound } from '@/lib/api-handler';
 import { getSessionStatus } from '@/lib/services/session-service';
 
 export const GET = withErrorBoundary(
@@ -8,9 +8,7 @@ export const GET = withErrorBoundary(
     assertUUID(id, 'Session');
 
     const result = await getSessionStatus(id);
-    if (!result) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-    }
+    requireFound(result, 'Session', id);
     return NextResponse.json(result);
   },
 );

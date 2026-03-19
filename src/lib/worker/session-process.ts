@@ -57,6 +57,8 @@ import {
   determineExitStatus,
 } from '@/lib/worker/session-exit-logic';
 import { SessionDataPipeline } from '@/lib/worker/session-data-pipeline';
+import { captureGitContext, countCommitsSince } from '@/lib/worker/git-context';
+import type { GitContextSnapshot } from '@/lib/realtime/event-types';
 
 /**
  * Derive a log file path for a session.
@@ -119,6 +121,8 @@ export class SessionProcess {
   private teamManager!: SessionTeamManager;
   /** Temp TOML policy file path written for Gemini sessions; cleaned up on exit. */
   private policyFilePath: string | null = null;
+  /** Git commit hash at session start, used to compute commitsSinceStart on subsequent snapshots. */
+  private initialGitHash: string | null = null;
   /** Debounce timer for flushing eventSeq to DB. */
   private seqFlushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last eventSeq value that was persisted to DB. */
@@ -299,6 +303,19 @@ export class SessionProcess {
     }
 
     this.spawnCwd = spawnCwdOpt ?? '/tmp';
+
+    // Capture point A: git context at session start (blocking — process not spawned yet)
+    const gitSnapshot = await captureGitContext(this.spawnCwd);
+    if (gitSnapshot) {
+      this.initialGitHash = gitSnapshot.commitHash;
+      await this.emitEvent({
+        type: 'system:git-context',
+        snapshot: this.toEventSnapshot(gitSnapshot),
+        capturedAt: new Date().toISOString(),
+        trigger: 'start',
+      });
+    }
+
     const spawnOpts = buildSpawnOpts(this.session, this.spawnCwd, childEnv, {
       policyFilePath: this.policyFilePath ?? undefined,
       mcpConfigPath,
@@ -757,6 +774,29 @@ export class SessionProcess {
       // Drain any team messages that arrived while Claude was active.
       this.teamManager.drainPendingInjections();
 
+      // Capture point B: git context at turn end (non-blocking)
+      if (this.spawnCwd) {
+        captureGitContext(this.spawnCwd)
+          .then(async (snap) => {
+            if (snap) {
+              const eventSnap = this.toEventSnapshot(snap);
+              if (this.initialGitHash) {
+                eventSnap.commitsSinceStart = await countCommitsSince(
+                  this.initialGitHash,
+                  this.spawnCwd ?? process.cwd(),
+                );
+              }
+              void this.emitEvent({
+                type: 'system:git-context',
+                snapshot: eventSnap,
+                capturedAt: new Date().toISOString(),
+                trigger: 'turn_end',
+              });
+            }
+          })
+          .catch(() => {}); // non-critical — don't fail the transition
+      }
+
       const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
       log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
       // autoResumeCount already reset to 0 in the DB update above (folded into
@@ -792,6 +832,30 @@ export class SessionProcess {
     // Resolve the slot future in case the process exits before ever reaching
     // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
     this.slotReleaseFuture.resolve();
+
+    // Capture point C: git context at session exit (non-blocking)
+    if (this.spawnCwd) {
+      try {
+        const snap = await captureGitContext(this.spawnCwd);
+        if (snap) {
+          const eventSnap = this.toEventSnapshot(snap);
+          if (this.initialGitHash) {
+            eventSnap.commitsSinceStart = await countCommitsSince(
+              this.initialGitHash,
+              this.spawnCwd,
+            );
+          }
+          await this.emitEvent({
+            type: 'system:git-context',
+            snapshot: eventSnap,
+            capturedAt: new Date().toISOString(),
+            trigger: 'exit',
+          });
+        }
+      } catch {
+        // non-critical — don't let git failures block session exit
+      }
+    }
 
     cleanupResources({
       activityTracker: this.activityTracker,
@@ -957,6 +1021,28 @@ export class SessionProcess {
    */
   waitForSlotRelease(): Promise<void> {
     return this.slotReleaseFuture.promise;
+  }
+
+  /**
+   * Map the worker's GitContextSnapshot (from git-context.ts) to the event-types
+   * GitContextSnapshot used in system:git-context events.
+   */
+  private toEventSnapshot(
+    snap: import('@/lib/worker/git-context').GitContextSnapshot,
+  ): GitContextSnapshot {
+    return {
+      branch: snap.branch,
+      commitHash: snap.commitHash,
+      commitMessage: snap.commitMessage,
+      isDirty: snap.isDirty,
+      isWorktree: snap.isWorktree,
+      worktreeMainPath: snap.worktreeMainPath,
+      baseBranch: snap.baseBranch,
+      untrackedCount: snap.untracked.length,
+      stagedFiles: snap.staged,
+      modifiedFiles: snap.modified,
+      aheadBehind: snap.aheadBehind,
+    };
   }
 
   /**

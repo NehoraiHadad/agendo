@@ -3,6 +3,7 @@ import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import { ConflictError, ValidationError } from '@/lib/errors';
 import type {
   BrainstormRoom,
@@ -74,9 +75,7 @@ export async function createBrainstorm(input: CreateBrainstormInput): Promise<Br
  */
 export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> {
   // Fetch the base room record
-  const [room] = await db.select().from(brainstormRooms).where(eq(brainstormRooms.id, id)).limit(1);
-
-  requireFound(room, 'BrainstormRoom', id);
+  const room = await getById(brainstormRooms, id, 'BrainstormRoom');
 
   // Fetch participants with agent name and slug
   const participantRows = await db
@@ -331,9 +330,7 @@ export async function extendBrainstorm(
   id: string,
   additionalWaves: number,
 ): Promise<BrainstormRoom> {
-  const [room] = await db.select().from(brainstormRooms).where(eq(brainstormRooms.id, id)).limit(1);
-
-  requireFound(room, 'BrainstormRoom', id);
+  const room = await getById(brainstormRooms, id, 'BrainstormRoom');
 
   if (room.status !== 'ended') {
     throw new ConflictError(

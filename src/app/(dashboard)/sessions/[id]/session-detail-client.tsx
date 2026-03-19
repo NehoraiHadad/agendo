@@ -48,7 +48,11 @@ import { TeamDiagram } from '@/components/sessions/team-diagram';
 import { AgentSwitchButton } from '@/components/sessions/agent-switch-button';
 import { AgentSwitchDialog } from '@/components/sessions/agent-switch-dialog';
 import { SessionLineage } from '@/components/sessions/session-lineage';
+import { GitBranchBadge } from '@/components/sessions/git-branch-badge';
 import { BtwModal } from '@/components/sessions/btw-modal';
+import { FileContentionAlert } from '@/components/sessions/file-contention-alert';
+import { useGitContext } from '@/hooks/use-git-context';
+import { useFileContention } from '@/hooks/use-file-contention';
 import type { Session } from '@/lib/types';
 import type { SessionStatus } from '@/lib/realtime/events';
 import {
@@ -68,6 +72,7 @@ import {
   deriveProvider,
   isModelMatch,
 } from '@/lib/utils/session-controls';
+import { SESSION_STATUS_CONFIG } from '@/lib/utils/session-status-config';
 
 const WebTerminal = dynamic(
   () => import('@/components/terminal/web-terminal').then((m) => m.WebTerminal),
@@ -129,59 +134,15 @@ interface SessionDetailClientProps {
   parentTurns: number | null;
 }
 
-interface StatusConfig {
-  dotColor: string;
-  pillBg: string;
-  pillBorder: string;
-  textColor: string;
-  label: string;
-  animate: boolean;
-}
-
-const STATUS_CONFIGS: Record<SessionStatus, StatusConfig> = {
-  active: {
-    dotColor: 'bg-blue-400',
-    pillBg: 'bg-blue-500/10',
-    pillBorder: 'border-blue-500/25',
-    textColor: 'text-blue-400',
-    label: 'Active',
-    animate: true,
-  },
-  awaiting_input: {
-    dotColor: 'bg-emerald-400',
-    pillBg: 'bg-emerald-500/10',
-    pillBorder: 'border-emerald-500/25',
-    textColor: 'text-emerald-400',
-    label: 'Your turn',
-    animate: true,
-  },
-  idle: {
-    dotColor: 'bg-zinc-500',
-    pillBg: 'bg-zinc-500/10',
-    pillBorder: 'border-zinc-600/20',
-    textColor: 'text-zinc-400',
-    label: 'Paused',
-    animate: false,
-  },
-  ended: {
-    dotColor: 'bg-zinc-600',
-    pillBg: 'bg-zinc-700/10',
-    pillBorder: 'border-zinc-700/20',
-    textColor: 'text-zinc-500',
-    label: 'Ended',
-    animate: false,
-  },
-};
-
 function SessionStatusIndicator({ status }: { status: SessionStatus | null }) {
   if (!status) return null;
-  const cfg = STATUS_CONFIGS[status];
+  const cfg = SESSION_STATUS_CONFIG[status];
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-[11px] font-medium rounded-full px-2.5 py-1 border ${cfg.pillBg} ${cfg.pillBorder} ${cfg.textColor}`}
     >
       <span
-        className={`inline-block size-1.5 rounded-full ${cfg.dotColor} ${cfg.animate ? 'animate-pulse' : ''}`}
+        className={`inline-block size-1.5 rounded-full ${cfg.dotBg} ${cfg.pulse ? 'animate-pulse' : ''}`}
       />
       {cfg.label}
     </span>
@@ -206,6 +167,8 @@ export function SessionDetailClient({
   const currentStatus = stream.sessionStatus ?? session.status;
   const logStream = useSessionLogStream(session.id);
   const teamState = useTeamState(stream.events);
+  const gitContext = useGitContext(stream.events);
+  const contention = useFileContention(stream.events);
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [showTeamSheet, setShowTeamSheet] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
@@ -530,6 +493,11 @@ export function SessionDetailClient({
                   <span>{teamState.members.length} agents</span>
                 </button>
               )}
+
+              {/* File contention alert pill */}
+              {contention && (
+                <FileContentionAlert alert={contention} currentSessionId={session.id} />
+              )}
             </div>
 
             {/* Meta breadcrumb — desktop only (mobile gets its own row below) */}
@@ -624,6 +592,12 @@ export function SessionDetailClient({
                   </span>
                 </>
               )}
+              {gitContext && (
+                <>
+                  <span className="text-muted-foreground/20">·</span>
+                  <GitBranchBadge snapshot={gitContext.snapshot} />
+                </>
+              )}
             </div>
           </div>
 
@@ -646,6 +620,12 @@ export function SessionDetailClient({
               <>
                 <span className="text-muted-foreground/25 shrink-0">·</span>
                 <span className="shrink-0 text-muted-foreground/40">Chat</span>
+              </>
+            )}
+            {gitContext && (
+              <>
+                <span className="text-muted-foreground/25 shrink-0">·</span>
+                <GitBranchBadge snapshot={gitContext.snapshot} />
               </>
             )}
           </div>

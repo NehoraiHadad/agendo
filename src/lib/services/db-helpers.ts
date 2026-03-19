@@ -1,8 +1,26 @@
 import { db } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { requireFound } from '@/lib/api-handler';
-import { sessions, tasks, agents } from '@/lib/db/schema';
-import type { Session, Task, Agent } from '@/lib/types';
+import {
+  sessions,
+  tasks,
+  agents,
+  brainstormRooms,
+  contextSnapshots,
+  agentWorkspaces,
+  plans,
+  projects,
+} from '@/lib/db/schema';
+import type {
+  Session,
+  Task,
+  Agent,
+  BrainstormRoom,
+  ContextSnapshot,
+  AgentWorkspace,
+  Plan,
+  Project,
+} from '@/lib/types';
 
 // Table → return type map for type-safe getById lookups.
 // Add entries here as more services adopt the helper.
@@ -10,6 +28,11 @@ type TableMap = {
   sessions: { table: typeof sessions; result: Session };
   tasks: { table: typeof tasks; result: Task };
   agents: { table: typeof agents; result: Agent };
+  brainstormRooms: { table: typeof brainstormRooms; result: BrainstormRoom };
+  contextSnapshots: { table: typeof contextSnapshots; result: ContextSnapshot };
+  agentWorkspaces: { table: typeof agentWorkspaces; result: AgentWorkspace };
+  plans: { table: typeof plans; result: Plan };
+  projects: { table: typeof projects; result: Project };
 };
 
 type TableEntry = TableMap[keyof TableMap];

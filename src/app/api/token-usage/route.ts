@@ -8,24 +8,9 @@ import path from 'path';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { readLatestContextWindow, readAllContextWindows } from '@/lib/worker/context-window-cache';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { findMeasurePy } from './_shared';
 
 const execFileAsync = promisify(execFile);
-
-const MEASURE_PY_PATHS = [
-  path.join(homedir(), '.claude', 'skills', 'token-optimizer', 'scripts', 'measure.py'),
-  // Plugin install path (glob pattern would be needed for exact match; try common cache location)
-  path.join(
-    homedir(),
-    '.claude',
-    'plugins',
-    'cache',
-    'token-optimizer',
-    'skills',
-    'token-optimizer',
-    'scripts',
-    'measure.py',
-  ),
-];
 
 const SNAPSHOT_PATH = path.join(
   homedir(),
@@ -34,13 +19,6 @@ const SNAPSHOT_PATH = path.join(
   'token-optimizer',
   'snapshot_current.json',
 );
-
-function findMeasurePy(): string | null {
-  for (const p of MEASURE_PY_PATHS) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 /**
  * GET /api/token-usage

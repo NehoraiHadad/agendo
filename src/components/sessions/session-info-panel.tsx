@@ -12,6 +12,9 @@ import {
   ctxBarColor,
   ctxTrackColor,
 } from '@/lib/utils/context-stats';
+import { permissionModeLabel } from '@/lib/utils/session-controls';
+import { useGitContext } from '@/hooks/use-git-context';
+import { GitContextSection } from '@/components/sessions/git-context-section';
 
 interface SessionInfoPanelProps {
   session: Session;
@@ -24,19 +27,6 @@ interface SessionInfoPanelProps {
 function formatTimestamp(date: Date | null | undefined): string {
   if (!date) return '—';
   return format(date, 'PPpp');
-}
-
-function permissionModeLabel(mode: string): string {
-  switch (mode) {
-    case 'bypassPermissions':
-      return 'All tools auto-allowed';
-    case 'acceptEdits':
-      return 'File edits auto-allowed, bash requires approval';
-    case 'default':
-      return 'All tools require approval';
-    default:
-      return mode;
-  }
 }
 
 function getLatestInitEvent(
@@ -155,6 +145,7 @@ export function SessionInfoPanel({
   const rateLimit = getLatestRateLimitEvent(stream.events);
   // Use latest-turn stats for context window (cumulative sum is semantically wrong for fill %)
   const latestCtx = getLatestContextStats(stream.events);
+  const gitContext = useGitContext(stream.events);
 
   return (
     <div className="flex flex-col gap-6">
@@ -296,6 +287,12 @@ export function SessionInfoPanel({
             </div>
           </div>
         )}
+
+      {/* Git Context */}
+      <GitContextSection
+        snapshot={gitContext?.snapshot ?? null}
+        capturedAt={gitContext?.capturedAt}
+      />
 
       {/* Usage Stats (aggregated from result events) */}
       {stats.count > 0 && (stats.totalInputTokens > 0 || stats.totalApiMs > 0) && (

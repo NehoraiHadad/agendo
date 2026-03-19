@@ -97,3 +97,24 @@ export function deriveProvider(binaryPath: string): string {
   if (base.startsWith('copilot')) return 'copilot';
   return 'claude';
 }
+
+// ---------------------------------------------------------------------------
+// Permission mode label
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a human-readable description for a session permission mode string.
+ * Used in the session info panel and anywhere mode descriptions are displayed.
+ */
+export function permissionModeLabel(mode: string): string {
+  switch (mode) {
+    case 'bypassPermissions':
+      return 'All tools auto-allowed';
+    case 'acceptEdits':
+      return 'File edits auto-allowed, bash requires approval';
+    case 'default':
+      return 'All tools require approval';
+    default:
+      return mode;
+  }
+}

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withErrorBoundary } from '@/lib/api-handler';
+import { ConflictError } from '@/lib/errors';
 import {
   getUpgradeStatus,
   startUpgrade,
@@ -14,36 +16,25 @@ const startSchema = z.object({
  * GET /api/upgrade
  * Returns current upgrade status.
  */
-export async function GET(): Promise<NextResponse> {
+export const GET = withErrorBoundary(async () => {
   return NextResponse.json(getUpgradeStatus());
-}
+});
 
 /**
  * POST /api/upgrade
  * Start an upgrade. Body: { targetVersion: "1.2.3" }
  * Returns 409 if already running.
  */
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  const body: unknown = await req.json();
-  const parsed = startSchema.safeParse(body);
-
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: parsed.error.message } },
-      { status: 400 },
-    );
-  }
+export const POST = withErrorBoundary(async (req: NextRequest) => {
+  const body = startSchema.parse(await req.json());
 
   try {
-    const { jobId } = await startUpgrade(parsed.data.targetVersion);
-    return NextResponse.json({ jobId, targetVersion: parsed.data.targetVersion });
+    const { jobId } = await startUpgrade(body.targetVersion);
+    return NextResponse.json({ jobId, targetVersion: body.targetVersion });
   } catch (err) {
     if (err instanceof UpgradeAlreadyRunningError) {
-      return NextResponse.json(
-        { error: { code: 'UPGRADE_RUNNING', message: err.message } },
-        { status: 409 },
-      );
+      throw new ConflictError(err.message);
     }
     throw err;
   }
-}
+});

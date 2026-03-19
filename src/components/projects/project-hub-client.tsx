@@ -10,16 +10,12 @@ import {
   MessageCircle,
   Play,
   Plus,
-  Sparkles,
-  Brain,
-  Code,
-  Bot,
   Camera,
   ListTodo,
   Server,
   Trash2,
-  type LucideIcon,
 } from 'lucide-react';
+import { getAgentIcon } from '@/lib/utils/agent-icon';
 import { QuickLaunchDialog } from '@/components/sessions/quick-launch-dialog';
 import { SnapshotsTab } from '@/components/snapshots/snapshots-tab';
 import { ProjectMcpConfig } from '@/components/mcp/project-mcp-config';
@@ -27,20 +23,7 @@ import { Button } from '@/components/ui/button';
 import type { Project, Task, Agent, McpServer, ProjectMcpServer, Plan } from '@/lib/types';
 import type { SessionListItem } from '@/lib/services/session-service';
 import type { SessionStatus } from '@/lib/realtime/events';
-
-const LUCIDE_ICONS: Record<string, LucideIcon> = {
-  sparkles: Sparkles,
-  brain: Brain,
-  code: Code,
-  bot: Bot,
-};
-
-const STATUS_CONFIG: Record<SessionStatus, { color: string; label: string; dot: string }> = {
-  active: { color: 'text-blue-400', label: 'Active', dot: 'fill-blue-400' },
-  awaiting_input: { color: 'text-emerald-400', label: 'Your turn', dot: 'fill-emerald-400' },
-  idle: { color: 'text-zinc-400', label: 'Paused', dot: 'fill-zinc-500' },
-  ended: { color: 'text-zinc-500', label: 'Ended', dot: 'fill-zinc-600' },
-};
+import { SESSION_STATUS_CONFIG } from '@/lib/utils/session-status-config';
 
 const TASK_STATUS_LABELS: Record<string, string> = {
   todo: 'Todo',
@@ -86,19 +69,6 @@ export function ProjectHubClient({
     setDefaultAgentId(agentId);
     setLaunchKind(kind);
     setLaunchOpen(true);
-  }
-
-  function getAgentIcon(agent: Agent, size = 'size-6'): React.ReactNode {
-    const meta = agent.metadata as { icon?: string; color?: string } | null;
-    const iconName = meta?.icon?.toLowerCase();
-    const color = meta?.color;
-    const LucideIcon = iconName ? LUCIDE_ICONS[iconName] : undefined;
-    if (LucideIcon) {
-      return <LucideIcon className={size} style={color ? { color } : undefined} />;
-    }
-    if (iconName && iconName.length <= 4)
-      return <span className="text-2xl leading-none">{iconName}</span>;
-    return <Bot className={`${size} text-muted-foreground`} />;
   }
 
   const tabs: { id: TabId; label: string; count: number; icon: React.ElementType }[] = [
@@ -148,7 +118,7 @@ export function ProjectHubClient({
                 className="flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border border-white/[0.08] bg-card hover:border-white/[0.2] hover:bg-card/80 transition-colors text-sm font-medium min-w-[100px] min-h-[72px]"
               >
                 <span className="flex items-center justify-center size-7">
-                  {getAgentIcon(agent)}
+                  {getAgentIcon(agent, 'size-6')}
                 </span>
                 <span className="text-xs text-muted-foreground">{agent.name}</span>
               </button>
@@ -246,7 +216,8 @@ function ConversationsTab({
   return (
     <ul className="space-y-1">
       {conversations.map((session) => {
-        const cfg = STATUS_CONFIG[session.status as SessionStatus] ?? STATUS_CONFIG.ended;
+        const cfg =
+          SESSION_STATUS_CONFIG[session.status as SessionStatus] ?? SESSION_STATUS_CONFIG.ended;
         return (
           <li key={session.id}>
             <Link
@@ -275,8 +246,8 @@ function ConversationsTab({
                   </span>
                 </p>
               </div>
-              <Circle className={`size-2 shrink-0 ${cfg.dot}`} />
-              <span className={`text-xs shrink-0 ${cfg.color}`}>{cfg.label}</span>
+              <Circle className={`size-2 shrink-0 ${cfg.dotFill}`} />
+              <span className={`text-xs shrink-0 ${cfg.textColor}`}>{cfg.label}</span>
               <ArrowRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />
             </Link>
           </li>
@@ -301,7 +272,8 @@ function SessionsTab({ sessions }: { sessions: SessionListItem[] }) {
   return (
     <ul className="space-y-1">
       {sessions.map((session) => {
-        const cfg = STATUS_CONFIG[session.status as SessionStatus] ?? STATUS_CONFIG.ended;
+        const cfg =
+          SESSION_STATUS_CONFIG[session.status as SessionStatus] ?? SESSION_STATUS_CONFIG.ended;
         return (
           <li key={session.id}>
             <Link
@@ -330,8 +302,8 @@ function SessionsTab({ sessions }: { sessions: SessionListItem[] }) {
                   </p>
                 )}
               </div>
-              <Circle className={`size-2 shrink-0 ${cfg.dot}`} />
-              <span className={`text-xs shrink-0 ${cfg.color}`}>{cfg.label}</span>
+              <Circle className={`size-2 shrink-0 ${cfg.dotFill}`} />
+              <span className={`text-xs shrink-0 ${cfg.textColor}`}>{cfg.label}</span>
               <ArrowRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />
             </Link>
           </li>

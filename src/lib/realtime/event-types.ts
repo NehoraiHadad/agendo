@@ -2,6 +2,34 @@
 // AgendoEvent — emitted by the worker, consumed by the frontend via SSE
 // ============================================================================
 
+/** Snapshot of the git state of a session's working directory */
+export interface GitContextSnapshot {
+  /** Current branch name or "HEAD detached at ..." */
+  branch: string;
+  /** Short SHA of the current commit */
+  commitHash: string;
+  /** Last commit subject line */
+  commitMessage: string;
+  /** True if running inside a git worktree */
+  isWorktree: boolean;
+  /** Path to the main repo if this is a worktree */
+  worktreeMainPath?: string;
+  /** Upstream tracking branch */
+  baseBranch?: string;
+  /** True if there are any uncommitted changes */
+  isDirty: boolean;
+  /** Number of untracked files */
+  untrackedCount: number;
+  /** Paths of staged files */
+  stagedFiles: string[];
+  /** Paths of modified (unstaged) files */
+  modifiedFiles: string[];
+  /** Number of commits since session start (only on subsequent snapshots) */
+  commitsSinceStart?: number;
+  /** How far ahead/behind the tracking branch */
+  aheadBehind?: { ahead: number; behind: number };
+}
+
 /** Base fields present on every event */
 interface EventBase {
   /** Monotonic sequence number within a session (used as SSE last-event-id) */
@@ -231,6 +259,27 @@ export type AgendoEvent =
       agentId: string;
       toolUseId: string;
       success: boolean;
+    })
+  /** Git context snapshot captured at session start, after each turn, or on exit */
+  | (EventBase & {
+      type: 'system:git-context';
+      snapshot: GitContextSnapshot;
+      /** ISO timestamp when the snapshot was captured */
+      capturedAt: string;
+      trigger: 'start' | 'turn_end' | 'exit';
+    })
+  /** File contention warning when multiple sessions touch the same files */
+  | (EventBase & {
+      type: 'system:file-contention';
+      conflictingFiles: string[];
+      severity: 'warning' | 'critical';
+      sessions: Array<{
+        sessionId: string;
+        agentName: string;
+        agentSlug: string;
+        branch: string;
+        taskTitle?: string;
+      }>;
     });
 
 export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';
