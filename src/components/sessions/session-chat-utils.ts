@@ -220,8 +220,6 @@ export function buildDisplayItems(
 
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
-  // Dedup team messages — backfill on cold-resume re-emits all inbox messages
-  const seenTeamMessages = new Set<string>();
   let sessionInitCount = 0;
   let sessionCostUsd = 0;
   // Track the last assistant UUID from agent:result so the next user:message
@@ -467,25 +465,10 @@ export function buildDisplayItems(
       }
 
       case 'team:message': {
-        // Dedup: cold-resume backfill re-emits all inbox messages that are
-        // already in the log from the previous worker incarnation.
-        const dedupKey = `${ev.fromAgent}::${ev.sourceTimestamp}`;
-        if (seenTeamMessages.has(dedupKey)) break;
-        seenTeamMessages.add(dedupKey);
-
-        // Pushing team-message naturally breaks any open assistant bubble —
-        // the next agent:text sees the last item is not 'assistant' and starts fresh.
-        items.push({
-          kind: 'team-message',
-          id: ev.id,
-          fromAgent: ev.fromAgent,
-          text: ev.text,
-          summary: ev.summary,
-          color: ev.color,
-          isStructured: ev.isStructured,
-          structuredPayload: ev.structuredPayload,
-          sourceTimestamp: ev.sourceTimestamp,
-        });
+        // Team messages are displayed exclusively in the Team Panel (useTeamState).
+        // They are intentionally excluded from the main chat to avoid duplication
+        // and ordering issues on reconnect (all team messages would appear at the
+        // end of the conversation instead of chronologically interspersed).
         break;
       }
 

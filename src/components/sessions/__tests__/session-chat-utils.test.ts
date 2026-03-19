@@ -377,7 +377,7 @@ describe('buildDisplayItems', () => {
   });
 
   describe('team:message events', () => {
-    it('creates a team-message item for team:message event', () => {
+    it('excludes team:message from chat display items (Team Panel only)', () => {
       const events: AgendoEvent[] = [
         {
           ...base,
@@ -392,64 +392,11 @@ describe('buildDisplayItems', () => {
         },
       ];
       const items = buildDisplayItems(events, emptyMap);
-      expect(items).toHaveLength(1);
-      expect(items[0].kind).toBe('team-message');
-      if (items[0].kind === 'team-message') {
-        expect(items[0].fromAgent).toBe('mobile-analyst');
-        expect(items[0].text).toBe('# Analysis\nResults here.');
-        expect(items[0].summary).toBe('Analysis complete');
-        expect(items[0].color).toBe('blue');
-        expect(items[0].isStructured).toBe(false);
-        expect(items[0].sourceTimestamp).toBe('2026-02-23T21:09:41.557Z');
-      }
+      // team:message events are handled by the Team Panel, not the chat
+      expect(items).toHaveLength(0);
     });
 
-    it('preserves structuredPayload for JSON-encoded messages', () => {
-      const events: AgendoEvent[] = [
-        {
-          ...base,
-          id: 11,
-          type: 'team:message',
-          fromAgent: 'worker-agent',
-          text: '{"type":"idle_notification"}',
-          isStructured: true,
-          structuredPayload: { type: 'idle_notification' },
-          sourceTimestamp: '2026-02-23T22:00:00.000Z',
-        },
-      ];
-      const items = buildDisplayItems(events, emptyMap);
-      expect(items).toHaveLength(1);
-      if (items[0].kind === 'team-message') {
-        expect(items[0].isStructured).toBe(true);
-        expect(items[0].structuredPayload).toEqual({ type: 'idle_notification' });
-      }
-    });
-
-    it('interleaves team:message chronologically with other events', () => {
-      const events: AgendoEvent[] = [
-        { ...base, id: 1, type: 'user:message', text: 'Start work' },
-        { ...base, id: 2, type: 'agent:text', text: 'Working...' },
-        {
-          ...base,
-          id: 3,
-          type: 'team:message',
-          fromAgent: 'sub-agent',
-          text: 'Subtask done',
-          isStructured: false,
-          sourceTimestamp: '2026-02-23T21:00:00.000Z',
-        },
-        { ...base, id: 4, type: 'agent:text', text: 'Got the report.' },
-      ];
-      const items = buildDisplayItems(events, emptyMap);
-      // Expected: user, assistant(Working...), team-message, assistant(Got the report.)
-      expect(items).toHaveLength(4);
-      expect(items[0].kind).toBe('user');
-      expect(items[1].kind).toBe('assistant');
-      expect(items[2].kind).toBe('team-message');
-      expect(items[3].kind).toBe('assistant');
-    });
-
-    it('breaks the assistant bubble before a team-message event', () => {
+    it('does not break assistant bubble continuity', () => {
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text', text: 'Before message' },
         {
@@ -461,30 +408,15 @@ describe('buildDisplayItems', () => {
           isStructured: false,
           sourceTimestamp: '2026-02-23T21:00:00.000Z',
         },
-        { ...base, id: 3, type: 'agent:text', text: 'After message' },
+        { ...base, id: 3, type: 'agent:text', text: ' and after' },
       ];
       const items = buildDisplayItems(events, emptyMap);
-      // agent:text before and after team:message must be separate assistant bubbles
-      expect(items).toHaveLength(3);
+      // team:message is skipped, so the two agent:text events merge into one bubble
+      expect(items).toHaveLength(1);
       expect(items[0].kind).toBe('assistant');
-      expect(items[1].kind).toBe('team-message');
-      expect(items[2].kind).toBe('assistant');
-    });
-
-    it('uses event id as the item id', () => {
-      const events: AgendoEvent[] = [
-        {
-          ...base,
-          id: 42,
-          type: 'team:message',
-          fromAgent: 'agent',
-          text: 'msg',
-          isStructured: false,
-          sourceTimestamp: '2026-02-23T21:00:00.000Z',
-        },
-      ];
-      const items = buildDisplayItems(events, emptyMap);
-      expect(items[0].id).toBe(42);
+      if (items[0].kind === 'assistant') {
+        expect(items[0].parts[0]).toEqual({ kind: 'text', text: 'Before message and after' });
+      }
     });
   });
 });
