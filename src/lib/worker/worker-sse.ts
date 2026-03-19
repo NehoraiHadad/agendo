@@ -38,16 +38,50 @@ const log = createLogger('worker-sse');
 // ============================================================================
 
 /**
+ * Create a typed event listener registry keyed by ID (sessionId, roomId, etc.).
+ * Returns a Map of listener sets and an `add` function that returns an unsubscribe callback.
+ */
+function createEventListenerRegistry<T>(): {
+  listeners: Map<string, Set<(event: T) => void>>;
+  add: (id: string, cb: (event: T) => void) => () => void;
+} {
+  const listeners = new Map<string, Set<(event: T) => void>>();
+
+  function add(id: string, cb: (event: T) => void): () => void {
+    let set = listeners.get(id);
+    if (!set) {
+      set = new Set();
+      listeners.set(id, set);
+    }
+    set.add(cb);
+
+    return () => {
+      const current = listeners.get(id);
+      if (!current) return;
+      current.delete(cb);
+      if (current.size === 0) {
+        listeners.delete(id);
+      }
+    };
+  }
+
+  return { listeners, add };
+}
+
+const sessionRegistry = createEventListenerRegistry<AgendoEvent>();
+const brainstormRegistry = createEventListenerRegistry<BrainstormEvent>();
+
+/**
  * Live SSE listeners for session events. Keyed by sessionId.
  * Populated by handleSessionSSE; consumed by SessionProcess.emitEvent().
  */
-export const sessionEventListeners = new Map<string, Set<(event: AgendoEvent) => void>>();
+export const sessionEventListeners = sessionRegistry.listeners;
 
 /**
  * Live SSE listeners for brainstorm events. Keyed by roomId.
  * Populated by handleBrainstormSSE; consumed by BrainstormOrchestrator.emitEvent().
  */
-export const brainstormEventListeners = new Map<string, Set<(event: BrainstormEvent) => void>>();
+export const brainstormEventListeners = brainstormRegistry.listeners;
 
 // ============================================================================
 // Listener registration helpers
@@ -57,51 +91,13 @@ export const brainstormEventListeners = new Map<string, Set<(event: BrainstormEv
  * Register a session event listener.
  * Returns an unsubscribe function that removes the listener.
  */
-export function addSessionEventListener(
-  sessionId: string,
-  cb: (event: AgendoEvent) => void,
-): () => void {
-  let listeners = sessionEventListeners.get(sessionId);
-  if (!listeners) {
-    listeners = new Set();
-    sessionEventListeners.set(sessionId, listeners);
-  }
-  listeners.add(cb);
-
-  return () => {
-    const current = sessionEventListeners.get(sessionId);
-    if (!current) return;
-    current.delete(cb);
-    if (current.size === 0) {
-      sessionEventListeners.delete(sessionId);
-    }
-  };
-}
+export const addSessionEventListener = sessionRegistry.add;
 
 /**
  * Register a brainstorm event listener.
  * Returns an unsubscribe function that removes the listener.
  */
-export function addBrainstormEventListener(
-  roomId: string,
-  cb: (event: BrainstormEvent) => void,
-): () => void {
-  let listeners = brainstormEventListeners.get(roomId);
-  if (!listeners) {
-    listeners = new Set();
-    brainstormEventListeners.set(roomId, listeners);
-  }
-  listeners.add(cb);
-
-  return () => {
-    const current = brainstormEventListeners.get(roomId);
-    if (!current) return;
-    current.delete(cb);
-    if (current.size === 0) {
-      brainstormEventListeners.delete(roomId);
-    }
-  };
-}
+export const addBrainstormEventListener = brainstormRegistry.add;
 
 // ============================================================================
 // SSE helpers

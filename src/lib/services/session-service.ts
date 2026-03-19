@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { ConflictError } from '@/lib/errors';
+import { safeUnlinkMany } from '@/lib/utils/fs-utils';
 import { sendSessionControl, sendSessionEvent } from '@/lib/realtime/worker-client';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
@@ -456,16 +457,8 @@ export async function deleteSession(id: string): Promise<void> {
   if (session.status === 'active' || session.status === 'awaiting_input') {
     throw new ConflictError('Cannot delete an active session. Cancel it first.');
   }
-  // Clean up log file
-  if (session.logFilePath) {
-    const { unlink } = await import('node:fs/promises');
-    await unlink(session.logFilePath).catch(() => {});
-  }
-  // Clean up plan file
-  if (session.planFilePath) {
-    const { unlink } = await import('node:fs/promises');
-    await unlink(session.planFilePath).catch(() => {});
-  }
+  // Clean up log and plan files
+  await safeUnlinkMany([session.logFilePath, session.planFilePath]);
   await db.delete(sessions).where(eq(sessions.id, id));
 }
 
@@ -502,13 +495,7 @@ export async function deleteSessions(
   if (deletable.length === 0) return { deletedCount: 0, skippedIds };
 
   // Clean up files
-  const { unlink } = await import('node:fs/promises');
-  await Promise.allSettled(
-    deletable.flatMap((row) => {
-      const paths = [row.logFilePath, row.planFilePath].filter(Boolean) as string[];
-      return paths.map((p) => unlink(p));
-    }),
-  );
+  await safeUnlinkMany(deletable.flatMap((row) => [row.logFilePath, row.planFilePath]));
 
   // Delete from DB
   const deletableIds = deletable.map((r) => r.id);

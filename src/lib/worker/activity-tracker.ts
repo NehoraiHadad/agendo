@@ -3,6 +3,7 @@ import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import { createLogger } from '@/lib/logger';
+import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 
 const log = createLogger('activity-tracker');
 
@@ -39,17 +40,14 @@ export class ActivityTracker {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private mcpHealthTimer: ReturnType<typeof setInterval> | null = null;
-  private deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private thinkingDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // -------------------------------------------------------------------------
   // Delta buffers (private)
   // -------------------------------------------------------------------------
 
-  private deltaBuffer = '';
-  private thinkingDeltaBuffer = '';
-
   static readonly DELTA_FLUSH_MS = 200;
+  private deltaBuffer!: DeltaBuffer;
+  private thinkingDeltaBuffer!: DeltaBuffer;
 
   constructor(
     private readonly sessionId: string,
@@ -73,7 +71,14 @@ export class ActivityTracker {
     private readonly publishTextDelta: (text: string) => Promise<void>,
     /** Publishes a batched thinking-delta event directly to PG NOTIFY (no log write). */
     private readonly publishThinkingDelta: (text: string) => Promise<void>,
-  ) {}
+  ) {
+    this.deltaBuffer = new DeltaBuffer(ActivityTracker.DELTA_FLUSH_MS, (text) => {
+      void this.publishTextDelta(text);
+    });
+    this.thinkingDeltaBuffer = new DeltaBuffer(ActivityTracker.DELTA_FLUSH_MS, (text) => {
+      void this.publishThinkingDelta(text);
+    });
+  }
 
   // -------------------------------------------------------------------------
   // Idle timer
@@ -208,40 +213,22 @@ export class ActivityTracker {
    * from a `stream_event`.
    */
   appendDelta(text: string): void {
-    this.deltaBuffer += text;
-    if (!this.deltaFlushTimer) {
-      this.deltaFlushTimer = setTimeout(() => {
-        void this.flushDeltaBuffer();
-      }, ActivityTracker.DELTA_FLUSH_MS);
-    }
+    this.deltaBuffer.append(text);
   }
 
   /** Append text to the thinking delta buffer. */
   appendThinkingDelta(text: string): void {
-    this.thinkingDeltaBuffer += text;
-    if (!this.thinkingDeltaFlushTimer) {
-      this.thinkingDeltaFlushTimer = setTimeout(() => {
-        void this.flushThinkingDeltaBuffer();
-      }, ActivityTracker.DELTA_FLUSH_MS);
-    }
+    this.thinkingDeltaBuffer.append(text);
   }
 
   /**
-   * Flush both delta buffers and cancel their timers.
+   * Clear both delta buffers and cancel their timers without flushing.
    * Called when a complete `assistant` message arrives (the deltas are
    * superseded by the full message).
    */
   clearDeltaBuffers(): void {
-    if (this.deltaFlushTimer) {
-      clearTimeout(this.deltaFlushTimer);
-      this.deltaFlushTimer = null;
-    }
-    this.deltaBuffer = '';
-    if (this.thinkingDeltaFlushTimer) {
-      clearTimeout(this.thinkingDeltaFlushTimer);
-      this.thinkingDeltaFlushTimer = null;
-    }
-    this.thinkingDeltaBuffer = '';
+    this.deltaBuffer.clear();
+    this.thinkingDeltaBuffer.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -260,32 +247,5 @@ export class ActivityTracker {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: flush helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Flush accumulated text deltas as a single agent:text-delta event.
-   * Published directly to PG NOTIFY (not written to the log file) because
-   * the complete agent:text event from the `assistant` message is the source
-   * of truth.
-   */
-  private async flushDeltaBuffer(): Promise<void> {
-    this.deltaFlushTimer = null;
-    const text = this.deltaBuffer;
-    if (!text) return;
-    this.deltaBuffer = '';
-    await this.publishTextDelta(text);
-  }
-
-  /** Flush accumulated thinking deltas as a single agent:thinking-delta event. */
-  private async flushThinkingDeltaBuffer(): Promise<void> {
-    this.thinkingDeltaFlushTimer = null;
-    const text = this.thinkingDeltaBuffer;
-    if (!text) return;
-    this.thinkingDeltaBuffer = '';
-    await this.publishThinkingDelta(text);
   }
 }

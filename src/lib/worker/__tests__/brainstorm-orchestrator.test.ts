@@ -8,6 +8,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgendoEvent } from '@/lib/realtime/event-types';
+import { DeltaBuffer } from '@/lib/utils/delta-buffer';
+
+/** Create a no-op DeltaBuffer suitable for test mocks. */
+function mockDeltaBuffer(): DeltaBuffer {
+  return new DeltaBuffer(150, () => {});
+}
 
 // ---------------------------------------------------------------------------
 // Mock: worker-sse
@@ -240,8 +246,7 @@ describe('subscribeToSession idempotency', () => {
         responseBuffer: string[];
         hasPassed: boolean;
         hasLeft: boolean;
-        deltaBuffer: string;
-        deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+        deltaBuffer: DeltaBuffer;
       }) => void;
     };
 
@@ -255,8 +260,7 @@ describe('subscribeToSession idempotency', () => {
       responseBuffer: [] as string[],
       hasPassed: false,
       hasLeft: false,
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     // Call twice with the same participant/sessionId
@@ -282,8 +286,7 @@ describe('subscribeToSession idempotency', () => {
         responseBuffer: string[];
         hasPassed: boolean;
         hasLeft: boolean;
-        deltaBuffer: string;
-        deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+        deltaBuffer: DeltaBuffer;
       }) => void;
     };
 
@@ -296,8 +299,7 @@ describe('subscribeToSession idempotency', () => {
       responseBuffer: [] as string[],
       hasPassed: false,
       hasLeft: false,
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     orchestrator.subscribeToSession({ ...base, sessionId: 'session-A' });
@@ -340,8 +342,7 @@ describe('delta batching', () => {
           responseBuffer: string[];
           hasPassed: boolean;
           hasLeft: boolean;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -358,9 +359,22 @@ describe('delta batching', () => {
       responseBuffer: [] as string[],
       hasPassed: false,
       hasLeft: false,
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: undefined! as DeltaBuffer,
     };
+    // DeltaBuffer with a flush callback that emits to the brainstorm event listeners
+    // (mirrors createParticipantDeltaBuffer in the real orchestrator)
+    participant.deltaBuffer = new DeltaBuffer(150, (text) => {
+      const event = {
+        id: 0,
+        roomId,
+        ts: Date.now(),
+        type: 'message:delta',
+        agentId: participant.agentId,
+        text,
+      };
+      const listeners = mockBrainstormEventListeners.get(roomId);
+      if (listeners) for (const cb of listeners) cb(event);
+    });
 
     // Fire 5 rapid text-delta events — should NOT emit message:delta immediately
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'a' });
@@ -413,8 +427,7 @@ describe('delta batching', () => {
           responseBuffer: string[];
           hasPassed: boolean;
           hasLeft: boolean;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -431,9 +444,20 @@ describe('delta batching', () => {
       responseBuffer: [] as string[],
       hasPassed: false,
       hasLeft: false,
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: undefined! as DeltaBuffer,
     };
+    participant.deltaBuffer = new DeltaBuffer(150, (text) => {
+      const event = {
+        id: 0,
+        roomId,
+        ts: Date.now(),
+        type: 'message:delta',
+        agentId: participant.agentId,
+        text,
+      };
+      const listeners = mockBrainstormEventListeners.get(roomId);
+      if (listeners) for (const cb of listeners) cb(event);
+    });
 
     // First batch
     orchestrator.handleSessionEvent(participant, { type: 'agent:text-delta', text: 'first' });
@@ -475,8 +499,7 @@ describe('delta batching', () => {
           responseBuffer: string[];
           hasPassed: boolean;
           hasLeft: boolean;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -493,8 +516,7 @@ describe('delta batching', () => {
       responseBuffer: [] as string[],
       hasPassed: false,
       hasLeft: false,
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     // fromDelta=true events should be completely ignored
@@ -510,7 +532,7 @@ describe('delta batching', () => {
     );
     expect(deltaEvents).toHaveLength(0);
     expect(participant.responseBuffer).toHaveLength(0);
-    expect(participant.deltaBuffer).toBe('');
+    expect(participant.deltaBuffer.pending).toBe('');
   });
 });
 
@@ -531,8 +553,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: string[];
         hasPassed: boolean;
         hasLeft: boolean;
-        deltaBuffer: string;
-        deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+        deltaBuffer: DeltaBuffer;
       }>;
       waveCompleteResolve: (() => void) | null;
       waveStarted: boolean;
@@ -552,8 +573,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: [],
         hasPassed: true,
         hasLeft: true,
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
       },
       {
         sessionId: 'sess-2',
@@ -565,8 +585,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: [],
         hasPassed: false,
         hasLeft: false,
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
       },
     ];
 
@@ -596,8 +615,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: string[];
         hasPassed: boolean;
         hasLeft: boolean;
-        deltaBuffer: string;
-        deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+        deltaBuffer: DeltaBuffer;
       }>;
       waveCompleteResolve: (() => void) | null;
       waveStarted: boolean;
@@ -616,8 +634,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: ['response text'],
         hasPassed: false,
         hasLeft: false,
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
       },
     ];
 
@@ -646,8 +663,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: string[];
         hasPassed: boolean;
         hasLeft: boolean;
-        deltaBuffer: string;
-        deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+        deltaBuffer: DeltaBuffer;
       }>;
       waveStarted: boolean;
       waitForWaveComplete: () => Promise<void>;
@@ -666,8 +682,7 @@ describe('waveStarted guard prevents premature wave completion', () => {
         responseBuffer: [],
         hasPassed: false,
         hasLeft: false,
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
       },
     ];
 
@@ -709,8 +724,7 @@ describe('empty response guard (compaction-only turns)', () => {
           hasPassed: boolean;
           hasLeft: boolean;
           readyAt: number | null;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -728,8 +742,7 @@ describe('empty response guard (compaction-only turns)', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     // Simulate a compaction-only turn: awaiting_input fires with empty buffer
@@ -769,8 +782,7 @@ describe('empty response guard (compaction-only turns)', () => {
           hasPassed: boolean;
           hasLeft: boolean;
           readyAt: number | null;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -791,8 +803,7 @@ describe('empty response guard (compaction-only turns)', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     // Simulate a real turn: text arrives, then awaiting_input
@@ -838,8 +849,7 @@ describe('empty response guard (compaction-only turns)', () => {
           hasPassed: boolean;
           hasLeft: boolean;
           readyAt: number | null;
-          deltaBuffer: string;
-          deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+          deltaBuffer: DeltaBuffer;
           model?: string;
         },
         event: unknown,
@@ -857,8 +867,7 @@ describe('empty response guard (compaction-only turns)', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: null,
-      deltaBuffer: '',
-      deltaFlushTimer: null as ReturnType<typeof setTimeout> | null,
+      deltaBuffer: mockDeltaBuffer(),
     };
 
     // When waveStatus is 'pending', awaiting_input should still call
@@ -978,8 +987,7 @@ describe('minWavesBeforePass enforcement', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
     };
@@ -1037,8 +1045,7 @@ describe('minWavesBeforePass enforcement', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
     };
@@ -1230,8 +1237,7 @@ describe('validated synthesis (two-phase)', () => {
         hasPassed: false,
         hasLeft: false,
         readyAt: Date.now(),
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
         waveResponseCount: 0,
         consecutiveTimeouts: 0,
       },
@@ -1246,8 +1252,7 @@ describe('validated synthesis (two-phase)', () => {
         hasPassed: false,
         hasLeft: false,
         readyAt: Date.now(),
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        deltaBuffer: mockDeltaBuffer(),
         waveResponseCount: 0,
         consecutiveTimeouts: 0,
       },
@@ -1449,8 +1454,7 @@ type ParticipantState = {
   hasPassed: boolean;
   hasLeft: boolean;
   readyAt: number | null;
-  deltaBuffer: string;
-  deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+  deltaBuffer: DeltaBuffer;
   /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
   waveResponseCount: number;
   /** Number of consecutive waves this participant timed out */
@@ -1478,8 +1482,7 @@ describe('reactive injection', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
       ...overrides,
@@ -1975,8 +1978,7 @@ describe('wave timeout handle', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
       ...overrides,
@@ -2103,8 +2105,7 @@ describe('wave 0 message deduplication', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
     };
@@ -2263,8 +2264,7 @@ describe('dead-participant detection', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
-      deltaBuffer: '',
-      deltaFlushTimer: null,
+      deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,
       ...overrides,

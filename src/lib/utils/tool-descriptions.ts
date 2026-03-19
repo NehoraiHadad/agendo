@@ -14,6 +14,15 @@ export function shortPath(filePath: string, segments = 2): string {
 }
 
 /**
+ * Abbreviate home directory in a file path: /home/username/... → ~/...
+ * Also handles /root/ → ~/
+ */
+export function shortPathHome(filePath: string): string {
+  if (!filePath) return '';
+  return filePath.replace(/^\/home\/[^/]+/, '~').replace(/^\/root/, '~');
+}
+
+/**
  * Generate a short, human-readable description of a tool invocation.
  * Returns null for tools that don't produce interesting descriptions.
  *
@@ -51,11 +60,18 @@ export function describeToolActivity(
     default:
       // MCP tools — show a clean short name
       if (toolName.startsWith('mcp__')) {
-        const shortName = toolName.replace(/^mcp__\w+__/, '');
-        return `Using ${shortName}`;
+        return `Using ${getMcpToolShortName(toolName)}`;
       }
       return null;
   }
+}
+
+/**
+ * Strip the `mcp__<server>__` prefix from an MCP tool name.
+ * Returns the original name if it doesn't match the pattern.
+ */
+export function getMcpToolShortName(toolName: string): string {
+  return toolName.replace(/^mcp__[^_]+__/, '');
 }
 
 /** Extract file_path or path from a tool input record. */
@@ -83,7 +99,7 @@ export function summarizeToolCall(toolName: string, input?: Record<string, unkno
   }
 
   if (toolName.startsWith('mcp__')) {
-    return `MCP(${toolName.replace(/^mcp__[^_]+__/, '')})`;
+    return `MCP(${getMcpToolShortName(toolName)})`;
   }
 
   return toolName;

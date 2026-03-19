@@ -49,6 +49,7 @@ import type {
   AgendoEvent,
 } from '@/lib/realtime/event-types';
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
+import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 
 const log = createLogger('brainstorm-orchestrator');
 
@@ -85,10 +86,8 @@ interface ParticipantState {
   hasLeft: boolean;
   /** Timestamp (ms) when this participant first reached awaiting_input, or null if not yet ready */
   readyAt: number | null;
-  /** Accumulated delta text waiting to be flushed to the frontend */
-  deltaBuffer: string;
-  /** Timer handle for the periodic delta flush */
-  deltaFlushTimer: ReturnType<typeof setTimeout> | null;
+  /** Batched delta buffer for throttled flush to frontend */
+  deltaBuffer: DeltaBuffer;
   /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
   waveResponseCount: number;
   /** Number of consecutive waves this participant timed out without any response */
@@ -287,11 +286,16 @@ export class BrainstormOrchestrator {
         hasPassed: false,
         hasLeft: false,
         readyAt: null,
-        deltaBuffer: '',
-        deltaFlushTimer: null,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- initialized in loop below
+        deltaBuffer: undefined!,
         waveResponseCount: 0,
         consecutiveTimeouts: 0,
       }));
+
+      // Initialize DeltaBuffers after participants are created (needs `this` for emitEvent)
+      for (const p of this.participants) {
+        p.deltaBuffer = this.createParticipantDeltaBuffer(p);
+      }
 
       // Mark room as active
       await updateBrainstormStatus(this.roomId, 'active');
@@ -608,11 +612,7 @@ export class BrainstormOrchestrator {
       if (p.hasLeft) continue;
       p.waveStatus = 'pending';
       p.responseBuffer = [];
-      p.deltaBuffer = '';
-      if (p.deltaFlushTimer) {
-        clearTimeout(p.deltaFlushTimer);
-        p.deltaFlushTimer = null;
-      }
+      p.deltaBuffer.clear();
     }
 
     const activeCount = this.participants.filter((p) => !p.hasLeft).length;
@@ -1111,11 +1111,7 @@ export class BrainstormOrchestrator {
       p.responseBuffer = [];
       p.waveResponseCount = 0;
       // Clear any leftover delta state from the previous wave
-      p.deltaBuffer = '';
-      if (p.deltaFlushTimer) {
-        clearTimeout(p.deltaFlushTimer);
-        p.deltaFlushTimer = null;
-      }
+      p.deltaBuffer.clear();
       await this.emitEvent({
         type: 'participant:status',
         agentId: p.agentId,
@@ -1250,12 +1246,7 @@ export class BrainstormOrchestrator {
           participant.responseBuffer.push(event.text);
           // Accumulate into delta buffer; a timer batches rapid bursts into a
           // single PG NOTIFY publish to avoid flooding the channel.
-          participant.deltaBuffer += event.text;
-          if (!participant.deltaFlushTimer) {
-            participant.deltaFlushTimer = setTimeout(() => {
-              this.flushParticipantDelta(participant);
-            }, DELTA_FLUSH_INTERVAL_MS);
-          }
+          participant.deltaBuffer.append(event.text);
         }
         break;
 
@@ -1342,20 +1333,15 @@ export class BrainstormOrchestrator {
     }
   }
 
-  /**
-   * Flush accumulated delta text to the frontend as a single batched event.
-   * Resets the buffer and clears the timer handle so the next delta starts fresh.
-   */
-  private flushParticipantDelta(participant: ParticipantState): void {
-    participant.deltaFlushTimer = null;
-    if (participant.deltaBuffer.length === 0) return;
-    const text = participant.deltaBuffer;
-    participant.deltaBuffer = '';
-    void this.emitEvent({
-      type: 'message:delta',
-      agentId: participant.agentId,
-      text,
-    }).catch(() => {});
+  /** Create a DeltaBuffer for a participant that flushes to the SSE stream. */
+  private createParticipantDeltaBuffer(participant: ParticipantState): DeltaBuffer {
+    return new DeltaBuffer(DELTA_FLUSH_INTERVAL_MS, (text) => {
+      void this.emitEvent({
+        type: 'message:delta',
+        agentId: participant.agentId,
+        text,
+      }).catch(() => {});
+    });
   }
 
   onParticipantTurnComplete(participant: ParticipantState): void {
@@ -1369,18 +1355,7 @@ export class BrainstormOrchestrator {
     }
 
     // Flush any remaining buffered deltas before emitting the final complete message
-    if (participant.deltaFlushTimer) {
-      clearTimeout(participant.deltaFlushTimer);
-      participant.deltaFlushTimer = null;
-    }
-    if (participant.deltaBuffer.length > 0) {
-      void this.emitEvent({
-        type: 'message:delta',
-        agentId: participant.agentId,
-        text: participant.deltaBuffer,
-      }).catch(() => {});
-      participant.deltaBuffer = '';
-    }
+    participant.deltaBuffer.flush();
 
     const rawResponse = participant.responseBuffer.join('').trim();
     const looksLikePass = rawResponse.toLowerCase().startsWith('[pass]');
@@ -1492,11 +1467,7 @@ export class BrainstormOrchestrator {
         if (target.waveStatus === 'done') {
           target.waveStatus = 'thinking';
           target.responseBuffer = [];
-          target.deltaBuffer = '';
-          if (target.deltaFlushTimer) {
-            clearTimeout(target.deltaFlushTimer);
-            target.deltaFlushTimer = null;
-          }
+          target.deltaBuffer.clear();
 
           await this.emitEvent({
             type: 'participant:status',
@@ -2270,10 +2241,7 @@ You will receive the discussion topic in your first wave message. Wait for it be
 
     // Cancel any pending delta flush timers to avoid fire-after-cleanup emissions
     for (const p of this.participants) {
-      if (p.deltaFlushTimer) {
-        clearTimeout(p.deltaFlushTimer);
-        p.deltaFlushTimer = null;
-      }
+      p.deltaBuffer.destroy();
     }
   }
 }

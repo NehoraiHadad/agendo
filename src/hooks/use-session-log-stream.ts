@@ -8,6 +8,7 @@ import {
   type RenderedLine,
   type StreamType,
 } from '@/lib/log-renderer';
+import { appendWithWindow } from '@/lib/utils/event-window';
 import { useEventSource } from './use-event-source';
 
 type SseLogEvent =
@@ -41,15 +42,12 @@ type StreamAction =
   | { type: 'SET_ERROR'; error: string }
   | { type: 'RESET' };
 
-function appendWithWindow(
+function appendLines(
   existing: RenderedLine[],
   incoming: RenderedLine[],
 ): { lines: RenderedLine[]; isTruncated: boolean } {
-  const combined = [...existing, ...incoming];
-  if (combined.length > MAX_LINES) {
-    return { lines: combined.slice(combined.length - MAX_LINES), isTruncated: true };
-  }
-  return { lines: combined, isTruncated: existing.length > MAX_LINES };
+  const { items, truncated } = appendWithWindow(existing, incoming, MAX_LINES);
+  return { lines: items, isTruncated: truncated };
 }
 
 const initialState: StreamState = {
@@ -64,11 +62,11 @@ const initialState: StreamState = {
 function reducer(state: StreamState, action: StreamAction): StreamState {
   switch (action.type) {
     case 'APPEND_LINES': {
-      const { lines, isTruncated } = appendWithWindow(state.lines, action.lines);
+      const { lines, isTruncated } = appendLines(state.lines, action.lines);
       return { ...state, lines, isTruncated: state.isTruncated || isTruncated };
     }
     case 'REPLACE_LINES': {
-      const { lines, isTruncated } = appendWithWindow([], action.lines);
+      const { lines, isTruncated } = appendLines([], action.lines);
       return { ...state, lines, isTruncated };
     }
     case 'SET_STATUS':

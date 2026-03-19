@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { shortPathHome } from '@/lib/utils/tool-descriptions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -152,9 +153,9 @@ function buildRows(
     if (!isClaudeMdKey(key)) continue;
     const v = val as ClaudeMdComponent;
     if (!v.exists || v.tokens === 0) continue;
-    const shortPath = v.path.replace(/^\/home\/[^/]+\//, '~/');
+    const short = shortPathHome(v.path);
     rows.push({
-      label: shortPath.endsWith('CLAUDE.md') ? shortPath : 'CLAUDE.md',
+      label: short.endsWith('CLAUDE.md') ? short : 'CLAUDE.md',
       tokens: v.tokens,
       detail: `${v.lines} lines`,
       color: 'oklch(0.62 0.13 225)',

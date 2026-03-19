@@ -2,6 +2,7 @@
 
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import { appendWithWindow } from '@/lib/utils/event-window';
 import { useEventSource } from './use-event-source';
 
 interface SessionStreamState {
@@ -40,9 +41,7 @@ function reducer(state: SessionStreamState, action: StreamAction): SessionStream
       if (state.events.some((e) => e.id === action.event.id)) {
         return state;
       }
-      const events = [...state.events, action.event];
-      const trimmed =
-        events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
+      const { items: trimmed } = appendWithWindow(state.events, action.event, MAX_EVENTS);
       // Track permission mode changes in real-time.
       const newMode =
         action.event.type === 'session:mode-change' ? action.event.mode : state.permissionMode;

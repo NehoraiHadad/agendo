@@ -23,6 +23,31 @@ export const liveBrainstormFeedbackHandlers = new Map<
 
 let server: http.Server | null = null;
 
+/**
+ * Factory that creates a POST dispatcher for a handler map.
+ * Reads the body, looks up the handler by id, invokes it, and responds.
+ */
+function createPostDispatcher(
+  handlerMap: { get(id: string): ((payload: string) => void | Promise<void>) | undefined },
+  entityLabel: string,
+): (req: http.IncomingMessage, res: http.ServerResponse, id: string) => Promise<void> {
+  return async (req, res, id) => {
+    const body = await readBody(req);
+    if (!body) {
+      badRequest(res, 'Missing request body');
+      return;
+    }
+    const handler = handlerMap.get(id);
+    if (!handler) {
+      log.warn({ id }, `No live ${entityLabel} handler found`);
+      ok(res, { dispatched: false, reason: `${entityLabel} not found on this worker` });
+      return;
+    }
+    await handler(body);
+    ok(res, { dispatched: true });
+  };
+}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -123,58 +148,28 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   const { resource, id, action } = parsed;
 
-  if (method === 'POST' && resource === 'sessions' && action === 'control') {
-    const body = await readBody(req);
-    if (!body) {
-      badRequest(res, 'Missing request body');
-      return;
-    }
-    const proc = allSessionProcs.get(id);
-    if (!proc) {
-      log.warn({ sessionId: id }, 'No live session proc found for control dispatch');
-      // Return 200 — session may be on a different worker
-      ok(res, { dispatched: false, reason: 'session not found on this worker' });
-      return;
-    }
-    await proc.onControl(body);
-    ok(res, { dispatched: true });
+  // Session control & event injection both route through onControl
+  const sessionControlMap = {
+    get(sid: string) {
+      const proc = allSessionProcs.get(sid);
+      return proc ? (payload: string) => proc.onControl(payload) : undefined;
+    },
+  };
+  const dispatchSessionPost = createPostDispatcher(sessionControlMap, 'session');
+
+  if (
+    method === 'POST' &&
+    resource === 'sessions' &&
+    (action === 'control' || action === 'events')
+  ) {
+    await dispatchSessionPost(req, res, id);
     return;
   }
 
-  if (method === 'POST' && resource === 'sessions' && action === 'events') {
-    // Synthetic event injection — used by team API and future Phase 2 work
-    const body = await readBody(req);
-    if (!body) {
-      badRequest(res, 'Missing request body');
-      return;
-    }
-    const proc = allSessionProcs.get(id);
-    if (!proc) {
-      log.warn({ sessionId: id }, 'No live session proc found for event injection');
-      ok(res, { dispatched: false, reason: 'session not found on this worker' });
-      return;
-    }
-    // Route synthetic events through onControl so the session can react.
-    // Phase 2 will add a dedicated emitEvent injection path.
-    await proc.onControl(body);
-    ok(res, { dispatched: true });
-    return;
-  }
+  const dispatchBrainstormPost = createPostDispatcher(liveBrainstormHandlers, 'brainstorm');
 
   if (method === 'POST' && resource === 'brainstorms' && action === 'control') {
-    const body = await readBody(req);
-    if (!body) {
-      badRequest(res, 'Missing request body');
-      return;
-    }
-    const handler = liveBrainstormHandlers.get(id);
-    if (!handler) {
-      log.warn({ roomId: id }, 'No live brainstorm handler found for control dispatch');
-      ok(res, { dispatched: false, reason: 'brainstorm not found on this worker' });
-      return;
-    }
-    handler(body);
-    ok(res, { dispatched: true });
+    await dispatchBrainstormPost(req, res, id);
     return;
   }
 
@@ -216,19 +211,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (method === 'POST' && resource === 'brainstorms' && action === 'events') {
-    const body = await readBody(req);
-    if (!body) {
-      badRequest(res, 'Missing request body');
-      return;
-    }
-    const handler = liveBrainstormHandlers.get(id);
-    if (!handler) {
-      log.warn({ roomId: id }, 'No live brainstorm handler found for event injection');
-      ok(res, { dispatched: false, reason: 'brainstorm not found on this worker' });
-      return;
-    }
-    handler(body);
-    ok(res, { dispatched: true });
+    await dispatchBrainstormPost(req, res, id);
     return;
   }
 

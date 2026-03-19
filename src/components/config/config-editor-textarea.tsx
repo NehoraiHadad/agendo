@@ -4,6 +4,7 @@ import { useRef, useEffect } from 'react';
 import { Save, RotateCcw, FileText, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { shortPathHome } from '@/lib/utils/tool-descriptions';
 
 interface ConfigEditorTextareaProps {
   content: string;
@@ -22,13 +23,6 @@ interface ConfigEditorTextareaProps {
 function fmtTokens(n: number): string {
   if (n < 1000) return `~${n}`;
   return `~${(n / 1000).toFixed(1)}K`;
-}
-
-/** Derives a short display label from an absolute file path. */
-function shortPath(filePath: string): string {
-  const home = filePath.replace(/^\/home\/[^/]+/, '~');
-  // Collapse /root/ → ~/
-  return home.replace(/^\/root/, '~');
 }
 
 export function ConfigEditorTextarea({
@@ -97,7 +91,7 @@ export function ConfigEditorTextarea({
             className="text-[11px] font-mono text-muted-foreground/55 truncate"
             title={filePath}
           >
-            {shortPath(filePath)}
+            {shortPathHome(filePath)}
           </span>
 
           {/* Token estimate badge */}
