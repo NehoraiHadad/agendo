@@ -376,6 +376,52 @@ describe('buildDisplayItems', () => {
     });
   });
 
+  describe('user:message protocol XML filtering', () => {
+    it('strips teammate-message XML from user:message (CLI history reconstruction)', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'user:message',
+          text: '<teammate-message teammate_id="implementer-1" color="yellow">\n{"type":"idle_notification","from":"implementer-1"}\n</teammate-message>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      // Pure protocol XML → skipped entirely
+      expect(items).toHaveLength(0);
+    });
+
+    it('preserves real user text mixed with teammate-message XML', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'user:message',
+          text: 'Please proceed. <teammate-message teammate_id="x" color="blue">{"type":"idle_notification"}</teammate-message>',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(1);
+      expect(items[0].kind).toBe('user');
+      if (items[0].kind === 'user') {
+        expect(items[0].text).toBe('Please proceed.');
+      }
+    });
+
+    it('still skips [Message from teammate] injections', () => {
+      const events: AgendoEvent[] = [
+        {
+          ...base,
+          id: 1,
+          type: 'user:message',
+          text: '[Message from teammate researcher-1]:\nHere is my report.',
+        },
+      ];
+      const items = buildDisplayItems(events, emptyMap);
+      expect(items).toHaveLength(0);
+    });
+  });
+
   describe('team:message events', () => {
     it('excludes team:message from chat display items (Team Panel only)', () => {
       const events: AgendoEvent[] = [

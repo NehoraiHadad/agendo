@@ -426,11 +426,18 @@ export function buildDisplayItems(
         // session-team-manager.ts pushes these as "[Message from teammate X]:\n..."
         if (ev.text?.startsWith('[Message from teammate ')) break;
 
+        // Strip Claude CLI protocol XML (teammate-message, slash command output)
+        // that appears in user:message events from CLI history reconstruction.
+        // Claude CLI formats inbox teammate messages as <teammate-message> XML
+        // in its conversation turns — these are already handled by the Team Panel.
+        const { cleanText: cleanUserText } = stripProtocolXml(ev.text ?? '');
+        if (!cleanUserText) break; // pure protocol noise — skip
+
         items.push({
           kind: 'user',
           id: ev.id,
           ts: ev.ts,
-          text: ev.text,
+          text: cleanUserText,
           hasImage: ev.hasImage,
           // Attach the UUID of the preceding assistant turn. When present,
           // the chat view shows a branch button on this user message.
