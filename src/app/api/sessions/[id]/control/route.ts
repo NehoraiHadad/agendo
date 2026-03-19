@@ -41,6 +41,7 @@ export const POST = withErrorBoundary(
       'mcp-reconnect',
       'mcp-toggle',
       'rewind-files',
+      'cancel-queued',
     ]);
     if (!allowedTypes.has(body.type)) {
       throw new BadRequestError(`Control type '${body.type}' is not handled by this endpoint`);

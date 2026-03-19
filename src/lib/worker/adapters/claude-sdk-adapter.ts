@@ -74,6 +74,20 @@ class AsyncQueue<T> {
     }
   }
 
+  /**
+   * Remove the first queued item matching the predicate.
+   * Returns true if an item was removed, false if nothing matched
+   * (already consumed by the SDK or never queued).
+   */
+  removeQueued(predicate: (item: T) => boolean): boolean {
+    const idx = this.queue.findIndex(predicate);
+    if (idx >= 0) {
+      this.queue.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
   [Symbol.asyncIterator](): AsyncIterableIterator<T> {
     return {
       next: (): Promise<IteratorResult<T>> => {
@@ -134,6 +148,7 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     message: string,
     image?: ImageContent,
     priority?: MessagePriority,
+    clientId?: string,
   ): Promise<void> {
     if (!this.alive || this.inputQueue.isDone) {
       throw new Error('SDK query is not active');
@@ -163,8 +178,9 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       message: { role: 'user', content: msgContent },
       // session_id is required by the SDKUserMessage type but ignored by the SDK —
       // QueryInstance manages its own _sessionId internally. The SDK's own send()
-      // method also passes '' here (see sdk.mjs). Safe to leave empty.
-      session_id: '',
+      // method also passes '' here (see sdk.mjs). We repurpose it to carry the
+      // clientId nonce so cancelQueuedMessage() can match items in the queue.
+      session_id: clientId ?? '',
       parent_tool_use_id: null,
       // Priority controls the SDK's internal message queue ordering:
       // 'now' = dequeued first, 'next' = default FIFO, 'later' = dequeued last.
@@ -189,6 +205,10 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       session_id: '',
       parent_tool_use_id: null,
     });
+  }
+
+  cancelQueuedMessage(clientId: string): boolean {
+    return this.inputQueue.removeQueued((m) => m.session_id === clientId);
   }
 
   async interrupt(): Promise<void> {

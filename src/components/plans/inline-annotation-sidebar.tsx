@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { X, Check, Loader2, Bot, PenLine, Send } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, generateId } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -215,7 +215,7 @@ export function InlineAnnotationSidebar({
   const handleAddAnnotation = useCallback(() => {
     if (!selection || !form.type || !form.comment.trim()) return;
     onAnnotationAdd({
-      id: crypto.randomUUID(),
+      id: generateId(),
       type: form.type,
       lineStart: selection.lineStart,
       lineEnd: selection.lineEnd,

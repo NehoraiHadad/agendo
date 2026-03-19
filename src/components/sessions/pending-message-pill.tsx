@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Clock, Loader2, Pencil, X, Zap } from 'lucide-react';
+import { CheckCircle2, Loader2, Pencil, X, Zap } from 'lucide-react';
 
 interface PendingMessagePillProps {
   text: string;
@@ -37,7 +37,7 @@ export function PendingMessagePill({
       {isSending ? (
         <Loader2 className="size-3.5 shrink-0 text-primary/50 animate-spin" />
       ) : (
-        <Clock className="size-3.5 shrink-0 text-primary/50 animate-pulse" />
+        <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400/70" />
       )}
 
       {imageDataUrl && (

@@ -84,7 +84,11 @@ describe('handleMessage priority passthrough', () => {
     } as Extract<AgendoControl, { type: 'message' }>;
     const ctx = makeCtx();
     await handleMessage(control, ctx);
-    expect(ctx.pushMessage).toHaveBeenCalledWith('do something', undefined, 'next');
+    expect(ctx.pushMessage).toHaveBeenCalledWith('do something', {
+      image: undefined,
+      priority: 'next',
+      clientId: undefined,
+    });
   });
 
   it('passes undefined priority when not specified', async () => {
@@ -95,7 +99,11 @@ describe('handleMessage priority passthrough', () => {
     } as Extract<AgendoControl, { type: 'message' }>;
     const ctx = makeCtx();
     await handleMessage(control, ctx);
-    expect(ctx.pushMessage).toHaveBeenCalledWith('plain message', undefined, undefined);
+    expect(ctx.pushMessage).toHaveBeenCalledWith('plain message', {
+      image: undefined,
+      priority: undefined,
+      clientId: undefined,
+    });
   });
 });
 
@@ -103,11 +111,11 @@ describe('handleMessage priority passthrough', () => {
 // 3. SessionControlCtx.pushMessage accepts priority parameter
 // ---------------------------------------------------------------------------
 describe('SessionControlCtx.pushMessage signature', () => {
-  it('pushMessage accepts 3rd priority parameter', () => {
+  it('pushMessage accepts opts with priority', () => {
     const ctx = makeCtx();
-    // Type-level test: calling with 3 args should be valid
-    void ctx.pushMessage('text', undefined, 'now');
-    expect(ctx.pushMessage).toHaveBeenCalledWith('text', undefined, 'now');
+    // Type-level test: calling with opts should be valid
+    void ctx.pushMessage('text', { priority: 'now' });
+    expect(ctx.pushMessage).toHaveBeenCalledWith('text', { priority: 'now' });
   });
 });
 

@@ -16,6 +16,7 @@ import { ModelPickerPopover } from '@/components/sessions/model-picker-popover';
 import { MemoryEditorModal } from '@/components/sessions/memory-editor-modal';
 import type { SessionStatus } from '@/lib/realtime/events';
 import { deriveProvider } from '@/lib/utils/session-controls';
+import { generateId } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Slash commands — populated live from the agent's system:init event
@@ -144,7 +145,7 @@ export interface QueuedImagePayload {
 interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
-  onSent?: (text: string, imageDataUrl?: string) => void;
+  onSent?: (text: string, imageDataUrl?: string, clientId?: string) => void;
   /** Called when a message is queued while agent is active — shows pill + POSTs with priority. */
   onQueue?: (
     text: string,
@@ -427,13 +428,15 @@ export function SessionMessageInput({
     setSuppressedSuggestion(promptSuggestion ?? null);
     // Capture image URL before clearing pendingImage state
     const sentImageDataUrl = pendingImage?.dataUrl;
+    // Generate a client nonce for belt-and-suspenders dedup matching.
+    const clientId = generateId();
     // Notify parent BEFORE the HTTP request so the optimistic-message baseline is
     // captured before the SSE `user:message` event can arrive and update the count.
     // If we called onSent after await, a fast SSE delivery would set baseUserMsgCount
     // equal to the new count, making the clearing condition (newCount > base) never fire.
-    onSent?.(trimmed, sentImageDataUrl);
+    onSent?.(trimmed, sentImageDataUrl, clientId);
     try {
-      const body: Record<string, unknown> = { message: trimmed };
+      const body: Record<string, unknown> = { message: trimmed, clientId };
       if (pendingImage) {
         body.image = { mimeType: pendingImage.mimeType, data: pendingImage.data };
       }

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Check, X, Loader2, PenLine, AlignLeft } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, generateId } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import type { PlanAnnotation, AnnotationType } from '@/lib/types/annotations';
@@ -311,7 +311,7 @@ export function PlanAnnotator({
     setAnnotations((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type,
         lineStart: form.lineStart,
         lineEnd: form.lineEnd,

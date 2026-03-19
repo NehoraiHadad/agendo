@@ -45,6 +45,7 @@ import { TaskNotificationCard } from '@/components/sessions/task-notification-ca
 import { ArtifactCard } from '@/components/sessions/artifact-card';
 import { deriveProvider } from '@/lib/utils/session-controls';
 import { apiFetch } from '@/lib/api-types';
+import { generateId } from '@/lib/utils';
 import type { SessionStatus } from '@/lib/realtime/events';
 
 // Module-level set keeps the early-return guard in ToolCard stable and avoids
@@ -1206,7 +1207,7 @@ export function SessionChatView({
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<
-    { id: string; text: string; imageDataUrl?: string }[]
+    { id: string; text: string; imageDataUrl?: string; clientId?: string }[]
   >([]);
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
@@ -1231,6 +1232,8 @@ export function SessionChatView({
     imagePayload?: { mimeType: string; data: string };
     /** True while the POST is in flight */
     isSending?: boolean;
+    /** Client-generated UUID nonce for dedup — pill clears when SSE with matching clientId arrives */
+    clientId?: string;
   };
 
   function persistQueue(msg: QueuedMessage | null) {
@@ -1305,7 +1308,7 @@ export function SessionChatView({
   }, [sessionId, isRollingBack]);
 
   const handleSent = useCallback(
-    (text: string, imageDataUrl?: string) => {
+    (text: string, imageDataUrl?: string, clientId?: string) => {
       if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
       baseUserMsgCountRef.current = currentUserMsgCountRef.current; // capture baseline
 
@@ -1320,7 +1323,7 @@ export function SessionChatView({
 
       setOptimisticMessages((prev) => [
         ...prev,
-        { id: String(++msgIdRef.current), text, imageDataUrl },
+        { id: String(++msgIdRef.current), text, imageDataUrl, clientId },
       ]);
     },
     [effectiveInitialPrompt, currentStatus],
@@ -1341,10 +1344,14 @@ export function SessionChatView({
       const controller = new AbortController();
       queueAbortRef.current = controller;
 
-      // Show pill in sending state immediately
-      setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: true });
+      // Generate a client nonce so we can match the SSE user:message event later.
+      // The pill stays visible until the SSE event with this clientId arrives.
+      const clientId = generateId();
 
-      const body: Record<string, unknown> = { message: text, priority: 'next' };
+      // Show pill in sending state immediately
+      setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: true, clientId });
+
+      const body: Record<string, unknown> = { message: text, priority: 'next', clientId };
       if (imagePayload) {
         body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
       }
@@ -1356,19 +1363,22 @@ export function SessionChatView({
           signal: controller.signal,
         });
 
-        // Success — clear pill, show optimistic bubble
+        // Success — do NOT call handleSent() or clear the pill here.
+        // The SSE user:message event with matching clientId will clear the pill
+        // (see the clientId dedup effect below). This avoids the race condition
+        // where handleSent() captures baseline AFTER the SSE already arrived.
         queueAbortRef.current = null;
-        setQueuedMessage(null);
-        handleSent(text, imageDataUrl);
+        if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
+        setQueuedMessage((prev) => (prev ? { ...prev, isSending: false } : null));
       } catch (err: unknown) {
         // If aborted (edit/cancel), don't touch state — the abort handler already did
         if (err instanceof DOMException && err.name === 'AbortError') return;
         // POST failed — revert pill to editable state (not sending)
         queueAbortRef.current = null;
-        setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: false });
+        setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: false, clientId });
       }
     },
-    [sessionId, handleSent],
+    [sessionId],
   );
 
   // Send a message immediately with priority:'now' to interrupt an active agent.
@@ -1378,7 +1388,8 @@ export function SessionChatView({
       imageDataUrl?: string,
       imagePayload?: { mimeType: string; data: string },
     ) => {
-      const body: Record<string, unknown> = { message: text, priority: 'now' };
+      const clientId = generateId();
+      const body: Record<string, unknown> = { message: text, priority: 'now', clientId };
       if (imagePayload) {
         body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
       }
@@ -1387,7 +1398,7 @@ export function SessionChatView({
           method: 'POST',
           body: JSON.stringify(body),
         });
-        handleSent(text, imageDataUrl);
+        handleSent(text, imageDataUrl, clientId);
       } catch {
         // Silently ignore — the agent is still running and will continue
       }
@@ -1395,11 +1406,19 @@ export function SessionChatView({
     [sessionId, handleSent],
   );
 
-  // Edit: abort in-flight POST (if any) and move queued message back to the textarea
+  // Edit: abort in-flight POST (if any), cancel from worker queue if already delivered,
+  // and move queued message back to the textarea
   const handleEditQueued = useCallback(() => {
     if (!queuedMessage) return;
     queueAbortRef.current?.abort();
     queueAbortRef.current = null;
+    // If POST already succeeded (not sending), try to cancel from worker queue
+    if (!queuedMessage.isSending && queuedMessage.clientId) {
+      void apiFetch(`/api/sessions/${sessionId}/control`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'cancel-queued', clientId: queuedMessage.clientId }),
+      }).catch(() => {});
+    }
     setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
     setRestoredImage(
       queuedMessage.imageDataUrl && queuedMessage.imagePayload
@@ -1411,14 +1430,22 @@ export function SessionChatView({
         : null,
     );
     setQueuedMessage(null);
-  }, [queuedMessage]);
+  }, [queuedMessage, sessionId]);
 
-  // Cancel: abort in-flight POST (if any) and discard the queued message
+  // Cancel: abort in-flight POST (if any), cancel from worker queue if already delivered,
+  // and discard the queued message
   const handleCancelQueued = useCallback(() => {
     queueAbortRef.current?.abort();
     queueAbortRef.current = null;
+    // If POST already succeeded (not sending), try to cancel from worker queue
+    if (queuedMessage && !queuedMessage.isSending && queuedMessage.clientId) {
+      void apiFetch(`/api/sessions/${sessionId}/control`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'cancel-queued', clientId: queuedMessage.clientId }),
+      }).catch(() => {});
+    }
     setQueuedMessage(null);
-  }, []);
+  }, [queuedMessage, sessionId]);
 
   // Send Now from pill: abort in-flight queue POST and re-send with priority:'now'
   const handleSendNowFromPill = useCallback(() => {
@@ -1458,30 +1485,63 @@ export function SessionChatView({
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
   }, []);
 
+  // Shared derived arrays — avoids repeated O(n) scans of stream.events in effects below.
+  const streamUserMessages = useMemo(
+    () => stream.events.filter((e) => e.type === 'user:message'),
+    [stream.events],
+  );
+  const streamCancelledMessages = useMemo(
+    () => stream.events.filter((e) => e.type === 'user:message-cancelled'),
+    [stream.events],
+  );
+
   // Keep currentUserMsgCountRef in sync with the stream
   useEffect(() => {
-    currentUserMsgCountRef.current = stream.events.filter((e) => e.type === 'user:message').length;
-  }, [stream.events]);
+    currentUserMsgCountRef.current = streamUserMessages.length;
+  }, [streamUserMessages]);
 
-  // Clear optimistic messages once the real user:message SSE event with matching text arrives.
-  // This prevents the "disappearing message" bug where the optimistic bubble cleared
-  // before the real message was rendered.
+  // Clear queued message pill once the real SSE user:message with matching clientId arrives,
+  // OR when a user:message-cancelled event confirms the cancel was successful.
+  // This is the primary dedup mechanism for the queue path — the pill stays visible until
+  // the SSE event confirms the message was processed by the worker.
+  useEffect(() => {
+    if (!queuedMessage?.clientId) return;
+    const clientId = queuedMessage.clientId;
+    const delivered = streamUserMessages.findLast(
+      (e) => 'clientId' in e && e.clientId === clientId,
+    );
+    const cancelled = streamCancelledMessages.findLast(
+      (e) => 'clientId' in e && e.clientId === clientId,
+    );
+    if (delivered ?? cancelled) {
+      setQueuedMessage(null);
+    }
+  }, [streamUserMessages, streamCancelledMessages, queuedMessage]);
+
+  // Clear optimistic messages once the real user:message SSE event arrives.
+  // Matches by clientId when available (reliable), falls back to text matching.
   useEffect(() => {
     if (optimisticMessages.length === 0) return;
-    const userMessages = stream.events.filter((e) => e.type === 'user:message');
+    const userMessages = streamUserMessages;
     // Only consider messages beyond the baseline count
     const newMessages = userMessages.slice(baseUserMsgCountRef.current);
     if (newMessages.length === 0) return;
 
-    // Remove optimistic messages whose text matches a real SSE user:message
-    const newTexts = new Set(newMessages.map((e) => ('text' in e ? (e.text as string) : '')));
-    const remaining = optimisticMessages.filter((m) => !newTexts.has(m.text));
+    // Remove optimistic messages matched by clientId or text
+    const remaining = optimisticMessages.filter((m) => {
+      // Prefer clientId matching (reliable, no false positives)
+      if (m.clientId) {
+        return !newMessages.some((e) => 'clientId' in e && e.clientId === m.clientId);
+      }
+      // Fallback to text matching for messages without clientId
+      return !newMessages.some((e) => 'text' in e && e.text === m.text);
+    });
     if (remaining.length < optimisticMessages.length) {
       setOptimisticMessages(remaining);
       // Advance baseline so we don't re-check the same events
       baseUserMsgCountRef.current = userMessages.length;
     }
-  }, [stream.events, optimisticMessages]);
+  }, [streamUserMessages, optimisticMessages]);
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;

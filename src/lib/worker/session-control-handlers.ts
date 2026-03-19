@@ -56,8 +56,11 @@ export interface SessionControlCtx {
   exitContext: ExitContext;
   pushMessage(
     text: string,
-    image?: ImageContent,
-    priority?: import('@/lib/realtime/events').MessagePriority,
+    opts?: {
+      image?: ImageContent;
+      priority?: import('@/lib/realtime/events').MessagePriority;
+      clientId?: string;
+    },
   ): Promise<void>;
   /** Build a fresh SessionControlCtx — needed when scheduling a delayed handleSetPermissionMode. */
   makeCtrl(): SessionControlCtx;
@@ -227,7 +230,11 @@ export async function handleMessage(
       log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
     }
   }
-  await ctx.pushMessage(control.text, image, control.priority);
+  await ctx.pushMessage(control.text, {
+    image,
+    priority: control.priority,
+    clientId: control.clientId,
+  });
 }
 
 /**
@@ -325,6 +332,22 @@ export async function handleToolApproval(
       );
     }
   }
+}
+
+/**
+ * Handle a cancel-queued control: attempt to remove a queued message from the
+ * adapter's in-memory queue before the SDK consumes it.
+ */
+export async function handleCancelQueued(
+  control: Extract<AgendoControl, { type: 'cancel-queued' }>,
+  ctx: SessionControlCtx,
+): Promise<void> {
+  const removed = ctx.adapter.cancelQueuedMessage?.(control.clientId) ?? false;
+  if (removed) {
+    await ctx.emitEvent({ type: 'user:message-cancelled', clientId: control.clientId });
+  }
+  // If not removed (already consumed or adapter doesn't support it), do nothing —
+  // the frontend will see the message appear in the chat as usual.
 }
 
 /**

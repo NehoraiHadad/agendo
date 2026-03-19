@@ -171,7 +171,11 @@ export interface AgentAdapter {
     message: string,
     image?: ImageContent,
     priority?: import('@/lib/realtime/events').MessagePriority,
+    clientId?: string,
   ): Promise<void>;
+  /** Remove a queued message before the SDK consumes it. Returns true if removed, false if too late.
+   *  Only supported by Claude SDK adapter (in-memory AsyncQueue). */
+  cancelQueuedMessage?(clientId: string): boolean;
   /** Send a tool_result NDJSON message for a pending tool_use (e.g. AskUserQuestion). Optional — only Claude supports this. */
   sendToolResult?(toolUseId: string, content: string): Promise<void>;
   interrupt(): Promise<void>;
