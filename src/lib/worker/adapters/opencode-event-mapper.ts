@@ -1,5 +1,5 @@
 import type { AgendoEventPayload } from '@/lib/realtime/events';
-import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
+import { createAcpEventMapper, OPENCODE_MODE_MAP } from './acp-event-mapper';
 
 // ---------------------------------------------------------------------------
 // OpenCode synthetic NDJSON event types
@@ -37,138 +37,8 @@ export type OpenCodeEvent =
 // Main mapper: OpenCodeEvent → AgendoEventPayload[]
 // ---------------------------------------------------------------------------
 
+const mapAcp = createAcpEventMapper({ agentLabel: 'OpenCode', modeMap: OPENCODE_MODE_MAP });
+
 export function mapOpenCodeJsonToEvents(event: OpenCodeEvent): AgendoEventPayload[] {
-  switch (event.type) {
-    // -----------------------------------------------------------------------
-    // opencode:init → session:init with model (synthetic, emitted by adapter)
-    // -----------------------------------------------------------------------
-    case 'opencode:init':
-      return [
-        {
-          type: 'session:init',
-          sessionRef: event.sessionId,
-          slashCommands: [],
-          mcpServers: [],
-          model: event.model,
-        },
-      ];
-
-    // -----------------------------------------------------------------------
-    // opencode:text → agent:text
-    // -----------------------------------------------------------------------
-    case 'opencode:text':
-      return [{ type: 'agent:text', text: event.text }];
-
-    // -----------------------------------------------------------------------
-    // opencode:text-delta → agent:text-delta (streaming chunk)
-    // -----------------------------------------------------------------------
-    case 'opencode:text-delta':
-      return [{ type: 'agent:text-delta', text: event.text }];
-
-    // -----------------------------------------------------------------------
-    // opencode:thinking → agent:thinking
-    // -----------------------------------------------------------------------
-    case 'opencode:thinking':
-      return [{ type: 'agent:thinking', text: event.text }];
-
-    // -----------------------------------------------------------------------
-    // opencode:thinking-delta → agent:thinking-delta (streaming chunk)
-    // -----------------------------------------------------------------------
-    case 'opencode:thinking-delta':
-      return [{ type: 'agent:thinking-delta', text: event.text }];
-
-    // -----------------------------------------------------------------------
-    // opencode:tool-start → agent:tool-start
-    // -----------------------------------------------------------------------
-    case 'opencode:tool-start':
-      return [buildToolStartEvent(event.toolUseId, event.toolName, event.toolInput)];
-
-    // -----------------------------------------------------------------------
-    // opencode:tool-end → agent:tool-end
-    // -----------------------------------------------------------------------
-    case 'opencode:tool-end':
-      return [buildToolEndEvent(event.toolUseId, event.resultText ?? '')];
-
-    // -----------------------------------------------------------------------
-    // opencode:turn-complete → agent:result
-    // -----------------------------------------------------------------------
-    case 'opencode:turn-complete': {
-      const result: AgendoEventPayload = {
-        type: 'agent:result',
-        costUsd: null,
-        turns: 1,
-        durationMs: null,
-      };
-
-      const usage = event.result?.usage as
-        | { inputTokens?: number; outputTokens?: number }
-        | undefined;
-      if (usage && (usage.inputTokens || usage.outputTokens)) {
-        (result as Record<string, unknown>).modelUsage = {
-          opencode: {
-            inputTokens: usage.inputTokens ?? 0,
-            outputTokens: usage.outputTokens ?? 0,
-            costUSD: 0,
-          },
-        };
-      }
-      return [result];
-    }
-
-    // -----------------------------------------------------------------------
-    // opencode:turn-error → agent:result (isError) + system:error
-    // -----------------------------------------------------------------------
-    case 'opencode:turn-error':
-      return [
-        {
-          type: 'agent:result',
-          costUsd: null,
-          turns: 1,
-          durationMs: null,
-          isError: true,
-          errors: [event.message],
-        },
-        {
-          type: 'system:error',
-          message: `OpenCode turn failed: ${event.message}`,
-        },
-      ];
-
-    // -----------------------------------------------------------------------
-    // opencode:plan → agent:plan (TodoWrite tool update)
-    // -----------------------------------------------------------------------
-    case 'opencode:plan':
-      return [
-        {
-          type: 'agent:plan',
-          entries: event.entries.map((e) => ({
-            content: e.content,
-            priority: e.priority as 'high' | 'medium' | 'low',
-            status: e.status as 'pending' | 'in_progress' | 'completed',
-          })),
-        },
-      ];
-
-    // -----------------------------------------------------------------------
-    // opencode:mode-change → session:mode-change (agent mode updated)
-    // OpenCode agent names: plan, build, general, explore
-    // -----------------------------------------------------------------------
-    case 'opencode:mode-change': {
-      const modeMap: Record<string, string> = {
-        general: 'default',
-        plan: 'plan',
-      };
-      const mode = modeMap[event.modeId] ?? event.modeId;
-      return [{ type: 'session:mode-change', mode }];
-    }
-
-    // -----------------------------------------------------------------------
-    // opencode:usage → agent:usage (real-time context window stats)
-    // -----------------------------------------------------------------------
-    case 'opencode:usage':
-      return [{ type: 'agent:usage', used: event.used, size: event.size }];
-
-    default:
-      return [];
-  }
+  return mapAcp(event);
 }

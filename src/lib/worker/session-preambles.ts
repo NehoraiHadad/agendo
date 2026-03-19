@@ -191,11 +191,25 @@ ${planContent}`;
  */
 type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
 
+/**
+ * Shared read-only plan preamble for ACP agents (Gemini, Copilot, OpenCode).
+ * These agents use `mcp__agendo__save_plan` to finalize; they cannot use ExitPlanMode.
+ */
+const ACP_PLAN_PREAMBLE =
+  `You are reviewing an implementation plan in read-only mode — you can read the ` +
+  `codebase but cannot write files. Explore the code to validate assumptions and identify gaps.\n` +
+  `\n` +
+  `When satisfied, save your finalized plan using the \`mcp__agendo__save_plan\` tool with the ` +
+  `full plan content in markdown.\n` +
+  `\n` +
+  `Focus on: feasibility, missing edge cases, concrete file paths, step ordering.\n`;
+
 export function generatePlanConversationPreamble(
   binaryName: string,
   planContext: string,
 ): { prompt: string; permissionMode: PermissionMode } {
   if (binaryName === 'codex') {
+    // Codex: read-only sandbox mode (permissionMode='plan' enforces sandbox)
     return {
       permissionMode: 'plan',
       prompt:
@@ -208,44 +222,11 @@ export function generatePlanConversationPreamble(
         `Focus on: implementation steps, file paths, architecture decisions, risk areas.\n` +
         planContext,
     };
-  } else if (binaryName === 'gemini') {
+  } else if (binaryName === 'gemini' || binaryName === 'copilot' || binaryName === 'opencode') {
+    // ACP agents: shared read-only preamble with save_plan MCP tool
     return {
       permissionMode: 'bypassPermissions',
-      prompt:
-        `You are reviewing an implementation plan in read-only mode — you can read the ` +
-        `codebase but cannot write files. Explore the code to validate assumptions and identify gaps.\n` +
-        `\n` +
-        `When satisfied, save your finalized plan using the \`mcp__agendo__save_plan\` tool with the ` +
-        `full plan content in markdown.\n` +
-        `\n` +
-        `Focus on: feasibility, missing edge cases, concrete file paths, step ordering.\n` +
-        planContext,
-    };
-  } else if (binaryName === 'copilot') {
-    return {
-      permissionMode: 'bypassPermissions',
-      prompt:
-        `You are reviewing an implementation plan in read-only mode — you can read the ` +
-        `codebase but cannot write files. Explore the code to validate assumptions and identify gaps.\n` +
-        `\n` +
-        `When satisfied, save your finalized plan using the \`mcp__agendo__save_plan\` tool with the ` +
-        `full plan content in markdown.\n` +
-        `\n` +
-        `Focus on: feasibility, missing edge cases, concrete file paths, step ordering.\n` +
-        planContext,
-    };
-  } else if (binaryName === 'opencode') {
-    return {
-      permissionMode: 'bypassPermissions',
-      prompt:
-        `You are reviewing an implementation plan in read-only mode — you can read the ` +
-        `codebase but cannot write files. Explore the code to validate assumptions and identify gaps.\n` +
-        `\n` +
-        `When satisfied, save your finalized plan using the \`mcp__agendo__save_plan\` tool with the ` +
-        `full plan content in markdown.\n` +
-        `\n` +
-        `Focus on: feasibility, missing edge cases, concrete file paths, step ordering.\n` +
-        planContext,
+      prompt: ACP_PLAN_PREAMBLE + planContext,
     };
   } else {
     // Claude (and any other agent): native ExitPlanMode
