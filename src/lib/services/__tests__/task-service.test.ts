@@ -119,7 +119,7 @@ describe('task-service', () => {
       mockState.selectResult = [doneTask];
 
       await expect(updateTask(doneTask.id, { status: 'in_progress' })).rejects.toThrow(
-        'Invalid status transition',
+        'Invalid task status transition',
       );
     });
 

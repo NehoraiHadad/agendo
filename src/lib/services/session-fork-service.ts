@@ -15,7 +15,8 @@ import { db } from '@/lib/db';
 import { agents } from '@/lib/db/schema';
 import { getSession, createSession } from '@/lib/services/session-service';
 import { extractSessionContext } from '@/lib/services/context-extractor';
-import { BadRequestError, ConflictError, NotFoundError } from '@/lib/errors';
+import { BadRequestError, ConflictError } from '@/lib/errors';
+import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
 import type { ExtractedContext } from '@/lib/services/context-extractor';
 
@@ -74,7 +75,7 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     .where(eq(agents.id, input.newAgentId))
     .limit(1);
 
-  if (!newAgent) throw new NotFoundError('Agent', input.newAgentId);
+  requireFound(newAgent, 'Agent', input.newAgentId);
 
   // 4. Extract conversation context from the parent session's log
   const extracted = await extractSessionContext(input.parentSessionId, {

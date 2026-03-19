@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback } from 'react';
 import {
   renderLogLine,
   renderLogChunk,
@@ -8,6 +8,7 @@ import {
   type RenderedLine,
   type StreamType,
 } from '@/lib/log-renderer';
+import { useEventSource } from './use-event-source';
 
 type SseLogEvent =
   | { type: 'status'; status: string }
@@ -91,82 +92,63 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
 
 export function useSessionLogStream(sessionId: string | null): UseSessionLogStreamReturn {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const retryDelayRef = useRef(1000);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   const reset = useCallback(() => {
     resetLineIdCounter();
     dispatch({ type: 'RESET' });
   }, []);
 
-  useEffect(() => {
-    if (!sessionId) return;
+  const url = sessionId ? `/api/sessions/${sessionId}/logs/stream` : null;
 
+  const { isConnected, error, markDone } = useEventSource({
+    url,
+    trackLastEventId: false,
+    onOpen: () => {
+      dispatch({ type: 'SET_CONNECTED', connected: true });
+    },
+    onMessage: (data: unknown) => {
+      const parsed = data as SseLogEvent;
+      switch (parsed.type) {
+        case 'status':
+          dispatch({ type: 'SET_STATUS', status: parsed.status });
+          break;
+        case 'catchup': {
+          const lines = renderLogChunk(parsed.content, 'stdout');
+          dispatch({ type: 'REPLACE_LINES', lines });
+          break;
+        }
+        case 'log': {
+          const line = renderLogLine(parsed.content, parsed.stream);
+          dispatch({ type: 'APPEND_LINES', lines: [line] });
+          break;
+        }
+        case 'done':
+          dispatch({ type: 'SET_DONE', status: parsed.status });
+          markDone();
+          break;
+        case 'error':
+          dispatch({ type: 'SET_ERROR', error: parsed.message });
+          markDone();
+          break;
+      }
+    },
+  });
+
+  // Sync connection state from useEventSource into reducer
+  useEffect(() => {
+    dispatch({ type: 'SET_CONNECTED', connected: isConnected });
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (error) {
+      dispatch({ type: 'SET_ERROR', error });
+    }
+  }, [error]);
+
+  // Reset line counter when sessionId changes
+  useEffect(() => {
     resetLineIdCounter();
     dispatch({ type: 'RESET' });
-    retryDelayRef.current = 1000;
-
-    function connect() {
-      if (eventSourceRef.current) eventSourceRef.current.close();
-
-      const es = new EventSource(`/api/sessions/${sessionId}/logs/stream`);
-      eventSourceRef.current = es;
-
-      es.onopen = () => {
-        dispatch({ type: 'SET_CONNECTED', connected: true });
-        retryDelayRef.current = 1000;
-      };
-
-      es.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data as string) as SseLogEvent;
-          switch (parsed.type) {
-            case 'status':
-              dispatch({ type: 'SET_STATUS', status: parsed.status });
-              break;
-            case 'catchup': {
-              const lines = renderLogChunk(parsed.content, 'stdout');
-              dispatch({ type: 'REPLACE_LINES', lines });
-              break;
-            }
-            case 'log': {
-              const line = renderLogLine(parsed.content, parsed.stream);
-              dispatch({ type: 'APPEND_LINES', lines: [line] });
-              break;
-            }
-            case 'done':
-              dispatch({ type: 'SET_DONE', status: parsed.status });
-              es.close();
-              break;
-            case 'error':
-              dispatch({ type: 'SET_ERROR', error: parsed.message });
-              es.close();
-              break;
-          }
-        } catch {
-          /* ignore malformed */
-        }
-      };
-
-      es.onerror = () => {
-        es.close();
-        dispatch({ type: 'SET_CONNECTED', connected: false });
-        if (state.isDone) return;
-        const delay = retryDelayRef.current;
-        retryDelayRef.current = Math.min(delay * 2, 30000);
-        setTimeout(connect, delay);
-      };
-    }
-
-    connect();
-
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   return { ...state, reset };

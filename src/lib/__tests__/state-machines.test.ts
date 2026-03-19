@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isValidTaskTransition, TASK_TRANSITIONS } from '../state-machines';
+import { isValidTaskTransition, taskMachine } from '../state-machines';
+import { createStatusMachine } from '@/lib/utils/status-machine';
+import { ConflictError } from '@/lib/errors';
 
 describe('Task Status Transitions', () => {
   it('allows todo -> in_progress', () => {
@@ -52,10 +54,52 @@ describe('Task Status Transitions', () => {
 });
 
 describe('Transition Table Completeness', () => {
-  it('every task status has a transition entry', () => {
+  it('every task status has valid targets', () => {
     const allStatuses = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
     for (const status of allStatuses) {
-      expect(TASK_TRANSITIONS).toHaveProperty(status);
+      expect(taskMachine.validTargets(status).length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('createStatusMachine', () => {
+  const machine = createStatusMachine(
+    { open: ['closed', 'paused'], closed: ['open'], paused: ['open'] },
+    'test',
+  );
+
+  it('isValid returns true for allowed transitions', () => {
+    expect(machine.isValid('open', 'closed')).toBe(true);
+    expect(machine.isValid('open', 'paused')).toBe(true);
+    expect(machine.isValid('closed', 'open')).toBe(true);
+  });
+
+  it('isValid returns false for disallowed transitions', () => {
+    expect(machine.isValid('closed', 'paused')).toBe(false);
+    expect(machine.isValid('paused', 'closed')).toBe(false);
+  });
+
+  it('isValid returns false for unknown statuses', () => {
+    expect(machine.isValid('unknown' as never, 'open')).toBe(false);
+  });
+
+  it('assert throws ConflictError on invalid transition', () => {
+    expect(() => machine.assert('closed', 'paused')).toThrow(ConflictError);
+    expect(() => machine.assert('closed', 'paused')).toThrow(
+      'Invalid test status transition: closed → paused',
+    );
+  });
+
+  it('assert does not throw on valid transition', () => {
+    expect(() => machine.assert('open', 'closed')).not.toThrow();
+  });
+
+  it('validTargets returns correct array', () => {
+    expect(machine.validTargets('open')).toEqual(['closed', 'paused']);
+    expect(machine.validTargets('closed')).toEqual(['open']);
+  });
+
+  it('validTargets returns empty array for unknown status', () => {
+    expect(machine.validTargets('unknown' as never)).toEqual([]);
   });
 });

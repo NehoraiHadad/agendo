@@ -1,4 +1,5 @@
 import { eq, and, desc, or, ilike } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { plans, planVersions, sessions } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -85,11 +86,10 @@ export async function listPlans(filters?: {
   status?: PlanStatus;
   limit?: number;
 }): Promise<Plan[]> {
-  const conditions = [];
-  if (filters?.projectId) conditions.push(eq(plans.projectId, filters.projectId));
-  if (filters?.status) conditions.push(eq(plans.status, filters.status));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = buildFilters(
+    { projectId: filters?.projectId, status: filters?.status },
+    { projectId: plans.projectId, status: plans.status },
+  );
   const limit = filters?.limit ?? 50;
 
   return db.select().from(plans).where(where).orderBy(desc(plans.createdAt)).limit(limit);

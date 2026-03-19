@@ -1,8 +1,17 @@
 /**
  * Human-readable descriptions of tool invocations.
- * Shared between the brainstorm orchestrator (worker) and any UI component
- * that needs to display what an agent is currently doing.
+ * Shared between the brainstorm orchestrator (worker), context-extractor,
+ * and any UI component that needs to display what an agent is currently doing.
  */
+
+/**
+ * Extract the last N segments of a file path.
+ * Returns '' for empty/falsy input.
+ */
+export function shortPath(filePath: string, segments = 2): string {
+  if (!filePath) return '';
+  return filePath.split('/').slice(-segments).join('/');
+}
 
 /**
  * Generate a short, human-readable description of a tool invocation.
@@ -18,11 +27,11 @@ export function describeToolActivity(
   if (!toolName) return null;
 
   const filePath = (input?.file_path ?? input?.path ?? '') as string;
-  const shortPath = filePath ? filePath.split('/').slice(-2).join('/') : '';
+  const short = shortPath(filePath);
 
   switch (toolName) {
     case 'Read':
-      return shortPath ? `Reading ${shortPath}` : 'Reading file';
+      return short ? `Reading ${short}` : 'Reading file';
     case 'Grep':
       return input?.pattern
         ? `Searching for "${String(input.pattern).slice(0, 40)}"`
@@ -36,9 +45,9 @@ export function describeToolActivity(
     case 'Agent':
       return input?.description ? String(input.description).slice(0, 60) : 'Running sub-agent';
     case 'Write':
-      return shortPath ? `Writing ${shortPath}` : 'Writing file';
+      return short ? `Writing ${short}` : 'Writing file';
     case 'Edit':
-      return shortPath ? `Editing ${shortPath}` : 'Editing file';
+      return short ? `Editing ${short}` : 'Editing file';
     default:
       // MCP tools — show a clean short name
       if (toolName.startsWith('mcp__')) {
@@ -47,4 +56,35 @@ export function describeToolActivity(
       }
       return null;
   }
+}
+
+/** Extract file_path or path from a tool input record. */
+function extractFilePath(input?: Record<string, unknown>): string {
+  return String(input?.file_path ?? input?.path ?? '');
+}
+
+/**
+ * Produce a compact single-line summary of a tool call for inclusion in
+ * context transfer prompts. Format: `Edit(path)`, `Bash(\`cmd\`)`, `MCP(tool)`.
+ */
+export function summarizeToolCall(toolName: string, input?: Record<string, unknown>): string {
+  if (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit') {
+    return `Edit(${extractFilePath(input)})`;
+  }
+
+  if (toolName === 'Read' || toolName === 'Glob' || toolName === 'Grep') {
+    const target = extractFilePath(input) || String(input?.pattern ?? input?.glob ?? '');
+    return `Read(${target})`;
+  }
+
+  if (toolName === 'Bash') {
+    const cmd = String(input?.command ?? '').slice(0, 60);
+    return `Bash(\`${cmd}\`)`;
+  }
+
+  if (toolName.startsWith('mcp__')) {
+    return `MCP(${toolName.replace(/^mcp__[^_]+__/, '')})`;
+  }
+
+  return toolName;
 }

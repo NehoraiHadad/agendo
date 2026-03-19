@@ -42,7 +42,7 @@ export async function listProjects(isActive?: boolean): Promise<Project[]> {
 
 export async function getProject(id: string): Promise<Project> {
   const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
-  if (!project) throw new NotFoundError('Project', id);
+  requireFound(project, 'Project', id);
   if (!project.isActive) throw new NotFoundError('Project', id);
   return project;
 }

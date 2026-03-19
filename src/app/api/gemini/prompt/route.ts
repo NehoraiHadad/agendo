@@ -19,6 +19,8 @@ import { z, ZodError } from 'zod';
 import { AppError } from '@/lib/errors';
 import { BadRequestError } from '@/lib/errors';
 import { spawnGeminiHeadless, runGeminiPrompt } from '@/lib/gemini/headless';
+import { SSE_HEADERS } from '@/lib/sse/constants';
+import { encodeSSE } from '@/lib/sse/encoder';
 
 const bodySchema = z.object({
   prompt: z.string().min(1).max(50_000),
@@ -73,13 +75,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 }
 
 function streamingResponse(req: NextRequest, body: z.infer<typeof bodySchema>): NextResponse {
-  const encoder = new TextEncoder();
-
   const readable = new ReadableStream({
     async start(controller) {
       function send(data: Record<string, unknown>) {
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+          controller.enqueue(encodeSSE(data));
         } catch {
           // Client disconnected — controller is already closed
         }
@@ -127,12 +127,5 @@ function streamingResponse(req: NextRequest, body: z.infer<typeof bodySchema>): 
     // cancel() is called on client disconnect — req.signal fires and cascades into spawnGeminiHeadless
   });
 
-  return new NextResponse(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+  return new NextResponse(readable, { headers: SSE_HEADERS });
 }

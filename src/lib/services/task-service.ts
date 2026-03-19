@@ -1,8 +1,7 @@
 import { eq, and, sql, desc, asc, ilike, or } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/schema';
-import { isValidTaskTransition } from '@/lib/state-machines';
-import { ConflictError } from '@/lib/errors';
+import { taskMachine } from '@/lib/state-machines';
 import { requireFound } from '@/lib/api-handler';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
@@ -203,9 +202,7 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
   const existing = await getTaskById(id);
 
   if (input.status && input.status !== existing.status) {
-    if (!isValidTaskTransition(existing.status, input.status)) {
-      throw new ConflictError(`Invalid status transition: ${existing.status} -> ${input.status}`);
-    }
+    taskMachine.assert(existing.status, input.status);
   }
 
   const [updated] = await db
@@ -526,9 +523,7 @@ export async function reorderTask(id: string, input: ReorderTaskInput): Promise<
 
   // Validate status transition if changing columns
   if (input.status && input.status !== existing.status) {
-    if (!isValidTaskTransition(existing.status, input.status)) {
-      throw new ConflictError(`Invalid status transition: ${existing.status} -> ${input.status}`);
-    }
+    taskMachine.assert(existing.status, input.status);
   }
 
   const { value: sortOrder, needsReindex } = computeSortOrder(

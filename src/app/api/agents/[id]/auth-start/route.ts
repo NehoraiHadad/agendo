@@ -7,12 +7,8 @@ import { assertUUID } from '@/lib/api-handler';
 import { getAgentById } from '@/lib/services/agent-service';
 import { getAuthConfig, setRunningAuthProcess } from '@/lib/services/agent-auth-service';
 import { AppError, BadRequestError, NotFoundError } from '@/lib/errors';
-
-const SSE_HEADERS = {
-  'Content-Type': 'text/event-stream',
-  'Cache-Control': 'no-cache',
-  Connection: 'keep-alive',
-};
+import { SSE_HEADERS } from '@/lib/sse/constants';
+import { encodeSSE } from '@/lib/sse/encoder';
 
 /** Patterns that indicate the CLI is waiting for user input (e.g. an authorization code) */
 const INPUT_PROMPT_PATTERNS = [
@@ -21,10 +17,6 @@ const INPUT_PROMPT_PATTERNS = [
   /enter.*(?:code|token|key)/i,
   /verification\s*code/i,
 ];
-
-function sseEvent(data: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
-}
 
 export async function POST(
   req: NextRequest,
@@ -114,7 +106,7 @@ export async function POST(
         const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
         if (urlMatch && !urlSent) {
           urlSent = true;
-          controller.enqueue(sseEvent({ type: 'url', url: urlMatch[1] }));
+          controller.enqueue(encodeSSE({ type: 'url', url: urlMatch[1] }));
         }
 
         // Detect input prompts (e.g. "Paste the authorization code here:")
@@ -130,7 +122,7 @@ export async function POST(
               .replace(ansiPattern, '')
               .replace(/\[?\?25[lh]\]?/g, '')
               .trim();
-            controller.enqueue(sseEvent({ type: 'input_needed', prompt: promptText }));
+            controller.enqueue(encodeSSE({ type: 'input_needed', prompt: promptText }));
           }
         }
       }
@@ -149,7 +141,7 @@ export async function POST(
         });
 
         if (hasFile) {
-          controller.enqueue(sseEvent({ type: 'success' }));
+          controller.enqueue(encodeSSE({ type: 'success' }));
           clearInterval(pollInterval);
           clearTimeout(timeout);
           proc.kill();
@@ -161,7 +153,7 @@ export async function POST(
       const timeout = setTimeout(() => {
         clearInterval(pollInterval);
         controller.enqueue(
-          sseEvent({ type: 'error', message: 'Authentication timed out after 5 minutes' }),
+          encodeSSE({ type: 'error', message: 'Authentication timed out after 5 minutes' }),
         );
         proc.kill();
         close();
@@ -172,10 +164,10 @@ export async function POST(
         clearInterval(pollInterval);
         if (!closed) {
           if (code === 0) {
-            controller.enqueue(sseEvent({ type: 'success' }));
+            controller.enqueue(encodeSSE({ type: 'success' }));
           } else if (code !== null) {
             controller.enqueue(
-              sseEvent({ type: 'error', message: `Process exited with code ${code}` }),
+              encodeSSE({ type: 'error', message: `Process exited with code ${code}` }),
             );
           }
           close();

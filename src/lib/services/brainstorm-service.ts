@@ -1,8 +1,9 @@
-import { eq, and, desc, asc, isNotNull, getTableColumns, count } from 'drizzle-orm';
+import { eq, desc, asc, isNotNull, getTableColumns, count, and } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { NotFoundError, ConflictError, ValidationError } from '@/lib/errors';
+import { ConflictError, ValidationError } from '@/lib/errors';
 import type {
   BrainstormRoom,
   BrainstormParticipant,
@@ -151,11 +152,10 @@ export async function listBrainstorms(filters?: {
   projectId?: string;
   status?: BrainstormStatus;
 }): Promise<BrainstormRoomSummary[]> {
-  const conditions = [];
-  if (filters?.projectId) conditions.push(eq(brainstormRooms.projectId, filters.projectId));
-  if (filters?.status) conditions.push(eq(brainstormRooms.status, filters.status));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = buildFilters(
+    { projectId: filters?.projectId, status: filters?.status },
+    { projectId: brainstormRooms.projectId, status: brainstormRooms.status },
+  );
 
   const rows = await db
     .select({
@@ -193,7 +193,7 @@ export async function updateBrainstormStatus(
     .where(eq(brainstormRooms.id, id))
     .returning();
 
-  if (!updated) throw new NotFoundError('BrainstormRoom', id);
+  requireFound(updated, 'BrainstormRoom', id);
   return updated;
 }
 
@@ -220,7 +220,7 @@ export async function updateBrainstormMaxWaves(
     .set({ maxWaves, updatedAt: new Date() })
     .where(eq(brainstormRooms.id, id))
     .returning();
-  if (!updated) throw new NotFoundError('BrainstormRoom', id);
+  requireFound(updated, 'BrainstormRoom', id);
   return updated;
 }
 
@@ -347,7 +347,7 @@ export async function extendBrainstorm(
     .where(eq(brainstormRooms.id, id))
     .returning();
 
-  if (!updated) throw new NotFoundError('BrainstormRoom', id);
+  requireFound(updated, 'BrainstormRoom', id);
   return updated;
 }
 

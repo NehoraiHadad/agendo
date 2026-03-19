@@ -2,6 +2,7 @@
 
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import { useEventSource } from './use-event-source';
 
 interface SessionStreamState {
   events: AgendoEvent[];
@@ -73,101 +74,76 @@ const STATUS_POLL_INTERVAL_MS = 30_000;
 
 export function useSessionStream(sessionId: string | null): UseSessionStreamReturn {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const retryDelayRef = useRef(1000);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const lastEventIdRef = useRef(0);
   const isDoneRef = useRef(false);
 
   const reset = useCallback(() => {
     dispatch({ type: 'RESET' });
-    lastEventIdRef.current = 0;
     isDoneRef.current = false;
   }, []);
 
+  const url = sessionId ? `/api/sessions/${sessionId}/events` : null;
+
+  const { isConnected, error, markDone, resetLastEventId, setLastEventId } = useEventSource({
+    url,
+    onOpen: () => {
+      dispatch({ type: 'SET_CONNECTED', connected: true });
+    },
+    onMessage: (data: unknown, rawEvent: MessageEvent) => {
+      // Track last-event-id for reconnect.
+      // Handle ID resets after session restarts: if the new ID drops
+      // significantly below our tracked max, a restart happened and
+      // we should reset to the new (lower) counter.
+      if (rawEvent.lastEventId) {
+        const id = parseInt(rawEvent.lastEventId, 10);
+        if (!isNaN(id)) {
+          setLastEventId(id);
+        }
+      }
+
+      const parsed = data as AgendoEvent;
+
+      if (parsed.type === 'session:state') {
+        dispatch({ type: 'SET_STATUS', status: parsed.status });
+        if (parsed.status === 'ended') {
+          isDoneRef.current = true;
+          markDone();
+        }
+      } else {
+        dispatch({ type: 'APPEND_EVENT', event: parsed });
+      }
+    },
+    onReconnect: () => {
+      // Reset event state on reconnect to prevent duplicates from stale events.
+      // Also reset lastEventIdRef so the server knows to send full history again
+      // (server skips CLI-native history replay when lastEventId > 0).
+      dispatch({ type: 'RESET' });
+      resetLastEventId();
+    },
+  });
+
+  // Sync connection state from useEventSource into the reducer-driven state
+  useEffect(() => {
+    dispatch({ type: 'SET_CONNECTED', connected: isConnected });
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (error) {
+      dispatch({ type: 'SET_ERROR', error });
+    }
+  }, [error]);
+
+  // Reset local state when sessionId changes
+  useEffect(() => {
+    dispatch({ type: 'RESET' });
+    isDoneRef.current = false;
+  }, [sessionId]);
+
+  // Polling fallback: periodically fetch the real session status from the API
+  // in case an SSE event was missed (e.g. stale-reaper, zombie-reconciler,
+  // or cancel API changed status without emitting via PG NOTIFY in older code).
   useEffect(() => {
     if (!sessionId) return;
 
-    dispatch({ type: 'RESET' });
-    retryDelayRef.current = 1000;
-    lastEventIdRef.current = 0;
-    isDoneRef.current = false;
-
-    function connect() {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-
-      // Build URL with lastEventId as query param for initial reconnect catchup.
-      // The browser EventSource also sends Last-Event-ID header automatically on
-      // subsequent reconnects, but the query param ensures the server can use it
-      // on the very first client-initiated reconnect call.
-      const lastId = lastEventIdRef.current;
-      const url = `/api/sessions/${sessionId}/events${lastId > 0 ? `?lastEventId=${lastId}` : ''}`;
-      const es = new EventSource(url);
-      eventSourceRef.current = es;
-
-      es.onopen = () => {
-        dispatch({ type: 'SET_CONNECTED', connected: true });
-        retryDelayRef.current = 1000;
-      };
-
-      es.onmessage = (event) => {
-        // Track last-event-id for reconnect.
-        // Handle ID resets after session restarts: if the new ID drops
-        // significantly below our tracked max, a restart happened and
-        // we should reset to the new (lower) counter.
-        if (event.lastEventId) {
-          const id = parseInt(event.lastEventId, 10);
-          if (!isNaN(id)) {
-            if (id < lastEventIdRef.current - 100) {
-              // Session restarted — ID counter reset
-              lastEventIdRef.current = id;
-            } else if (id > lastEventIdRef.current) {
-              lastEventIdRef.current = id;
-            }
-          }
-        }
-
-        try {
-          const parsed = JSON.parse(event.data) as AgendoEvent;
-
-          if (parsed.type === 'session:state') {
-            dispatch({ type: 'SET_STATUS', status: parsed.status });
-            if (parsed.status === 'ended') {
-              isDoneRef.current = true;
-            }
-          } else {
-            dispatch({ type: 'APPEND_EVENT', event: parsed });
-          }
-        } catch {
-          // ignore malformed messages
-        }
-      };
-
-      es.onerror = () => {
-        es.close();
-        dispatch({ type: 'SET_CONNECTED', connected: false });
-
-        // Don't reconnect if session has ended
-        if (isDoneRef.current) return;
-
-        // Reset event state on reconnect to prevent duplicates from stale events.
-        // Also reset lastEventIdRef so the server knows to send full history again
-        // (server skips CLI-native history replay when lastEventId > 0).
-        dispatch({ type: 'RESET' });
-        lastEventIdRef.current = 0;
-
-        const delay = retryDelayRef.current;
-        retryDelayRef.current = Math.min(delay * 2, 30000);
-        setTimeout(connect, delay);
-      };
-    }
-
-    connect();
-
-    // Polling fallback: periodically fetch the real session status from the API
-    // in case an SSE event was missed (e.g. stale-reaper, zombie-reconciler,
-    // or cancel API changed status without emitting via PG NOTIFY in older code).
     const pollTimer = setInterval(async () => {
       if (isDoneRef.current) return;
       try {
@@ -178,6 +154,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
           dispatch({ type: 'SET_STATUS', status: data.status });
           if (data.status === 'ended') {
             isDoneRef.current = true;
+            markDone();
           }
         }
       } catch {
@@ -185,14 +162,8 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       }
     }, STATUS_POLL_INTERVAL_MS);
 
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      clearInterval(pollTimer);
-    };
-  }, [sessionId]);
+    return () => clearInterval(pollTimer);
+  }, [sessionId, markDone]);
 
   return { ...state, reset };
 }

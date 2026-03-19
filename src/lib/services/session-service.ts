@@ -1,8 +1,9 @@
 import { eq, and, desc, count, or, ilike, inArray, isNull, isNotNull, sql } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
-import { ConflictError, NotFoundError } from '@/lib/errors';
+import { ConflictError } from '@/lib/errors';
 import { sendSessionControl, sendSessionEvent } from '@/lib/realtime/worker-client';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { Session } from '@/lib/types';
@@ -94,7 +95,7 @@ export async function getSessionWithDetails(id: string): Promise<SessionWithDeta
     .where(eq(sessions.id, id))
     .limit(1);
 
-  if (!row) throw new NotFoundError('Session', id);
+  requireFound(row, 'Session', id);
 
   return {
     ...row.session,
@@ -116,7 +117,7 @@ export async function updateSessionTitle(
     .where(eq(sessions.id, id))
     .returning({ id: sessions.id, title: sessions.title });
 
-  if (!updated) throw new NotFoundError('Session', id);
+  requireFound(updated, 'Session', id);
   return updated;
 }
 
@@ -401,16 +402,20 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
   const pageSize = filters?.pageSize ?? 20;
   const offset = (page - 1) * pageSize;
 
-  const conditions = [];
-  if (filters?.taskId) conditions.push(eq(sessions.taskId, filters.taskId));
-  if (filters?.agentId) conditions.push(eq(sessions.agentId, filters.agentId));
-  if (filters?.status)
-    conditions.push(
-      eq(sessions.status, filters.status as 'active' | 'awaiting_input' | 'idle' | 'ended'),
-    );
-  if (filters?.kind) conditions.push(eq(sessions.kind, filters.kind));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = buildFilters(
+    {
+      taskId: filters?.taskId,
+      agentId: filters?.agentId,
+      status: filters?.status,
+      kind: filters?.kind,
+    },
+    {
+      taskId: sessions.taskId,
+      agentId: sessions.agentId,
+      status: sessions.status,
+      kind: sessions.kind,
+    },
+  );
 
   const [data, [{ total }]] = await Promise.all([
     db

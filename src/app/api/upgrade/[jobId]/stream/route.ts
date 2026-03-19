@@ -1,15 +1,10 @@
 import { NextRequest } from 'next/server';
 import { getJobLog, subscribeToJob } from '@/lib/upgrade/upgrade-manager';
+import { SSE_HEADERS } from '@/lib/sse/constants';
+import { encodeSSE, encodeHeartbeat } from '@/lib/sse/encoder';
 import type { UpgradeSseEvent } from '@/lib/upgrade/upgrade-events';
 
 export const dynamic = 'force-dynamic';
-
-const SSE_HEADERS = {
-  'Content-Type': 'text/event-stream',
-  'Cache-Control': 'no-cache, no-transform',
-  Connection: 'keep-alive',
-  'X-Accel-Buffering': 'no',
-};
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
@@ -23,17 +18,16 @@ export async function GET(
   { params }: { params: Promise<{ jobId: string }> },
 ): Promise<Response> {
   const { jobId } = await params;
-  const encoder = new TextEncoder();
 
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
 
   function send(evt: UpgradeSseEvent): void {
-    void writer.write(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`)).catch(() => {});
+    void writer.write(encodeSSE(evt)).catch(() => {});
   }
 
   function sendKeepAlive(): void {
-    void writer.write(encoder.encode(': keepalive\n\n')).catch(() => {});
+    void writer.write(encodeHeartbeat()).catch(() => {});
   }
 
   // Replay historical log lines as catchup

@@ -3,6 +3,8 @@ import { tasks } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
 import { listTasksBoardItems } from '@/lib/services/task-service';
 import { createLogger } from '@/lib/logger';
+import { SSE_HEADERS } from '@/lib/sse/constants';
+import { encodeNamedSSE } from '@/lib/sse/encoder';
 
 const log = createLogger('sse-board');
 const POLL_INTERVAL_MS = 2000;
@@ -11,7 +13,6 @@ const HEARTBEAT_INTERVAL_MS = 15000;
 export const dynamic = 'force-dynamic';
 
 export async function GET(_req: NextRequest) {
-  const encoder = new TextEncoder();
   let closed = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -23,7 +24,7 @@ export async function GET(_req: NextRequest) {
       function send(event: string, data: unknown) {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          controller.enqueue(encodeNamedSSE(event, data));
         } catch {
           closed = true;
         }
@@ -75,12 +76,5 @@ export async function GET(_req: NextRequest) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

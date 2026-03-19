@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { AgendoEvent } from '@/lib/realtime/events';
+import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 
 /** A tool call observed from a teammate (via permission_request or other structured messages). */
 export interface AgentToolEvent {
@@ -171,8 +172,9 @@ export function useTeamState(events: AgendoEvent[]): TeamState {
         currentActivity = 'idle';
       } else if (toolEvents.length > 0) {
         const lastTool = toolEvents[toolEvents.length - 1];
-        const shortPath = lastTool.filePath?.split('/').pop();
-        currentActivity = shortPath ? `${lastTool.toolName} ${shortPath}` : lastTool.toolName;
+        currentActivity =
+          describeToolActivity(lastTool.toolName, { file_path: lastTool.filePath }) ??
+          lastTool.toolName;
       } else if (status === 'active') {
         currentActivity = 'working';
       }

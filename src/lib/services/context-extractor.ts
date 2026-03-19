@@ -11,6 +11,7 @@ import { readEventsFromLog } from '@/lib/realtime/event-utils';
 import { getSessionWithDetails } from '@/lib/services/session-service';
 import { callSummarizationProvider } from '@/lib/services/summarization-providers';
 import { readNativeSession } from '@/lib/services/native-session-reader';
+import { summarizeToolCall as summarizeToolCallShared } from '@/lib/utils/tool-descriptions';
 import type { NativeTurn } from '@/lib/services/native-session-reader';
 import type { AgendoEvent } from '@/lib/realtime/event-types';
 
@@ -74,11 +75,6 @@ interface TurnAccumulator {
 // ============================================================================
 // Helper
 // ============================================================================
-
-/** Safe string cast — avoids `any` while accessing dynamic record fields */
-function safeStr(v: unknown): string {
-  return String(v ?? '');
-}
 
 function freshAccumulator(): TurnAccumulator {
   return {
@@ -366,36 +362,10 @@ function buildTurnFromPair(
 
 /**
  * Produces a compact single-line summary of a tool call for inclusion in
- * summarized turns.
+ * summarized turns. Delegates to the shared utility in tool-descriptions.ts.
  */
 export function summarizeToolCall(tc: ToolCall): string {
-  const name = tc.toolName;
-
-  if (name === 'Edit' || name === 'Write' || name === 'MultiEdit') {
-    const path = safeStr(tc.input['file_path'] ?? tc.input['path'] ?? '');
-    return `Edit(${path})`;
-  }
-
-  if (name === 'Read' || name === 'Glob' || name === 'Grep') {
-    const path = safeStr(
-      tc.input['file_path'] ?? tc.input['path'] ?? tc.input['pattern'] ?? tc.input['glob'] ?? '',
-    );
-    return `Read(${path})`;
-  }
-
-  if (name === 'Bash') {
-    const cmd = safeStr(tc.input['command'] ?? '');
-    const preview = cmd.slice(0, 60);
-    return `Bash(\`${preview}\`)`;
-  }
-
-  if (name.startsWith('mcp__')) {
-    // Strip mcp__agendo__ prefix (or any mcp__ prefix) and show tool name
-    const stripped = name.replace(/^mcp__[^_]+__/, '');
-    return `MCP(${stripped})`;
-  }
-
-  return name;
+  return summarizeToolCallShared(tc.toolName, tc.input);
 }
 
 // ============================================================================
@@ -434,15 +404,7 @@ export function renderTurnVerbatim(turn: Turn): string {
   lines.push(turn.assistantText.trim() || '(no response)');
 
   for (const tc of turn.toolCalls) {
-    if (tc.toolName === 'Edit' || tc.toolName === 'Write' || tc.toolName === 'MultiEdit') {
-      const path = safeStr(tc.input['file_path'] ?? tc.input['path'] ?? '');
-      lines.push(`[Tool: Edit ${path}]`);
-    } else if (tc.toolName === 'Bash') {
-      const cmd = safeStr(tc.input['command'] ?? '').slice(0, 60);
-      lines.push(`[Tool: Bash \`${cmd}\`]`);
-    } else {
-      lines.push(`[Tool: ${summarizeToolCall(tc)}]`);
-    }
+    lines.push(`[Tool: ${summarizeToolCall(tc)}]`);
   }
 
   return lines.join('\n');

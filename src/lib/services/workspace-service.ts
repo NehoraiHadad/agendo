@@ -1,4 +1,5 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { agentWorkspaces } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -38,10 +39,10 @@ export async function getWorkspace(id: string): Promise<AgentWorkspace> {
 }
 
 export async function listWorkspaces(filters?: { projectId?: string }): Promise<AgentWorkspace[]> {
-  const conditions = [];
-  if (filters?.projectId) conditions.push(eq(agentWorkspaces.projectId, filters.projectId));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = buildFilters(
+    { projectId: filters?.projectId },
+    { projectId: agentWorkspaces.projectId },
+  );
 
   return db.select().from(agentWorkspaces).where(where).orderBy(desc(agentWorkspaces.createdAt));
 }

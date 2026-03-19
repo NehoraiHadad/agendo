@@ -1,4 +1,5 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
+import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { contextSnapshots } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
@@ -51,10 +52,10 @@ export async function listSnapshots(filters?: {
   projectId?: string;
   limit?: number;
 }): Promise<ContextSnapshot[]> {
-  const conditions = [];
-  if (filters?.projectId) conditions.push(eq(contextSnapshots.projectId, filters.projectId));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = buildFilters(
+    { projectId: filters?.projectId },
+    { projectId: contextSnapshots.projectId },
+  );
   const limit = filters?.limit ?? 50;
 
   return db

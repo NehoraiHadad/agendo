@@ -8,6 +8,8 @@ import {
   watch,
   type FSWatcher,
 } from 'node:fs';
+import { SSE_HEADERS } from '@/lib/sse/constants';
+import { encodeSSE, encoder } from '@/lib/sse/encoder';
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
 const FILE_POLL_INTERVAL_MS = 500;
@@ -32,7 +34,6 @@ export function createLogStreamHandler(
   id: string,
   config: LogStreamConfig,
 ): Response {
-  const encoder = new TextEncoder();
   let closed = false;
   let fileOffset = 0;
   let watcher: FSWatcher | null = null;
@@ -47,8 +48,7 @@ export function createLogStreamHandler(
       function send(event: Record<string, unknown>, eventId?: number) {
         if (closed) return;
         try {
-          const idLine = eventId !== undefined ? `id: ${eventId}\n` : '';
-          controller.enqueue(encoder.encode(`${idLine}data: ${JSON.stringify(event)}\n\n`));
+          controller.enqueue(encodeSSE(event, eventId));
         } catch {
           closed = true;
         }
@@ -198,12 +198,5 @@ export function createLogStreamHandler(
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }
