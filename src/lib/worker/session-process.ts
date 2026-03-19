@@ -241,6 +241,7 @@ export class SessionProcess {
       mcpServers,
       initialImage,
       displayText,
+      displayClientId,
       resumeSessionAt,
       developerInstructions,
       appendSystemPrompt,
@@ -425,7 +426,11 @@ export class SessionProcess {
       // session log and is replayed after a page refresh (cold-resume path).
       // Use displayText if provided so system preambles (e.g. [Previous Work Summary])
       // are not shown in the chat view.
-      await this.emitEvent({ type: 'user:message', text: displayText ?? prompt });
+      await this.emitEvent({
+        type: 'user:message',
+        text: displayText ?? prompt,
+        ...(displayClientId && { clientId: displayClientId }),
+      });
       this.managedProcess = this.adapter.resume(resumeRef, prompt, spawnOpts);
     } else {
       this.managedProcess = this.adapter.spawn(prompt, spawnOpts);

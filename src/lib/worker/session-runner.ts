@@ -76,6 +76,7 @@ export async function runSession(
   resumeSessionAt?: string,
   resumePrompt?: string,
   skipResumeContext?: boolean,
+  resumeClientId?: string,
 ): Promise<void> {
   const session = await getSession(sessionId);
   const agent = await getAgentById(session.agentId);
@@ -345,6 +346,7 @@ export async function runSession(
     mcpServers,
     initialImage,
     displayText: userResumeText,
+    displayClientId: resumeClientId,
     resumeSessionAt,
     developerInstructions: codexDeveloperInstructions,
   });

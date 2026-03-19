@@ -14,6 +14,12 @@ export interface RunSessionJobData {
    */
   resumePrompt?: string;
   /**
+   * Client-generated UUID nonce for the resume message.
+   * Passed through to the user:message SSE event so the frontend
+   * dedup effect can clear the optimistic message / pill on cold-resume.
+   */
+  resumeClientId?: string;
+  /**
    * When true, skip prepending the generateResumeContext block (task title +
    * progress notes). Used for mid-turn auto-resumes (worker/infra restart) where
    * the agent already has its full conversation history via resumeRef and only

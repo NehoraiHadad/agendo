@@ -247,4 +247,7 @@ export interface SessionStartOptions {
   developerInstructions?: string;
   /** Text to append to Claude's system prompt via SDK systemPrompt.append. */
   appendSystemPrompt?: string;
+  /** Client-generated nonce for the resume message — forwarded to user:message SSE event
+   *  so the frontend dedup effect can clear the optimistic pill on cold-resume. */
+  displayClientId?: string;
 }

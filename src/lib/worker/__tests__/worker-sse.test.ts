@@ -62,6 +62,21 @@ vi.mock('@/lib/worker/session-runner', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock: brainstorm-history (keep buildTranscriptFromSessions available,
+//       but getBrainstormHistoryFromSessions should NOT be called in the
+//       fixed code — mock it to throw so tests catch any accidental calls)
+// ---------------------------------------------------------------------------
+
+const { mockGetBrainstormHistoryFromSessions } = vi.hoisted(() => ({
+  mockGetBrainstormHistoryFromSessions: vi.fn(),
+}));
+
+vi.mock('@/lib/worker/brainstorm-history', () => ({
+  getBrainstormHistoryFromSessions: mockGetBrainstormHistoryFromSessions,
+  buildTranscriptFromSessions: vi.fn().mockResolvedValue(null),
+}));
+
+// ---------------------------------------------------------------------------
 // Import module under test (after mocks)
 // ---------------------------------------------------------------------------
 
@@ -143,6 +158,11 @@ beforeEach(() => {
   brainstormEventListeners.clear();
   mockExistsSync.mockReturnValue(false);
   mockReadFileSync.mockReturnValue('');
+  // After the fix, getBrainstormHistoryFromSessions is NOT called from the SSE
+  // path. Default to throwing so tests catch any accidental invocation.
+  mockGetBrainstormHistoryFromSessions.mockRejectedValue(
+    new Error('getBrainstormHistoryFromSessions should not be called from SSE path'),
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -477,6 +497,134 @@ describe('handleBrainstormSSE', () => {
     const allData = writtenData.join('');
     expect(allData).toContain('room:synthesis');
     expect(allData).toContain('The team concluded that approach A is best.');
+  });
+
+  // -------------------------------------------------------------------------
+  // NEW TESTS: log-file-first replay (the fixed behavior)
+  // -------------------------------------------------------------------------
+
+  it('log file replays ALL agents — both Claude and Gemini messages appear on cold connect', async () => {
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-log-1',
+      status: 'ended',
+      synthesis: null,
+      logFilePath: '/logs/room-log-1.log',
+      participants: [
+        { agentId: 'agent-claude', agentName: 'Claude', status: 'done' },
+        { agentId: 'agent-gemini', agentName: 'Gemini', status: 'done' },
+      ],
+    });
+
+    mockExistsSync.mockReturnValue(true);
+    const claudeEvent = {
+      id: 1,
+      roomId: 'room-log-1',
+      ts: 100,
+      type: 'message',
+      wave: 0,
+      senderType: 'agent',
+      agentId: 'agent-claude',
+      agentName: 'Claude',
+      content: 'Claude says hello',
+      isPass: false,
+    };
+    const geminiEvent = {
+      id: 2,
+      roomId: 'room-log-1',
+      ts: 200,
+      type: 'message',
+      wave: 0,
+      senderType: 'agent',
+      agentId: 'agent-gemini',
+      agentName: 'Gemini',
+      content: 'Gemini says hi',
+      isPass: false,
+    };
+    mockReadFileSync.mockReturnValue(
+      `[system] [1|message] ${JSON.stringify(claudeEvent)}\n` +
+        `[system] [2|message] ${JSON.stringify(geminiEvent)}\n`,
+    );
+
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    await handleBrainstormSSE(req, res, 'room-log-1', 0);
+
+    const allData = writtenData.join('');
+    expect(allData).toContain('Claude says hello');
+    expect(allData).toContain('Gemini says hi');
+    // Should NOT call getBrainstormHistoryFromSessions
+    expect(mockGetBrainstormHistoryFromSessions).not.toHaveBeenCalled();
+  });
+
+  it('lastEventId filtering: only replays events after the given lastEventId', async () => {
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-log-2',
+      status: 'ended',
+      synthesis: null,
+      logFilePath: '/logs/room-log-2.log',
+      participants: [],
+    });
+
+    mockExistsSync.mockReturnValue(true);
+    // Build 10 events with IDs 1–10
+    const logLines = Array.from({ length: 10 }, (_, i) => {
+      const ev = {
+        id: i + 1,
+        roomId: 'room-log-2',
+        ts: 100 + i,
+        type: 'message',
+        wave: 0,
+        senderType: 'agent',
+        agentId: 'agent-1',
+        agentName: 'Agent',
+        content: `message ${i + 1}`,
+        isPass: false,
+      };
+      return `[system] [${i + 1}|message] ${JSON.stringify(ev)}`;
+    }).join('\n');
+    mockReadFileSync.mockReturnValue(logLines);
+
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    // Reconnect with lastEventId=5 — should only replay events 6–10
+    await handleBrainstormSSE(req, res, 'room-log-2', 5);
+
+    const allData = writtenData.join('');
+    // Events 1–5 must NOT appear
+    for (let i = 1; i <= 5; i++) {
+      expect(allData).not.toContain(`"content":"message ${i}"`);
+    }
+    // Events 6–10 MUST appear
+    for (let i = 6; i <= 10; i++) {
+      expect(allData).toContain(`"content":"message ${i}"`);
+    }
+  });
+
+  it('unreadable log file does not crash — function completes normally', async () => {
+    mockGetBrainstorm.mockResolvedValue({
+      id: 'room-log-3',
+      status: 'active',
+      synthesis: null,
+      logFilePath: '/logs/room-log-3.log',
+      participants: [],
+    });
+
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    const { req } = makeMockReq();
+    const { res, writtenData } = makeMockRes();
+
+    // Should not throw
+    await expect(handleBrainstormSSE(req, res, 'room-log-3', 0)).resolves.toBeUndefined();
+
+    // room:state still sent
+    const allData = writtenData.join('');
+    expect(allData).toContain('room:state');
   });
 
   it('does not emit room:synthesis event when synthesis is null', async () => {

@@ -23,7 +23,6 @@ import { getSession } from '@/lib/services/session-service';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { readEventsFromLog, readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import { getSessionProc } from '@/lib/worker/session-runner';
-import { getBrainstormHistoryFromSessions } from '@/lib/worker/brainstorm-history';
 import type {
   AgendoEvent,
   BrainstormEvent,
@@ -379,57 +378,43 @@ export async function handleBrainstormSSE(
     sendEvent(res, synthesisEvent);
   }
 
-  // 2. Catchup: participant getHistory() (primary) → log file (fallback)
-  //
-  //    Priority order:
-  //      (a) Participant session getHistory() — the authoritative source.
-  //          Calls each participant's live SessionProcess.getHistory(), which
-  //          delegates to the adapter (Claude JSONL, Codex thread/read, etc.)
-  //          and maps agent:text turns to brainstorm message events by wave.
-  //      (b) Log file — fallback when no live procs are available (e.g. ended
-  //          brainstorms with Gemini/Copilot participants, or after worker restart).
-  let catchupSent = false;
-
-  if (lastEventId === 0) {
-    try {
-      const historyEvents = await getBrainstormHistoryFromSessions(room);
-      if (historyEvents.length > 0) {
-        log.info(
-          { roomId, eventCount: historyEvents.length },
-          'Brainstorm catchup from participant session histories',
-        );
-        for (const ev of historyEvents) {
-          sendEvent(res, ev);
-        }
-        catchupSent = true;
-      }
-    } catch (err) {
-      log.debug({ err, roomId }, 'Participant history catchup failed, falling back to log');
-    }
-  }
-
-  if (!catchupSent && room.logFilePath && existsSync(room.logFilePath)) {
-    try {
-      const logContent = readFileSync(room.logFilePath, 'utf-8');
-      const catchupEvents = readBrainstormEventsFromLog(logContent, lastEventId);
-      if (catchupEvents.length > 0) {
-        for (const ev of catchupEvents) {
-          sendEvent(res, ev);
-        }
-      }
-    } catch {
-      // Log file unreadable — skip catchup
-    }
-  }
-
-  // 3. Register in-memory listener for live events
+  // 2. Register buffered listener BEFORE any I/O to avoid race condition.
+  //    Live events emitted during the log read are buffered and flushed
+  //    after catchup — mirrors the handleSessionSSE pattern.
+  const buffered: BrainstormEvent[] = [];
+  let liveFlushing = false;
   const unsub = addBrainstormEventListener(roomId, (event) => {
-    sendEvent(res, event);
+    if (liveFlushing) {
+      sendEvent(res, event);
+    } else {
+      buffered.push(event);
+    }
   });
 
-  // 4. Clean up on client disconnect
+  // 3. Clean up on client disconnect
   req.on('close', () => {
     unsub();
     log.debug({ roomId }, 'Brainstorm SSE client disconnected');
   });
+
+  // 4. Log file is the unconditional primary replay source.
+  //    It contains ALL agents' messages (unlike in-memory session getHistory()
+  //    which only returns data for the agent whose proc is live).
+  if (room.logFilePath && existsSync(room.logFilePath)) {
+    try {
+      const logContent = readFileSync(room.logFilePath, 'utf-8');
+      const catchupEvents = readBrainstormEventsFromLog(logContent, lastEventId);
+      for (const ev of catchupEvents) {
+        sendEvent(res, ev);
+      }
+    } catch {
+      // Log file unreadable — no catchup, live events still work
+    }
+  }
+
+  // 5. Flush buffered live events, then switch to direct mode.
+  for (const ev of buffered) {
+    sendEvent(res, ev);
+  }
+  liveFlushing = true;
 }
