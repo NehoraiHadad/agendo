@@ -1174,4 +1174,52 @@ AGENDO_TASK_ID=<task-uuid>          # כשהסשן מקושר לtask
 
 ---
 
+---
+
+## נספח F: שדות SpawnOpts חדשים (עדכון post-refactor)
+
+לאחר ה-refactor של `session-process.ts` ו-`types.ts`, SpawnOpts קיבל שדות חדשים שמשקפים יכולות שכעת **בשימוש ב-Agendo**:
+
+| שדה                       | סוג                                    | דגל CLI / שימוש                         |
+| ------------------------- | -------------------------------------- | --------------------------------------- |
+| `effort`                  | `'low' \| 'medium' \| 'high'`          | → `--effort`                            |
+| `noSessionPersistence`    | `boolean`                              | → `--no-session-persistence`            |
+| `sdkMcpServers`           | `Record<string, {...}>`                | MCP servers לClaude SDK (ללא קובץ temp) |
+| `enableFileCheckpointing` | `boolean`                              | File checkpointing לrewind (Claude SDK) |
+| `outputFormat`            | `{type: 'json_schema', schema, name?}` | Structured output                       |
+| `useWorktree`             | `boolean`                              | → `--worktree`                          |
+| `policyFiles`             | `string[]`                             | TOML policy files → `--policy` (Gemini) |
+| `developerInstructions`   | `string`                               | System-level instructions (Codex)       |
+| `sdkHooks`                | `Record<string, HookMatcher[]>`        | Hook callbacks (Claude SDK)             |
+| `sdkAgents`               | `Record<string, AgentDef>`             | Subagent definitions (Claude SDK)       |
+| `sdkAgent`                | `string`                               | שם ה-agent הראשי                        |
+
+### Control messages חדשים (post-refactor)
+
+Control messages אלה נמסרים כעת דרך Worker HTTP (port 4102) במקום PG NOTIFY:
+
+| סוג control       | תיאור                                  | Adapter    |
+| ----------------- | -------------------------------------- | ---------- |
+| `steer`           | Inject steering message לturn הנוכחי   | Codex בלבד |
+| `rollback`        | Rollback N turns                       | Codex בלבד |
+| `mcp-set-servers` | החלפת כל MCP servers בlive session     | Claude SDK |
+| `mcp-reconnect`   | חיבור מחדש ל-MCP server ספציפי         | Claude SDK |
+| `mcp-toggle`      | הפעלה/כיבוי MCP server                 | Claude SDK |
+| `rewind-files`    | Rewind קבצים למצב ב-user message מסוים | Claude SDK |
+
+### AgentAdapter methods חדשים
+
+| Method                           | תיאור                                      |
+| -------------------------------- | ------------------------------------------ |
+| `setMcpServers(servers)`         | החלפת MCP servers בזמן ריצה                |
+| `reconnectMcpServer(name)`       | חיבור מחדש                                 |
+| `toggleMcpServer(name, enabled)` | הפעלה/כיבוי                                |
+| `rewindFiles(msgId, dryRun?)`    | Rewind לפי user message UUID               |
+| `steer(message)`                 | Codex steering                             |
+| `rollback(numTurns?)`            | Codex rollback                             |
+| `setActivityCallbacks(cbs)`      | Inject delta/cost callbacks (SDK adapters) |
+| `getHistory(sessionRef, cwd?)`   | קריאת היסטוריה מCLI native storage         |
+
+---
+
 _מסמך זה משקף את המצב של claude-adapter.ts גרסה `2.1.68`. לעדכון — בדוק `claude --version` ו-`claude --help` לדגלים חדשים._
