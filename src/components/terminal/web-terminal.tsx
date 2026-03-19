@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface WebTerminalProps {
   executionId?: string;
@@ -277,7 +278,7 @@ export function WebTerminal({
         await connect(terminal, fitAddon);
       } catch (err) {
         if (!state.disposed) {
-          setError(err instanceof Error ? err.message : 'Failed to initialize terminal');
+          setError(getErrorMessage(err));
           setIsConnecting(false);
         }
       }

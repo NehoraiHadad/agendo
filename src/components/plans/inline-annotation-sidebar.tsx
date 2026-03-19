@@ -17,6 +17,7 @@ import { serializeAnnotations } from '@/lib/utils/annotation-serializer';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { PlanAnnotation, AnnotationType, BlockSelection } from '@/lib/types/annotations';
 import type { Agent } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -192,7 +193,7 @@ export function InlineAnnotationSidebar({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setAgentError(err instanceof Error ? err.message : 'Failed to load agents');
+        setAgentError(getErrorMessage(err));
         setLoadingAgents(false);
       });
 
@@ -247,7 +248,7 @@ export function InlineAnnotationSidebar({
       });
       onFeedbackSent();
     } catch (err: unknown) {
-      setSendError(err instanceof Error ? err.message : 'Failed to send feedback');
+      setSendError(getErrorMessage(err));
     } finally {
       setIsSending(false);
     }
@@ -272,7 +273,7 @@ export function InlineAnnotationSidebar({
       onSessionCreated(result.data.sessionId);
       onFeedbackSent();
     } catch (err: unknown) {
-      setSendError(err instanceof Error ? err.message : 'Failed to start session');
+      setSendError(getErrorMessage(err));
     } finally {
       setIsSending(false);
     }

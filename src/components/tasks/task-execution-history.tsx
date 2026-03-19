@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
-import { apiFetch, type ApiListResponse } from '@/lib/api-types';
+import { useFetch } from '@/hooks/use-fetch';
+import type { ApiListResponse } from '@/lib/api-types';
 import { SessionStatusBadge } from '@/components/sessions/session-table';
 import { StartSessionDialog } from '@/components/sessions/start-session-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,34 +15,10 @@ interface TaskExecutionHistoryProps {
 }
 
 export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryProps) {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    async function loadAll() {
-      try {
-        const sessResult = await apiFetch<ApiListResponse<Session>>(
-          `/api/sessions?taskId=${taskId}&pageSize=10`,
-          { signal },
-        );
-        if (signal.aborted) return;
-        setSessions(sessResult.data);
-      } catch {
-        // Network error or abort — leave state as empty arrays
-      } finally {
-        if (!signal.aborted) setIsLoading(false);
-      }
-    }
-
-    void loadAll();
-
-    return () => {
-      controller.abort();
-    };
-  }, [taskId]);
+  const { data: sessions, isLoading } = useFetch<Session[]>(
+    `/api/sessions?taskId=${taskId}&pageSize=10`,
+    { transform: (json: unknown) => (json as ApiListResponse<Session>).data },
+  );
 
   return (
     <div className="flex flex-col gap-2">
@@ -58,11 +34,11 @@ export function TaskExecutionHistory({ taskId, agentId }: TaskExecutionHistoryPr
         </div>
       )}
 
-      {!isLoading && sessions.length === 0 && (
+      {!isLoading && (!sessions || sessions.length === 0) && (
         <p className="text-sm text-muted-foreground">No sessions yet.</p>
       )}
 
-      {!isLoading && sessions.length > 0 && (
+      {!isLoading && sessions && sessions.length > 0 && (
         <div className="flex flex-col gap-1">
           {sessions.map((sess) => (
             <Link

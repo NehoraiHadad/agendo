@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type { UpgradeStage } from '@/lib/upgrade/upgrade-manager';
 import type { UpgradeSseEvent } from '@/lib/upgrade/upgrade-events';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 export type UpgradePhase =
   | 'idle'
@@ -124,7 +125,7 @@ export function useUpgrade(): UseUpgradeReturn {
         jobId = data.jobId;
       } catch (err) {
         updatePhase('failed');
-        setError(err instanceof Error ? err.message : 'Failed to start upgrade');
+        setError(getErrorMessage(err));
         return;
       }
 

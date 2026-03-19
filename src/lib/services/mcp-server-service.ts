@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { mcpServers, projectMcpServers } from '@/lib/db/schema';
 import type { McpServer, NewMcpServer, ProjectMcpServer } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // --- CRUD ---
 
@@ -376,7 +377,7 @@ export async function importFromInstalledPlugins(): Promise<{
     try {
       allDiscovered = allDiscovered.concat(fn());
     } catch (err) {
-      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`${name}: ${getErrorMessage(err)}`);
     }
   }
 
@@ -423,7 +424,7 @@ export async function importFromInstalledPlugins(): Promise<{
         });
       imported.push(name);
     } catch (err) {
-      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`${name}: ${getErrorMessage(err)}`);
     }
   }
 

@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent, McpServer } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
@@ -143,7 +144,7 @@ export function QuickLaunchDialog({
       onOpenChange(false);
       router.push(`/sessions/${res.data.sessionId}?tab=${view}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to launch session');
+      setError(getErrorMessage(err));
       setIsLaunching(false);
     }
   }

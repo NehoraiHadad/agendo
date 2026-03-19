@@ -44,6 +44,7 @@ import type { PlanAnnotation, BlockSelection } from '@/lib/types/annotations';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { Plan, PlanStatus, PlanMetadata, Project } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Types & constants
@@ -374,7 +375,7 @@ export function PlanDetailClient({ plan: initialPlan, project }: PlanDetailClien
         setIsDirty(false);
         setLastSavedAt(new Date());
       } catch (err: unknown) {
-        setSaveError(err instanceof Error ? err.message : 'Save failed');
+        setSaveError(getErrorMessage(err));
       } finally {
         setIsSaving(false);
       }

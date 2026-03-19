@@ -46,6 +46,7 @@ import { apiFetch, type ApiListResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { Session, SessionStatus } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // SessionStatusBadge
@@ -438,7 +439,7 @@ export function SessionTable({ taskId }: SessionTableProps) {
       setSelected(new Set());
       fetchSessions(meta.page, statusFilter, kindFilter);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }

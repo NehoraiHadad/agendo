@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useFetch } from '@/hooks/use-fetch';
 import { Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -58,25 +59,13 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
   const selectTask = useTaskBoardStore((s) => s.selectTask);
   const removeTask = useTaskBoardStore((s) => s.removeTask);
   const tasksById = useTaskBoardStore((s) => s.tasksById);
-  const [details, setDetails] = useState<TaskWithDetails | null>(null);
+  const { data: fetchedDetails } = useFetch<TaskWithDetails>(`/api/tasks/${taskId}`, {
+    transform: (json: unknown) => (json as { data: TaskWithDetails }).data,
+  });
+  const [detailsOverride, setDetailsOverride] = useState<TaskWithDetails | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    fetch(`/api/tasks/${taskId}`, { signal: controller.signal })
-      .then((res) => res.json())
-      .then((json) => {
-        setDetails(json.data);
-      })
-      .catch(() => {
-        // Aborted or network error
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [taskId]);
+  const details = detailsOverride ?? fetchedDetails ?? null;
 
   // Sync editable fields from the store whenever a server action updates the task.
   // The store is updated by updateTask() calls in child components; details is not,
@@ -85,7 +74,7 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
     const storeTask = tasksById[taskId];
     if (!storeTask) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDetails((prev) => {
+    setDetailsOverride((prev) => {
       if (!prev) return prev;
       const rawDue = storeTask.dueAt;
       const dueAt =

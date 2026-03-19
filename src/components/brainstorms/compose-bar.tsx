@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { BrainstormRoomStatus } from '@/lib/realtime/event-types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface ComposeBarProps {
   roomId: string;
@@ -73,7 +74,7 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
         textareaRef.current.style.height = 'auto';
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send message');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsSending(false);
     }

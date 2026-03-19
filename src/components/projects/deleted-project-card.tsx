@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface DeletedProjectCardProps {
   project: Project;
@@ -29,7 +30,7 @@ export function DeletedProjectCard({ project, onRestored, onPurged }: DeletedPro
       });
       onRestored(res.data);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to restore project');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsRestoring(false);
     }
@@ -44,7 +45,7 @@ export function DeletedProjectCard({ project, onRestored, onPurged }: DeletedPro
       await apiFetch(url, { method: 'DELETE' });
       onPurged(project.id);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete project');
+      toast.error(getErrorMessage(err));
       setIsPurging(false);
     }
   }
@@ -94,7 +95,8 @@ export function DeletedProjectCard({ project, onRestored, onPurged }: DeletedPro
       ) : (
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            Permanently delete <span className="font-semibold text-foreground">{project.name}</span>? This cannot be undone.
+            Permanently delete <span className="font-semibold text-foreground">{project.name}</span>
+            ? This cannot be undone.
           </p>
           <div className="flex items-center gap-2">
             <Checkbox

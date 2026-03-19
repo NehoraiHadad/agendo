@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import { ClipboardList } from 'lucide-react';
 import type { TaskStatus, Project } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 /** Client-side valid transitions (mirrors src/lib/state-machines.ts) */
 const VALID_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
@@ -245,7 +246,7 @@ export function TaskBoard({ initialData, initialCursors, initialProjects }: Task
           throw new Error(err.error?.message ?? 'Reorder failed');
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to reorder task');
+        toast.error(getErrorMessage(err));
         // Revert: re-hydrate would be too heavy, just let SSE correct it
       } finally {
         settleOptimistic(taskId);

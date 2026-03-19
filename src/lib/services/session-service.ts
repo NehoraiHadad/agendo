@@ -3,6 +3,7 @@ import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import { ConflictError } from '@/lib/errors';
 import { safeUnlinkMany } from '@/lib/utils/fs-utils';
 import { sendSessionControl, sendSessionEvent } from '@/lib/realtime/worker-client';
@@ -67,8 +68,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 }
 
 export async function getSession(id: string): Promise<Session> {
-  const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
-  return requireFound(session, 'Session', id);
+  return getById(sessions, id, 'Session');
 }
 
 export interface SessionWithDetails extends Session {

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ArrowLeftRight, Loader2 } from 'lucide-react';
+import { useFetch } from '@/hooks/use-fetch';
 import { Button } from '@/components/ui/button';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { agentColorKey } from '@/lib/utils/agent-switch-colors';
@@ -26,27 +27,12 @@ export function AgentSwitchButton({
   onSelect,
 }: AgentSwitchButtonProps) {
   const [open, setOpen] = useState(false);
-  const [agents, setAgents] = useState<AgentRow[]>([]);
-  // Start as true — we immediately fetch on mount
-  const [loading, setLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch agents on mount — no synchronous setState inside effect body
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/agents?group=ai', { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentRow[] }>) : null))
-      .then((body) => {
-        if (controller.signal.aborted || !body?.data) {
-          setLoading(false);
-          return;
-        }
-        setAgents(body.data.filter((a) => a.isActive));
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-    return () => controller.abort();
-  }, []);
+  const { data: agents, isLoading: loading } = useFetch<AgentRow[]>('/api/agents?group=ai', {
+    transform: (json: unknown) =>
+      ((json as { data: AgentRow[] })?.data ?? []).filter((a) => a.isActive),
+  });
 
   // Close on outside click
   useEffect(() => {
@@ -98,7 +84,7 @@ export function AgentSwitchButton({
             <div className="flex items-center justify-center py-4">
               <Loader2 className="size-3.5 animate-spin text-muted-foreground/40" />
             </div>
-          ) : agents.length === 0 ? (
+          ) : !agents || agents.length === 0 ? (
             <div className="px-3 py-3 text-xs text-muted-foreground/40">
               No other agents available
             </div>

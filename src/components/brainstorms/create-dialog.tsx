@@ -27,10 +27,12 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
+import { getAgentColor } from '@/lib/utils/brainstorm-colors';
+import { AgentAvatar } from '@/components/shared/agent-avatar';
 import { deriveProvider } from '@/lib/utils/session-controls';
 import { PLAYBOOK_PRESETS, PLAYBOOK_DEFAULTS } from '@/lib/brainstorm/playbook';
 import type { BrainstormConfig } from '@/lib/db/schema';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ============================================================================
 // Types
@@ -547,7 +549,6 @@ function FormContent({
               const selected = isAgentSelected(agent.id);
               const participant = participants.find((p) => p.agentId === agent.id);
               const colors = getAgentColor(agent.slug, agentIndex);
-              const initials = getInitials(agent.name);
               const borderColorClass = colors.border.replace('border-l-', 'border-');
               return (
                 <div
@@ -567,11 +568,7 @@ function FormContent({
                       onCheckedChange={() => toggleAgent(agent)}
                       className="shrink-0"
                     />
-                    <div
-                      className={`shrink-0 size-6 rounded-full flex items-center justify-center text-[9px] font-bold border ${borderColorClass} bg-white/[0.03]`}
-                    >
-                      <span className={colors.dot}>{initials}</span>
-                    </div>
+                    <AgentAvatar name={agent.name} slug={agent.slug} index={agentIndex} size="sm" />
                     <span className="text-sm text-foreground/80 flex-1">{agent.name}</span>
                     <span className="text-[10px] text-muted-foreground/35 font-mono hidden sm:inline">
                       {agent.slug}
@@ -992,7 +989,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       onOpenChange(false);
       router.push(`/brainstorms/${room.id}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create brainstorm');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }

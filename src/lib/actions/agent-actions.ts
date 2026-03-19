@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createAgent, updateAgent, deleteAgent } from '@/lib/services/agent-service';
 import type { Agent } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface CreateAgentInput {
   name: string;
@@ -33,7 +34,7 @@ export async function createAgentAction(data: CreateAgentInput): Promise<{
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create agent',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -53,7 +54,7 @@ export async function updateAgentAction(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to update agent',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -69,7 +70,7 @@ export async function deleteAgentAction(id: string): Promise<{
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to delete agent',
+      error: getErrorMessage(error),
     };
   }
 }

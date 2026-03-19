@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, Check, X, Loader2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // Keep in sync with the TOOL_RENDERERS registry in interactive-tools.tsx.
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
@@ -180,7 +181,7 @@ export function ToolApprovalCard({
         onResolved();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      setError(getErrorMessage(err));
       setPending(null);
     }
   }

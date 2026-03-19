@@ -7,6 +7,7 @@
  */
 
 import type { Readable } from 'node:stream';
+import { ensureString } from '@/lib/utils/buffer-utils';
 
 /**
  * Parse a single NDJSON line. Returns null for blank lines or invalid JSON.
@@ -61,7 +62,7 @@ export async function* ndjsonStream<T = unknown>(opts: NdjsonStreamOpts<T>): Asy
   let lineBuffer = '';
 
   stream.on('data', (chunk: Buffer) => {
-    const combined = lineBuffer + (Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk);
+    const combined = lineBuffer + ensureString(chunk);
     const parts = combined.split('\n');
     lineBuffer = parts.pop() ?? '';
     for (const line of parts) {

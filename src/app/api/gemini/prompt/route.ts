@@ -21,6 +21,7 @@ import { BadRequestError } from '@/lib/errors';
 import { spawnGeminiHeadless, runGeminiPrompt } from '@/lib/gemini/headless';
 import { SSE_HEADERS } from '@/lib/sse/constants';
 import { encodeSSE } from '@/lib/sse/encoder';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const bodySchema = z.object({
   prompt: z.string().min(1).max(50_000),
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
       return NextResponse.json({ data: result });
     } catch (err) {
-      throw new BadRequestError(err instanceof Error ? err.message : 'Gemini prompt failed');
+      throw new BadRequestError(getErrorMessage(err));
     }
   } catch (error) {
     if (error instanceof AppError) {
@@ -119,7 +120,7 @@ function streamingResponse(req: NextRequest, body: z.infer<typeof bodySchema>): 
           }
         }
       } catch (err) {
-        send({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
+        send({ type: 'error', message: getErrorMessage(err) });
       } finally {
         controller.close();
       }

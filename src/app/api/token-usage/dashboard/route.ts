@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'fs/promises';
 import { homedir, tmpdir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,7 +61,7 @@ export async function GET(): Promise<Response> {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = getErrorMessage(err);
     return new Response(`Dashboard error: ${msg}`, { status: 500 });
   } finally {
     await rm(coordDir, { recursive: true, force: true }).catch(() => {});

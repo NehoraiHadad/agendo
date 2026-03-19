@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useFetch } from '@/hooks/use-fetch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -225,28 +226,19 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const removeTask = useTaskBoardStore((s) => s.removeTask);
   const updateTask = useTaskBoardStore((s) => s.updateTask);
   const parentTask = useTaskBoardStore((s) => s.tasksById[taskId]);
-  const [subtasks, setSubtasks] = useState<TaskBoardItem[]>([]);
+  const { data: fetchedSubtasks } = useFetch<TaskBoardItem[]>(`/api/tasks/${taskId}/subtasks`, {
+    transform: (json: unknown) => (json as { data: TaskBoardItem[] }).data ?? [],
+  });
+  const [optimisticAdds, setOptimisticAdds] = useState<TaskBoardItem[]>([]);
+  const [optimisticRemoveIds, setOptimisticRemoveIds] = useState<Set<string>>(new Set());
   const [isAdding, setIsAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/tasks/${taskId}/subtasks`, { signal });
-        const json = (await res.json()) as { data: TaskBoardItem[] };
-        if (signal.aborted) return;
-        setSubtasks(json.data ?? []);
-      } catch {
-        // ignore abort and network errors
-      }
-    };
-
-    void load();
-    return () => controller.abort();
-  }, [taskId]);
+  // Merge fetched data with optimistic local changes
+  const subtasks = useMemo(() => {
+    const base = (fetchedSubtasks ?? []).filter((s) => !optimisticRemoveIds.has(s.id));
+    return [...base, ...optimisticAdds.filter((a) => !base.some((b) => b.id === a.id))];
+  }, [fetchedSubtasks, optimisticAdds, optimisticRemoveIds]);
 
   const handleAdd = async () => {
     if (!newTitle.trim()) return;
@@ -259,7 +251,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
 
     if (result.success) {
       const newTask = result.data as TaskBoardItem;
-      setSubtasks((prev) => [...prev, newTask]);
+      setOptimisticAdds((prev) => [...prev, newTask]);
       addTask(newTask);
       setNewTitle('');
       setIsAdding(false);
@@ -269,7 +261,7 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
   const handleDelete = async (subId: string) => {
     const result = await deleteTaskAction(subId);
     if (result.success) {
-      setSubtasks((prev) => prev.filter((s) => s.id !== subId));
+      setOptimisticRemoveIds((prev) => new Set([...prev, subId]));
       removeTask(subId);
     }
   };

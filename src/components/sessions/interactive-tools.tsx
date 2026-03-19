@@ -35,6 +35,7 @@ import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { PlanAnnotator } from '@/components/sessions/plan-annotator';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -233,7 +234,7 @@ function AskUserQuestionRenderer({ input, isAnswered, respond, onResolved }: Int
       setSubmitted(true);
       onResolved?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -601,7 +602,7 @@ function ExitPlanModeRenderer({
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      setError(getErrorMessage(err));
       setPending(null);
     }
   }
@@ -626,7 +627,7 @@ function ExitPlanModeRenderer({
       });
       onResolved?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      setError(getErrorMessage(err));
       setPending(null);
     }
   }

@@ -3,6 +3,7 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 import { appendWithWindow } from '@/lib/utils/event-window';
+import { createStreamReducer } from './create-stream-reducer';
 import { useEventSource } from './use-event-source';
 
 interface SessionStreamState {
@@ -14,12 +15,9 @@ interface SessionStreamState {
   error: string | null;
 }
 
-type StreamAction =
+type CustomAction =
   | { type: 'APPEND_EVENT'; event: AgendoEvent }
-  | { type: 'SET_STATUS'; status: SessionStatus }
-  | { type: 'SET_CONNECTED'; connected: boolean }
-  | { type: 'SET_ERROR'; error: string }
-  | { type: 'RESET' };
+  | { type: 'SET_STATUS'; status: SessionStatus };
 
 const MAX_EVENTS = 2000;
 
@@ -31,38 +29,31 @@ const initialState: SessionStreamState = {
   error: null,
 };
 
-function reducer(state: SessionStreamState, action: StreamAction): SessionStreamState {
-  switch (action.type) {
-    case 'APPEND_EVENT': {
-      // Guard against duplicate delivery (e.g. SSE reconnect replaying already-seen events).
-      // id: 0 is used by synthetic/meta events (e.g. the log-fallback reconnect marker);
-      // those must also be deduped — without this guard they bypass dedup on every reconnect
-      // and produce duplicate React keys (e.g. `info-0`).
-      if (state.events.some((e) => e.id === action.event.id)) {
-        return state;
+const reducer = createStreamReducer<SessionStreamState, CustomAction>(
+  initialState,
+  (state, action) => {
+    switch (action.type) {
+      case 'APPEND_EVENT': {
+        // Guard against duplicate delivery (e.g. SSE reconnect replaying already-seen events).
+        // id: 0 is used by synthetic/meta events (e.g. the log-fallback reconnect marker);
+        // those must also be deduped — without this guard they bypass dedup on every reconnect
+        // and produce duplicate React keys (e.g. `info-0`).
+        if (state.events.some((e) => e.id === action.event.id)) {
+          return state;
+        }
+        const { items: trimmed } = appendWithWindow(state.events, action.event, MAX_EVENTS);
+        // Track permission mode changes in real-time.
+        const newMode =
+          action.event.type === 'session:mode-change' ? action.event.mode : state.permissionMode;
+        return { ...state, events: trimmed, permissionMode: newMode };
       }
-      const { items: trimmed } = appendWithWindow(state.events, action.event, MAX_EVENTS);
-      // Track permission mode changes in real-time.
-      const newMode =
-        action.event.type === 'session:mode-change' ? action.event.mode : state.permissionMode;
-      return { ...state, events: trimmed, permissionMode: newMode };
+      case 'SET_STATUS':
+        return { ...state, sessionStatus: action.status };
+      default:
+        return undefined;
     }
-    case 'SET_STATUS':
-      return { ...state, sessionStatus: action.status };
-    case 'SET_CONNECTED':
-      return {
-        ...state,
-        isConnected: action.connected,
-        error: action.connected ? null : state.error,
-      };
-    case 'SET_ERROR':
-      return { ...state, error: action.error, isConnected: false };
-    case 'RESET':
-      return initialState;
-    default:
-      return state;
-  }
-}
+  },
+);
 
 export interface UseSessionStreamReturn extends SessionStreamState {
   reset: () => void;

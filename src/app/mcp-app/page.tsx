@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { App } from '@modelcontextprotocol/ext-apps';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
 import DOMPurify from 'isomorphic-dompurify';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface ArtifactData {
   id: string;
@@ -37,7 +38,7 @@ function ArtifactViewer() {
       const { data } = (await resp.json()) as { data: ArtifactData };
       setArtifact(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load artifact');
+      setError(getErrorMessage(err));
     }
   }
 

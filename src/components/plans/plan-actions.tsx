@@ -22,6 +22,7 @@ import {
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { Agent } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,7 +88,7 @@ export function PlanActions({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load agents');
+        setError(getErrorMessage(err));
         setLoadingAgents(false);
       });
 
@@ -113,7 +114,7 @@ export function PlanActions({
       setValidateOpen(false);
       router.push(`/sessions/${result.data.sessionId}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Validation failed');
+      setError(getErrorMessage(err));
       setIsValidating(false);
     }
   }
@@ -136,7 +137,7 @@ export function PlanActions({
       setExecuteOpen(false);
       router.push(`/sessions/${result.data.sessionId}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Execution failed');
+      setError(getErrorMessage(err));
       setIsExecuting(false);
     }
   }
@@ -158,7 +159,7 @@ export function PlanActions({
       setBreakdownOpen(false);
       router.push(`/sessions/${result.data.sessionId}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Breakdown failed');
+      setError(getErrorMessage(err));
       setIsBreakingDown(false);
     }
   }

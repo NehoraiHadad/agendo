@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { MS } from '@/lib/utils/format-time';
 
 interface UsagePeriod {
   utilization: number;
@@ -35,8 +36,8 @@ function formatReset(iso: string | null): string {
   const now = Date.now();
   const diffMs = d.getTime() - now;
   if (diffMs <= 0) return 'resetting...';
-  const hours = Math.floor(diffMs / 3_600_000);
-  const mins = Math.floor((diffMs % 3_600_000) / 60_000);
+  const hours = Math.floor(diffMs / MS.HOUR);
+  const mins = Math.floor((diffMs % MS.HOUR) / MS.MINUTE);
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
 }

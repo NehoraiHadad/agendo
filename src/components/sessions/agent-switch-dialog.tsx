@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowRight, Loader2, Sparkles, Scissors } from 'lucide-react';
+import { useFetch } from '@/hooks/use-fetch';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { getTeamColor } from '@/lib/utils/team-colors';
 import { agentColorKey, agentPillClass } from '@/lib/utils/agent-switch-colors';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 export type ContextMode = 'hybrid' | 'full';
 
@@ -117,9 +119,19 @@ export function AgentSwitchDialog({
   const [resultMeta, setResultMeta] = useState<ContextMeta | null>(null);
 
   // Picker state (only used when pickerMode)
-  const [agents, setAgents] = useState<AgentOption[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(false);
   const [pickedAgent, setPickedAgent] = useState<AgentOption | null>(null);
+
+  const { data: agents, isLoading: loadingAgents } = useFetch<AgentOption[]>(
+    open && pickerMode ? '/api/agents?group=ai' : null,
+    {
+      transform: (json: unknown) => {
+        const body = json as { data: AgentSimple[] } | null;
+        return (body?.data ?? [])
+          .filter((a) => a.isActive)
+          .map((a) => ({ id: a.id, name: a.name }));
+      },
+    },
+  );
 
   // AbortController for the fork request
   const forkAbortRef = useRef<AbortController | null>(null);
@@ -156,7 +168,6 @@ export function AgentSwitchDialog({
       setIsSlow(false);
       setResultMeta(null);
       setPickedAgent(null);
-      setAgents([]);
     }
   }, [open, cancelFork]);
 
@@ -168,29 +179,6 @@ export function AgentSwitchDialog({
       ref.current++;
     };
   }, [cancelFork]);
-
-  // Fetch agents when in picker mode and dialog opens
-  useEffect(() => {
-    if (!open || !pickerMode) return;
-    const controller = new AbortController();
-    // Set loading inside a microtask to avoid synchronous setState-in-effect lint rule
-    Promise.resolve().then(() => setLoadingAgents(true));
-    fetch('/api/agents?group=ai', { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: AgentSimple[] }>) : null))
-      .then((body) => {
-        if (controller.signal.aborted || !body?.data) {
-          setLoadingAgents(false);
-          return;
-        }
-        const rows: AgentOption[] = body.data
-          .filter((a) => a.isActive)
-          .map((a) => ({ id: a.id, name: a.name }));
-        setAgents(rows);
-        setLoadingAgents(false);
-      })
-      .catch(() => setLoadingAgents(false));
-    return () => controller.abort();
-  }, [open, pickerMode]);
 
   async function handleSubmit() {
     if (isSubmitting || !resolvedAgentId) return;
@@ -259,7 +247,7 @@ export function AgentSwitchDialog({
       if (gen !== submitGenRef.current) return;
       // Don't show error for user-initiated abort
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(getErrorMessage(err));
       setIsSubmitting(false);
     } finally {
       if (slowTimerRef.current) {
@@ -285,7 +273,7 @@ export function AgentSwitchDialog({
                 <div className="flex items-center justify-center py-6">
                   <Loader2 className="size-4 animate-spin text-muted-foreground/40" />
                 </div>
-              ) : agents.length === 0 ? (
+              ) : !agents || agents.length === 0 ? (
                 <p className="text-xs text-muted-foreground/40 py-4 text-center">
                   No agents available
                 </p>

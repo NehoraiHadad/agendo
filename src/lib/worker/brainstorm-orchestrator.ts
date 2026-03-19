@@ -50,6 +50,7 @@ import type {
 } from '@/lib/realtime/event-types';
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 import { DeltaBuffer } from '@/lib/utils/delta-buffer';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const log = createLogger('brainstorm-orchestrator');
 
@@ -315,7 +316,7 @@ export class BrainstormOrchestrator {
       log.error({ err, roomId: this.roomId }, 'Brainstorm orchestrator error');
       await this.emitEvent({
         type: 'room:error',
-        message: err instanceof Error ? err.message : String(err),
+        message: getErrorMessage(err),
       }).catch(() => {});
       // Use 'paused' so the steer route can re-enqueue and recover the room.
       // 'ended' is reserved for intentional user-initiated stops.
@@ -1713,7 +1714,7 @@ ${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
       log.error({ err, roomId: this.roomId }, 'Synthesis failed');
       await this.emitEvent({
         type: 'room:error',
-        message: `Synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Synthesis failed: ${getErrorMessage(err)}`,
       });
     }
 

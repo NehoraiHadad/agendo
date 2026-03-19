@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plug, Loader2 } from 'lucide-react';
+import { useFetch } from '@/hooks/use-fetch';
 import {
   Dialog,
   DialogBody,
@@ -17,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiFetch } from '@/lib/api-types';
 import { agentColorKey } from '@/lib/utils/agent-switch-colors';
 import { getTeamColor } from '@/lib/utils/team-colors';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface AgentOption {
   id: string;
@@ -39,33 +41,26 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   const [source, setSource] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
 
+  const { data: agents } = useFetch<AgentOption[]>(open ? '/api/agents?group=ai' : null, {
+    transform: (json: unknown) => {
+      const body = json as { data: Agent[] } | null;
+      return (body?.data ?? []).filter((a) => a.isActive).map((a) => ({ id: a.id, name: a.name }));
+    },
+  });
+
+  // Auto-select first agent when data arrives
   useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    fetch('/api/agents?group=ai', { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: Agent[] }>) : null))
-      .then((body) => {
-        if (controller.signal.aborted || !body?.data) return;
-        const rows: AgentOption[] = body.data
-          .filter((a) => a.isActive)
-          .map((a) => ({ id: a.id, name: a.name }));
-        setAgents(rows);
-        if (rows.length > 0) setSelectedAgentId(rows[0].id);
-      })
-      .catch(() => {
-        /* silently ignore fetch errors */
-      });
-    return () => controller.abort();
-  }, [open]);
+    if (agents && agents.length > 0 && !selectedAgentId) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
 
   function handleOpenChange(next: boolean) {
     if (!next) {
       setSource('');
       setError('');
-      setAgents([]);
       setSelectedAgentId('');
     }
     onOpenChange(next);
@@ -86,7 +81,7 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
       onOpenChange(false);
       router.push('/sessions/' + result.data.sessionId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start integration');
+      setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -115,7 +110,7 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
 
         <form onSubmit={(e) => void handleSubmit(e)}>
           <DialogBody className="flex flex-col gap-4">
-            {agents.length > 1 && (
+            {agents && agents.length > 1 && (
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground uppercase tracking-wider">
                   Agent

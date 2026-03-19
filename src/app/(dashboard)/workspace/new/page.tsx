@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 export default function NewWorkspacePage() {
   const router = useRouter();
@@ -35,7 +36,7 @@ export default function NewWorkspacePage() {
       const body = (await res.json()) as { data: { id: string } };
       router.push(`/workspace/${body.data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create workspace');
+      setError(getErrorMessage(err));
       setIsCreating(false);
     }
   }

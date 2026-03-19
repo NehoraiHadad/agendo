@@ -32,6 +32,7 @@ import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
 import { enqueueSession } from '@/lib/worker/queue';
 import type { ExitContext } from '@/lib/worker/session-exit-logic';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 /** Human-readable labels for permission modes. */
 export const MODE_LABELS: Record<string, string> = {
@@ -198,7 +199,7 @@ export async function handleSetModel(model: string, ctx: SessionControlCtx): Pro
   } catch (err) {
     await ctx.emitEvent({
       type: 'system:error',
-      message: `Failed to switch model: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Failed to switch model: ${getErrorMessage(err)}`,
     });
   }
 }

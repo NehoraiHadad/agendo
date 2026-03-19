@@ -20,6 +20,7 @@
 
 import { collectCliOutput } from '@/lib/utils/cli-runner';
 import { runGeminiPrompt } from '@/lib/gemini/headless';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ============================================================================
 // Types
@@ -130,7 +131,7 @@ async function summarizeWithCodex(turnText: string): Promise<SummarizationResult
     );
     return { text: text.trim(), provider: 'codex', model };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : '';
+    const msg = getErrorMessage(err);
     // "model is not supported" → retry without -m flag (CLI default)
     if (msg.includes('not supported')) {
       const text = await runCli('codex', ['exec', prompt, '--sandbox', 'read-only'], 30_000);

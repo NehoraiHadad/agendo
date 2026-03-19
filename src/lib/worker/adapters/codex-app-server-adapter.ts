@@ -24,6 +24,7 @@ import {
   normalizeThreadItem,
 } from '@/lib/worker/adapters/codex-app-server-event-mapper';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const log = createLogger('codex-app-server');
 
@@ -364,7 +365,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     resumeThreadId: string | null,
   ): void {
     this.runInitChain(initialPrompt, opts, resumeThreadId).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error({ err }, 'init chain failed');
       this.emitSynthetic({ type: 'as:error', message });
       // Trigger exit so session-process can clean up

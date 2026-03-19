@@ -9,6 +9,7 @@ import {
   type StreamType,
 } from '@/lib/log-renderer';
 import { appendWithWindow } from '@/lib/utils/event-window';
+import { createStreamReducer } from './create-stream-reducer';
 import { useEventSource } from './use-event-source';
 
 type SseLogEvent =
@@ -33,14 +34,11 @@ export interface UseSessionLogStreamReturn extends StreamState {
   reset: () => void;
 }
 
-type StreamAction =
+type CustomAction =
   | { type: 'APPEND_LINES'; lines: RenderedLine[] }
   | { type: 'REPLACE_LINES'; lines: RenderedLine[] }
   | { type: 'SET_STATUS'; status: string }
-  | { type: 'SET_DONE'; status: string }
-  | { type: 'SET_CONNECTED'; connected: boolean }
-  | { type: 'SET_ERROR'; error: string }
-  | { type: 'RESET' };
+  | { type: 'SET_DONE'; status: string };
 
 function appendLines(
   existing: RenderedLine[],
@@ -59,7 +57,7 @@ const initialState: StreamState = {
   isTruncated: false,
 };
 
-function reducer(state: StreamState, action: StreamAction): StreamState {
+const reducer = createStreamReducer<StreamState, CustomAction>(initialState, (state, action) => {
   switch (action.type) {
     case 'APPEND_LINES': {
       const { lines, isTruncated } = appendLines(state.lines, action.lines);
@@ -73,20 +71,10 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
       return { ...state, status: action.status };
     case 'SET_DONE':
       return { ...state, isDone: true, status: action.status, isConnected: false };
-    case 'SET_CONNECTED':
-      return {
-        ...state,
-        isConnected: action.connected,
-        error: action.connected ? null : state.error,
-      };
-    case 'SET_ERROR':
-      return { ...state, error: action.error, isConnected: false };
-    case 'RESET':
-      return initialState;
     default:
-      return state;
+      return undefined;
   }
-}
+});
 
 export function useSessionLogStream(sessionId: string | null): UseSessionLogStreamReturn {
   const [state, dispatch] = useReducer(reducer, initialState);

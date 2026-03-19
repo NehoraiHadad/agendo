@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { resolveCliPath, stripClaudeEnv } from '@/lib/worker/adapters/build-sdk-options';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const BTW_SYSTEM_PROMPT = `You are answering a quick side question. The user is asking about something related to the conversation you can see in your history.
 
@@ -150,7 +151,7 @@ export const POST = async (req: NextRequest): Promise<Response> => {
 
         controller.enqueue(encodeLine({ type: 'done', fullText }));
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to fork session';
+        const message = getErrorMessage(err);
         controller.enqueue(encodeLine({ type: 'error', message }));
       } finally {
         controller.close();

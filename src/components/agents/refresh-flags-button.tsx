@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import type { ParsedFlag } from '@/lib/db/schema';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface RefreshFlagsButtonProps {
   agentId: string;
@@ -29,9 +30,11 @@ export function RefreshFlagsButton({ agentId, initialFlags }: RefreshFlagsButton
       const data = (await res.json()) as { data: { parsedFlags: ParsedFlag[] } };
       const updated = data.data.parsedFlags;
       setFlags(updated);
-      toast.success(`Flags refreshed — ${updated.length} flag${updated.length !== 1 ? 's' : ''} found`);
+      toast.success(
+        `Flags refreshed — ${updated.length} flag${updated.length !== 1 ? 's' : ''} found`,
+      );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = getErrorMessage(err);
       setError(msg);
       toast.error(`Refresh failed: ${msg}`);
     } finally {
@@ -42,21 +45,14 @@ export function RefreshFlagsButton({ agentId, initialFlags }: RefreshFlagsButton
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleRefresh}
-          disabled={loading}
-        >
+        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
           <RefreshCw className={`size-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh Flags
         </Button>
         <Badge variant="secondary">{flags.length} flags</Badge>
       </div>
 
-      {error && (
-        <p className="text-sm text-destructive">{error}</p>
-      )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       {flags.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -65,7 +61,10 @@ export function RefreshFlagsButton({ agentId, initialFlags }: RefreshFlagsButton
       ) : (
         <div className="space-y-1.5 max-h-64 overflow-auto">
           {flags.map((flag, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm py-1 border-b border-border/50 last:border-0">
+            <div
+              key={i}
+              className="flex items-start gap-2 text-sm py-1 border-b border-border/50 last:border-0"
+            >
               <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground shrink-0">
                 {flag.flags.join(', ')}
               </code>

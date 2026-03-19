@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { TeamMessageCard, type TeamMessageItem } from './team-message-card';
 import { getTeamColor } from '@/lib/utils/team-colors';
+import { formatRelativeTime } from '@/lib/utils/format-time';
 import type { TeamState, TeamMember, TeamTask, ActiveSubagent } from '@/hooks/use-team-state';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface TeamPanelProps {
   teamState: TeamState;
@@ -21,18 +23,6 @@ interface TeamPanelProps {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-function formatRelativeTime(timestamp: string): string {
-  try {
-    const diffMs = Date.now() - new Date(timestamp).getTime();
-    if (diffMs < 60_000) return 'just now';
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-    return `${Math.floor(diffMs / 86_400_000)}d ago`;
-  } catch {
-    return '';
-  }
-}
 
 function MemberStatusPill({ status }: { status: TeamMember['status'] }) {
   if (status === 'active') {
@@ -170,7 +160,7 @@ function AgentThread({
       setText('');
       toast.success(`Message sent to ${member.name}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send message');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsSending(false);
     }

@@ -4,7 +4,8 @@ import { memo, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronUp, ChevronsRight, Copy, Check } from 'lucide-react';
-import { getAgentColor, getInitials } from '@/lib/utils/brainstorm-colors';
+import { getAgentColor } from '@/lib/utils/brainstorm-colors';
+import { AgentAvatar } from '@/components/shared/agent-avatar';
 import type { BrainstormMessageItem, ReviewState } from '@/stores/brainstorm-store';
 import { brainstormMdComponents } from './markdown-components';
 
@@ -26,11 +27,13 @@ function PassMessage({ agentName, agentSlug, agentIndex }: PassMessageProps) {
       aria-label={`${agentName} skipped this wave`}
       title={`${agentName} passed`}
     >
-      <div
-        className={`shrink-0 size-5 rounded-full flex items-center justify-center text-[8px] font-bold border ${colors.border.replace('border-l-', 'border-')} opacity-20`}
-      >
-        <span className={`${colors.dot} opacity-70`}>{getInitials(agentName)}</span>
-      </div>
+      <AgentAvatar
+        name={agentName}
+        slug={agentSlug}
+        index={agentIndex}
+        size="xs"
+        className="opacity-20"
+      />
       <span className={`text-[10px] font-medium ${colors.dot} opacity-25`}>{agentName}</span>
       <ChevronsRight className="size-3 text-muted-foreground/20 shrink-0" />
     </div>
@@ -55,19 +58,19 @@ export function StreamingCard({
   wave: number;
 }) {
   const colors = getAgentColor(agentSlug, agentIndex);
-  const initials = getInitials(agentName);
 
   return (
     <div
       className={`flex gap-3 items-start ${colors.bg} rounded-xl p-3 border-l-2 ${colors.border}`}
     >
       {/* Avatar */}
-      <div
-        className={`shrink-0 size-7 rounded-full flex items-center justify-center text-[10px] font-bold ${colors.pulse} bg-opacity-20 border ${colors.border.replace('border-l-', 'border-')} border-opacity-40`}
-        aria-hidden="true"
-      >
-        <span className={colors.dot}>{initials}</span>
-      </div>
+      <AgentAvatar
+        name={agentName}
+        slug={agentSlug}
+        index={agentIndex}
+        pulse
+        className="bg-opacity-20 border-opacity-40"
+      />
 
       <div className="flex-1 min-w-0">
         {/* Header */}
@@ -129,7 +132,6 @@ export function ThinkingCard({
   activity?: string | null;
 }) {
   const colors = getAgentColor(agentSlug, agentIndex);
-  const initials = getInitials(agentName);
 
   return (
     <div
@@ -138,12 +140,7 @@ export function ThinkingCard({
       aria-label={`${agentName} is ${activity ?? 'thinking'}`}
     >
       {/* Avatar — pulsing to signal activity */}
-      <div
-        className={`shrink-0 size-7 rounded-full flex items-center justify-center text-[10px] font-bold animate-pulse border ${colors.border.replace('border-l-', 'border-')} bg-white/[0.03]`}
-        aria-hidden="true"
-      >
-        <span className={colors.dot}>{initials}</span>
-      </div>
+      <AgentAvatar name={agentName} slug={agentSlug} index={agentIndex} className="animate-pulse" />
 
       <div className="flex flex-1 min-w-0 items-center gap-2">
         <span className="text-xs font-medium text-foreground/60 truncate">{agentName}</span>
@@ -300,7 +297,6 @@ function AgentMessageCard({
   const [copied, setCopied] = useState(false);
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const agentName = message.agentName ?? 'Agent';
-  const initials = getInitials(agentName);
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(message.content);
@@ -318,12 +314,7 @@ function AgentMessageCard({
   return (
     <div className={`flex gap-3 items-start group`}>
       {/* Agent avatar */}
-      <div
-        className={`shrink-0 size-7 rounded-full flex items-center justify-center text-[10px] font-bold mt-0.5 border ${colors.border.replace('border-l-', 'border-')} bg-white/[0.03]`}
-        aria-label={agentName}
-      >
-        <span className={colors.dot}>{initials}</span>
-      </div>
+      <AgentAvatar name={agentName} slug={agentSlug} index={agentIndex} className="mt-0.5" />
 
       <div className="flex-1 min-w-0">
         {/* Header */}

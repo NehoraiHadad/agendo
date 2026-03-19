@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { ContextSnapshot, SnapshotFindings, Agent } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
@@ -92,7 +93,7 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
       onOpenChange(false);
       router.push(`/sessions/${res.data.sessionId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume');
+      setError(getErrorMessage(err));
       setIsLaunching(false);
     }
   }

@@ -31,6 +31,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, McpServer, Task } from '@/lib/types';
 import { deriveProvider } from '@/lib/utils/session-controls';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface ModelOption {
   id: string;
@@ -222,7 +223,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
       setOpen(false);
       router.push(`/sessions/${res.data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start session');
+      setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }

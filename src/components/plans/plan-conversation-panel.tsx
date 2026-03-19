@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useFetch } from '@/hooks/use-fetch';
 import {
   X,
   Loader2,
@@ -46,6 +47,7 @@ import {
   modelDisplayLabel,
   deriveProvider,
 } from '@/lib/utils/session-controls';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Mode config (icon references are component-level)
@@ -286,7 +288,7 @@ export function PlanConversationPanel({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setAgentError(err instanceof Error ? err.message : 'Failed to load agents');
+        setAgentError(getErrorMessage(err));
         setLoadingAgents(false);
       });
 
@@ -311,7 +313,7 @@ export function PlanConversationPanel({
       );
       onSessionCreated(result.data.sessionId);
     } catch (err: unknown) {
-      setStartError(err instanceof Error ? err.message : 'Failed to start conversation');
+      setStartError(getErrorMessage(err));
       setIsStarting(false);
     }
   }, [selectedAgentId, planId, isStarting, onSessionCreated]);
@@ -381,23 +383,27 @@ export function PlanConversationPanel({
   }, [showModelMenu]);
 
   // Fetch available models from the agent's provider
-  useEffect(() => {
-    if (!initEvent?.cwd) return; // wait for init to know the agent
+  const modelProvider = useMemo(() => {
+    if (!initEvent?.cwd) return null;
     const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-    const provider = selectedAgent?.binaryPath
-      ? deriveProvider(selectedAgent.binaryPath)
-      : 'claude';
-    const controller = new AbortController();
-    fetch(`/api/models?provider=${encodeURIComponent(provider)}`, { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<{ data: DynamicModelOption[] }>) : null))
-      .then((body) => {
-        if (!controller.signal.aborted && body?.data) {
-          setDynamicModels(body.data.map((m) => ({ id: m.id, label: m.label })));
-        }
-      })
-      .catch(() => {});
-    return () => controller.abort();
+    return selectedAgent?.binaryPath ? deriveProvider(selectedAgent.binaryPath) : 'claude';
   }, [initEvent?.cwd, selectedAgentId, agents]);
+
+  const { data: fetchedModels } = useFetch<DynamicModelOption[]>(
+    modelProvider ? `/api/models?provider=${encodeURIComponent(modelProvider)}` : null,
+    {
+      deps: [modelProvider],
+      transform: (json: unknown) =>
+        ((json as { data: DynamicModelOption[] })?.data ?? []).map((m) => ({
+          id: m.id,
+          label: m.label,
+        })),
+    },
+  );
+
+  useEffect(() => {
+    if (fetchedModels) setDynamicModels(fetchedModels);
+  }, [fetchedModels]);
 
   // Derive current model from stream events (same logic as session-detail-client)
   const events = stream.events;

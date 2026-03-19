@@ -9,6 +9,7 @@ import {
   createFromDiscovery,
 } from '@/lib/services/agent-service';
 import type { Agent } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 export async function triggerScan(extraTargets?: string[]): Promise<{
   success: boolean;
@@ -27,7 +28,7 @@ export async function triggerScan(extraTargets?: string[]): Promise<{
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Scan failed',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -44,7 +45,7 @@ export async function confirmTool(tool: DiscoveredTool): Promise<{
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to confirm tool',
+      error: getErrorMessage(error),
     };
   }
 }

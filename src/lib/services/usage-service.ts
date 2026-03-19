@@ -15,6 +15,7 @@ import {
   readCodexOAuthToken,
   readGeminiOAuthToken,
 } from './credential-reader';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export async function fetchClaudeUsage(): Promise<UsageResult> {
       status: 'error',
       account: null,
       usage: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     };
   }
 }
@@ -176,7 +177,7 @@ export async function fetchOpenAIUsage(): Promise<UsageResult> {
       status: 'error',
       account: null,
       usage: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     };
   }
 }
@@ -236,7 +237,7 @@ export async function fetchGeminiUsage(): Promise<UsageResult> {
       status: 'error',
       account: null,
       usage: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     };
   }
 }

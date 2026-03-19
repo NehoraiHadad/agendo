@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -292,7 +293,7 @@ export function BtwModal({ open, onClose, claudeSessionId }: BtwModalProps) {
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
-        const msg = err instanceof Error ? err.message : 'Something went wrong';
+        const msg = getErrorMessage(err);
         setError(msg);
       }
       // Remove any streaming placeholder

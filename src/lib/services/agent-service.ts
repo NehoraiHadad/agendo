@@ -5,6 +5,7 @@ import type { ParsedFlag } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { ValidationError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import type { Agent, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
@@ -155,9 +156,7 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
 }
 
 export async function getAgentById(id: string): Promise<Agent> {
-  const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
-
-  return requireFound(agent, 'Agent', id);
+  return getById(agents, id, 'Agent');
 }
 
 export async function listAgents(): Promise<Agent[]> {

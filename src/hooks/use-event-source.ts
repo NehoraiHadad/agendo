@@ -16,6 +16,12 @@ interface UseEventSourceOptions {
   onOpen?: () => void;
   /** Called just before a reconnect attempt (e.g. to reset local state). */
   onReconnect?: () => void;
+  /**
+   * Named SSE event types to listen for (via addEventListener).
+   * If provided, `onMessage` receives both unnamed and named events.
+   * Each named event's data is JSON-parsed before being passed to `onMessage`.
+   */
+  eventNames?: string[];
 }
 
 interface UseEventSourceReturn {
@@ -115,6 +121,22 @@ export function useEventSource(options: UseEventSourceOptions): UseEventSourceRe
           // Ignore malformed messages
         }
       };
+
+      // Listen for named SSE events (e.g., "snapshot", "task_updated")
+      const names = callbacksRef.current.eventNames;
+      if (names) {
+        for (const name of names) {
+          es.addEventListener(name, ((event: MessageEvent) => {
+            if (!isMountedRef.current) return;
+            try {
+              const data: unknown = JSON.parse(event.data as string);
+              callbacksRef.current.onMessage(data, event);
+            } catch {
+              // Ignore malformed messages
+            }
+          }) as EventListener);
+        }
+      }
 
       es.onerror = () => {
         if (!isMountedRef.current) return;

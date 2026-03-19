@@ -33,6 +33,7 @@ import { PlanStatusBadge } from '@/components/plans/plan-status-badge';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { Plan, PlanStatus, Project } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -147,7 +148,7 @@ function NewPlanDialog({ open, onOpenChange, projects, onCreated }: NewPlanDialo
       setContent('');
       onOpenChange(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create plan');
+      setError(getErrorMessage(err));
       setIsCreating(false);
     }
   }

@@ -20,6 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Textarea } from '@/components/ui/textarea';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const PRESET_COLORS = [
   '#6366f1',
@@ -163,7 +164,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
       reset();
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project');
+      setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }

@@ -1,16 +1,7 @@
 'use client';
 
-import { cn } from '@/lib/utils';
+import { StatusBadge, type StatusConfig } from '@/components/shared/status-badge';
 import type { PlanStatus } from '@/lib/types';
-
-interface StatusConfig {
-  label: string;
-  dotColor: string;
-  pillBg: string;
-  pillBorder: string;
-  textColor: string;
-  pulse: boolean;
-}
 
 const PLAN_STATUS_CONFIG: Record<PlanStatus, StatusConfig> = {
   draft: {
@@ -69,24 +60,5 @@ interface PlanStatusBadgeProps {
 }
 
 export function PlanStatusBadge({ status, className }: PlanStatusBadgeProps) {
-  const cfg = PLAN_STATUS_CONFIG[status];
-
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 text-[11px] font-medium rounded-full px-2.5 py-1 border',
-        cfg.pillBg,
-        cfg.pillBorder,
-        cfg.textColor,
-        className,
-      )}
-    >
-      <span
-        className={cn('inline-block size-1.5 rounded-full shrink-0', cfg.dotColor, {
-          'animate-pulse': cfg.pulse,
-        })}
-      />
-      {cfg.label}
-    </span>
-  );
+  return <StatusBadge config={PLAN_STATUS_CONFIG[status]} className={className} />;
 }

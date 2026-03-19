@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Terminal, ScrollText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getTeamColor } from '@/lib/utils/team-colors';
+import { formatRelativeTime } from '@/lib/utils/format-time';
 
 /** Minimal shape accepted by TeamMessageCard — compatible with both
  *  DisplayItem (kind:'team-message') and AgendoEvent (type:'team:message'). */
@@ -17,18 +18,6 @@ export interface TeamMessageItem {
   isStructured: boolean;
   structuredPayload?: Record<string, unknown>;
   sourceTimestamp: string;
-}
-
-function formatRelativeTime(timestamp: string): string {
-  try {
-    const diffMs = Date.now() - new Date(timestamp).getTime();
-    if (diffMs < 60_000) return 'just now';
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-    return `${Math.floor(diffMs / 86_400_000)}d ago`;
-  } catch {
-    return '';
-  }
 }
 
 /** Minimal Markdown component map — keeps font size consistent with chat. */

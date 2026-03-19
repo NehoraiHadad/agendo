@@ -25,13 +25,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import {
-  getAgentColor,
-  getInitials,
-  BRAINSTORM_STATUS_CONFIG,
-} from '@/lib/utils/brainstorm-colors';
+import { BRAINSTORM_STATUS_CONFIG } from '@/lib/utils/brainstorm-colors';
+import { AgentAvatar } from '@/components/shared/agent-avatar';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import type { ParticipantState } from '@/stores/brainstorm-store';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // ============================================================================
 // Status indicators per participant
@@ -138,7 +136,7 @@ function AddParticipantRow({
       setAgents((body.data ?? []).filter((a) => !existingAgentIds.has(a.id)));
       setIsOpen(true);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load agents');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -161,7 +159,7 @@ function AddParticipantRow({
       setIsOpen(false);
       setSelectedId('');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add participant');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsAdding(false);
     }
@@ -231,18 +229,10 @@ function AddParticipantRow({
 // ============================================================================
 
 function ParticipantRow({ participant, index }: { participant: ParticipantState; index: number }) {
-  const colors = getAgentColor(participant.agentSlug || '', index);
-  const initials = getInitials(participant.agentName);
-
   return (
     <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-white/[0.02] transition-colors">
       {/* Avatar with color dot */}
-      <div
-        className={`shrink-0 size-7 rounded-full flex items-center justify-center text-[10px] font-bold border ${colors.border.replace('border-l-', 'border-')} bg-white/[0.03]`}
-        aria-label={participant.agentName}
-      >
-        <span className={colors.dot}>{initials}</span>
-      </div>
+      <AgentAvatar name={participant.agentName} slug={participant.agentSlug || ''} index={index} />
 
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium text-foreground/80 truncate block">
@@ -315,7 +305,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       });
       toast.success('Brainstorm ended');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to end brainstorm');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsEnding(false);
     }
@@ -336,7 +326,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       }
       toast.success('Synthesis started');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start synthesis');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsSynthesizing(false);
     }
@@ -364,7 +354,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       });
       toast.success(`+${additionalWaves} rounds added`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to continue brainstorm');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsContinuing(false);
     }
@@ -387,7 +377,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
       toast.success('Brainstorm deleted');
       router.push('/brainstorms');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete');
+      toast.error(getErrorMessage(err));
     } finally {
       setIsDeleting(false);
       setConfirmDelete(false);

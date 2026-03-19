@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 export interface OAuthProvider {
   provider: string;
@@ -44,7 +45,7 @@ export function useAgentAuth(agentId: string): UseAgentAuthReturn {
       setStatus(data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch auth status');
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }

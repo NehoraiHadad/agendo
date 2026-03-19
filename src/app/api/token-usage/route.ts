@@ -7,6 +7,7 @@ import { homedir } from 'os';
 import path from 'path';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { readLatestContextWindow, readAllContextWindows } from '@/lib/worker/context-window-cache';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,7 +78,7 @@ export const GET = withErrorBoundary(async () => {
     ]);
     coachResult = coachRes;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = getErrorMessage(err);
     return NextResponse.json(
       { error: 'subprocess_failed', message: `measure.py failed: ${msg}` },
       { status: 500 },

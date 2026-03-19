@@ -2,7 +2,7 @@ import { eq, and, sql, desc, asc, ilike, or } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies, taskEvents, agents, projects } from '@/lib/db/schema';
 import { taskMachine } from '@/lib/state-machines';
-import { requireFound } from '@/lib/api-handler';
+import { getById } from '@/lib/services/db-helpers';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import type { Task, TaskStatus } from '@/lib/types';
@@ -58,6 +58,23 @@ export interface ListTasksOptions {
 }
 
 // --- Implementation ---
+
+async function emitStatusChangeEvent(
+  taskId: string,
+  from: string,
+  to: string,
+  taskTitle: string,
+): Promise<void> {
+  await db.insert(taskEvents).values({
+    taskId,
+    actorType: 'user',
+    eventType: 'status_changed',
+    payload: { from, to },
+  });
+  if (to === 'done') {
+    void sendPushToAll({ title: 'Task completed', body: taskTitle, url: '/tasks' });
+  }
+}
 
 async function getNextSortOrder(status: TaskStatus): Promise<number> {
   const [last] = await db
@@ -215,15 +232,7 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
     .returning();
 
   if (input.status && input.status !== existing.status) {
-    await db.insert(taskEvents).values({
-      taskId: id,
-      actorType: 'user',
-      eventType: 'status_changed',
-      payload: { from: existing.status, to: input.status },
-    });
-    if (input.status === 'done') {
-      void sendPushToAll({ title: 'Task completed', body: existing.title, url: '/tasks' });
-    }
+    await emitStatusChangeEvent(id, existing.status, input.status, existing.title);
   }
 
   if (input.assigneeAgentId !== undefined && input.assigneeAgentId !== existing.assigneeAgentId) {
@@ -261,9 +270,7 @@ export async function deleteTask(id: string): Promise<void> {
 }
 
 export async function getTaskById(id: string): Promise<Task> {
-  const [task] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
-
-  return requireFound(task, 'Task', id);
+  return getById(tasks, id, 'Task');
 }
 
 export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
@@ -544,12 +551,7 @@ export async function reorderTask(id: string, input: ReorderTaskInput): Promise<
     .returning();
 
   if (input.status && input.status !== existing.status) {
-    await db.insert(taskEvents).values({
-      taskId: id,
-      actorType: 'user',
-      eventType: 'status_changed',
-      payload: { from: existing.status, to: input.status },
-    });
+    await emitStatusChangeEvent(id, existing.status, input.status, existing.title);
   }
 
   if (needsReindex) {

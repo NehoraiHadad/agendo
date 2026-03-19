@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { AuthStatusResult, OAuthProvider } from '@/hooks/use-agent-auth';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 type OAuthStep = 'idle' | 'starting' | 'waiting' | 'input_needed' | 'success' | 'error';
 
@@ -104,7 +105,7 @@ export function AgentAuthModal({
       onAuthChanged();
       setTimeout(() => handleOpenChange(false), 1500);
     } catch (err) {
-      setApiKeyError(err instanceof Error ? err.message : 'Failed to save API key');
+      setApiKeyError(getErrorMessage(err));
     } finally {
       setApiKeyLoading(false);
     }
@@ -183,7 +184,7 @@ export function AgentAuthModal({
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') return;
       setOauthStep('error');
-      setOauthError(err instanceof Error ? err.message : 'Authentication failed');
+      setOauthError(getErrorMessage(err));
     }
   }
 
@@ -209,7 +210,7 @@ export function AgentAuthModal({
       setOauthInputPrompt(null);
       setOauthInputValue('');
     } catch (err) {
-      setOauthError(err instanceof Error ? err.message : 'Failed to send input');
+      setOauthError(getErrorMessage(err));
       setOauthStep('error');
     } finally {
       setOauthInputSending(false);

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/sheet';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface DiscoveredProject {
   path: string;
@@ -117,7 +118,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
       clearDraft();
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update project');
+      setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -144,7 +145,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
       onDeleted(project.id);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete project');
+      setError(getErrorMessage(err));
       setIsDeleting(false);
       setConfirmDelete(false);
     }

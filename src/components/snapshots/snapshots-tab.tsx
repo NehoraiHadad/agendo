@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Camera, Loader2 } from 'lucide-react';
 import { SnapshotCard } from './snapshot-card';
 import type { ContextSnapshot } from '@/lib/types';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface SnapshotsTabProps {
   projectId: string;
@@ -23,7 +24,7 @@ export function SnapshotsTab({ projectId }: SnapshotsTabProps) {
       const body = (await res.json()) as { data: ContextSnapshot[] };
       setSnapshots(body.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }

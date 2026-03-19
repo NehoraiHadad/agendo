@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { createTask, updateTask, deleteTask } from '@/lib/services/task-service';
 import { addDependency, removeDependency } from '@/lib/services/dependency-service';
 import { taskStatusEnum } from '@/lib/db/schema';
+import { getErrorMessage } from '@/lib/utils/error-utils';
 
 // --- Schemas ---
 
@@ -52,7 +53,7 @@ export async function createTaskAction(
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create task',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -71,7 +72,7 @@ export async function updateTaskAction(
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to update task',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -83,7 +84,7 @@ export async function deleteTaskAction(id: string): Promise<ActionResult> {
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to delete task',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -96,7 +97,7 @@ export async function updateTaskStatusAction(id: string, status: string): Promis
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to update status',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -111,7 +112,7 @@ export async function assignAgentAction(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to assign agent',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -126,7 +127,7 @@ export async function addDependencyAction(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to add dependency',
+      error: getErrorMessage(error),
     };
   }
 }
@@ -141,7 +142,7 @@ export async function removeDependencyAction(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to remove dependency',
+      error: getErrorMessage(error),
     };
   }
 }
