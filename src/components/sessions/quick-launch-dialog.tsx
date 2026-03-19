@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import {
   ChevronDown,
   GitBranch,
@@ -31,7 +32,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent, McpServer } from '@/lib/types';
-import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
@@ -73,14 +73,36 @@ export function QuickLaunchDialog({
   const [selectedAgentId, setSelectedAgentId] = useState<string>(defaultAgentId ?? '');
   const [view, setView] = useState<'chat' | 'terminal'>('chat');
   const [prompt, setPrompt] = useState('');
-  const [isLaunching, setIsLaunching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [selectedMcpIds, setSelectedMcpIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:quick-launch:${projectId}`);
+
+  const {
+    isSubmitting: isLaunching,
+    error,
+    handleSubmit: submitLaunch,
+  } = useFormSubmit(async () => {
+    const res = await apiFetch<ApiResponse<{ sessionId: string; taskId?: string }>>(
+      `/api/projects/${projectId}/sessions`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          initialPrompt: prompt.trim() || undefined,
+          view,
+          kind: defaultKind,
+          mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
+          useWorktree: useWorktree || undefined,
+        }),
+      },
+    );
+    clearDraft();
+    onOpenChange(false);
+    router.push(`/sessions/${res.data.sessionId}?tab=${view}`);
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -124,30 +146,7 @@ export function QuickLaunchDialog({
 
   async function handleLaunch() {
     if (!selectedAgentId || isLaunching) return;
-    setIsLaunching(true);
-    setError(null);
-    try {
-      const res = await apiFetch<ApiResponse<{ sessionId: string; taskId?: string }>>(
-        `/api/projects/${projectId}/sessions`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            agentId: selectedAgentId,
-            initialPrompt: prompt.trim() || undefined,
-            view,
-            kind: defaultKind,
-            mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
-            useWorktree: useWorktree || undefined,
-          }),
-        },
-      );
-      clearDraft();
-      onOpenChange(false);
-      router.push(`/sessions/${res.data.sessionId}?tab=${view}`);
-    } catch (err) {
-      setError(getErrorMessage(err));
-      setIsLaunching(false);
-    }
+    await submitLaunch();
   }
 
   function handleOpenChange(nextOpen: boolean) {

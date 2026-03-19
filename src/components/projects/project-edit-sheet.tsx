@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useDraft } from '@/hooks/use-draft';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import { Folder, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -54,12 +55,11 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
   const [description, setDescription] = useState(project.description ?? '');
   const [color, setColor] = useState(project.color ?? PRESET_COLORS[0]);
   const [icon, setIcon] = useState(project.icon ?? '');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteMode, setDeleteMode] = useState<'archive' | 'purge'>('archive');
   const [deleteTasks, setDeleteTasks] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [suggestions, setSuggestions] = useState<DiscoveredProject[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -81,6 +81,27 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:project:${project.id}`);
 
+  const {
+    isSubmitting,
+    error,
+    setError,
+    handleSubmit: submitUpdate,
+  } = useFormSubmit(async () => {
+    const res = await apiFetch<ApiResponse<Project>>(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: name.trim(),
+        rootPath: rootPath.trim(),
+        description: description.trim() || undefined,
+        color,
+        icon: icon.trim() || undefined,
+      }),
+    });
+    onUpdated(res.data);
+    clearDraft();
+    setOpen(false);
+  });
+
   function saveCombinedDraft(nextName = name, nextDescription = description) {
     saveDraft(JSON.stringify({ name: nextName, description: nextDescription }));
   }
@@ -92,6 +113,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     setColor(project.color ?? PRESET_COLORS[0]);
     setIcon(project.icon ?? '');
     setError(null);
+    setDeleteError(null);
     setConfirmDelete(false);
     setDeleteMode('archive');
     setDeleteTasks(false);
@@ -100,29 +122,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !rootPath.trim()) return;
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const res = await apiFetch<ApiResponse<Project>>(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          name: name.trim(),
-          rootPath: rootPath.trim(),
-          description: description.trim() || undefined,
-          color,
-          icon: icon.trim() || undefined,
-        }),
-      });
-      onUpdated(res.data);
-      clearDraft();
-      setOpen(false);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitUpdate();
   }
 
   async function handleDelete() {
@@ -132,7 +132,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     }
 
     setIsDeleting(true);
-    setError(null);
+    setDeleteError(null);
 
     try {
       if (deleteMode === 'purge') {
@@ -146,7 +146,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
       onDeleted(project.id);
       setOpen(false);
     } catch (err) {
-      setError(getErrorMessage(err));
+      setDeleteError(getErrorMessage(err));
       setIsDeleting(false);
       setConfirmDelete(false);
     }
@@ -317,7 +317,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
             />
           </div>
 
-          <ErrorAlert message={error} />
+          <ErrorAlert message={error ?? deleteError} />
 
           <SheetFooter className="flex-col gap-2 mt-auto p-0">
             <Button

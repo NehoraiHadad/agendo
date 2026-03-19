@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useRouter } from 'next/navigation';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import { ChevronDown, ChevronRight, GitBranch, Loader2, MessageSquare, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,7 +33,6 @@ import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-types';
 import type { Agent, McpServer, Task } from '@/lib/types';
 import { deriveProvider } from '@/lib/utils/session-controls';
-import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface ModelOption {
   id: string;
@@ -58,8 +58,6 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
 
   const [isLoadingTask, setIsLoadingTask] = useState(false);
   const [promptText, setPromptText] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -71,6 +69,33 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
+
+  const {
+    isSubmitting,
+    error,
+    setError,
+    handleSubmit: submitForm,
+  } = useFormSubmit(async () => {
+    const parsedBudget = maxBudgetUsd ? parseFloat(maxBudgetUsd) : undefined;
+    const res = await apiFetch<ApiResponse<{ id: string }>>('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        taskId,
+        agentId: activeAgentId,
+        initialPrompt: promptText || undefined,
+        model: selectedModel || undefined,
+        mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
+        useWorktree: useWorktree || undefined,
+        maxBudgetUsd:
+          parsedBudget != null && !isNaN(parsedBudget) && parsedBudget > 0
+            ? parsedBudget
+            : undefined,
+      }),
+    });
+    clearDraft();
+    setOpen(false);
+    router.push(`/sessions/${res.data.id}`);
+  });
 
   const fetchAgents = useCallback(
     async (signal: AbortSignal) => {
@@ -152,7 +177,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
     return () => {
       controller.abort();
     };
-  }, [open, agentIdProp, fetchAgents, fetchTask, getDraft]);
+  }, [open, agentIdProp, fetchAgents, fetchTask, getDraft, setError]);
 
   // Fetch models when agent changes
   const fetchModels = useCallback(async (signal: AbortSignal, binaryPath: string) => {
@@ -199,35 +224,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!activeAgentId) return;
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const parsedBudget = maxBudgetUsd ? parseFloat(maxBudgetUsd) : undefined;
-      const res = await apiFetch<ApiResponse<{ id: string }>>('/api/sessions', {
-        method: 'POST',
-        body: JSON.stringify({
-          taskId,
-          agentId: activeAgentId,
-          initialPrompt: promptText || undefined,
-          model: selectedModel || undefined,
-          mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
-          useWorktree: useWorktree || undefined,
-          maxBudgetUsd:
-            parsedBudget != null && !isNaN(parsedBudget) && parsedBudget > 0
-              ? parsedBudget
-              : undefined,
-        }),
-      });
-      clearDraft();
-      setOpen(false);
-      router.push(`/sessions/${res.data.id}`);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitForm();
   }
 
   const isLoading = isLoadingAgents || isLoadingTask;

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plug, Loader2 } from 'lucide-react';
 import { useFetch } from '@/hooks/use-fetch';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import {
   Dialog,
   DialogBody,
@@ -18,7 +19,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiFetch } from '@/lib/api-types';
 import { agentColorKey } from '@/lib/utils/agent-switch-colors';
 import { getTeamColor } from '@/lib/utils/team-colors';
-import { getErrorMessage } from '@/lib/utils/error-utils';
 
 interface AgentOption {
   id: string;
@@ -39,9 +39,23 @@ interface ConnectRepoDialogProps {
 export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps) {
   const router = useRouter();
   const [source, setSource] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState('');
   const [selectedAgentId, setSelectedAgentId] = useState('');
+
+  const {
+    isSubmitting,
+    error,
+    setError,
+    handleSubmit: submitForm,
+  } = useFormSubmit(async () => {
+    const body: Record<string, string> = { source: source.trim() };
+    if (selectedAgentId) body.agentId = selectedAgentId;
+    const result = await apiFetch<{ data: { sessionId: string } }>('/api/integrations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    onOpenChange(false);
+    router.push('/sessions/' + result.data.sessionId);
+  });
 
   const { data: agents } = useFetch<AgentOption[]>(open ? '/api/agents?group=ai' : null, {
     transform: (json: unknown) => {
@@ -53,6 +67,7 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   // Auto-select first agent when data arrives
   useEffect(() => {
     if (agents && agents.length > 0 && !selectedAgentId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedAgentId(agents[0].id);
     }
   }, [agents, selectedAgentId]);
@@ -60,7 +75,7 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   function handleOpenChange(next: boolean) {
     if (!next) {
       setSource('');
-      setError('');
+      setError(null);
       setSelectedAgentId('');
     }
     onOpenChange(next);
@@ -69,22 +84,7 @@ export function ConnectRepoDialog({ open, onOpenChange }: ConnectRepoDialogProps
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!source.trim() || isSubmitting) return;
-    setIsSubmitting(true);
-    setError('');
-    try {
-      const body: Record<string, string> = { source: source.trim() };
-      if (selectedAgentId) body.agentId = selectedAgentId;
-      const result = await apiFetch<{ data: { sessionId: string } }>('/api/integrations', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      onOpenChange(false);
-      router.push('/sessions/' + result.data.sessionId);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitForm();
   }
 
   return (

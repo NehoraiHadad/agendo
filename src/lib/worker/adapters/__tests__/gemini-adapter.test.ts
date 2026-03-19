@@ -384,6 +384,10 @@ describe('GeminiAdapter', () => {
     const proc = adapter.spawn('test prompt', opts);
     proc.onData((chunk) => received.push(chunk));
 
+    // Wait a tick for the spawn's prompt() mock to flush its turn-complete event
+    await new Promise((r) => setTimeout(r, 20));
+    received.length = 0;
+
     await expect(
       capturedClientHandler!.sessionUpdate({
         update: { sessionUpdate: 'unknown_debug_line' },

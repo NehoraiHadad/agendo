@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Camera, Loader2, Plus, X } from 'lucide-react';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -116,7 +117,6 @@ export function SaveSnapshotDialog({
 }: SaveSnapshotDialogProps) {
   const [name, setName] = useState('');
   const [summary, setSummary] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const [showFindings, setShowFindings] = useState(false);
   const [findings, setFindings] = useState<FindingsState>({
     filesExplored: [],
@@ -136,53 +136,42 @@ export function SaveSnapshotDialog({
     onOpenChange(v);
   }
 
-  async function handleSave() {
+  const { isSubmitting: isSaving, handleSubmit: handleSave } = useFormSubmit(async () => {
     const trimmedName = name.trim();
     const trimmedSummary = summary.trim();
-    if (!trimmedName || !trimmedSummary || isSaving) return;
     if (!projectId) {
       toast.error('Session is not linked to a project');
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const hasFindings =
-        findings.filesExplored.length > 0 ||
-        findings.findings.length > 0 ||
-        findings.nextSteps.length > 0;
+    const hasFindings =
+      findings.filesExplored.length > 0 ||
+      findings.findings.length > 0 ||
+      findings.nextSteps.length > 0;
 
-      await apiFetch<ApiResponse<ContextSnapshot>>('/api/snapshots', {
-        method: 'POST',
-        body: JSON.stringify({
-          projectId,
-          sessionId,
-          name: trimmedName,
-          summary: trimmedSummary,
-          ...(hasFindings
-            ? {
-                keyFindings: {
-                  filesExplored: findings.filesExplored,
-                  findings: findings.findings,
-                  hypotheses: [],
-                  nextSteps: findings.nextSteps,
-                },
-              }
-            : {}),
-        }),
-      });
+    await apiFetch<ApiResponse<ContextSnapshot>>('/api/snapshots', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId,
+        sessionId,
+        name: trimmedName,
+        summary: trimmedSummary,
+        ...(hasFindings
+          ? {
+              keyFindings: {
+                filesExplored: findings.filesExplored,
+                findings: findings.findings,
+                hypotheses: [],
+                nextSteps: findings.nextSteps,
+              },
+            }
+          : {}),
+      }),
+    });
 
-      toast.success('Snapshot saved', {
-        description: trimmedName,
-      });
-      handleOpenChange(false);
-    } catch (err) {
-      toast.error('Failed to save snapshot', {
-        description: err instanceof Error ? err.message : undefined,
-      });
-      setIsSaving(false);
-    }
-  }
+    toast.success('Snapshot saved', { description: trimmedName });
+    handleOpenChange(false);
+  });
 
   const isValid = name.trim().length > 0 && summary.trim().length > 0;
 

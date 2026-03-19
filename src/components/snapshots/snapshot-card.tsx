@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import { formatDistanceToNow } from 'date-fns';
 import {
   RotateCcw,
@@ -33,7 +34,6 @@ import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 import type { ContextSnapshot, SnapshotFindings, Agent } from '@/lib/types';
-import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
@@ -61,8 +61,6 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
-  const [isLaunching, setIsLaunching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -75,29 +73,25 @@ function ResumeDialog({ open, onOpenChange, snapshot }: ResumeDialogProps) {
       });
   }, [open]);
 
-  async function handleResume() {
-    if (!selectedAgentId || isLaunching) return;
-    setIsLaunching(true);
-    setError(null);
-    try {
-      const res = await apiFetch<ApiResponse<{ sessionId: string }>>(
-        `/api/snapshots/${snapshot.id}/resume`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            agentId: selectedAgentId,
-            permissionMode: 'bypassPermissions',
-          }),
-        },
-      );
-      toast.success('Session resumed from snapshot');
-      onOpenChange(false);
-      router.push(`/sessions/${res.data.sessionId}`);
-    } catch (err) {
-      setError(getErrorMessage(err));
-      setIsLaunching(false);
-    }
-  }
+  const {
+    isSubmitting: isLaunching,
+    error,
+    handleSubmit: handleResume,
+  } = useFormSubmit(async () => {
+    const res = await apiFetch<ApiResponse<{ sessionId: string }>>(
+      `/api/snapshots/${snapshot.id}/resume`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          permissionMode: 'bypassPermissions',
+        }),
+      },
+    );
+    toast.success('Session resumed from snapshot');
+    onOpenChange(false);
+    router.push(`/sessions/${res.data.sessionId}`);
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -212,12 +206,11 @@ function EditDialog({ open, onOpenChange, snapshot, onUpdated }: EditDialogProps
   const [findings, setFindings] = useState((kf?.findings ?? []).join('\n'));
   const [hypotheses, setHypotheses] = useState((kf?.hypotheses ?? []).join('\n'));
   const [nextSteps, setNextSteps] = useState((kf?.nextSteps ?? []).join('\n'));
-  const [isSaving, setIsSaving] = useState(false);
-
   // Reset form when snapshot changes or dialog opens
   useEffect(() => {
     if (!open) return;
     const f = snapshot.keyFindings as SnapshotFindings | null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(snapshot.name);
     setSummary(snapshot.summary);
     setFilesExplored((f?.filesExplored ?? []).join('\n'));
@@ -233,32 +226,24 @@ function EditDialog({ open, onOpenChange, snapshot, onUpdated }: EditDialogProps
       .filter(Boolean);
   }
 
-  async function handleSave() {
-    if (!name.trim() || !summary.trim() || isSaving) return;
-    setIsSaving(true);
-    try {
-      const res = await apiFetch<ApiResponse<ContextSnapshot>>(`/api/snapshots/${snapshot.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          name: name.trim(),
-          summary: summary.trim(),
-          keyFindings: {
-            filesExplored: splitLines(filesExplored),
-            findings: splitLines(findings),
-            hypotheses: splitLines(hypotheses),
-            nextSteps: splitLines(nextSteps),
-          },
-        }),
-      });
-      toast.success('Snapshot updated');
-      onUpdated(res.data);
-      onOpenChange(false);
-    } catch {
-      toast.error('Failed to update snapshot');
-    } finally {
-      setIsSaving(false);
-    }
-  }
+  const { isSubmitting: isSaving, handleSubmit: handleSave } = useFormSubmit(async () => {
+    const res = await apiFetch<ApiResponse<ContextSnapshot>>(`/api/snapshots/${snapshot.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: name.trim(),
+        summary: summary.trim(),
+        keyFindings: {
+          filesExplored: splitLines(filesExplored),
+          findings: splitLines(findings),
+          hypotheses: splitLines(hypotheses),
+          nextSteps: splitLines(nextSteps),
+        },
+      }),
+    });
+    toast.success('Snapshot updated');
+    onUpdated(res.data);
+    onOpenChange(false);
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -368,8 +353,6 @@ export function SnapshotCard({
   const [showResume, setShowResume] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
   // Sync if parent re-renders with new data
   useEffect(() => {
     setSnapshot(initialSnapshot);
@@ -386,18 +369,12 @@ export function SnapshotCard({
   const topFindings = findings?.findings?.slice(0, 1) ?? [];
   const topNext = findings?.nextSteps?.slice(0, 1) ?? [];
 
-  async function handleDelete() {
-    setIsDeleting(true);
-    try {
-      await apiFetch(`/api/snapshots/${snapshot.id}`, { method: 'DELETE' });
-      toast.success('Snapshot deleted');
-      setShowDelete(false);
-      onDeleted(snapshot.id);
-    } catch {
-      toast.error('Failed to delete snapshot');
-      setIsDeleting(false);
-    }
-  }
+  const { isSubmitting: isDeleting, handleSubmit: handleDelete } = useFormSubmit(async () => {
+    await apiFetch(`/api/snapshots/${snapshot.id}`, { method: 'DELETE' });
+    toast.success('Snapshot deleted');
+    setShowDelete(false);
+    onDeleted(snapshot.id);
+  });
 
   return (
     <>

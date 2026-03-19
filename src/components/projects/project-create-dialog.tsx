@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useDraft } from '@/hooks/use-draft';
+import { useFormSubmit } from '@/hooks/use-form-submit';
 import { Check, Folder, FolderPlus, Loader2, Plus, Search, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -21,7 +22,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
-import { getErrorMessage } from '@/lib/utils/error-utils';
 
 const PRESET_COLORS = [
   '#6366f1',
@@ -53,8 +53,6 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const [description, setDescription] = useState('');
   const [color, setColor] = useState(PRESET_COLORS[0]);
   const [icon, setIcon] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [suggestions, setSuggestions] = useState<DiscoveredProject[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -63,6 +61,28 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const checkAbortRef = useRef<AbortController | null>(null);
 
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:project:new');
+  const {
+    isSubmitting,
+    error,
+    setError,
+    handleSubmit: submitForm,
+  } = useFormSubmit(async () => {
+    const res = await apiFetch<ApiResponse<Project>>('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: name.trim(),
+        rootPath: rootPath.trim(),
+        description: description.trim() || undefined,
+        color,
+        icon: icon.trim() || undefined,
+        createDir: pathStatus === 'creatable',
+      }),
+    });
+    onCreated(res.data);
+    clearDraft();
+    reset();
+    setOpen(false);
+  });
 
   function saveCombinedDraft(nextName = name, nextDescription = description) {
     saveDraft(JSON.stringify({ name: nextName, description: nextDescription }));
@@ -144,31 +164,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !rootPath.trim()) return;
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const res = await apiFetch<ApiResponse<Project>>('/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: name.trim(),
-          rootPath: rootPath.trim(),
-          description: description.trim() || undefined,
-          color,
-          icon: icon.trim() || undefined,
-          createDir: pathStatus === 'creatable',
-        }),
-      });
-      onCreated(res.data);
-      clearDraft();
-      reset();
-      setOpen(false);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitForm();
   }
 
   const isCreateDisabled =
