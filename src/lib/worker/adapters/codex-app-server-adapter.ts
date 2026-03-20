@@ -105,6 +105,14 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private static readonly COMPACTION_COOLDOWN_MS = 60_000;
   /** Whether the current turn is active (set on turn/started, cleared on turn/completed). */
   private turnActive = false;
+  /** Prompt for the current turn so interrupted compactions can replay it automatically. */
+  private currentTurnPrompt: string | null = null;
+  /** Interrupted prompt waiting to be replayed after compaction completes. */
+  private pendingCompactionResumePrompt: string | null = null;
+  /** Compaction completed before the interrupted-turn notification arrived. */
+  private compactionCompletedPendingResume = false;
+  /** Guard against duplicate replay attempts when multiple compaction items arrive. */
+  private compactionResumeInFlight = false;
   /**
    * Watchdog timer for context compaction. Started after the `thread/compact/start`
    * RPC succeeds. If no `contextCompaction` item arrives within 60 seconds the
@@ -574,6 +582,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
   private async startTurn(prompt: string): Promise<void> {
     if (!this.threadId) throw new Error('No thread ID for turn/start');
+    this.currentTurnPrompt = prompt;
 
     const approvalPolicy = getApprovalPolicy(this.permissionMode);
     const sandboxMode = getSandboxMode(this.permissionMode);
@@ -629,32 +638,38 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       case 'turn/completed': {
         this.currentTurnId = null;
         this.turnActive = false;
-        this.thinkingCallback?.(false);
         const turn = params.turn as Record<string, unknown>;
         const status = (turn?.status as string) ?? 'completed';
         const error = turn?.error as { message: string; additionalDetails?: string | null } | null;
+        const shouldAutoResume =
+          status === 'interrupted' &&
+          !!this.currentTurnPrompt &&
+          (this.compacting || this.compactionCompletedPendingResume);
+        if (!shouldAutoResume) {
+          this.thinkingCallback?.(false);
+        }
+        if (status === 'completed' || status === 'failed') {
+          this.currentTurnPrompt = null;
+          this.pendingCompactionResumePrompt = null;
+          this.compactionCompletedPendingResume = false;
+        } else if (status === 'interrupted') {
+          this.pendingCompactionResumePrompt = this.currentTurnPrompt ?? null;
+          this.resumeAfterCompactionIfReady();
+        }
         this.emitSynthetic({ type: 'as:turn.completed', status, error: error ?? null });
         break;
       }
 
       case 'item/started': {
         const item = params.item as Record<string, unknown>;
-        const normalized = normalizeThreadItem(item, () => {
-          this.clearCompactionWatchdog();
-          this.compacting = false;
-          this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
-        });
+        const normalized = normalizeThreadItem(item, () => this.handleCompactionComplete());
         if (normalized) this.emitSynthetic({ type: 'as:item.started', item: normalized });
         break;
       }
 
       case 'item/completed': {
         const item = params.item as Record<string, unknown>;
-        const normalized = normalizeThreadItem(item, () => {
-          this.clearCompactionWatchdog();
-          this.compacting = false;
-          this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
-        });
+        const normalized = normalizeThreadItem(item, () => this.handleCompactionComplete());
         if (normalized) this.emitSynthetic({ type: 'as:item.completed', item: normalized });
         break;
       }
@@ -938,6 +953,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
 
     this.compacting = true;
+    this.compactionCompletedPendingResume = false;
     this.lastCompactionAt = now;
     this.emitSynthetic({ type: 'as:compact-start' });
 
@@ -973,6 +989,51 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       clearTimeout(this.compactionWatchdog);
       this.compactionWatchdog = null;
     }
+  }
+
+  private handleCompactionComplete(): void {
+    this.clearCompactionWatchdog();
+    this.compacting = false;
+    this.compactionCompletedPendingResume = true;
+
+    if (!this.resumeAfterCompactionIfReady()) {
+      if (this.currentTurnPrompt) {
+        return;
+      }
+      this.compactionCompletedPendingResume = false;
+      this.emitSynthetic({ type: 'as:info', message: 'Context compacted.' });
+    }
+  }
+
+  private resumeAfterCompactionIfReady(): boolean {
+    const promptToResume = this.pendingCompactionResumePrompt;
+    if (
+      !this.compactionCompletedPendingResume ||
+      !promptToResume ||
+      this.compactionResumeInFlight
+    ) {
+      return false;
+    }
+
+    this.compactionCompletedPendingResume = false;
+    this.pendingCompactionResumePrompt = null;
+    this.compactionResumeInFlight = true;
+    this.emitSynthetic({ type: 'as:info', message: 'Context compacted. Resuming response…' });
+
+    void this.startTurn(promptToResume)
+      .catch((err: unknown) => {
+        this.currentTurnPrompt = null;
+        this.thinkingCallback?.(false);
+        this.emitSynthetic({
+          type: 'as:error',
+          message: `Failed to resume after compaction: ${getErrorMessage(err)}`,
+        });
+      })
+      .finally(() => {
+        this.compactionResumeInFlight = false;
+      });
+
+    return true;
   }
 
   // -------------------------------------------------------------------------

@@ -275,10 +275,10 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
       // Emitting agent:result here would transition the session to awaiting_input,
       // requiring the user to manually re-send — and with the old token counter bug
       // that would immediately trigger another compaction (infinite loop).
-      // Instead, return a system:info so the user sees what happened, then let
-      // Codex's native compaction complete and resume naturally.
+      // Emit compact-start instead so the chat shows the interruption
+      // immediately while the adapter handles the automatic replay.
       if (event.status === 'interrupted') {
-        return [{ type: 'system:info', message: 'Turn interrupted — compacting context…' }];
+        return [{ type: 'system:compact-start', trigger: 'auto' }];
       }
       return [
         {

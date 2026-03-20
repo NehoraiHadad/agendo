@@ -233,6 +233,18 @@ describe('buildDisplayItems', () => {
     }
   });
 
+  it('dedupes repeated compact-start events until compaction completes', () => {
+    const events: AgendoEvent[] = [
+      { ...base, id: 1, type: 'system:compact-start', trigger: 'auto' },
+      { ...base, id: 2, type: 'system:compact-start', trigger: 'auto' },
+      { ...base, id: 3, type: 'system:info', message: 'Context compacted. Resuming response…' },
+      { ...base, id: 4, type: 'system:compact-start', trigger: 'auto' },
+    ];
+    const items = buildDisplayItems(events, emptyMap);
+    expect(items.filter((item) => item.kind === 'compact-loading')).toHaveLength(2);
+    expect(items.filter((item) => item.kind === 'info')).toHaveLength(1);
+  });
+
   describe('protocol XML stripping', () => {
     it('strips Claude Code slash command XML from agent:text events', () => {
       const events: AgendoEvent[] = [

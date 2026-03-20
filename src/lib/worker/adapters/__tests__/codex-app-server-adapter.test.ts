@@ -188,11 +188,11 @@ describe('CodexAppServerAdapter', () => {
             reasoningOutputTokens: 2000,
           },
           last: {
-            totalTokens: 5000,
-            inputTokens: 3000,
-            cachedInputTokens: 0,
-            outputTokens: 1500,
-            reasoningOutputTokens: 500,
+            totalTokens: 45000,
+            inputTokens: 30000,
+            cachedInputTokens: 15000,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
           },
           modelContextWindow: 128000,
         },
@@ -226,9 +226,9 @@ describe('CodexAppServerAdapter', () => {
             reasoningOutputTokens: 500,
           },
           last: {
-            totalTokens: 0,
-            inputTokens: 0,
-            cachedInputTokens: 0,
+            totalTokens: 10000,
+            inputTokens: 7000,
+            cachedInputTokens: 3000,
             outputTokens: 0,
             reasoningOutputTokens: 0,
           },
@@ -288,7 +288,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -307,7 +313,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-2',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -329,7 +341,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -347,7 +365,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-2',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -368,13 +392,260 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 100000 },
+          last: {
+            totalTokens: 100000,
+            inputTokens: 100000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
 
       const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
       expect(compactEvents).toHaveLength(0);
+    });
+  });
+
+  describe('automatic resume after compaction', () => {
+    it('keeps thinking active while an interrupted turn is being auto-resumed', async () => {
+      const { adapter, transport, written, onNotification } = setupAdapter();
+      const thinkingStates: boolean[] = [];
+
+      adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+      await firstTurnPromise;
+
+      onNotification('turn/started', {
+        turn: { id: 'turn-1' },
+      });
+
+      const compactPromise = (adapter as any).triggerCompaction();
+      const compactRequestLine = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequestLine).toBeDefined();
+      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
+
+      onNotification('turn/completed', {
+        turn: { status: 'interrupted' },
+      });
+
+      expect(thinkingStates).toEqual([true]);
+
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
+      await compactPromise;
+
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      const resumedTurnRequest = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (msg): msg is { id: number; method: string } => !!msg && msg.method === 'turn/start',
+        )[1];
+      expect(resumedTurnRequest).toBeDefined();
+
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: resumedTurnRequest.id, result: {} }),
+      );
+      onNotification('turn/started', {
+        turn: { id: 'turn-2' },
+      });
+      onNotification('turn/completed', {
+        turn: { status: 'completed' },
+      });
+
+      expect(thinkingStates).toEqual([true, true, false]);
+    });
+
+    it('replays the interrupted prompt once compaction completes', async () => {
+      const { adapter, transport, written, onNotification, emitted } = setupAdapter();
+
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+      await firstTurnPromise;
+
+      const compactPromise = (adapter as any).triggerCompaction();
+      const compactRequestLine = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequestLine).toBeDefined();
+      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
+
+      onNotification('turn/completed', {
+        turn: { status: 'interrupted' },
+      });
+
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
+      await compactPromise;
+
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      const turnStartRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (msg): msg is { method: string; params: { input: Array<{ text: string }> } } =>
+            !!msg && msg.method === 'turn/start',
+        );
+
+      expect(turnStartRequests).toHaveLength(2);
+      expect(turnStartRequests[1].params.input[0].text).toBe('Continue working');
+      expect(emitted).toContainEqual({
+        type: 'as:info',
+        message: 'Context compacted. Resuming response…',
+      });
+    });
+
+    it('replays the interrupted prompt when compaction completes before turn interruption is reported', async () => {
+      const { adapter, transport, written, onNotification } = setupAdapter();
+      const thinkingStates: boolean[] = [];
+
+      adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+      await firstTurnPromise;
+
+      onNotification('turn/started', {
+        turn: { id: 'turn-1' },
+      });
+
+      const compactPromise = (adapter as any).triggerCompaction();
+      const compactRequestLine = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequestLine).toBeDefined();
+      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
+
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
+      await compactPromise;
+
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+      onNotification('turn/completed', {
+        turn: { status: 'interrupted' },
+      });
+
+      const resumedTurnRequest = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (msg): msg is { id: number; method: string } => !!msg && msg.method === 'turn/start',
+        )[1];
+      expect(resumedTurnRequest).toBeDefined();
+      expect(thinkingStates).toEqual([true]);
+
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: resumedTurnRequest.id, result: {} }),
+      );
+      onNotification('turn/started', {
+        turn: { id: 'turn-2' },
+      });
+      onNotification('turn/completed', {
+        turn: { status: 'completed' },
+      });
+
+      expect(thinkingStates).toEqual([true, true, false]);
+    });
+
+    it('does not replay the interrupted prompt twice when both compaction item notifications arrive', async () => {
+      const { adapter, transport, written, onNotification } = setupAdapter();
+
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+      await firstTurnPromise;
+
+      const compactPromise = (adapter as any).triggerCompaction();
+      const compactRequestLine = written.find((line) => {
+        try {
+          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+        } catch {
+          return false;
+        }
+      });
+      expect(compactRequestLine).toBeDefined();
+      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
+
+      onNotification('turn/completed', {
+        turn: { status: 'interrupted' },
+      });
+
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
+      await compactPromise;
+
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      const turnStartRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter((msg) => !!msg && msg.method === 'turn/start');
+
+      expect(turnStartRequests).toHaveLength(2);
     });
   });
 
@@ -402,7 +673,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -454,7 +731,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -495,7 +778,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });
@@ -616,7 +905,13 @@ describe('CodexAppServerAdapter', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         tokenUsage: {
-          total: { totalTokens: 170000 },
+          last: {
+            totalTokens: 170000,
+            inputTokens: 170000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
           modelContextWindow: 200000,
         },
       });

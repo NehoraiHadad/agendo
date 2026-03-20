@@ -114,6 +114,16 @@ describe('mapAppServerEventToPayloads', () => {
       });
       expect(result[1]).toMatchObject({ type: 'system:error' });
     });
+
+    it('maps turn.completed interrupted to compact-start', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:turn.completed',
+        status: 'interrupted',
+        error: null,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toEqual([{ type: 'system:compact-start', trigger: 'auto' }]);
+    });
   });
 });
 

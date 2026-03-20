@@ -222,6 +222,7 @@ export function buildDisplayItems(
   const pendingTools = new Map<string, ToolState>();
   let sessionInitCount = 0;
   let sessionCostUsd = 0;
+  let compactionInProgress = false;
   // Track the last assistant UUID from agent:result so the next user:message
   // can offer a branch button (Claude only — only set when messageUuid is present).
   let lastAgentResultUuid: string | undefined;
@@ -450,6 +451,8 @@ export function buildDisplayItems(
       }
 
       case 'system:compact-start': {
+        if (compactionInProgress) break;
+        compactionInProgress = true;
         items.push({ kind: 'compact-loading', id: ev.id, trigger: ev.trigger });
         break;
       }
@@ -457,6 +460,15 @@ export function buildDisplayItems(
       case 'system:info': {
         // Hide internal diagnostic messages from the chat view (still visible in event log)
         if (ev.message.startsWith('History loaded from')) break;
+
+        if (
+          ev.compactMeta ||
+          ev.message === 'Conversation history compacted' ||
+          ev.message.startsWith('Conversation compacted (') ||
+          ev.message.startsWith('Context compacted.')
+        ) {
+          compactionInProgress = false;
+        }
 
         let infoText = ev.message;
         if (ev.compactMeta) {
