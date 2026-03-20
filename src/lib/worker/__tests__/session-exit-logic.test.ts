@@ -40,6 +40,7 @@ import {
   ExitContext,
   determineExitStatus,
   cleanupResources,
+  isMidTurnInterruption,
   type CleanupDeps,
   type ExitStatusDeps,
 } from '../session-exit-logic';
@@ -272,6 +273,70 @@ describe('determineExitStatus', () => {
     // transitionTo, the endedAt update depends on implementation details.
     // We'll verify the transition happened correctly.
     expect(deps.transitionTo).toHaveBeenCalledWith('ended');
+  });
+});
+
+describe('isMidTurnInterruption', () => {
+  it('treats signal-style null exits from active turns as interruptions', () => {
+    const ctx = new ExitContext();
+
+    expect(
+      isMidTurnInterruption({
+        currentStatus: 'active',
+        exitCode: null,
+        exitContext: ctx,
+      }),
+    ).toBe(true);
+  });
+
+  it('treats planned terminate exits from active turns as interruptions', () => {
+    const ctx = new ExitContext();
+    ctx.reason = 'terminate';
+
+    expect(
+      isMidTurnInterruption({
+        currentStatus: 'active',
+        exitCode: null,
+        exitContext: ctx,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not treat clean exits as interruptions', () => {
+    const ctx = new ExitContext();
+
+    expect(
+      isMidTurnInterruption({
+        currentStatus: 'active',
+        exitCode: 0,
+        exitContext: ctx,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not treat awaiting_input exits as mid-turn interruptions', () => {
+    const ctx = new ExitContext();
+
+    expect(
+      isMidTurnInterruption({
+        currentStatus: 'awaiting_input',
+        exitCode: null,
+        exitContext: ctx,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not treat user cancellations as interruptions', () => {
+    const ctx = new ExitContext();
+    ctx.reason = 'cancel';
+
+    expect(
+      isMidTurnInterruption({
+        currentStatus: 'active',
+        exitCode: null,
+        exitContext: ctx,
+      }),
+    ).toBe(false);
   });
 });
 

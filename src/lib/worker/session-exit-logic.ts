@@ -75,6 +75,12 @@ export interface ExitStatusDeps {
   transitionTo(status: SessionStatus): Promise<void>;
 }
 
+export interface MidTurnInterruptionInput {
+  currentStatus: SessionStatus;
+  exitCode: number | null;
+  exitContext: Pick<ExitContext, 'reason' | 'cancelKilled' | 'terminateKilled'>;
+}
+
 // ---------------------------------------------------------------------------
 // cleanupResources
 // ---------------------------------------------------------------------------
@@ -115,6 +121,23 @@ export function cleanupResources(deps: CleanupDeps): void {
 // ---------------------------------------------------------------------------
 // determineExitStatus
 // ---------------------------------------------------------------------------
+
+/**
+ * Detect exits that happened while the agent was still actively working and
+ * should therefore trigger auto-resume instead of being treated as a normal
+ * pause. This includes signal-based exits that surface as `code=null`.
+ */
+export function isMidTurnInterruption({
+  currentStatus,
+  exitCode,
+  exitContext,
+}: MidTurnInterruptionInput): boolean {
+  return (
+    currentStatus === 'active' &&
+    !exitContext.cancelKilled &&
+    (exitContext.terminateKilled || (exitContext.reason === 'none' && exitCode !== 0))
+  );
+}
 
 /**
  * Map exit code and session flags to the final session status, emit

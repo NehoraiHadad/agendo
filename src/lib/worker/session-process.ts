@@ -56,6 +56,7 @@ import {
   ExitContext,
   cleanupResources,
   determineExitStatus,
+  isMidTurnInterruption,
 } from '@/lib/worker/session-exit-logic';
 import { SessionDataPipeline } from '@/lib/worker/session-data-pipeline';
 import { captureGitContext, countCommitsSince } from '@/lib/worker/git-context';
@@ -913,11 +914,11 @@ export class SessionProcess {
     // Covers both planned terminations (terminateKilled) and unexpected crashes
     // (non-zero exit, no known reason) — e.g. agendo restart dropping the MCP
     // connection while the agent was actively working.
-    const wasInterruptedMidTurn =
-      this.status === 'active' &&
-      !this.exitCtx.cancelKilled &&
-      (this.exitCtx.terminateKilled ||
-        (exitCode !== 0 && exitCode !== null && this.exitCtx.reason === 'none'));
+    const wasInterruptedMidTurn = isMidTurnInterruption({
+      currentStatus: this.status,
+      exitCode,
+      exitContext: this.exitCtx,
+    });
 
     await determineExitStatus(this.exitCtx, exitCode, wasInterruptedMidTurn, {
       sessionId: this.session.id,
