@@ -62,6 +62,19 @@ describe('apiFetch', () => {
     expect(headers).toHaveProperty('Content-Type', 'text/plain');
   });
 
+  it('does not force Content-Type when body is FormData', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: null }));
+
+    const body = new FormData();
+    body.set('message', 'hello');
+
+    await apiFetch('/api/test', { method: 'POST', body });
+
+    const callArgs = mockFetch.mock.calls[0];
+    expect(callArgs[1]?.headers).toBeUndefined();
+    expect(callArgs[1]?.body).toBe(body);
+  });
+
   it('passes through other RequestInit options', async () => {
     mockFetch.mockResolvedValue(jsonResponse({ data: null }));
 

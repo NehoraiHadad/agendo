@@ -46,6 +46,38 @@ describe('handleRedirect', () => {
   });
 });
 
+describe('handleMessage', () => {
+  it('forwards attachments, priority, and clientId to ctx.pushMessage', async () => {
+    const { handleMessage } = await import('@/lib/worker/session-control-handlers');
+    const control = {
+      type: 'message',
+      text: 'inspect the files',
+      attachments: [
+        {
+          id: 'att-1',
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          size: 12,
+          kind: 'file',
+          path: '/workspace/.agendo/attachments/notes.txt',
+          sha256: 'abc123',
+        },
+      ],
+      priority: 'next',
+      clientId: 'client-1',
+    } as Extract<AgendoControl, { type: 'message' }>;
+    const ctx = makeCtx();
+
+    await handleMessage(control, ctx);
+
+    expect(ctx.pushMessage).toHaveBeenCalledWith('inspect the files', {
+      attachments: control.attachments,
+      priority: 'next',
+      clientId: 'client-1',
+    });
+  });
+});
+
 describe('handleToolResult', () => {
   it('calls approvalHandler.pushToolResult when status is active', async () => {
     const { handleToolResult } = await import('@/lib/worker/session-control-handlers');

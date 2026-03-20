@@ -85,7 +85,7 @@ describe('handleMessage priority passthrough', () => {
     const ctx = makeCtx();
     await handleMessage(control, ctx);
     expect(ctx.pushMessage).toHaveBeenCalledWith('do something', {
-      image: undefined,
+      attachments: undefined,
       priority: 'next',
       clientId: undefined,
     });
@@ -100,7 +100,7 @@ describe('handleMessage priority passthrough', () => {
     const ctx = makeCtx();
     await handleMessage(control, ctx);
     expect(ctx.pushMessage).toHaveBeenCalledWith('plain message', {
-      image: undefined,
+      attachments: undefined,
       priority: undefined,
       clientId: undefined,
     });

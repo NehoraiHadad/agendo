@@ -1,15 +1,15 @@
 import { createLogger } from '@/lib/logger';
 import { AsyncLock } from '@/lib/utils/async-lock';
+import type { AttachmentRef } from '@/lib/attachments';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { extractMessage, AcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
 import type { Client } from '@agentclientprotocol/sdk';
-import type {
-  AgentAdapter,
-  ImageContent,
-  ManagedProcess,
-  SpawnOpts,
-} from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
+import {
+  buildMessageWithAttachments,
+  readNativeImageContents,
+} from '@/lib/worker/attachment-utils';
 
 const log = createLogger('acp-adapter');
 
@@ -38,7 +38,6 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
   protected sessionId: string | null = null;
   protected currentTurn: Promise<void> = Promise.resolve();
   protected lock = new AsyncLock();
-  protected pendingImage: ImageContent | null = null;
   protected dataCallbacks: Array<(chunk: string) => void> = [];
   protected exitCallbacks: Array<(code: number | null) => void> = [];
   protected storedOpts: SpawnOpts | null = null;
@@ -151,13 +150,12 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
 
   async sendMessage(
     message: string,
-    image?: ImageContent,
+    attachments?: AttachmentRef[],
     _priority?: import('@/lib/realtime/events').MessagePriority,
   ): Promise<void> {
     if (!this.sessionId) throw new Error(`No active ${this.agentLabel} ACP session`);
     await this.currentTurn;
-    this.pendingImage = image ?? null;
-    this.currentTurn = this.lock.acquire(() => this.sendPrompt(message));
+    this.currentTurn = this.lock.acquire(() => this.sendPrompt(message, attachments));
     await this.currentTurn;
   }
 
@@ -345,18 +343,22 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     }
 
     await this.onAfterInit(opts);
-    await this.sendPrompt(prompt);
+    await this.sendPrompt(prompt, opts.initialAttachments);
   }
 
-  protected async sendPrompt(text: string): Promise<void> {
+  protected async sendPrompt(text: string, attachments?: AttachmentRef[]): Promise<void> {
     if (!this.sessionId) throw new Error('No active session');
     this.thinkingCallback?.(true);
 
-    const image = this.pendingImage ?? undefined;
-    this.pendingImage = null;
-
     try {
-      const promptResponse = await this.transport.sendPrompt(this.sessionId, text, image);
+      const promptResponse = await this.transport.sendPrompt(
+        this.sessionId,
+        buildMessageWithAttachments(text, attachments),
+        readNativeImageContents(attachments).map(({ attachment, data }) => ({
+          data,
+          mimeType: attachment.mimeType,
+        })),
+      );
       this.emitNdjson({
         type: `${this.agentPrefix}:turn-complete`,
         result: promptResponse,

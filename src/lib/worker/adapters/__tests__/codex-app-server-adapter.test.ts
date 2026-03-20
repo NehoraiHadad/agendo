@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { AttachmentRef } from '@/lib/attachments';
 
 // ---------------------------------------------------------------------------
 // Mock heavy dependencies so we can instantiate CodexAppServerAdapter
@@ -126,6 +127,51 @@ describe('CodexAppServerAdapter', () => {
       await promise;
 
       expect((adapter as any).model).toBe('gpt-4.1');
+    });
+  });
+
+  describe('sendMessage()', () => {
+    it('sends attachment manifest text and localImage inputs for image attachments', async () => {
+      const { adapter, transport, written } = setupAdapter();
+      (adapter as any).threadId = 'thread-1';
+
+      const attachment: AttachmentRef = {
+        id: 'att-1',
+        name: 'diagram.png',
+        mimeType: 'image/png',
+        size: 4,
+        kind: 'image',
+        path: '/workspace/.agendo/attachments/thread-1/diagram.png',
+        sha256: 'deadbeef',
+      };
+
+      const promise = adapter.sendMessage('describe this diagram', [attachment]);
+
+      const sent = JSON.parse(written[0].trimEnd());
+      expect(sent).toMatchObject({
+        jsonrpc: '2.0',
+        id: expect.any(Number),
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-1',
+          input: [
+            {
+              type: 'text',
+              text: expect.stringContaining('describe this diagram'),
+              text_elements: [],
+            },
+            {
+              type: 'localImage',
+              path: attachment.path,
+            },
+          ],
+        },
+      });
+      expect(sent.params.input[0].text).toContain('Attached files available in the workspace:');
+      expect(sent.params.input[0].text).toContain(attachment.path);
+
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: sent.id, result: {} }));
+      await promise;
     });
   });
 

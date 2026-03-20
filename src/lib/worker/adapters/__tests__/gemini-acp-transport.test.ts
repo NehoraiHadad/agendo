@@ -273,7 +273,7 @@ describe('GeminiAcpTransport', () => {
 
     it('sends text + image when image provided', async () => {
       const image = { data: 'base64data', mimeType: 'image/png' };
-      await transport.sendPrompt('session-1', 'Describe this', image);
+      await transport.sendPrompt('session-1', 'Describe this', [image]);
 
       expect(mockConnection.prompt).toHaveBeenCalledWith({
         sessionId: 'session-1',

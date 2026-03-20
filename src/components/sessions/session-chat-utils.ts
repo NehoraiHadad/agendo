@@ -1,3 +1,4 @@
+import type { AttachmentMeta } from '@/lib/attachments';
 import type { AgendoEvent } from '@/lib/realtime/events';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,10 @@ export interface ToolState {
   /** Present when this tool call spawned a subagent (Task / Agent tools). */
   subagentInfo?: SubagentInfo;
 }
+
+export type DisplayAttachment = AttachmentMeta & {
+  previewDataUrl?: string;
+};
 
 export type AssistantPart =
   | { kind: 'text'; text: string; fromDelta?: boolean }
@@ -61,7 +66,7 @@ export type DisplayItem =
       ts?: number;
       text: string;
       hasImage?: boolean;
-      imageDataUrl?: string;
+      attachments?: DisplayAttachment[];
       /**
        * UUID of the preceding assistant turn — used as --resume-session-at when branching.
        * null = first user message (no preceding turn); fork without --resume-session-at.
@@ -440,6 +445,7 @@ export function buildDisplayItems(
           ts: ev.ts,
           text: cleanUserText,
           hasImage: ev.hasImage,
+          attachments: ev.attachments,
           // Attach the UUID of the preceding assistant turn. When present,
           // the chat view shows a branch button on this user message.
           // null = first message (no preceding turn) — still shows button, forks from start.

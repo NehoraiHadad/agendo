@@ -36,7 +36,12 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { WriteView } from '@/components/executions/tool-views/write-view';
 import { EditView } from '@/components/executions/tool-views/edit-view';
 import { MultiEditView } from '@/components/executions/tool-views/multi-edit-view';
-import { SessionMessageInput } from '@/components/sessions/session-message-input';
+import { buildMessageFormData } from '@/components/sessions/session-message-attachments';
+import {
+  SessionMessageInput,
+  type PendingAttachment,
+  type QueuedAttachmentPayload,
+} from '@/components/sessions/session-message-input';
 import { PendingMessagePill } from '@/components/sessions/pending-message-pill';
 import { ToolApprovalCard } from '@/components/sessions/tool-approval-card';
 import { InteractiveTool } from '@/components/sessions/interactive-tools';
@@ -64,6 +69,7 @@ import {
   type ToolState,
   type AssistantPart,
   type DisplayItem,
+  type DisplayAttachment,
   type TurnMeta,
 } from './session-chat-utils';
 
@@ -1003,19 +1009,24 @@ function BranchPopover({
 
 function UserBubble({
   text,
+  attachments,
   hasImage,
-  imageDataUrl,
   ts,
   sessionId,
   branchUuid,
 }: {
   text: string;
+  attachments?: DisplayAttachment[];
   hasImage?: boolean;
-  imageDataUrl?: string;
   ts?: number;
   sessionId?: string;
   branchUuid?: string | null;
 }) {
+  const hasAttachments = (attachments?.length ?? 0) > 0;
+  const nativePreviewAttachments =
+    attachments?.filter((attachment) => attachment.previewDataUrl) ?? [];
+  const fileOnlyAttachments = attachments?.filter((attachment) => !attachment.previewDataUrl) ?? [];
+
   return (
     <div className="flex gap-2.5 items-start justify-end animate-fade-in-up group/userrow">
       <div className="flex flex-col items-end gap-1 min-w-0">
@@ -1029,13 +1040,39 @@ function UserBubble({
             boxShadow: '0 2px 12px oklch(0.7 0.18 280 / 0.08)',
           }}
         >
-          {imageDataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imageDataUrl}
-              alt="attachment"
-              className="max-h-48 max-w-full rounded-lg object-contain"
-            />
+          {hasAttachments ? (
+            <div className="space-y-2">
+              {nativePreviewAttachments.length > 0 && (
+                <div
+                  className={`grid gap-2 ${
+                    nativePreviewAttachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
+                  }`}
+                >
+                  {nativePreviewAttachments.map((attachment) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={attachment.id}
+                      src={attachment.previewDataUrl}
+                      alt={attachment.name}
+                      className="max-h-48 w-full rounded-lg object-contain"
+                    />
+                  ))}
+                </div>
+              )}
+              {fileOnlyAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {fileOnlyAttachments.map((attachment) => (
+                    <span
+                      key={attachment.id}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-[11px] text-foreground/75"
+                    >
+                      <Paperclip className="size-3 shrink-0" />
+                      <span className="max-w-48 truncate">{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : hasImage ? (
             <div className="flex items-center gap-1.5 text-xs text-primary/70">
               <Paperclip className="size-3 shrink-0" />
@@ -1207,7 +1244,7 @@ export function SessionChatView({
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<
-    { id: string; text: string; imageDataUrl?: string; clientId?: string }[]
+    { id: string; text: string; attachments?: QueuedAttachmentPayload[]; clientId?: string }[]
   >([]);
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
@@ -1219,17 +1256,16 @@ export function SessionChatView({
   const msgIdRef = useRef(0);
   const currentUserMsgCountRef = useRef(0); // always-current count from stream
   const baseUserMsgCountRef = useRef(0); // count at time of last send
-  // Accumulates base64 image data URLs in send order so we can re-hydrate
-  // user:message display items (which only carry hasImage:boolean, not the URL).
-  const imageUrlsQueueRef = useRef<string[]>([]);
+  // Accumulates local attachment previews in send order so we can re-hydrate
+  // user:message display items after the SSE event arrives.
+  const attachmentPreviewQueueRef = useRef<QueuedAttachmentPayload[][]>([]);
 
   // Queued message: shown as a pill while the POST with priority:'next' is in flight.
   // Persisted to sessionStorage so it survives page refresh.
   const QUEUE_KEY = `queued-msg:${sessionId}`;
   type QueuedMessage = {
     text: string;
-    imageDataUrl?: string;
-    imagePayload?: { mimeType: string; data: string };
+    attachments?: QueuedAttachmentPayload[];
     /** True while the POST is in flight */
     isSending?: boolean;
     /** Client-generated UUID nonce for dedup — pill clears when SSE with matching clientId arrives */
@@ -1256,11 +1292,7 @@ export function SessionChatView({
   // in SessionMessageInput re-fires even if the text is the same.
   const restoreKeyRef = useRef(0);
   const [restoredDraft, setRestoredDraft] = useState<{ text: string; key: number } | null>(null);
-  const [restoredImage, setRestoredImage] = useState<{
-    dataUrl: string;
-    mimeType: string;
-    data: string;
-  } | null>(null);
+  const [restoredAttachments, setRestoredAttachments] = useState<PendingAttachment[] | null>(null);
 
   const handleInterrupt = useCallback(async () => {
     if (isInterrupting) return;
@@ -1308,8 +1340,8 @@ export function SessionChatView({
   }, [sessionId, isRollingBack]);
 
   const handleSent = useCallback(
-    (text: string, imageDataUrl?: string, clientId?: string) => {
-      if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
+    (text: string, attachments?: QueuedAttachmentPayload[], clientId?: string) => {
+      if (attachments?.length) attachmentPreviewQueueRef.current.push(attachments);
       baseUserMsgCountRef.current = currentUserMsgCountRef.current; // capture baseline
 
       // When this is the very first message to a fresh session (idle, no initial prompt set),
@@ -1323,7 +1355,7 @@ export function SessionChatView({
 
       setOptimisticMessages((prev) => [
         ...prev,
-        { id: String(++msgIdRef.current), text, imageDataUrl, clientId },
+        { id: String(++msgIdRef.current), text, attachments, clientId },
       ]);
     },
     [effectiveInitialPrompt, currentStatus],
@@ -1333,11 +1365,7 @@ export function SessionChatView({
   // Shows pill in "sending" state; on success clears pill and shows optimistic bubble.
   // On failure reverts pill to editable state. Edit/cancel abort the in-flight request.
   const handleQueue = useCallback(
-    async (
-      text: string,
-      imageDataUrl?: string,
-      imagePayload?: { mimeType: string; data: string },
-    ) => {
+    async (text: string, attachments?: QueuedAttachmentPayload[]) => {
       // Abort any previous in-flight queued POST
       queueAbortRef.current?.abort();
 
@@ -1349,17 +1377,12 @@ export function SessionChatView({
       const clientId = generateId();
 
       // Show pill in sending state immediately
-      setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: true, clientId });
-
-      const body: Record<string, unknown> = { message: text, priority: 'next', clientId };
-      if (imagePayload) {
-        body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
-      }
+      setQueuedMessage({ text, attachments, isSending: true, clientId });
 
       try {
         await apiFetch(`/api/sessions/${sessionId}/message`, {
           method: 'POST',
-          body: JSON.stringify(body),
+          body: buildMessageFormData(text, attachments, { priority: 'next', clientId }),
           signal: controller.signal,
         });
 
@@ -1368,14 +1391,14 @@ export function SessionChatView({
         // (see the clientId dedup effect below). This avoids the race condition
         // where handleSent() captures baseline AFTER the SSE already arrived.
         queueAbortRef.current = null;
-        if (imageDataUrl) imageUrlsQueueRef.current.push(imageDataUrl);
+        if (attachments?.length) attachmentPreviewQueueRef.current.push(attachments);
         setQueuedMessage((prev) => (prev ? { ...prev, isSending: false } : null));
       } catch (err: unknown) {
         // If aborted (edit/cancel), don't touch state — the abort handler already did
         if (err instanceof DOMException && err.name === 'AbortError') return;
         // POST failed — revert pill to editable state (not sending)
         queueAbortRef.current = null;
-        setQueuedMessage({ text, imageDataUrl, imagePayload, isSending: false, clientId });
+        setQueuedMessage({ text, attachments, isSending: false, clientId });
       }
     },
     [sessionId],
@@ -1383,22 +1406,14 @@ export function SessionChatView({
 
   // Send a message immediately with priority:'now' to interrupt an active agent.
   const handleSendNow = useCallback(
-    async (
-      text: string,
-      imageDataUrl?: string,
-      imagePayload?: { mimeType: string; data: string },
-    ) => {
+    async (text: string, attachments?: QueuedAttachmentPayload[]) => {
       const clientId = generateId();
-      const body: Record<string, unknown> = { message: text, priority: 'now', clientId };
-      if (imagePayload) {
-        body.image = { mimeType: imagePayload.mimeType, data: imagePayload.data };
-      }
       try {
         await apiFetch(`/api/sessions/${sessionId}/message`, {
           method: 'POST',
-          body: JSON.stringify(body),
+          body: buildMessageFormData(text, attachments, { priority: 'now', clientId }),
         });
-        handleSent(text, imageDataUrl, clientId);
+        handleSent(text, attachments, clientId);
       } catch {
         // Silently ignore — the agent is still running and will continue
       }
@@ -1420,14 +1435,11 @@ export function SessionChatView({
       }).catch(() => {});
     }
     setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
-    setRestoredImage(
-      queuedMessage.imageDataUrl && queuedMessage.imagePayload
-        ? {
-            dataUrl: queuedMessage.imageDataUrl,
-            mimeType: queuedMessage.imagePayload.mimeType,
-            data: queuedMessage.imagePayload.data,
-          }
-        : null,
+    setRestoredAttachments(
+      queuedMessage.attachments?.map((attachment) => ({
+        id: generateId(),
+        ...attachment,
+      })) ?? null,
     );
     setQueuedMessage(null);
   }, [queuedMessage, sessionId]);
@@ -1452,9 +1464,9 @@ export function SessionChatView({
     if (!queuedMessage) return;
     queueAbortRef.current?.abort();
     queueAbortRef.current = null;
-    const { text, imageDataUrl, imagePayload } = queuedMessage;
+    const { text, attachments } = queuedMessage;
     setQueuedMessage(null);
-    void handleSendNow(text, imageDataUrl, imagePayload);
+    void handleSendNow(text, attachments);
   }, [queuedMessage, handleSendNow]);
 
   // Sync queuedMessage to sessionStorage so it survives page refresh
@@ -1477,7 +1489,7 @@ export function SessionChatView({
     // Re-send the recovered queued message through handleQueue (which POSTs with priority)
     const msg = queuedMessage;
     setQueuedMessage(null);
-    void handleQueue(msg.text, msg.imageDataUrl, msg.imagePayload);
+    void handleQueue(msg.text, msg.attachments);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
 
@@ -1644,14 +1656,43 @@ export function SessionChatView({
   // findLast is available in Node 18+ / modern browsers; fall back to reverse iteration.
   const showTyping = isActive && stream.isConnected;
 
-  // Re-hydrate user items that have images: stream events only carry hasImage:boolean,
-  // so we correlate them (in order) with the URLs we buffered at send time.
+  // Re-hydrate user items with local attachment previews by correlating them in send order.
   const augmentedDisplayItems = (() => {
     let queueIdx = 0;
     return displayItems.map((item) => {
-      if (item.kind === 'user' && item.hasImage) {
-        return { ...item, imageDataUrl: imageUrlsQueueRef.current[queueIdx++] };
+      if (item.kind !== 'user') {
+        return item;
       }
+
+      const previewBundle = attachmentPreviewQueueRef.current[queueIdx];
+      if (!previewBundle?.length) return item;
+
+      if (item.attachments?.length) {
+        queueIdx++;
+        return {
+          ...item,
+          attachments: item.attachments.map((attachment, index) => ({
+            ...attachment,
+            previewDataUrl: previewBundle[index]?.previewDataUrl,
+          })),
+        };
+      }
+
+      if (item.hasImage) {
+        queueIdx++;
+        return {
+          ...item,
+          attachments: previewBundle.map((attachment, index) => ({
+            id: `preview-${item.id}-${index}`,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            kind: attachment.kind,
+            previewDataUrl: attachment.previewDataUrl,
+          })),
+        };
+      }
+
       return item;
     });
   })();
@@ -1685,8 +1726,8 @@ export function SessionChatView({
           <UserBubble
             key={k}
             text={item.text}
+            attachments={item.attachments}
             hasImage={item.hasImage}
-            imageDataUrl={item.imageDataUrl}
             ts={item.ts}
             sessionId={sessionId}
             branchUuid={item.branchUuid}
@@ -1828,7 +1869,14 @@ export function SessionChatView({
 
           {/* Optimistic user messages shown while real event is in-flight */}
           {optimisticMessages.map((msg) => (
-            <UserBubble key={`opt-${msg.id}`} text={msg.text} imageDataUrl={msg.imageDataUrl} />
+            <UserBubble
+              key={`opt-${msg.id}`}
+              text={msg.text}
+              attachments={msg.attachments?.map((attachment, index) => ({
+                ...attachment,
+                id: `opt-${msg.id}-${index}`,
+              }))}
+            />
           ))}
 
           {showTyping && <TypingIndicator />}
@@ -1927,7 +1975,7 @@ export function SessionChatView({
               <div className="px-3 pt-2">
                 <PendingMessagePill
                   text={queuedMessage.text}
-                  imageDataUrl={queuedMessage.imageDataUrl}
+                  attachments={queuedMessage.attachments}
                   isSending={queuedMessage.isSending}
                   onEdit={handleEditQueued}
                   onCancel={handleCancelQueued}
@@ -1942,7 +1990,7 @@ export function SessionChatView({
               onQueue={handleQueue}
               onSendNow={handleSendNow}
               restoredDraft={restoredDraft}
-              restoredImage={restoredImage}
+              restoredAttachments={restoredAttachments}
               slashCommands={slashCommands}
               richSlashCommands={richSlashCommands}
               mcpServers={mcpServers}

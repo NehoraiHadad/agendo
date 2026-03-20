@@ -112,6 +112,33 @@ describe('buildDisplayItems', () => {
     }
   });
 
+  it('preserves attachment metadata on user messages', () => {
+    const attachments = [
+      {
+        id: 'att-1',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        size: 42,
+        kind: 'file' as const,
+      },
+    ];
+    const events: AgendoEvent[] = [
+      {
+        ...base,
+        id: 1,
+        type: 'user:message',
+        text: 'see attachment',
+        attachments,
+      },
+    ];
+    const items = buildDisplayItems(events, emptyMap);
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe('user');
+    if (items[0].kind === 'user') {
+      expect(items[0].attachments).toEqual(attachments);
+    }
+  });
+
   it('creates info item for session:init (first one only)', () => {
     const events: AgendoEvent[] = [
       {

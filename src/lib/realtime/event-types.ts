@@ -1,3 +1,6 @@
+import type { AttachmentMeta, AttachmentRef } from '@/lib/attachments';
+import type { FallbackTriggerError } from '@/lib/fallback/policy';
+
 // ============================================================================
 // AgendoEvent — emitted by the worker, consumed by the frontend via SSE
 // ============================================================================
@@ -139,7 +142,13 @@ export type AgendoEvent =
     })
   | (EventBase & { type: 'agent:usage'; used: number; size: number; costUsd?: number })
   | (EventBase & { type: 'session:info'; title?: string | null })
-  | (EventBase & { type: 'user:message'; text: string; hasImage?: boolean; clientId?: string })
+  | (EventBase & {
+      type: 'user:message';
+      text: string;
+      hasImage?: boolean;
+      attachments?: AttachmentMeta[];
+      clientId?: string;
+    })
   | (EventBase & { type: 'user:message-cancelled'; clientId: string })
   | (EventBase & {
       type: 'system:info';
@@ -299,21 +308,43 @@ interface BrainstormEventBase {
   ts: number;
 }
 
+export interface BrainstormParticipantRecovery {
+  state:
+    | 'attempting_model_fallback'
+    | 'model_fallback_succeeded'
+    | 'attempting_agent_fallback'
+    | 'agent_fallback_succeeded'
+    | 'fallback_failed';
+  reason: FallbackTriggerError;
+  summary: string;
+  triggerError: string;
+  attemptedModels?: string[];
+  attemptedAgents?: string[];
+  targetModel?: string | null;
+  targetAgentId?: string | null;
+  targetAgentName?: string | null;
+}
+
 export type BrainstormEvent =
   | (BrainstormEventBase & { type: 'room:state'; status: BrainstormRoomStatus })
   | (BrainstormEventBase & { type: 'wave:start'; wave: number })
   | (BrainstormEventBase & { type: 'wave:complete'; wave: number })
   | (BrainstormEventBase & {
       type: 'participant:status';
+      participantId: string;
       agentId: string;
       agentName: string;
+      agentSlug?: string;
       status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted';
       error?: string | null;
+      model?: string | null;
+      recovery?: BrainstormParticipantRecovery | null;
     })
   | (BrainstormEventBase & {
       type: 'message';
       wave: number;
       senderType: 'agent' | 'user';
+      participantId?: string;
       agentId?: string;
       agentName?: string;
       content: string;
@@ -321,6 +352,7 @@ export type BrainstormEvent =
     })
   | (BrainstormEventBase & {
       type: 'message:delta';
+      participantId?: string;
       agentId: string;
       text: string;
     })
@@ -331,21 +363,30 @@ export type BrainstormEvent =
   | (BrainstormEventBase & { type: 'room:synthesis'; synthesis: string })
   | (BrainstormEventBase & {
       type: 'participant:activity';
+      participantId: string;
       agentId: string;
       /** Human-readable description of what the agent is doing, e.g. "Reading orchestrator.ts" */
       description: string;
+      recovery?: BrainstormParticipantRecovery | null;
     })
   | (BrainstormEventBase & {
       type: 'participant:joined';
+      participantId: string;
       agentId: string;
       agentName: string;
+      agentSlug?: string;
       role?: string;
+      model?: string | null;
+      recovery?: BrainstormParticipantRecovery | null;
     })
   | (BrainstormEventBase & {
       type: 'participant:left';
+      participantId: string;
       agentId: string;
       agentName: string;
+      agentSlug?: string;
       error?: string | null;
+      recovery?: BrainstormParticipantRecovery | null;
     })
   | (BrainstormEventBase & { type: 'room:error'; message: string })
   | (BrainstormEventBase & { type: 'wave:review'; wave: number; timeoutSec: number })
@@ -383,7 +424,7 @@ export type AgendoControl =
   | {
       type: 'message';
       text: string;
-      imageRef?: { path: string; mimeType: string };
+      attachments?: AttachmentRef[];
       priority?: MessagePriority;
       /** Client-generated UUID nonce for dedup matching on the frontend. */
       clientId?: string;

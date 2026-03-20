@@ -1,3 +1,5 @@
+import type { AttachmentRef } from '@/lib/attachments';
+
 export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
 
 export type PermissionDecision =
@@ -44,8 +46,8 @@ export interface SpawnOpts {
   mcpServers?: AcpMcpServer[];
   /** TOML policy files to inject via --policy (Gemini only). */
   policyFiles?: string[];
-  /** Initial image to attach to the first user message (for cold resumes with image attachments). */
-  initialImage?: ImageContent;
+  /** Initial attachments to attach to the first user message on spawn/resume. */
+  initialAttachments?: AttachmentRef[];
   /** Max budget in USD for this session. Claude will stop when exceeded. */
   maxBudgetUsd?: number;
   /** Effort level for this session: controls depth of thinking and resource usage. */
@@ -141,11 +143,6 @@ export interface ManagedProcess {
   onEvents?: (cb: (payloads: import('@/lib/realtime/events').AgendoEventPayload[]) => void) => void;
 }
 
-export interface ImageContent {
-  mimeType: string;
-  data: string; // base64 encoded
-}
-
 /** Callback type injected by SessionProcess to handle per-tool approval requests. */
 export type ToolApprovalFn = (request: ApprovalRequest) => Promise<PermissionDecision>;
 
@@ -169,7 +166,7 @@ export interface AgentAdapter {
   extractSessionId(output: string): string | null;
   sendMessage(
     message: string,
-    image?: ImageContent,
+    attachments?: AttachmentRef[],
     priority?: import('@/lib/realtime/events').MessagePriority,
     clientId?: string,
   ): Promise<void>;
@@ -241,7 +238,7 @@ export interface SessionStartOptions {
   mcpServers?: AcpMcpServer[];
   /** SDK-format MCP servers for Claude SDK adapter (no temp file needed). */
   sdkMcpServers?: SpawnOpts['sdkMcpServers'];
-  initialImage?: ImageContent;
+  initialAttachments?: AttachmentRef[];
   displayText?: string;
   resumeSessionAt?: string;
   developerInstructions?: string;

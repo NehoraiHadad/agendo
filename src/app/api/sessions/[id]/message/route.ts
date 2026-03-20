@@ -1,25 +1,106 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getSession } from '@/lib/services/session-service';
+import {
+  storeMessageAttachments,
+  writePendingResumeAttachments,
+} from '@/lib/services/session-attachment-service';
 import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { enqueueSession } from '@/lib/worker/queue';
 import { BadRequestError } from '@/lib/errors';
-import { config } from '@/lib/config';
 import type { AgendoControl } from '@/lib/realtime/events';
+
+interface ParsedMessageRequest {
+  message: string;
+  priority?: 'now' | 'next' | 'later';
+  clientId?: string;
+  attachments: Array<{
+    name: string;
+    mimeType?: string | null;
+    data: Buffer;
+  }>;
+}
+
+interface JsonAttachmentInput {
+  name?: string;
+  mimeType?: string;
+  data: string;
+}
+
+function normalizeJsonAttachment(
+  attachment: JsonAttachmentInput,
+  fallbackName: string,
+): ParsedMessageRequest['attachments'][number] {
+  return {
+    name: attachment.name?.trim() || fallbackName,
+    mimeType: attachment.mimeType,
+    data: Buffer.from(attachment.data, 'base64'),
+  };
+}
+
+async function parseRequest(req: NextRequest): Promise<ParsedMessageRequest> {
+  const contentType = req.headers.get('content-type') ?? '';
+
+  if (contentType.includes('multipart/form-data')) {
+    const form = await req.formData();
+    const message = String(form.get('message') ?? '');
+    const priorityValue = form.get('priority');
+    const clientIdValue = form.get('clientId');
+    const attachments = await Promise.all(
+      form
+        .getAll('attachments')
+        .filter((value): value is File => value instanceof File)
+        .map(async (file) => ({
+          name: file.name || 'attachment',
+          mimeType: file.type || undefined,
+          data: Buffer.from(await file.arrayBuffer()),
+        })),
+    );
+
+    return {
+      message,
+      priority:
+        priorityValue === 'now' || priorityValue === 'next' || priorityValue === 'later'
+          ? priorityValue
+          : undefined,
+      clientId: typeof clientIdValue === 'string' && clientIdValue ? clientIdValue : undefined,
+      attachments,
+    };
+  }
+
+  const body = (await req.json()) as {
+    message: string;
+    image?: { mimeType: string; data: string };
+    attachments?: JsonAttachmentInput[];
+    priority?: 'now' | 'next' | 'later';
+    clientId?: string;
+  };
+
+  const attachments = [
+    ...(body.attachments ?? []).map((attachment, index) =>
+      normalizeJsonAttachment(attachment, `attachment-${index + 1}`),
+    ),
+    ...(body.image ? [normalizeJsonAttachment(body.image, 'image')] : []),
+  ];
+
+  return {
+    message: body.message,
+    priority: body.priority,
+    clientId: body.clientId,
+    attachments,
+  };
+}
 
 export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
     assertUUID(id, 'Session');
-    const { message, image, priority, clientId } = (await req.json()) as {
-      message: string;
-      image?: { mimeType: string; data: string };
-      priority?: 'now' | 'next' | 'later';
-      clientId?: string;
-    };
+    const {
+      message,
+      priority,
+      clientId,
+      attachments: incomingAttachments,
+    } = await parseRequest(req);
 
     const session = await getSession(id);
 
@@ -32,20 +113,12 @@ export const POST = withErrorBoundary(
       throw new BadRequestError(`Session not accepting messages (status: ${session.status})`);
     }
 
+    const attachments = await storeMessageAttachments(id, incomingAttachments);
+
     // Cold resume: process has exited; restart via run-session job, passing the message in
     // job data (not writing to session.initialPrompt so the original prompt is preserved).
     if (session.status === 'idle' || session.status === 'ended') {
-      // If an image was attached, save it to a predictable path for the session-runner to pick up.
-      if (image) {
-        const dir = join(config.LOG_DIR, 'attachments', id);
-        mkdirSync(dir, { recursive: true });
-        const imgPath = join(dir, 'resume-image');
-        writeFileSync(imgPath, Buffer.from(image.data, 'base64'));
-        writeFileSync(
-          join(dir, 'resume-pending.json'),
-          JSON.stringify({ path: imgPath, mimeType: image.mimeType }),
-        );
-      }
+      if (attachments.length > 0) writePendingResumeAttachments(id, attachments);
       await enqueueSession({
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
@@ -57,21 +130,10 @@ export const POST = withErrorBoundary(
     }
 
     // Hot path: process is alive — forward message via Worker HTTP.
-    // Images are saved to disk first; only the file path is sent through the control
-    // channel to avoid large payloads.
-    let imageRef: { path: string; mimeType: string } | undefined;
-    if (image) {
-      const dir = join(config.LOG_DIR, 'attachments', id);
-      mkdirSync(dir, { recursive: true });
-      const imgPath = join(dir, randomUUID());
-      writeFileSync(imgPath, Buffer.from(image.data, 'base64'));
-      imageRef = { path: imgPath, mimeType: image.mimeType };
-    }
-
     const control: AgendoControl = {
       type: 'message',
       text: message,
-      ...(imageRef && { imageRef }),
+      ...(attachments.length > 0 ? { attachments } : {}),
       ...(priority && { priority }),
       ...(clientId && { clientId }),
     };
@@ -80,13 +142,7 @@ export const POST = withErrorBoundary(
     // If the worker doesn't have the process in memory (e.g. after a restart),
     // fall back to cold resume so the message isn't silently lost.
     if (!result.dispatched) {
-      if (image && imageRef) {
-        const dir = join(config.LOG_DIR, 'attachments', id);
-        writeFileSync(
-          join(dir, 'resume-pending.json'),
-          JSON.stringify({ path: imageRef.path, mimeType: imageRef.mimeType }),
-        );
-      }
+      if (attachments.length > 0) writePendingResumeAttachments(id, attachments);
       await enqueueSession({
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,

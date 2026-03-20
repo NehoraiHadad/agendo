@@ -54,3 +54,6 @@ next-env.d.ts
 
 # repo-sync
 .repo-sync-manifest.json
+
+# agendo local runtime data
+.agendo/

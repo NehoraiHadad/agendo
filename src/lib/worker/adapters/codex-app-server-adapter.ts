@@ -2,6 +2,7 @@ import * as readline from 'node:readline';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { getNativeImageAttachments, type AttachmentRef } from '@/lib/attachments';
 import * as tmux from '@/lib/worker/tmux-manager';
 import { createLogger } from '@/lib/logger';
 import type {
@@ -25,6 +26,7 @@ import {
 } from '@/lib/worker/adapters/codex-app-server-event-mapper';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { buildMessageWithAttachments } from '@/lib/worker/attachment-utils';
 
 const log = createLogger('codex-app-server');
 
@@ -183,13 +185,13 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
   async sendMessage(
     message: string,
-    _image?: import('@/lib/worker/adapters/types').ImageContent,
+    attachments?: AttachmentRef[],
     _priority?: import('@/lib/realtime/events').MessagePriority,
   ): Promise<void> {
     if (!this.threadId) {
       throw new Error('No Codex thread ID — cannot send follow-up message');
     }
-    await this.startTurn(message);
+    await this.startTurn(message, attachments);
   }
 
   async interrupt(): Promise<void> {
@@ -474,7 +476,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     });
 
     // 4. Start first turn with initial prompt
-    await this.startTurn(initialPrompt);
+    await this.startTurn(initialPrompt, opts.initialAttachments);
   }
 
   // -------------------------------------------------------------------------
@@ -580,9 +582,10 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   // Private: turn management
   // -------------------------------------------------------------------------
 
-  private async startTurn(prompt: string): Promise<void> {
+  private async startTurn(prompt: string, attachments?: AttachmentRef[]): Promise<void> {
     if (!this.threadId) throw new Error('No thread ID for turn/start');
-    this.currentTurnPrompt = prompt;
+    const promptWithAttachments = buildMessageWithAttachments(prompt, attachments);
+    this.currentTurnPrompt = promptWithAttachments;
 
     const approvalPolicy = getApprovalPolicy(this.permissionMode);
     const sandboxMode = getSandboxMode(this.permissionMode);
@@ -604,7 +607,13 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
     await this.transport.call('turn/start', {
       threadId: this.threadId,
-      input: [{ type: 'text', text: prompt, text_elements: [] }],
+      input: [
+        { type: 'text', text: promptWithAttachments, text_elements: [] },
+        ...getNativeImageAttachments(attachments ?? []).map((attachment) => ({
+          type: 'localImage' as const,
+          path: attachment.path,
+        })),
+      ],
       approvalPolicy,
       sandboxPolicy,
       model: this.model ?? null,

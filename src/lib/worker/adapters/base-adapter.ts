@@ -1,8 +1,8 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import type { AttachmentRef } from '@/lib/attachments';
 import type {
   AgentAdapter,
   ToolApprovalFn,
-  ImageContent,
   ManagedProcess,
   SpawnOpts,
 } from '@/lib/worker/adapters/types';
@@ -50,7 +50,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   abstract extractSessionId(output: string): string | null;
   abstract sendMessage(
     message: string,
-    image?: ImageContent,
+    attachments?: AttachmentRef[],
     priority?: import('@/lib/realtime/events').MessagePriority,
   ): Promise<void>;
   abstract interrupt(): Promise<void>;

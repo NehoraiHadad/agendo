@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
 // ---------------------------------------------------------------------------
@@ -94,8 +97,9 @@ vi.mock('@agentclientprotocol/sdk', () => ({
 }));
 
 import { spawn as nodeSpawn } from 'node:child_process';
+import type { AttachmentRef } from '@/lib/attachments';
 import { GeminiAdapter } from '@/lib/worker/adapters/gemini-adapter';
-import type { SpawnOpts, ImageContent } from '@/lib/worker/adapters/types';
+import type { SpawnOpts } from '@/lib/worker/adapters/types';
 
 const opts: SpawnOpts = {
   cwd: '/tmp',
@@ -293,7 +297,7 @@ describe('GeminiAdapter', () => {
   // Image support
   // ---------------------------------------------------------------------------
 
-  it('passes image in sendMessage through to sendPrompt', async () => {
+  it('passes native image attachments in sendMessage through to sendPrompt', async () => {
     const adapter = new GeminiAdapter();
     const received: string[] = [];
     const proc = adapter.spawn('test prompt', opts);
@@ -312,14 +316,39 @@ describe('GeminiAdapter', () => {
       return Promise.resolve({});
     });
 
-    const image: ImageContent = { data: 'base64data', mimeType: 'image/png' };
-    await adapter.sendMessage('describe this image', image);
+    const tempDir = mkdtempSync(join(tmpdir(), 'gemini-attachment-'));
+    const attachmentPath = join(tempDir, 'diagram.png');
+    writeFileSync(attachmentPath, Buffer.from('image-bytes'));
+
+    const attachment: AttachmentRef = {
+      id: 'att-1',
+      name: 'diagram.png',
+      mimeType: 'image/png',
+      size: 11,
+      kind: 'image',
+      path: attachmentPath,
+      sha256: 'deadbeef',
+    };
+
+    try {
+      await adapter.sendMessage('describe this image', [attachment]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
 
     expect(capturedPromptParams).not.toBeNull();
     const prompt = capturedPromptParams!.prompt as Array<Record<string, unknown>>;
     expect(prompt).toHaveLength(2);
-    expect(prompt[0]).toEqual({ type: 'text', text: 'describe this image' });
-    expect(prompt[1]).toEqual({ type: 'image', data: 'base64data', mimeType: 'image/png' });
+    expect(prompt[0]).toEqual({
+      type: 'text',
+      text: expect.stringContaining('describe this image'),
+    });
+    expect(prompt[0].text).toContain(attachmentPath);
+    expect(prompt[1]).toEqual({
+      type: 'image',
+      data: Buffer.from('image-bytes').toString('base64'),
+      mimeType: 'image/png',
+    });
   });
 
   // ---------------------------------------------------------------------------

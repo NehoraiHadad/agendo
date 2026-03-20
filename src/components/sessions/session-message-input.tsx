@@ -14,6 +14,7 @@ import {
 import { apiFetch } from '@/lib/api-types';
 import { ModelPickerPopover } from '@/components/sessions/model-picker-popover';
 import { MemoryEditorModal } from '@/components/sessions/memory-editor-modal';
+import { buildMessageFormData } from '@/components/sessions/session-message-attachments';
 import type { SessionStatus } from '@/lib/realtime/events';
 import { deriveProvider } from '@/lib/utils/session-controls';
 import { generateId } from '@/lib/utils';
@@ -130,39 +131,39 @@ function SlashCommandPicker({
 // Types
 // ---------------------------------------------------------------------------
 
-interface PendingImage {
-  dataUrl: string;
+export interface PendingAttachment {
+  id: string;
+  name: string;
   mimeType: string;
   data: string;
+  size: number;
+  kind: 'image' | 'file';
+  previewDataUrl?: string;
 }
 
-/** Image payload shape for queued messages (base64 data for POST body). */
-export interface QueuedImagePayload {
+/** Attachment payload shape for queued messages (base64 data for POST body). */
+export interface QueuedAttachmentPayload {
+  name: string;
   mimeType: string;
   data: string;
+  size: number;
+  kind: 'image' | 'file';
+  previewDataUrl?: string;
 }
 
 interface SessionMessageInputProps {
   sessionId: string;
   status?: SessionStatus | null;
-  onSent?: (text: string, imageDataUrl?: string, clientId?: string) => void;
+  onSent?: (text: string, attachments?: QueuedAttachmentPayload[], clientId?: string) => void;
   /** Called when a message is queued while agent is active — shows pill + POSTs with priority. */
-  onQueue?: (
-    text: string,
-    imageDataUrl?: string,
-    imagePayload?: QueuedImagePayload,
-  ) => Promise<void>;
+  onQueue?: (text: string, attachments?: QueuedAttachmentPayload[]) => Promise<void>;
   /** Called on Shift+Enter while agent is active — POSTs with priority:'now' to interrupt. */
-  onSendNow?: (
-    text: string,
-    imageDataUrl?: string,
-    imagePayload?: QueuedImagePayload,
-  ) => Promise<void>;
+  onSendNow?: (text: string, attachments?: QueuedAttachmentPayload[]) => Promise<void>;
   /** Text to restore into the textarea when the user edits a queued message.
    *  Wrapped in an object with a monotonic key so the effect re-fires even if the text is identical. */
   restoredDraft?: { text: string; key: number } | null;
-  /** Image to restore when the user edits a queued message. */
-  restoredImage?: PendingImage | null;
+  /** Attachments to restore when the user edits a queued message. */
+  restoredAttachments?: PendingAttachment[] | null;
   /** Live slash commands received from the agent's system:init event (bare names, fallback) */
   slashCommands?: string[];
   /** Rich slash commands from the agent's session:commands event (name + description + argumentHint) */
@@ -193,6 +194,17 @@ function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = Math.min(el.scrollHeight, 128) + 'px';
 }
 
+function toQueuedAttachmentPayload(attachment: PendingAttachment): QueuedAttachmentPayload {
+  return {
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    data: attachment.data,
+    size: attachment.size,
+    kind: attachment.kind,
+    previewDataUrl: attachment.previewDataUrl,
+  };
+}
+
 function getBlockedMessage(
   name: string,
   mcpServers?: Array<{ name: string; status?: string; tools?: string[] }>,
@@ -220,7 +232,7 @@ export function SessionMessageInput({
   onQueue,
   onSendNow,
   restoredDraft,
-  restoredImage,
+  restoredAttachments,
   slashCommands,
   richSlashCommands,
   mcpServers,
@@ -230,7 +242,7 @@ export function SessionMessageInput({
 }: SessionMessageInputProps) {
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   // Track the last suggestion text that was dismissed or used, to avoid re-showing the same one.
@@ -291,10 +303,10 @@ export function SessionMessageInput({
     });
   }, [restoredDraft]);
 
-  // Restore image attachment when user edits a queued message
+  // Restore attachments when user edits a queued message
   useEffect(() => {
-    if (restoredImage) setPendingImage(restoredImage);
-  }, [restoredImage]);
+    if (restoredAttachments) setPendingAttachments(restoredAttachments);
+  }, [restoredAttachments]);
 
   const isAccepting =
     status === 'active' || status === 'awaiting_input' || status === 'idle' || status === 'ended';
@@ -398,7 +410,7 @@ export function SessionMessageInput({
 
   async function submitText(text: string) {
     const trimmed = text.trim();
-    if ((!trimmed && !pendingImage) || isSending) return;
+    if ((!trimmed && pendingAttachments.length === 0) || isSending) return;
 
     // Guard blocked commands — they crash Claude in stream-json mode
     const blockedCmd = allCommands.find((c) => c.blocked && trimmed.split(/\s/)[0] === c.name);
@@ -410,43 +422,36 @@ export function SessionMessageInput({
     // Queue path: when the agent is mid-turn, show the pill and POST immediately
     // with priority: 'next'. The backend queues it for delivery after the current turn.
     if (status === 'active' && onQueue) {
-      const imgPayload = pendingImage
-        ? { mimeType: pendingImage.mimeType, data: pendingImage.data }
-        : undefined;
+      const attachments = pendingAttachments.map(toQueuedAttachmentPayload);
       setMessage('');
       clearDraft();
-      setPendingImage(null);
+      setPendingAttachments([]);
       setSuppressedSuggestion(promptSuggestion ?? null);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
       // onQueue handles pill display, POST with priority, and abort on edit/cancel
-      void onQueue(trimmed, pendingImage?.dataUrl, imgPayload);
+      void onQueue(trimmed, attachments);
       return;
     }
 
     setIsSending(true);
     // Clear any active suggestion when the user sends — it's stale after this turn.
     setSuppressedSuggestion(promptSuggestion ?? null);
-    // Capture image URL before clearing pendingImage state
-    const sentImageDataUrl = pendingImage?.dataUrl;
+    const attachments = pendingAttachments.map(toQueuedAttachmentPayload);
     // Generate a client nonce for belt-and-suspenders dedup matching.
     const clientId = generateId();
     // Notify parent BEFORE the HTTP request so the optimistic-message baseline is
     // captured before the SSE `user:message` event can arrive and update the count.
     // If we called onSent after await, a fast SSE delivery would set baseUserMsgCount
     // equal to the new count, making the clearing condition (newCount > base) never fire.
-    onSent?.(trimmed, sentImageDataUrl, clientId);
+    onSent?.(trimmed, attachments, clientId);
     try {
-      const body: Record<string, unknown> = { message: trimmed, clientId };
-      if (pendingImage) {
-        body.image = { mimeType: pendingImage.mimeType, data: pendingImage.data };
-      }
       await apiFetch(`/api/sessions/${sessionId}/message`, {
         method: 'POST',
-        body: JSON.stringify(body),
+        body: buildMessageFormData(trimmed, attachments, { clientId }),
       });
       setMessage('');
       clearDraft();
-      setPendingImage(null);
+      setPendingAttachments([]);
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
@@ -459,21 +464,18 @@ export function SessionMessageInput({
 
   async function submitNow(text: string) {
     const trimmed = text.trim();
-    if (!trimmed && !pendingImage) return;
+    if (!trimmed && pendingAttachments.length === 0) return;
     if (!onSendNow) return;
 
-    const imgPayload = pendingImage
-      ? { mimeType: pendingImage.mimeType, data: pendingImage.data }
-      : undefined;
-    const imageDataUrl = pendingImage?.dataUrl;
+    const attachments = pendingAttachments.map(toQueuedAttachmentPayload);
 
     setMessage('');
     clearDraft();
-    setPendingImage(null);
+    setPendingAttachments([]);
     setSuppressedSuggestion(promptSuggestion ?? null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    await onSendNow(trimmed, imageDataUrl, imgPayload);
+    await onSendNow(trimmed, attachments);
   }
 
   async function submitMessage() {
@@ -495,36 +497,36 @@ export function SessionMessageInput({
     }
   }
 
-  // Shared image-processing logic used by both the file picker and the paste handler.
-  function processImageFile(file: File | Blob) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const commaIdx = dataUrl.indexOf(',');
-      const meta = dataUrl.slice(0, commaIdx);
-      const rawData = dataUrl.slice(commaIdx + 1);
-      let mimeType = (meta.match(/:(.*?);/)?.[1] ?? 'image/png').toLowerCase();
-      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
-      if (SUPPORTED_IMAGE_TYPES.has(mimeType)) {
-        setPendingImage({ dataUrl, mimeType, data: rawData });
-        return;
-      }
-      // Convert unsupported format → JPEG via canvas
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        const jpegData = jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1);
-        setPendingImage({ dataUrl: jpegDataUrl, mimeType: 'image/jpeg', data: jpegData });
-      };
-      img.src = dataUrl;
+  async function buildPendingAttachment(file: File): Promise<PendingAttachment> {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read attachment'));
+      reader.readAsDataURL(file);
+    });
+    const commaIdx = dataUrl.indexOf(',');
+    const meta = dataUrl.slice(0, commaIdx);
+    const rawData = dataUrl.slice(commaIdx + 1);
+    const mimeType = (
+      meta.match(/:(.*?);/)?.[1] ??
+      file.type ??
+      'application/octet-stream'
+    ).toLowerCase();
+    const kind = mimeType.startsWith('image/') ? 'image' : 'file';
+    return {
+      id: generateId(),
+      name: file.name || 'attachment',
+      mimeType,
+      data: rawData,
+      size: file.size,
+      kind,
+      previewDataUrl: kind === 'image' ? dataUrl : undefined,
     };
-    reader.readAsDataURL(file);
+  }
+
+  async function appendFiles(files: File[]) {
+    const attachments = await Promise.all(files.map((file) => buildPendingAttachment(file)));
+    setPendingAttachments((prev) => [...prev, ...attachments]);
   }
 
   // Document-level paste listener: Chrome filters image items from clipboardData when the
@@ -541,7 +543,9 @@ export function SessionMessageInput({
       if (!imageItem) return;
       e.preventDefault();
       const file = imageItem.getAsFile();
-      if (file) processImageFile(file);
+      if (file) {
+        void appendFiles([file]);
+      }
     }
     document.addEventListener('paste', onDocPaste);
     return () => document.removeEventListener('paste', onDocPaste);
@@ -665,42 +669,10 @@ export function SessionMessageInput({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showPicker, showModelPicker]);
 
-  const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-
-  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const commaIdx = dataUrl.indexOf(',');
-      const meta = dataUrl.slice(0, commaIdx);
-      const rawData = dataUrl.slice(commaIdx + 1);
-      // Normalize: image/jpg → image/jpeg
-      let mimeType = (meta.match(/:(.*?);/)?.[1] ?? 'image/png').toLowerCase();
-      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
-
-      if (SUPPORTED_IMAGE_TYPES.has(mimeType)) {
-        setPendingImage({ dataUrl, mimeType, data: rawData });
-        return;
-      }
-
-      // Unsupported format — convert to JPEG via canvas
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        const jpegData = jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1);
-        setPendingImage({ dataUrl: jpegDataUrl, mimeType: 'image/jpeg', data: jpegData });
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+  function handleAttachmentSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    void appendFiles(files);
     e.target.value = '';
   }
 
@@ -768,46 +740,64 @@ export function SessionMessageInput({
           </div>
         )}
 
-        {/* Image preview */}
-        {pendingImage && (
-          <div className="mb-2.5 flex items-start">
-            <div className="relative group">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={pendingImage.dataUrl}
-                alt="attachment"
-                className="h-16 w-16 object-cover rounded-xl border border-white/[0.12] shadow-[0_4px_12px_oklch(0_0_0/0.4)]"
-              />
-              <button
-                type="button"
-                onClick={() => setPendingImage(null)}
-                className="absolute -top-1.5 -right-1.5 rounded-full bg-zinc-900 border border-white/[0.15] p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-zinc-800 transition-all shadow-sm"
-                aria-label="Remove image"
+        {/* Attachment preview */}
+        {pendingAttachments.length > 0 && (
+          <div className="mb-2.5 flex flex-wrap gap-2">
+            {pendingAttachments.map((attachment) => (
+              <div
+                key={attachment.id}
+                className="relative group rounded-xl border border-white/[0.12] bg-white/[0.03] px-2.5 py-2 shadow-[0_4px_12px_oklch(0_0_0/0.25)]"
               >
-                <X className="size-2.5" />
-              </button>
-            </div>
+                {attachment.previewDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={attachment.previewDataUrl}
+                    alt={attachment.name}
+                    className="h-16 w-16 object-cover rounded-lg"
+                  />
+                ) : (
+                  <div className="max-w-40 pr-4">
+                    <div className="truncate text-xs text-foreground/85">{attachment.name}</div>
+                    <div className="text-[10px] text-muted-foreground/45">
+                      {(attachment.size / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendingAttachments((prev) =>
+                      prev.filter((item) => item.id !== attachment.id),
+                    )
+                  }
+                  className="absolute -top-1.5 -right-1.5 rounded-full bg-zinc-900 border border-white/[0.15] p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-zinc-800 transition-all shadow-sm"
+                  aria-label={`Remove ${attachment.name}`}
+                >
+                  <X className="size-2.5" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
         <div className="flex items-end gap-2">
-          {/* Image attach button */}
+          {/* Attachment button */}
           <>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="shrink-0 flex items-center justify-center h-[44px] w-9 rounded-xl border border-white/[0.09] bg-white/[0.03] text-muted-foreground/40 hover:text-muted-foreground/80 hover:bg-white/[0.07] hover:border-white/[0.14] active:scale-95 transition-all duration-150 disabled:opacity-25"
               disabled={isSending}
-              aria-label="Attach image"
+              aria-label="Attach files"
             >
               <Paperclip className="size-3.5" />
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
               className="hidden"
-              onChange={handleImageSelect}
+              multiple
+              onChange={handleAttachmentSelect}
             />
           </>
 
@@ -856,7 +846,7 @@ export function SessionMessageInput({
             type="submit"
             size="icon"
             className="shrink-0 h-[44px] w-[44px] rounded-xl shadow-[0_2px_8px_oklch(0.7_0.18_280/0.2)] hover:shadow-[0_4px_16px_oklch(0.7_0.18_280/0.35)] active:scale-95 transition-all duration-150 disabled:shadow-none"
-            disabled={(!message.trim() && !pendingImage) || isSending}
+            disabled={(!message.trim() && pendingAttachments.length === 0) || isSending}
             aria-label="Send message"
           >
             {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}

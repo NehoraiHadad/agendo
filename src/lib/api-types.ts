@@ -27,11 +27,14 @@ export interface ApiErrorResponse {
  * Throws on non-2xx responses with the error body.
  */
 export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const isFormData = options?.body instanceof FormData;
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers: isFormData
+      ? options?.headers
+      : {
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        },
     ...options,
   });
 

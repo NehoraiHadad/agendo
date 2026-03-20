@@ -3,7 +3,8 @@
  */
 
 import type { Session } from '@/lib/types';
-import type { SpawnOpts, ImageContent, AcpMcpServer } from '@/lib/worker/adapters/types';
+import type { AttachmentRef } from '@/lib/attachments';
+import type { SpawnOpts, AcpMcpServer } from '@/lib/worker/adapters/types';
 
 export function buildSpawnOpts(
   session: Pick<
@@ -25,7 +26,7 @@ export function buildSpawnOpts(
     mcpConfigPath?: string;
     mcpServers?: AcpMcpServer[];
     sdkMcpServers?: SpawnOpts['sdkMcpServers'];
-    initialImage?: ImageContent;
+    initialAttachments?: AttachmentRef[];
     developerInstructions?: string;
     appendSystemPrompt?: string;
   },
@@ -42,7 +43,7 @@ export function buildSpawnOpts(
     ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
     ...(opts.sdkMcpServers ? { sdkMcpServers: opts.sdkMcpServers } : {}),
     ...(opts.policyFilePath ? { policyFiles: [opts.policyFilePath] } : {}),
-    ...(opts.initialImage ? { initialImage: opts.initialImage } : {}),
+    ...(opts.initialAttachments ? { initialAttachments: opts.initialAttachments } : {}),
     // Sync Claude's session ID with agendo's DB session ID
     sessionId: session.id,
     // Only use our MCP servers when an MCP config or SDK servers are provided

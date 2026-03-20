@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { CheckCircle2, Loader2, Pencil, X, Zap } from 'lucide-react';
+import type { QueuedAttachmentPayload } from '@/components/sessions/session-message-input';
 
 interface PendingMessagePillProps {
   text: string;
-  imageDataUrl?: string;
+  attachments?: QueuedAttachmentPayload[];
   /** When true, the message POST is in flight — show spinner, disable Edit. */
   isSending?: boolean;
   onEdit: () => void;
@@ -18,7 +19,7 @@ const PREVIEW_LEN = 80;
 
 export function PendingMessagePill({
   text,
-  imageDataUrl,
+  attachments,
   isSending,
   onEdit,
   onCancel,
@@ -27,6 +28,8 @@ export function PendingMessagePill({
   const [hovered, setHovered] = useState(false);
   const isLong = text.length > PREVIEW_LEN;
   const preview = isLong ? text.slice(0, PREVIEW_LEN) + '…' : text;
+  const previewAttachment = attachments?.[0];
+  const extraAttachmentCount = Math.max((attachments?.length ?? 0) - 1, 0);
 
   return (
     <div
@@ -40,13 +43,23 @@ export function PendingMessagePill({
         <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400/70" />
       )}
 
-      {imageDataUrl && (
+      {previewAttachment?.previewDataUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={imageDataUrl}
-          alt="queued attachment"
+          src={previewAttachment.previewDataUrl}
+          alt={previewAttachment.name}
           className="size-6 rounded object-cover border border-white/10 shrink-0"
         />
+      ) : previewAttachment ? (
+        <span className="shrink-0 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-foreground/60">
+          {previewAttachment.name}
+        </span>
+      ) : null}
+
+      {extraAttachmentCount > 0 && (
+        <span className="shrink-0 text-[10px] text-muted-foreground/50">
+          +{extraAttachmentCount}
+        </span>
       )}
 
       <span className="flex-1 truncate text-foreground/70" dir="auto" title={text}>

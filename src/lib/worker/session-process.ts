@@ -40,10 +40,10 @@ import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { buildChildEnv } from '@/lib/worker/session-env';
 import { buildSpawnOpts } from '@/lib/worker/spawn-opts-builder';
 import { claimSession } from '@/lib/worker/session-claim';
+import { isImageAttachment, toAttachmentMeta } from '@/lib/attachments';
 import type {
   AgentAdapter,
   ManagedProcess,
-  ImageContent,
   SessionStartOptions,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
@@ -61,6 +61,7 @@ import {
 import { SessionDataPipeline } from '@/lib/worker/session-data-pipeline';
 import { captureGitContext, countCommitsSince } from '@/lib/worker/git-context';
 import type { GitContextSnapshot } from '@/lib/realtime/event-types';
+import type { AttachmentRef } from '@/lib/attachments';
 
 /**
  * Derive a log file path for a session.
@@ -240,7 +241,7 @@ export class SessionProcess {
       mcpConfigPath,
       sdkMcpServers,
       mcpServers,
-      initialImage,
+      initialAttachments,
       displayText,
       displayClientId,
       resumeSessionAt,
@@ -330,7 +331,7 @@ export class SessionProcess {
       mcpConfigPath,
       sdkMcpServers,
       mcpServers,
-      initialImage,
+      initialAttachments,
       developerInstructions,
       appendSystemPrompt,
     });
@@ -690,9 +691,9 @@ export class SessionProcess {
    */
   async pushMessage(
     text: string,
-    opts?: { image?: ImageContent; priority?: MessagePriority; clientId?: string },
+    opts?: { attachments?: AttachmentRef[]; priority?: MessagePriority; clientId?: string },
   ): Promise<void> {
-    const { image, priority, clientId } = opts ?? {};
+    const { attachments, priority, clientId } = opts ?? {};
     if (!['active', 'awaiting_input'].includes(this.status)) {
       log.warn(
         { sessionId: this.session.id, status: this.status },
@@ -715,7 +716,10 @@ export class SessionProcess {
     await this.emitEvent({
       type: 'user:message',
       text,
-      hasImage: !!image,
+      hasImage: !!attachments?.some((attachment) => isImageAttachment(attachment)),
+      ...(attachments && attachments.length > 0
+        ? { attachments: attachments.map((attachment) => toAttachmentMeta(attachment)) }
+        : {}),
       ...(clientId && { clientId }),
     });
     // Emit a compact-start indicator when the user manually triggers /compact.
@@ -725,7 +729,7 @@ export class SessionProcess {
     }
     await this.transitionTo('active');
     this.activityTracker.recordActivity();
-    await this.adapter.sendMessage(text, image, priority, clientId);
+    await this.adapter.sendMessage(text, attachments, priority, clientId);
   }
 
   // ---------------------------------------------------------------------------

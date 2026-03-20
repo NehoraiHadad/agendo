@@ -19,11 +19,11 @@ import {
   type PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageParam, ContentBlockParam } from '@anthropic-ai/sdk/resources';
+import type { AttachmentRef } from '@/lib/attachments';
 import type {
   AgentAdapter,
   ManagedProcess,
   SpawnOpts,
-  ImageContent,
   PermissionDecision,
   ActivityCallbacks,
 } from '@/lib/worker/adapters/types';
@@ -35,6 +35,10 @@ import {
 } from '@/lib/worker/adapters/sdk-event-mapper';
 import type { AgendoEventPayload, MessagePriority } from '@/lib/realtime/events';
 import { createLogger } from '@/lib/logger';
+import {
+  buildMessageWithAttachments,
+  readNativeImageContents,
+} from '@/lib/worker/attachment-utils';
 
 const log = createLogger('claude-sdk-adapter');
 
@@ -146,7 +150,7 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
 
   async sendMessage(
     message: string,
-    image?: ImageContent,
+    attachments?: AttachmentRef[],
     priority?: MessagePriority,
     clientId?: string,
   ): Promise<void> {
@@ -154,23 +158,32 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       throw new Error('SDK query is not active');
     }
 
+    const messageText = buildMessageWithAttachments(message, attachments);
+    const nativeImages = readNativeImageContents(attachments);
+
     let msgContent: MessageParam['content'];
-    if (image) {
+    if (nativeImages.length > 0) {
       const blocks: ContentBlockParam[] = [];
-      if (message.trim()) {
-        blocks.push({ type: 'text', text: message });
+      if (messageText.trim()) {
+        blocks.push({ type: 'text', text: messageText });
       }
-      blocks.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: image.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-          data: image.data,
-        },
-      });
+      for (const { attachment, data } of nativeImages) {
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: attachment.mimeType as
+              | 'image/jpeg'
+              | 'image/png'
+              | 'image/gif'
+              | 'image/webp',
+            data,
+          },
+        });
+      }
       msgContent = blocks;
     } else {
-      msgContent = message;
+      msgContent = messageText;
     }
 
     this.inputQueue.push({
@@ -410,19 +423,27 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     };
 
     // Build initial message content
-    let initialContent: MessageParam['content'] = prompt;
-    if (opts.initialImage) {
-      const img = opts.initialImage;
+    const initialMessage = buildMessageWithAttachments(prompt, opts.initialAttachments);
+    let initialContent: MessageParam['content'] = initialMessage;
+    const initialImages = readNativeImageContents(opts.initialAttachments);
+    if (initialImages.length > 0) {
       initialContent = [
-        { type: 'text', text: prompt },
-        {
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-            data: img.data,
-          },
-        },
+        { type: 'text', text: initialMessage },
+        ...initialImages.map(
+          ({ attachment, data }) =>
+            ({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: attachment.mimeType as
+                  | 'image/jpeg'
+                  | 'image/png'
+                  | 'image/gif'
+                  | 'image/webp',
+                data,
+              },
+            }) satisfies ContentBlockParam,
+        ),
       ];
     }
 

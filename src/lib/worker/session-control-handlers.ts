@@ -5,12 +5,11 @@
  * session state and callbacks needed to perform the action. This keeps
  * session-process.ts focused on lifecycle orchestration.
  */
-
-import { readFileSync, unlinkSync } from 'node:fs';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { createLogger } from '@/lib/logger';
+import type { AttachmentRef } from '@/lib/attachments';
 
 const log = createLogger('session-control');
 import type {
@@ -20,12 +19,7 @@ import type {
   SessionStatus,
 } from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
-import type {
-  AgentAdapter,
-  ImageContent,
-  ManagedProcess,
-  PermissionDecision,
-} from '@/lib/worker/adapters/types';
+import type { AgentAdapter, ManagedProcess, PermissionDecision } from '@/lib/worker/adapters/types';
 import type { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
@@ -57,7 +51,7 @@ export interface SessionControlCtx {
   pushMessage(
     text: string,
     opts?: {
-      image?: ImageContent;
+      attachments?: AttachmentRef[];
       priority?: import('@/lib/realtime/events').MessagePriority;
       clientId?: string;
     },
@@ -208,30 +202,15 @@ export async function handleSetModel(model: string, ctx: SessionControlCtx): Pro
 }
 
 /**
- * Handle a message control: read optional image attachment and push the
+ * Handle a message control: forward optional attachments and push the
  * message to the running agent.
  */
 export async function handleMessage(
   control: Extract<AgendoControl, { type: 'message' }>,
   ctx: SessionControlCtx,
 ): Promise<void> {
-  let image: ImageContent | undefined;
-  if (control.imageRef) {
-    try {
-      const data = readFileSync(control.imageRef.path).toString('base64');
-      image = { mimeType: control.imageRef.mimeType, data };
-      // Clean up the temp file (best-effort)
-      try {
-        unlinkSync(control.imageRef.path);
-      } catch {
-        /* ignore */
-      }
-    } catch (err) {
-      log.warn({ err, path: control.imageRef.path }, 'Failed to read image file');
-    }
-  }
   await ctx.pushMessage(control.text, {
-    image,
+    attachments: control.attachments,
     priority: control.priority,
     clientId: control.clientId,
   });

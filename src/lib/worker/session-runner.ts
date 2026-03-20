@@ -1,15 +1,11 @@
-import { readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
-import { db } from '@/lib/db';
-import { tasks, projects } from '@/lib/db/schema';
 import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-runner');
 import { getSession } from '@/lib/services/session-service';
-import { getAgentById } from '@/lib/services/agent-service';
-import { validateWorkingDir, validateBinary } from '@/lib/worker/safety';
+import { validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
 import { getBinaryName } from '@/lib/worker/agent-utils';
@@ -18,7 +14,9 @@ import {
   generateGeminiAcpMcpServers,
 } from '@/lib/mcp/config-templates';
 import { resolveSessionMcpServers, resolveByMcpServerIds } from '@/lib/services/mcp-server-service';
-import { getDefaultModel, type Provider } from '@/lib/services/model-service';
+import { getDefaultModel } from '@/lib/services/model-service';
+import { readPendingResumeAttachments } from '@/lib/services/session-attachment-service';
+import { resolveSessionRuntimeContext } from '@/lib/services/session-runtime-context';
 import { listTaskEvents } from '@/lib/services/task-event-service';
 import {
   generateExecutionPreamble,
@@ -26,16 +24,8 @@ import {
   generateSupportPreamble,
   generateResumeContext,
 } from '@/lib/worker/session-preambles';
-import type { AcpMcpServer, ImageContent, SpawnOpts } from '@/lib/worker/adapters/types';
-
-/** Map CLI binary name to model-service provider. */
-function binaryNameToProvider(name: string): Provider | null {
-  if (name === 'claude') return 'anthropic';
-  if (name === 'codex') return 'openai';
-  if (name === 'gemini') return 'google';
-  if (name === 'copilot') return 'github';
-  return null;
-}
+import type { AcpMcpServer, SpawnOpts } from '@/lib/worker/adapters/types';
+import { binaryNameToProvider } from '@/lib/worker/fallback/provider-utils';
 
 /**
  * Live session processes that have released their pg-boss slot (reached
@@ -79,61 +69,10 @@ export async function runSession(
   resumeClientId?: string,
 ): Promise<void> {
   const session = await getSession(sessionId);
-  const agent = await getAgentById(session.agentId);
+  const runtime = await resolveSessionRuntimeContext(sessionId);
+  const { agent, task, project, resolvedProjectId, cwd: resolvedCwd, envOverrides } = runtime;
 
   validateBinary(agent.binaryPath);
-
-  // Load task for workingDir, env overrides, and prompt interpolation (may be null for conversations)
-  const task = session.taskId
-    ? await db
-        .select({
-          title: tasks.title,
-          description: tasks.description,
-          inputContext: tasks.inputContext,
-          projectId: tasks.projectId,
-        })
-        .from(tasks)
-        .where(eq(tasks.id, session.taskId))
-        .limit(1)
-        .then((r) => r[0] ?? null)
-    : null;
-
-  // Load project — prefer session.projectId (direct), fallback to task.projectId
-  const resolvedProjectId = session.projectId ?? task?.projectId ?? null;
-  const project = resolvedProjectId
-    ? await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, resolvedProjectId))
-        .limit(1)
-        .then((r) => r[0] ?? null)
-    : null;
-
-  // WorkingDir priority: task.inputContext.workingDir > project.rootPath > agent.workingDir > /tmp
-  const taskWorkingDir = (task?.inputContext as { workingDir?: string } | null)?.workingDir;
-  const rawCwd = taskWorkingDir ?? project?.rootPath ?? agent.workingDir ?? '/tmp';
-  const resolvedCwd = await validateWorkingDir(rawCwd);
-
-  // Collect env overrides: project (less specific) then task (more specific).
-  // These are merged on top of the base env in SessionProcess.start().
-  const envOverrides: Record<string, string> = {};
-  if (project?.envOverrides) {
-    for (const [k, v] of Object.entries(project.envOverrides)) {
-      envOverrides[k] = v;
-    }
-  }
-  const taskEnv = (task?.inputContext as { envOverrides?: Record<string, string> } | null)
-    ?.envOverrides;
-  if (taskEnv) {
-    for (const [k, v] of Object.entries(taskEnv)) {
-      envOverrides[k] = v;
-    }
-  }
-
-  // Propagate projectId into the child env so hooks can read it without MCP.
-  if (resolvedProjectId) {
-    envOverrides['AGENDO_PROJECT_ID'] = resolvedProjectId;
-  }
 
   // Resolve the prompt from job data. resumePrompt covers both first-spawn and cold-resume —
   // all enqueue callsites now pass it explicitly. session.initialPrompt is kept as a fallback
@@ -263,32 +202,18 @@ export async function runSession(
     }
   }
 
-  // Check for a pending resume image saved by the message API (cold resume with attachment).
-  let initialImage: ImageContent | undefined;
+  // Check for pending resume attachments saved by the message API (cold resume).
+  let initialAttachments: import('@/lib/attachments').AttachmentRef[] | undefined;
   if (resumeRef ?? session.sessionRef) {
     const pendingMetaPath = join(config.LOG_DIR, 'attachments', sessionId, 'resume-pending.json');
     if (existsSync(pendingMetaPath)) {
-      try {
-        const meta = JSON.parse(readFileSync(pendingMetaPath, 'utf-8')) as {
-          path: string;
-          mimeType: string;
-        };
-        const data = readFileSync(meta.path).toString('base64');
-        initialImage = { mimeType: meta.mimeType, data };
-        // Clean up after reading (best-effort)
-        try {
-          unlinkSync(meta.path);
-        } catch {
-          /* ignore */
-        }
-        try {
-          unlinkSync(pendingMetaPath);
-        } catch {
-          /* ignore */
-        }
-        log.info({ sessionId }, 'Loaded pending resume image');
-      } catch (err) {
-        log.warn({ err, sessionId }, 'Failed to read pending resume image');
+      const pendingAttachments = readPendingResumeAttachments(sessionId);
+      if (pendingAttachments.length > 0) {
+        initialAttachments = pendingAttachments;
+        log.info(
+          { sessionId, count: pendingAttachments.length },
+          'Loaded pending resume attachments',
+        );
       }
     }
   }
@@ -344,7 +269,7 @@ export async function runSession(
     envOverrides,
     sdkMcpServers,
     mcpServers,
-    initialImage,
+    initialAttachments,
     displayText: userResumeText,
     displayClientId: resumeClientId,
     resumeSessionAt,

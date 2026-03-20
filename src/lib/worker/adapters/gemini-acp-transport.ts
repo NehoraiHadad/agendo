@@ -7,7 +7,7 @@ import {
   type AgentCapabilities,
   type Client,
 } from '@agentclientprotocol/sdk';
-import type { AcpMcpServer, ImageContent } from '@/lib/worker/adapters/types';
+import type { AcpMcpServer } from '@/lib/worker/adapters/types';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 const log = createLogger('acp-transport');
@@ -222,14 +222,14 @@ export class AcpTransport {
   async sendPrompt(
     sessionId: string,
     text: string,
-    image?: ImageContent,
+    images?: Array<{ data: string; mimeType: string }>,
   ): Promise<Record<string, unknown>> {
     if (!this.connection) throw new Error('No ACP connection');
 
     const promptContent: Parameters<ClientSideConnection['prompt']>[0]['prompt'] = [
       { type: 'text', text },
     ];
-    if (image) {
+    for (const image of images ?? []) {
       promptContent.push({
         type: 'image',
         data: image.data,
