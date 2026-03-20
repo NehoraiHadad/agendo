@@ -21,6 +21,8 @@ export interface ParticipantState {
   status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout' | 'evicted';
   /** Human-readable description of current activity, e.g. "Reading orchestrator.ts" */
   activity: string | null;
+  /** Last surfaced session error for this participant, if any. */
+  error: string | null;
 }
 
 export interface BrainstormMessageItem {
@@ -121,6 +123,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         role: p.role ?? null,
         status: p.status as ParticipantState['status'],
         activity: null,
+        error: null,
       });
     }
 
@@ -187,6 +190,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             ...existing,
             status: displayStatus,
             activity: clearActivity ? null : existing.activity,
+            error: event.status === 'thinking' ? null : (event.error ?? null),
           });
         } else {
           // Participant not yet in map — add with minimal info
@@ -199,6 +203,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             role: null,
             status: displayStatus,
             activity: null,
+            error: event.status === 'thinking' ? null : (event.error ?? null),
           });
         }
         set({ participants });
@@ -290,6 +295,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             role: event.role ?? null,
             status: 'pending',
             activity: null,
+            error: null,
           });
           set({ participants });
         }
@@ -300,7 +306,12 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         const participants = new Map(state.participants);
         const existing = participants.get(event.agentId);
         if (existing) {
-          participants.set(event.agentId, { ...existing, status: 'left' });
+          participants.set(event.agentId, {
+            ...existing,
+            status: 'left',
+            activity: null,
+            error: event.error ?? existing.error ?? null,
+          });
           set({ participants });
         }
         break;

@@ -884,7 +884,151 @@ describe('empty response guard (compaction-only turns)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// #9 — Majority PASS convergence
+// #11 - participant errors are preserved and surfaced in timeout/eviction flows
+// ---------------------------------------------------------------------------
+
+describe('participant error propagation', () => {
+  it('includes the last session error on timeout status events', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-error-timeout-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 1) as unknown as {
+      participants: Array<{
+        sessionId: string | null;
+        agentId: string;
+        agentName: string;
+        agentSlug: string;
+        participantId: string;
+        waveStatus: string;
+        responseBuffer: string[];
+        hasPassed: boolean;
+        hasLeft: boolean;
+        readyAt: number | null;
+        lastError: string | null;
+        deltaBuffer: DeltaBuffer;
+        waveResponseCount: number;
+        consecutiveTimeouts: number;
+      }>;
+      currentWave: number;
+      scheduleWaveTimeout: (wave: number) => void;
+      handleSessionEvent: (participant: Record<string, unknown>, event: unknown) => void;
+    };
+
+    const participant = {
+      sessionId: 'session-error-timeout-1',
+      agentId: 'agent-1',
+      agentName: 'Codex',
+      agentSlug: 'codex-cli-1',
+      participantId: 'part-1',
+      waveStatus: 'thinking',
+      responseBuffer: [] as string[],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: Date.now(),
+      lastError: null,
+      deltaBuffer: mockDeltaBuffer(),
+      waveResponseCount: 0,
+      consecutiveTimeouts: 0,
+    };
+
+    orchestrator.participants = [participant];
+    orchestrator.currentWave = 1;
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:error',
+      message: 'Codex turn failed: usageLimitExceeded',
+    });
+
+    expect(participant.lastError).toBe('Codex turn failed: usageLimitExceeded');
+
+    orchestrator.scheduleWaveTimeout(1);
+    await vi.advanceTimersByTimeAsync(4000);
+
+    const timeoutEvent = capturedEvents.find(
+      (event) =>
+        (event as { type?: string; status?: string }).type === 'participant:status' &&
+        (event as { status?: string }).status === 'timeout',
+    ) as { error?: string } | undefined;
+
+    expect(timeoutEvent).toBeDefined();
+    expect(timeoutEvent?.error).toBe('Codex turn failed: usageLimitExceeded');
+  });
+
+  it('surfaces startup failure reason on participant:left and room:error events', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-error-startup-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
+      participants: Array<{
+        sessionId: string | null;
+        agentId: string;
+        agentName: string;
+        agentSlug: string;
+        participantId: string;
+        waveStatus: string;
+        responseBuffer: string[];
+        hasPassed: boolean;
+        hasLeft: boolean;
+        readyAt: number | null;
+        lastError: string | null;
+        deltaBuffer: DeltaBuffer;
+        waveResponseCount: number;
+        consecutiveTimeouts: number;
+      }>;
+      participantReadyTimeoutSec: number;
+      waitForAllParticipantsReady: () => Promise<void>;
+    };
+
+    orchestrator.participantReadyTimeoutSec = 600;
+    orchestrator.participants = [
+      {
+        sessionId: 'session-error-startup-1',
+        agentId: 'agent-2',
+        agentName: 'Codex',
+        agentSlug: 'codex-cli-1',
+        participantId: 'part-2',
+        waveStatus: 'pending',
+        responseBuffer: [],
+        hasPassed: false,
+        hasLeft: false,
+        readyAt: null,
+        lastError: 'Codex error: usageLimitExceeded',
+        deltaBuffer: mockDeltaBuffer(),
+        waveResponseCount: 0,
+        consecutiveTimeouts: 0,
+      },
+    ];
+
+    const readyPromise = expect(orchestrator.waitForAllParticipantsReady()).rejects.toThrow(
+      'All participants failed to start within the per-participant timeout',
+    );
+    await vi.advanceTimersByTimeAsync(305000);
+    await readyPromise;
+
+    const leftEvent = capturedEvents.find(
+      (event) => (event as { type?: string }).type === 'participant:left',
+    ) as { error?: string } | undefined;
+    expect(leftEvent?.error).toBe('Codex error: usageLimitExceeded');
+
+    const roomErrorEvent = capturedEvents.find(
+      (event) => (event as { type?: string }).type === 'room:error',
+    ) as { message?: string } | undefined;
+    expect(roomErrorEvent?.message).toContain('usageLimitExceeded');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #12 — Majority PASS convergence
 // ---------------------------------------------------------------------------
 
 describe('majority PASS convergence', () => {

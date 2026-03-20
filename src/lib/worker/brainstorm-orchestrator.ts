@@ -94,6 +94,20 @@ interface ParticipantState {
   waveResponseCount: number;
   /** Number of consecutive waves this participant timed out without any response */
   consecutiveTimeouts: number;
+  /** Last session-level error observed for this participant. */
+  lastError: string | null;
+}
+
+function normalizeParticipantError(message: string | null | undefined): string | null {
+  const trimmed = message?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function formatRateLimitError(event: Extract<AgendoEvent, { type: 'system:rate-limit' }>): string {
+  const parts = [`Rate limit: ${event.rateLimitType}`];
+  if (event.status) parts.push(`status=${event.status}`);
+  if (event.overageStatus) parts.push(`overage=${event.overageStatus}`);
+  return parts.join(' ');
 }
 
 interface BrainstormControlMessage {
@@ -292,6 +306,7 @@ export class BrainstormOrchestrator {
         deltaBuffer: undefined!,
         waveResponseCount: 0,
         consecutiveTimeouts: 0,
+        lastError: null,
       }));
 
       // Initialize DeltaBuffers after participants are created (needs `this` for emitEvent)
@@ -543,14 +558,19 @@ export class BrainstormOrchestrator {
               'Participant failed to start within per-participant timeout — evicting',
             );
 
+            const failureReason =
+              p.lastError ??
+              `Session did not become ready within ${Math.round(perParticipantTimeoutMs / 1000)} seconds`;
+
             await this.emitEvent({
               type: 'room:error',
-              message: `Agent ${p.agentName} failed to start within 3 minutes — removing from brainstorm`,
+              message: `Agent ${p.agentName} failed to start: ${failureReason}`,
             }).catch(() => {});
 
             p.hasLeft = true;
             p.hasPassed = true;
             p.waveStatus = 'done';
+            p.lastError = failureReason;
 
             await updateParticipantStatus(p.participantId, 'left').catch(() => {});
 
@@ -558,6 +578,7 @@ export class BrainstormOrchestrator {
               type: 'participant:left',
               agentId: p.agentId,
               agentName: p.agentName,
+              error: failureReason,
             }).catch(() => {});
           }
 
@@ -1098,6 +1119,7 @@ export class BrainstormOrchestrator {
             agentId: p.agentId,
             agentName: p.agentName,
             status: 'evicted',
+            error: p.lastError,
           });
           await updateParticipantStatus(p.participantId, 'left');
         }
@@ -1124,6 +1146,7 @@ export class BrainstormOrchestrator {
       p.waveStatus = 'thinking';
       p.responseBuffer = [];
       p.waveResponseCount = 0;
+      p.lastError = null;
       // Clear any leftover delta state from the previous wave
       p.deltaBuffer.clear();
       await this.emitEvent({
@@ -1131,6 +1154,7 @@ export class BrainstormOrchestrator {
         agentId: p.agentId,
         agentName: p.agentName,
         status: 'thinking',
+        error: null,
       });
     }
 
@@ -1178,6 +1202,7 @@ export class BrainstormOrchestrator {
             agentId: p.agentId,
             agentName: p.agentName,
             status: 'timeout',
+            error: p.lastError,
           });
         }
       }
@@ -1312,6 +1337,20 @@ export class BrainstormOrchestrator {
         }
         break;
 
+      case 'agent:result':
+        if (event.isError) {
+          participant.lastError = normalizeParticipantError(event.errors?.join('; '));
+        }
+        break;
+
+      case 'system:error':
+        participant.lastError = normalizeParticipantError(event.message);
+        break;
+
+      case 'system:rate-limit':
+        participant.lastError = formatRateLimitError(event);
+        break;
+
       case 'agent:tool-start': {
         // Forward tool activity so the UI can show what the agent is doing
         // (e.g. "Reading orchestrator.ts" instead of just "thinking...")
@@ -1365,6 +1404,7 @@ export class BrainstormOrchestrator {
     if (!this.waveStarted) {
       participant.waveStatus = 'done';
       participant.responseBuffer = [];
+      participant.lastError = null;
       return;
     }
 
@@ -1390,6 +1430,7 @@ export class BrainstormOrchestrator {
 
     participant.waveStatus = isPass ? 'passed' : 'done';
     participant.waveResponseCount++;
+    participant.lastError = null;
 
     void (async () => {
       try {
@@ -1410,6 +1451,7 @@ export class BrainstormOrchestrator {
           agentId: participant.agentId,
           agentName: participant.agentName,
           status: isPass ? 'passed' : 'done',
+          error: null,
         });
 
         // Reactive injection: inject this agent's response into other participants

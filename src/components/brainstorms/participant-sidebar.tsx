@@ -253,6 +253,11 @@ function ParticipantRow({ participant, index }: { participant: ParticipantState;
             {participant.model.replace('claude-', 'cl-').replace('gemini-', 'ge-').slice(0, 18)}
           </span>
         )}
+        {participant.error && (
+          <span className="text-[10px] text-red-400/80 block mt-0.5 line-clamp-2 break-words">
+            {participant.error}
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5 shrink-0">

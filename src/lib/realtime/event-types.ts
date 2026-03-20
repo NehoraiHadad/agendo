@@ -308,6 +308,7 @@ export type BrainstormEvent =
       agentId: string;
       agentName: string;
       status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted';
+      error?: string | null;
     })
   | (BrainstormEventBase & {
       type: 'message';
@@ -344,6 +345,7 @@ export type BrainstormEvent =
       type: 'participant:left';
       agentId: string;
       agentName: string;
+      error?: string | null;
     })
   | (BrainstormEventBase & { type: 'room:error'; message: string })
   | (BrainstormEventBase & { type: 'wave:review'; wave: number; timeoutSec: number })
