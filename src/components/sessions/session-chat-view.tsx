@@ -333,8 +333,9 @@ const ToolCard = memo(function ToolCard({
     );
   }
 
+  const displayResult = tool.result ?? tool.liveResult;
   const hasResult = tool.result !== undefined;
-  const isError = tool.result?.isError ?? false;
+  const isError = displayResult?.isError ?? false;
   const open = manualOpen !== null ? manualOpen : !hasResult || isError;
   const isSubagent = !!tool.subagentInfo;
 
@@ -416,7 +417,7 @@ const ToolCard = memo(function ToolCard({
                   {prompt}
                 </p>
               )}
-              {tool.result && <ToolOutput name={tool.toolName} result={tool.result} />}
+              {displayResult && <ToolOutput name={tool.toolName} result={displayResult} />}
             </div>
           )}
         </div>
@@ -492,7 +493,7 @@ const ToolCard = memo(function ToolCard({
                   {inputStr}
                 </pre>
               )}
-              {tool.result && <ToolOutput name={tool.toolName} result={tool.result} />}
+              {displayResult && <ToolOutput name={tool.toolName} result={displayResult} />}
             </>
           )}
           {/* Show tool result for Write/Edit/MultiEdit too */}
@@ -501,9 +502,9 @@ const ToolCard = memo(function ToolCard({
             tool.toolName === 'Edit' ||
             tool.toolName === 'str_replace_editor' ||
             tool.toolName === 'MultiEdit') &&
-            tool.result && (
+            displayResult && (
               <div className="mt-1">
-                <ToolOutput name={tool.toolName} result={tool.result} />
+                <ToolOutput name={tool.toolName} result={displayResult} />
               </div>
             )}
         </div>

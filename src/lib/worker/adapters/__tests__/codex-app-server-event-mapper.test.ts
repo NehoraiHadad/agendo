@@ -124,6 +124,22 @@ describe('mapAppServerEventToPayloads', () => {
       const result = mapAppServerEventToPayloads(event);
       expect(result).toEqual([{ type: 'system:compact-start', trigger: 'auto' }]);
     });
+
+    it('maps command output deltas to tool progress events', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:cmd-delta',
+        itemId: 'cmd-1',
+        text: 'streaming stdout\n',
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toEqual([
+        {
+          type: 'agent:tool-progress',
+          toolUseId: 'cmd-1',
+          content: 'streaming stdout\n',
+        },
+      ]);
+    });
   });
 });
 

@@ -199,6 +199,92 @@ describe('buildDisplayItems', () => {
     }
   });
 
+  it('keeps Codex command output inside the tool card while the tool is running', () => {
+    const events: AgendoEvent[] = [
+      { ...base, id: 1, type: 'agent:text', text: 'Running command' },
+      {
+        ...base,
+        id: 2,
+        type: 'agent:tool-start',
+        toolUseId: 'cmd-1',
+        toolName: 'Bash',
+        input: { command: 'ls -la' },
+      },
+      {
+        ...base,
+        id: 3,
+        type: 'agent:tool-progress',
+        toolUseId: 'cmd-1',
+        content: 'file-a\n',
+      },
+      {
+        ...base,
+        id: 4,
+        type: 'agent:tool-progress',
+        toolUseId: 'cmd-1',
+        content: 'file-b\n',
+      },
+    ];
+
+    const items = buildDisplayItems(events, emptyMap);
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe('assistant');
+    if (items[0].kind === 'assistant') {
+      expect(items[0].parts).toHaveLength(2);
+      const toolPart = items[0].parts[1];
+      expect(toolPart.kind).toBe('tool');
+      if (toolPart.kind === 'tool') {
+        expect(toolPart.tool.result).toBeUndefined();
+        expect(toolPart.tool.liveResult).toEqual({
+          content: 'file-a\nfile-b\n',
+          isError: false,
+        });
+      }
+    }
+  });
+
+  it('replaces live tool output with the final tool result when the tool completes', () => {
+    const events: AgendoEvent[] = [
+      {
+        ...base,
+        id: 1,
+        type: 'agent:tool-start',
+        toolUseId: 'cmd-1',
+        toolName: 'Bash',
+        input: { command: 'pwd' },
+      },
+      {
+        ...base,
+        id: 2,
+        type: 'agent:tool-progress',
+        toolUseId: 'cmd-1',
+        content: '/tmp\n',
+      },
+      {
+        ...base,
+        id: 3,
+        type: 'agent:tool-end',
+        toolUseId: 'cmd-1',
+        content: '/home/ubuntu/projects/agendo\n',
+      },
+    ];
+
+    const items = buildDisplayItems(events, emptyMap);
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe('assistant');
+    if (items[0].kind === 'assistant') {
+      const toolPart = items[0].parts[0];
+      expect(toolPart.kind).toBe('tool');
+      if (toolPart.kind === 'tool') {
+        expect(toolPart.tool.liveResult).toBeUndefined();
+        expect(toolPart.tool.result).toEqual({
+          content: '/home/ubuntu/projects/agendo\n',
+          isError: false,
+        });
+      }
+    }
+  });
+
   it('attaches turnMeta to last assistant bubble for non-error agent:result', () => {
     const events: AgendoEvent[] = [
       { ...base, id: 1, type: 'agent:text', text: 'Hello' },

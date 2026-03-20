@@ -21,6 +21,7 @@ export interface ToolState {
   toolName: string;
   input: Record<string, unknown>;
   result?: ToolCallResult;
+  liveResult?: ToolCallResult;
   durationMs?: number;
   numFiles?: number;
   truncated?: boolean;
@@ -225,6 +226,7 @@ export function buildDisplayItems(
 
   // Track pending tool calls so we can hydrate them with results as they arrive
   const pendingTools = new Map<string, ToolState>();
+  const liveToolResults = new Map<string, ToolCallResult>();
   let sessionInitCount = 0;
   let sessionCostUsd = 0;
   let compactionInProgress = false;
@@ -322,6 +324,7 @@ export function buildDisplayItems(
           toolName: ev.toolName,
           input: ev.input,
           result,
+          liveResult: liveToolResults.get(ev.toolUseId),
           subagentInfo: subagentByToolUseId.get(ev.toolUseId),
         };
         pendingTools.set(ev.toolUseId, toolState);
@@ -341,15 +344,36 @@ export function buildDisplayItems(
         break;
       }
 
+      case 'agent:tool-progress': {
+        const content = extractToolContent(ev.content);
+        if (!content) break;
+        const pending = pendingTools.get(ev.toolUseId);
+        if (pending) {
+          pending.liveResult = {
+            content: (pending.liveResult?.content ?? '') + content,
+            isError: false,
+          };
+        } else {
+          const existing = liveToolResults.get(ev.toolUseId);
+          liveToolResults.set(ev.toolUseId, {
+            content: (existing?.content ?? '') + content,
+            isError: false,
+          });
+        }
+        break;
+      }
+
       case 'agent:tool-end': {
         const pending = pendingTools.get(ev.toolUseId);
         if (pending) {
           pending.result = { content: extractToolContent(ev.content), isError: false };
+          pending.liveResult = undefined;
           if (ev.durationMs != null) pending.durationMs = ev.durationMs;
           if (ev.numFiles != null) pending.numFiles = ev.numFiles;
           if (ev.truncated != null) pending.truncated = ev.truncated;
           pendingTools.delete(ev.toolUseId);
         }
+        liveToolResults.delete(ev.toolUseId);
         break;
       }
 

@@ -55,6 +55,11 @@ export type AgendoEvent =
       input: Record<string, unknown>;
     })
   | (EventBase & {
+      type: 'agent:tool-progress';
+      toolUseId: string;
+      content: unknown;
+    })
+  | (EventBase & {
       type: 'agent:tool-end';
       toolUseId: string;
       content: unknown;

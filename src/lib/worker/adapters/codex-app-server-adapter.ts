@@ -741,7 +741,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
       case 'item/commandExecution/outputDelta': {
         const delta = params.delta as string;
-        if (delta) this.emitSynthetic({ type: 'as:cmd-delta', text: delta });
+        const itemId = params.itemId as string;
+        if (delta && itemId) this.emitSynthetic({ type: 'as:cmd-delta', text: delta, itemId });
         break;
       }
 

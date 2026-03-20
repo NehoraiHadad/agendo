@@ -13,7 +13,7 @@ export type AppServerSyntheticEvent =
   | { type: 'as:item.completed'; item: AppServerItem }
   | { type: 'as:delta'; text: string; itemId: string }
   | { type: 'as:reasoning.delta'; text: string; itemId: string }
-  | { type: 'as:cmd-delta'; text: string }
+  | { type: 'as:cmd-delta'; text: string; itemId: string }
   | { type: 'as:plan-delta'; text: string }
   | { type: 'as:info'; message: string }
   | { type: 'as:compact-start' }
@@ -229,12 +229,12 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
       return [{ type: 'agent:thinking-delta', text: event.text }];
 
     // -----------------------------------------------------------------------
-    // cmd-delta → agent:text-delta (streaming command output; fromDelta=true
-    // so the frontend doesn't double-render with the completed aggregatedOutput)
+    // cmd-delta → agent:tool-progress so streaming command output renders
+    // inside the active tool card instead of as assistant chat text.
     // -----------------------------------------------------------------------
     case 'as:cmd-delta':
       if (!event.text) return [];
-      return [{ type: 'agent:text-delta', text: event.text, fromDelta: true }];
+      return [{ type: 'agent:tool-progress', toolUseId: event.itemId, content: event.text }];
 
     // -----------------------------------------------------------------------
     // plan-delta → agent:text-delta (streaming plan text; fromDelta=true
