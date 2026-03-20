@@ -2205,8 +2205,15 @@ export class BrainstormOrchestrator {
           const resolve = this.controlResolve;
           this.controlResolve = null;
           resolve?.(msg);
+        } else if (this.waveCompleteResolve) {
+          // Mid-wave: force-resolve the wave wait so the loop exits immediately
+          // instead of waiting for all participants to finish naturally.
+          // The finally block in run() will terminate all sessions.
+          log.info({ roomId: this.roomId }, 'End received mid-wave — force-completing wave');
+          const resolve = this.waveCompleteResolve;
+          this.waveCompleteResolve = null;
+          resolve();
         }
-        // If not paused, waveLoop will check this.stopped after wave completes
         break;
 
       case 'extend': {
