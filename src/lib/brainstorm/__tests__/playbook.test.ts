@@ -11,6 +11,7 @@ import {
   getPreset,
 } from '../playbook';
 import type { BrainstormConfig } from '@/lib/db/schema';
+import { DEFAULT_FALLBACK_POLICY } from '@/lib/fallback/policy';
 
 // ============================================================================
 // Defaults
@@ -24,6 +25,7 @@ describe('PLAYBOOK_DEFAULTS', () => {
     expect(PLAYBOOK_DEFAULTS.minWavesBeforePass).toBe(2);
     expect(PLAYBOOK_DEFAULTS.requiredObjections).toBe(0);
     expect(PLAYBOOK_DEFAULTS.synthesisMode).toBe('single');
+    expect(PLAYBOOK_DEFAULTS.fallback).toEqual(DEFAULT_FALLBACK_POLICY);
   });
 
   it('DEFAULT_MAX_WAVES is 10', () => {
@@ -99,6 +101,7 @@ describe('resolvePlaybook', () => {
     expect(resolved.synthesisAgentId).toBeUndefined();
     expect(resolved.language).toBeUndefined();
     expect(resolved.roles).toBeUndefined();
+    expect(resolved.fallback).toEqual(DEFAULT_FALLBACK_POLICY);
   });
 
   it('returns all defaults when config is undefined', () => {
@@ -143,6 +146,22 @@ describe('resolvePlaybook', () => {
   it('passes through participantReadyTimeoutSec', () => {
     const resolved = resolvePlaybook({ participantReadyTimeoutSec: 600 });
     expect(resolved.participantReadyTimeoutSec).toBe(600);
+  });
+
+  it('merges fallback policy with defaults', () => {
+    const resolved = resolvePlaybook({
+      fallback: {
+        mode: 'model_only',
+        preservePinnedModel: false,
+        triggerErrors: ['usage_limit', 'auth_error'],
+      },
+    });
+
+    expect(resolved.fallback.enabled).toBe(true);
+    expect(resolved.fallback.mode).toBe('model_only');
+    expect(resolved.fallback.preservePinnedModel).toBe(false);
+    expect(resolved.fallback.triggerErrors).toEqual(['usage_limit', 'auth_error']);
+    expect(resolved.fallback.allowedFallbackAgents).toEqual([]);
   });
 });
 

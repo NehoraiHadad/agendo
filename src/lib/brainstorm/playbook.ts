@@ -6,6 +6,7 @@
  */
 
 import type { BrainstormConfig } from '@/lib/db/schema';
+import { DEFAULT_FALLBACK_POLICY, resolveFallbackPolicy } from '@/lib/fallback/policy';
 
 // ============================================================================
 // Defaults
@@ -39,6 +40,7 @@ export const PLAYBOOK_DEFAULTS: Required<
   reviewPauseSec: 0,
   autoReflection: true,
   reflectionInterval: 3,
+  fallback: DEFAULT_FALLBACK_POLICY,
 } as const;
 
 /** Default maxWaves (stored on the room row, not in config) */
@@ -119,6 +121,7 @@ export function resolvePlaybook(config: BrainstormConfig | null | undefined): Re
   constraints?: string[];
   deliverableType?: BrainstormConfig['deliverableType'];
   targetAudience?: string;
+  fallback: typeof DEFAULT_FALLBACK_POLICY;
 } {
   return {
     waveTimeoutSec: config?.waveTimeoutSec ?? PLAYBOOK_DEFAULTS.waveTimeoutSec,
@@ -134,6 +137,7 @@ export function resolvePlaybook(config: BrainstormConfig | null | undefined): Re
     reviewPauseSec: config?.reviewPauseSec ?? PLAYBOOK_DEFAULTS.reviewPauseSec,
     autoReflection: config?.autoReflection ?? PLAYBOOK_DEFAULTS.autoReflection,
     reflectionInterval: config?.reflectionInterval ?? PLAYBOOK_DEFAULTS.reflectionInterval,
+    fallback: resolveFallbackPolicy(config?.fallback),
     synthesisAgentId: config?.synthesisAgentId,
     language: config?.language,
     roles: config?.roles,

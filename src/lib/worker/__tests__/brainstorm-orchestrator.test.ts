@@ -53,8 +53,39 @@ vi.mock('@/lib/worker/worker-sse', () => ({
 // Mock: worker-client
 // ---------------------------------------------------------------------------
 
+const mockSendSessionControl = vi.fn().mockResolvedValue({ ok: true, dispatched: true });
+
 vi.mock('@/lib/realtime/worker-client', () => ({
-  sendSessionControl: vi.fn().mockResolvedValue({ ok: true, dispatched: true }),
+  sendSessionControl: mockSendSessionControl,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock: model-service
+// ---------------------------------------------------------------------------
+
+const mockGetModelsForProvider = vi.fn(async (provider: string) => {
+  if (provider === 'openai') {
+    return [
+      { id: 'gpt-4o', label: 'GPT-4o', description: 'Fallback' },
+      { id: 'o3-mini', label: 'o3-mini', description: 'Secondary fallback' },
+    ];
+  }
+
+  return [];
+});
+
+vi.mock('@/lib/services/model-service', () => ({
+  getModelsForProvider: mockGetModelsForProvider,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock: agent-service
+// ---------------------------------------------------------------------------
+
+const mockListAgents = vi.fn().mockResolvedValue([]);
+
+vi.mock('@/lib/services/agent-service', () => ({
+  listAgents: mockListAgents,
 }));
 
 // ---------------------------------------------------------------------------
@@ -65,6 +96,7 @@ const mockGetBrainstorm = vi.fn();
 const mockUpdateBrainstormStatus = vi.fn().mockResolvedValue(undefined);
 const mockUpdateBrainstormWave = vi.fn().mockResolvedValue(undefined);
 const mockUpdateParticipantSession = vi.fn().mockResolvedValue(undefined);
+const mockUpdateParticipantModel = vi.fn().mockResolvedValue(undefined);
 const mockUpdateParticipantStatus = vi.fn().mockResolvedValue(undefined);
 const mockSetBrainstormSynthesis = vi.fn().mockResolvedValue(undefined);
 
@@ -73,6 +105,7 @@ vi.mock('@/lib/services/brainstorm-service', () => ({
   updateBrainstormStatus: mockUpdateBrainstormStatus,
   updateBrainstormWave: mockUpdateBrainstormWave,
   updateParticipantSession: mockUpdateParticipantSession,
+  updateParticipantModel: mockUpdateParticipantModel,
   updateParticipantStatus: mockUpdateParticipantStatus,
   setBrainstormSynthesis: mockSetBrainstormSynthesis,
 }));
@@ -131,6 +164,69 @@ function fireSessionEvent(
   }
 }
 
+function createParticipant(
+  overrides: Partial<{
+    sessionId: string | null;
+    agentId: string;
+    agentName: string;
+    agentSlug: string;
+    participantId: string;
+    model?: string;
+    waveStatus: string;
+    responseBuffer: string[];
+    hasPassed: boolean;
+    hasLeft: boolean;
+    readyAt: number | null;
+    lastError: string | null;
+    pendingPrompt: string | null;
+    fallbackInFlight: boolean;
+    fallbackTriggerError: string | null;
+    fallbackTargetModel: string | null;
+    fallbackAttemptedModels: string[];
+    fallbackAttemptedAgents: string[];
+    provider: 'openai' | 'anthropic' | 'google' | 'github' | null;
+    modelPinned: boolean;
+    recovery: null;
+    deltaBuffer: DeltaBuffer;
+    waveResponseCount: number;
+    consecutiveTimeouts: number;
+  }> = {},
+) {
+  return {
+    sessionId: 'session-1',
+    agentId: 'agent-1',
+    agentName: 'Codex',
+    agentSlug: 'codex-cli-1',
+    participantId: 'participant-1',
+    model: 'o3',
+    waveStatus: 'thinking',
+    responseBuffer: [] as string[],
+    hasPassed: false,
+    hasLeft: false,
+    readyAt: Date.now(),
+    lastError: null,
+    pendingPrompt: null,
+    fallbackInFlight: false,
+    fallbackTriggerError: null,
+    fallbackTargetModel: null,
+    fallbackAttemptedModels: [] as string[],
+    fallbackAttemptedAgents: [] as string[],
+    provider: 'openai' as const,
+    modelPinned: false,
+    recovery: null,
+    deltaBuffer: mockDeltaBuffer(),
+    waveResponseCount: 0,
+    consecutiveTimeouts: 0,
+    ...overrides,
+  };
+}
+
+async function flushAsyncWork(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
@@ -143,10 +239,13 @@ beforeEach(() => {
   mockUpdateBrainstormStatus.mockResolvedValue(undefined);
   mockUpdateBrainstormWave.mockResolvedValue(undefined);
   mockUpdateParticipantSession.mockResolvedValue(undefined);
+  mockUpdateParticipantModel.mockResolvedValue(undefined);
   mockUpdateParticipantStatus.mockResolvedValue(undefined);
   mockSetBrainstormSynthesis.mockResolvedValue(undefined);
   mockEnqueueSession.mockResolvedValue(undefined);
   mockGetSessionProc.mockReturnValue(null);
+  mockGetModelsForProvider.mockClear();
+  mockListAgents.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -898,53 +997,31 @@ describe('participant error propagation', () => {
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
     const orchestrator = new BrainstormOrchestrator(roomId, 3, 1) as unknown as {
-      participants: Array<{
-        sessionId: string | null;
-        agentId: string;
-        agentName: string;
-        agentSlug: string;
-        participantId: string;
-        waveStatus: string;
-        responseBuffer: string[];
-        hasPassed: boolean;
-        hasLeft: boolean;
-        readyAt: number | null;
-        lastError: string | null;
-        deltaBuffer: DeltaBuffer;
-        waveResponseCount: number;
-        consecutiveTimeouts: number;
-      }>;
+      participants: Array<ReturnType<typeof createParticipant>>;
       currentWave: number;
       scheduleWaveTimeout: (wave: number) => void;
-      handleSessionEvent: (participant: Record<string, unknown>, event: unknown) => void;
+      handleSessionEvent: (
+        participant: ReturnType<typeof createParticipant>,
+        event: unknown,
+      ) => void;
     };
 
-    const participant = {
+    const participant = createParticipant({
       sessionId: 'session-error-timeout-1',
-      agentId: 'agent-1',
-      agentName: 'Codex',
-      agentSlug: 'codex-cli-1',
-      participantId: 'part-1',
       waveStatus: 'thinking',
-      responseBuffer: [] as string[],
-      hasPassed: false,
-      hasLeft: false,
       readyAt: Date.now(),
-      lastError: null,
-      deltaBuffer: mockDeltaBuffer(),
-      waveResponseCount: 0,
-      consecutiveTimeouts: 0,
-    };
+    });
 
     orchestrator.participants = [participant];
     orchestrator.currentWave = 1;
 
     orchestrator.handleSessionEvent(participant, {
       type: 'system:error',
-      message: 'Codex turn failed: usageLimitExceeded',
+      message: 'Transport stalled while streaming response',
     });
 
-    expect(participant.lastError).toBe('Codex turn failed: usageLimitExceeded');
+    expect(participant.lastError).toBe('Transport stalled while streaming response');
+    expect(mockSendSessionControl).not.toHaveBeenCalled();
 
     orchestrator.scheduleWaveTimeout(1);
     await vi.advanceTimersByTimeAsync(4000);
@@ -956,7 +1033,7 @@ describe('participant error propagation', () => {
     ) as { error?: string } | undefined;
 
     expect(timeoutEvent).toBeDefined();
-    expect(timeoutEvent?.error).toBe('Codex turn failed: usageLimitExceeded');
+    expect(timeoutEvent?.error).toBe('Transport stalled while streaming response');
   });
 
   it('surfaces startup failure reason on participant:left and room:error events', async () => {
@@ -969,44 +1046,19 @@ describe('participant error propagation', () => {
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
     const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
-      participants: Array<{
-        sessionId: string | null;
-        agentId: string;
-        agentName: string;
-        agentSlug: string;
-        participantId: string;
-        waveStatus: string;
-        responseBuffer: string[];
-        hasPassed: boolean;
-        hasLeft: boolean;
-        readyAt: number | null;
-        lastError: string | null;
-        deltaBuffer: DeltaBuffer;
-        waveResponseCount: number;
-        consecutiveTimeouts: number;
-      }>;
+      participants: Array<ReturnType<typeof createParticipant>>;
       participantReadyTimeoutSec: number;
       waitForAllParticipantsReady: () => Promise<void>;
     };
 
     orchestrator.participantReadyTimeoutSec = 600;
     orchestrator.participants = [
-      {
+      createParticipant({
         sessionId: 'session-error-startup-1',
-        agentId: 'agent-2',
-        agentName: 'Codex',
-        agentSlug: 'codex-cli-1',
-        participantId: 'part-2',
         waveStatus: 'pending',
-        responseBuffer: [],
-        hasPassed: false,
-        hasLeft: false,
         readyAt: null,
         lastError: 'Codex error: usageLimitExceeded',
-        deltaBuffer: mockDeltaBuffer(),
-        waveResponseCount: 0,
-        consecutiveTimeouts: 0,
-      },
+      }),
     ];
 
     const readyPromise = expect(orchestrator.waitForAllParticipantsReady()).rejects.toThrow(
@@ -1024,6 +1076,172 @@ describe('participant error propagation', () => {
       (event) => (event as { type?: string }).type === 'room:error',
     ) as { message?: string } | undefined;
     expect(roomErrorEvent?.message).toContain('usageLimitExceeded');
+  });
+
+  it('triggers immediate model fallback on codex usage-limit errors and retries the turn', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-fallback-success-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 60) as unknown as {
+      participants: Array<ReturnType<typeof createParticipant>>;
+      currentWave: number;
+      waveStarted: boolean;
+      handleSessionEvent: (
+        participant: ReturnType<typeof createParticipant>,
+        event: unknown,
+      ) => void;
+    };
+
+    const participant = createParticipant({
+      sessionId: 'session-fallback-success-1',
+      participantId: 'part-fallback-success-1',
+      pendingPrompt: 'Retry the brainstorm turn.',
+    });
+
+    orchestrator.participants = [participant];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:error',
+      message: 'Codex turn failed: usageLimitExceeded',
+    });
+    await flushAsyncWork();
+
+    expect(mockSendSessionControl).toHaveBeenNthCalledWith(1, 'session-fallback-success-1', {
+      type: 'set-model',
+      model: 'gpt-4o',
+    });
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:info',
+      message: 'Model switched to "gpt-4o".',
+    });
+    await flushAsyncWork();
+
+    expect(mockUpdateParticipantModel).toHaveBeenCalledWith('part-fallback-success-1', 'gpt-4o');
+    expect(mockSendSessionControl).toHaveBeenNthCalledWith(2, 'session-fallback-success-1', {
+      type: 'message',
+      text: 'Retry the brainstorm turn.',
+    });
+    expect(participant.model).toBe('gpt-4o');
+    expect(participant.lastError).toBeNull();
+
+    const activityEvent = capturedEvents.find(
+      (event) =>
+        (event as { type?: string; description?: string }).type === 'participant:activity' &&
+        (event as { description?: string }).description?.includes('Automatic fallback succeeded'),
+    ) as { description?: string } | undefined;
+
+    expect(activityEvent?.description).toContain('gpt-4o');
+  });
+
+  it('marks the participant left when codex model fallback options are exhausted', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-fallback-failed-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 60) as unknown as {
+      participants: Array<ReturnType<typeof createParticipant>>;
+      currentWave: number;
+      waveStarted: boolean;
+      handleSessionEvent: (
+        participant: ReturnType<typeof createParticipant>,
+        event: unknown,
+      ) => void;
+    };
+
+    const participant = createParticipant({
+      sessionId: 'session-fallback-failed-1',
+      participantId: 'part-fallback-failed-1',
+      model: 'gpt-4o',
+      fallbackAttemptedModels: ['gpt-4o'],
+      pendingPrompt: 'Retry the brainstorm turn.',
+    });
+
+    orchestrator.participants = [participant];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:error',
+      message: 'Codex turn failed: usageLimitExceeded',
+    });
+    await flushAsyncWork();
+
+    expect(mockSendSessionControl).toHaveBeenNthCalledWith(1, 'session-fallback-failed-1', {
+      type: 'set-model',
+      model: 'o3-mini',
+    });
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:error',
+      message: 'Failed to switch model to "o3-mini" because the CLI did not respond.',
+    });
+    await flushAsyncWork();
+
+    expect(participant.hasLeft).toBe(true);
+    expect(participant.hasPassed).toBe(true);
+    expect(participant.waveStatus).toBe('done');
+    expect(participant.lastError).toContain('Automatic model fallback failed');
+
+    const leftEvent = capturedEvents.find(
+      (event) => (event as { type?: string }).type === 'participant:left',
+    ) as { error?: string } | undefined;
+    expect(leftEvent?.error).toContain('Automatic model fallback failed');
+  });
+
+  it('treats codex auth errors as terminal and does not attempt a model switch', async () => {
+    vi.useFakeTimers();
+
+    const roomId = 'room-fallback-auth-1';
+    const capturedEvents: unknown[] = [];
+    const listenerSet = new Set<(event: unknown) => void>();
+    listenerSet.add((event) => capturedEvents.push(event));
+    mockBrainstormEventListeners.set(roomId, listenerSet);
+
+    const orchestrator = new BrainstormOrchestrator(roomId, 3, 60) as unknown as {
+      participants: Array<ReturnType<typeof createParticipant>>;
+      currentWave: number;
+      waveStarted: boolean;
+      handleSessionEvent: (
+        participant: ReturnType<typeof createParticipant>,
+        event: unknown,
+      ) => void;
+    };
+
+    const participant = createParticipant({
+      sessionId: 'session-fallback-auth-1',
+      participantId: 'part-fallback-auth-1',
+    });
+
+    orchestrator.participants = [participant];
+    orchestrator.currentWave = 1;
+    orchestrator.waveStarted = true;
+
+    orchestrator.handleSessionEvent(participant, {
+      type: 'system:error',
+      message: 'Auth error: invalid API key',
+    });
+    await flushAsyncWork();
+
+    expect(mockSendSessionControl).not.toHaveBeenCalled();
+    expect(participant.hasLeft).toBe(true);
+    expect(participant.lastError).toContain('authentication failures');
+
+    const leftEvent = capturedEvents.find(
+      (event) => (event as { type?: string }).type === 'participant:left',
+    ) as { error?: string } | undefined;
+    expect(leftEvent?.error).toContain('authentication failures');
   });
 });
 
@@ -1598,6 +1816,12 @@ type ParticipantState = {
   hasPassed: boolean;
   hasLeft: boolean;
   readyAt: number | null;
+  lastError?: string | null;
+  pendingPrompt?: string | null;
+  fallbackInFlight?: boolean;
+  fallbackTriggerError?: string | null;
+  fallbackTargetModel?: string | null;
+  fallbackAttemptedModels?: string[];
   deltaBuffer: DeltaBuffer;
   /** Number of responses this participant has sent in the current wave (reactive injection tracking) */
   waveResponseCount: number;
@@ -1626,6 +1850,12 @@ describe('reactive injection', () => {
       hasPassed: false,
       hasLeft: false,
       readyAt: Date.now(),
+      lastError: null,
+      pendingPrompt: null,
+      fallbackInFlight: false,
+      fallbackTriggerError: null,
+      fallbackTargetModel: null,
+      fallbackAttemptedModels: [],
       deltaBuffer: mockDeltaBuffer(),
       waveResponseCount: 0,
       consecutiveTimeouts: 0,

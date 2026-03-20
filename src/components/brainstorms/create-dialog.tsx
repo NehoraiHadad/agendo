@@ -33,6 +33,7 @@ import { deriveProvider } from '@/lib/utils/session-controls';
 import { PLAYBOOK_PRESETS, PLAYBOOK_DEFAULTS } from '@/lib/brainstorm/playbook';
 import type { BrainstormConfig } from '@/lib/db/schema';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { FALLBACK_TRIGGER_ERRORS } from '@/lib/fallback/policy';
 
 // ============================================================================
 // Types
@@ -149,6 +150,12 @@ interface FormContentProps {
   setDeliverableType: (v: BrainstormConfig['deliverableType']) => void;
   targetAudience: string;
   setTargetAudience: (v: string) => void;
+  fallbackMode: NonNullable<BrainstormConfig['fallback']>['mode'];
+  setFallbackMode: (v: NonNullable<BrainstormConfig['fallback']>['mode']) => void;
+  preservePinnedModel: boolean;
+  setPreservePinnedModel: (v: boolean) => void;
+  fallbackTriggerErrors: string[];
+  toggleFallbackTriggerError: (value: string) => void;
 }
 
 function FormContent({
@@ -185,8 +192,15 @@ function FormContent({
   setDeliverableType,
   targetAudience,
   setTargetAudience,
+  fallbackMode,
+  setFallbackMode,
+  preservePinnedModel,
+  setPreservePinnedModel,
+  fallbackTriggerErrors,
+  toggleFallbackTriggerError,
 }: FormContentProps) {
   const [setupOpen, setSetupOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const constraintInputRef = useRef<HTMLInputElement>(null);
   const [constraintDraft, setConstraintDraft] = useState('');
 
@@ -226,6 +240,10 @@ function FormContent({
     constraints.length > 0 ||
     deliverableType !== undefined ||
     targetAudience.trim().length > 0;
+  const hasRecoveryOverrides =
+    fallbackMode !== undefined ||
+    preservePinnedModel !== true ||
+    fallbackTriggerErrors.join('|') !== FALLBACK_TRIGGER_ERRORS.join('|');
 
   return (
     <div className="space-y-5">
@@ -524,6 +542,96 @@ function FormContent({
         </p>
       </div>
 
+      <div className="rounded-md border border-white/[0.06] overflow-hidden">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground/60 hover:text-muted-foreground/80 hover:bg-white/[0.02] transition-colors"
+          onClick={() => setRecoveryOpen((v) => !v)}
+          aria-expanded={recoveryOpen}
+        >
+          <span className="font-medium">
+            Recovery <span className="text-muted-foreground/35 font-normal">(optional)</span>
+            {hasRecoveryOverrides && !recoveryOpen && (
+              <span className="ml-1.5 inline-flex items-center rounded-full bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-blue-400">
+                configured
+              </span>
+            )}
+          </span>
+          {recoveryOpen ? (
+            <ChevronUp className="size-3.5 shrink-0" />
+          ) : (
+            <ChevronDown className="size-3.5 shrink-0" />
+          )}
+        </button>
+
+        {recoveryOpen && (
+          <div className="px-3 pb-3 pt-1 space-y-3 border-t border-white/[0.06]">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-foreground/70">Fallback Mode</Label>
+              <Select
+                value={fallbackMode ?? '__default__'}
+                onValueChange={(value) =>
+                  setFallbackMode(
+                    value === '__default__'
+                      ? undefined
+                      : (value as NonNullable<BrainstormConfig['fallback']>['mode']),
+                  )
+                }
+              >
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder="Default: model then agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">Default</SelectItem>
+                  <SelectItem value="off">Off</SelectItem>
+                  <SelectItem value="model_only">Model only</SelectItem>
+                  <SelectItem value="model_then_agent">Model then agent</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground/35">
+                Controls whether participants should recover automatically from explicit provider,
+                model, or authentication failures.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-foreground/70">Trigger Errors</Label>
+              <div className="space-y-2">
+                {[
+                  { value: 'usage_limit', label: 'Usage limit' },
+                  { value: 'auth_error', label: 'Authentication failure' },
+                  { value: 'provider_unavailable', label: 'Provider unavailable' },
+                  { value: 'model_unavailable', label: 'Model unavailable' },
+                  { value: 'rate_limited', label: 'Rate limited' },
+                ].map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex items-center gap-2 text-xs text-foreground/75"
+                  >
+                    <Checkbox
+                      checked={fallbackTriggerErrors.includes(option.value)}
+                      onCheckedChange={() => toggleFallbackTriggerError(option.value)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/35">
+                Defaults target explicit non-recoverable failures. Rate-limit fallback is opt-in.
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-foreground/75">
+              <Checkbox
+                checked={preservePinnedModel}
+                onCheckedChange={(checked) => setPreservePinnedModel(checked === true)}
+              />
+              <span>Keep explicitly selected participant models pinned</span>
+            </label>
+          </div>
+        )}
+      </div>
+
       <SectionHeader>Participants</SectionHeader>
 
       {/* Participants */}
@@ -717,6 +825,12 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [deliverableType, setDeliverableType] =
     useState<BrainstormConfig['deliverableType']>(undefined);
   const [targetAudience, setTargetAudience] = useState('');
+  const [fallbackMode, setFallbackMode] =
+    useState<NonNullable<BrainstormConfig['fallback']>['mode']>(undefined);
+  const [preservePinnedModel, setPreservePinnedModel] = useState(true);
+  const [fallbackTriggerErrors, setFallbackTriggerErrors] = useState<string[]>([
+    ...FALLBACK_TRIGGER_ERRORS,
+  ]);
 
   // Draft persistence via existing useDraft hook (debounced localStorage)
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:brainstorm:new');
@@ -724,13 +838,26 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   /** Save current form state as draft (called on every field change) */
   const persistDraft = useCallback(() => {
     if (!title && !topic) return;
+    const draftConfig: BrainstormConfig = { ...config };
+    const hasCustomFallbackTriggers =
+      fallbackTriggerErrors.length !== FALLBACK_TRIGGER_ERRORS.length ||
+      fallbackTriggerErrors.some((value, index) => value !== FALLBACK_TRIGGER_ERRORS[index]);
+    if (fallbackMode !== undefined || preservePinnedModel !== true || hasCustomFallbackTriggers) {
+      draftConfig.fallback = {
+        mode: fallbackMode,
+        preservePinnedModel,
+        triggerErrors: fallbackTriggerErrors as NonNullable<
+          BrainstormConfig['fallback']
+        >['triggerErrors'],
+      };
+    }
     const draft: DraftState = {
       title,
       topic,
       selectedProjectId,
       maxWaves,
       presetId,
-      config,
+      config: draftConfig,
       goal: goal || undefined,
       constraints: constraints.length > 0 ? constraints : undefined,
       deliverableType,
@@ -744,9 +871,12 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     maxWaves,
     presetId,
     config,
+    fallbackMode,
+    fallbackTriggerErrors,
     goal,
     constraints,
     deliverableType,
+    preservePinnedModel,
     targetAudience,
     saveDraft,
   ]);
@@ -773,6 +903,13 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (draft.constraints) setConstraints(draft.constraints);
       if (draft.deliverableType) setDeliverableType(draft.deliverableType);
       if (draft.targetAudience) setTargetAudience(draft.targetAudience);
+      if (draft.config?.fallback?.mode !== undefined) {
+        setFallbackMode(draft.config.fallback.mode);
+      }
+      setPreservePinnedModel(draft.config?.fallback?.preservePinnedModel ?? true);
+      setFallbackTriggerErrors(
+        draft.config?.fallback?.triggerErrors ?? [...FALLBACK_TRIGGER_ERRORS],
+      );
     } catch {
       // malformed draft — ignore
     }
@@ -891,6 +1028,12 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     setParticipants((prev) => prev.map((p) => (p.agentId === agentId ? { ...p, model } : p)));
   }, []);
 
+  const toggleFallbackTriggerError = useCallback((value: string) => {
+    setFallbackTriggerErrors((prev) =>
+      prev.includes(value) ? prev.filter((entry) => entry !== value) : [...prev, value],
+    );
+  }, []);
+
   const canSubmit =
     title.trim().length > 0 &&
     topic.trim().length > 0 &&
@@ -932,6 +1075,18 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (constraints.length > 0) finalConfig.constraints = constraints;
       if (deliverableType) finalConfig.deliverableType = deliverableType;
       if (targetAudience.trim()) finalConfig.targetAudience = targetAudience.trim();
+      const hasCustomFallbackTriggers =
+        fallbackTriggerErrors.length !== FALLBACK_TRIGGER_ERRORS.length ||
+        fallbackTriggerErrors.some((value, index) => value !== FALLBACK_TRIGGER_ERRORS[index]);
+      if (fallbackMode !== undefined || preservePinnedModel !== true || hasCustomFallbackTriggers) {
+        finalConfig.fallback = {
+          mode: fallbackMode,
+          preservePinnedModel,
+          triggerErrors: fallbackTriggerErrors as NonNullable<
+            BrainstormConfig['fallback']
+          >['triggerErrors'],
+        };
+      }
       const hasConfig = Object.keys(finalConfig).length > 0;
 
       const createRes = await fetch('/api/brainstorms', {
@@ -985,6 +1140,9 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       setConstraints([]);
       setDeliverableType(undefined);
       setTargetAudience('');
+      setFallbackMode(undefined);
+      setPreservePinnedModel(true);
+      setFallbackTriggerErrors([...FALLBACK_TRIGGER_ERRORS]);
 
       onOpenChange(false);
       router.push(`/brainstorms/${room.id}`);
@@ -999,8 +1157,11 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     config,
     constraints,
     deliverableType,
+    fallbackMode,
+    fallbackTriggerErrors,
     goal,
     projectId,
+    preservePinnedModel,
     selectedProjectId,
     selectedRelatedIds,
     targetAudience,
@@ -1046,6 +1207,12 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     setDeliverableType,
     targetAudience,
     setTargetAudience,
+    fallbackMode,
+    setFallbackMode,
+    preservePinnedModel,
+    setPreservePinnedModel,
+    fallbackTriggerErrors,
+    toggleFallbackTriggerError,
   };
 
   const footerProps: FooterContentProps = {

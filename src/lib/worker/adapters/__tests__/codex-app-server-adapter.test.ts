@@ -321,15 +321,13 @@ describe('CodexAppServerAdapter', () => {
     });
   });
 
-  describe('compaction cooldown', () => {
-    it('does not trigger compaction again within the cooldown period', () => {
-      const { onNotification, emitted, adapter } = setupAdapter();
+  describe('compaction trigger behavior', () => {
+    it('does not auto-trigger compaction from token usage updates', () => {
+      const { onNotification, emitted, adapter, written } = setupAdapter();
 
-      // Set alive and threadId so triggerCompaction doesn't bail
       (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      // First usage update at 85% — should trigger compaction
       onNotification('thread/tokenUsage/updated', {
         threadId: 'thread-1',
         turnId: 'turn-1',
@@ -345,118 +343,95 @@ describe('CodexAppServerAdapter', () => {
         },
       });
 
-      const compactEvents1 = emitted.filter((e) => e.type === 'as:compact-start');
-      expect(compactEvents1).toHaveLength(1);
-
-      // Simulate compaction completing (resets compacting flag)
-      onNotification('item/completed', {
-        item: { type: 'contextCompaction', id: 'compact-1' },
+      expect(emitted).toContainEqual({
+        type: 'as:usage',
+        used: 170000,
+        size: 200000,
       });
-
-      // Second usage update IMMEDIATELY after — still 85%, but should NOT
-      // trigger compaction because of cooldown
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-2',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
-
-      const compactEvents2 = emitted.filter((e) => e.type === 'as:compact-start');
-      // Should still be just 1 (no second compaction)
-      expect(compactEvents2).toHaveLength(1);
+      expect(emitted.filter((e) => e.type === 'as:compact-start')).toHaveLength(0);
+      expect(
+        written.some((line) => {
+          try {
+            return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
+          } catch {
+            return false;
+          }
+        }),
+      ).toBe(false);
     });
 
-    it('allows compaction again after the cooldown period expires', () => {
-      vi.useFakeTimers();
-      const { onNotification, emitted, adapter } = setupAdapter();
+    it('does not trigger manual compaction again within the cooldown period', async () => {
+      const { adapter, transport, written, onNotification } = setupAdapter();
 
       (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      // First compaction
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
+      const firstCompactPromise = (adapter as any).triggerCompaction();
+      const firstRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: firstRequest.id, result: {} }));
+      await firstCompactPromise;
 
-      // Complete the compaction
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
       });
 
-      // Advance past cooldown (default 60s)
+      await (adapter as any).triggerCompaction();
+
+      const compactRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter((msg) => !!msg && msg.method === 'thread/compact/start');
+
+      expect(compactRequests).toHaveLength(1);
+    });
+
+    it('allows manual compaction again after the cooldown period expires', async () => {
+      vi.useFakeTimers();
+      const { adapter, transport, written, onNotification } = setupAdapter();
+
+      (adapter as any).alive = true;
+      (adapter as any).threadId = 'thread-1';
+
+      const firstCompactPromise = (adapter as any).triggerCompaction();
+      const firstRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: firstRequest.id, result: {} }));
+      await firstCompactPromise;
+
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
       vi.advanceTimersByTime(61_000);
 
-      // Now another usage notification should trigger compaction
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-2',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
+      const secondCompactPromise = (adapter as any).triggerCompaction();
+      const secondRequest = JSON.parse(written[1].trimEnd());
+      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: secondRequest.id, result: {} }));
+      await secondCompactPromise;
 
-      const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
-      expect(compactEvents).toHaveLength(2);
+      const compactRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter((msg) => !!msg && msg.method === 'thread/compact/start');
+
+      expect(compactRequests).toHaveLength(2);
 
       vi.useRealTimers();
-    });
-
-    it('does not trigger compaction when usage is below 80%', () => {
-      const { onNotification, emitted, adapter } = setupAdapter();
-
-      (adapter as any).alive = true;
-      (adapter as any).threadId = 'thread-1';
-
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 100000,
-            inputTokens: 100000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
-
-      const compactEvents = emitted.filter((e) => e.type === 'as:compact-start');
-      expect(compactEvents).toHaveLength(0);
     });
   });
 
   describe('automatic resume after compaction', () => {
-    it('keeps thinking active while an interrupted turn is being auto-resumed', async () => {
-      const { adapter, transport, written, onNotification } = setupAdapter();
+    it('keeps thinking active while a Codex-initiated compaction is being auto-resumed', async () => {
+      const { adapter, transport, written, onNotification, emitted } = setupAdapter();
       const thinkingStates: boolean[] = [];
 
       adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
@@ -473,25 +448,18 @@ describe('CodexAppServerAdapter', () => {
         turn: { id: 'turn-1' },
       });
 
-      const compactPromise = (adapter as any).triggerCompaction();
-      const compactRequestLine = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
-      });
-      expect(compactRequestLine).toBeDefined();
-      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
-
       onNotification('turn/completed', {
         turn: { status: 'interrupted' },
       });
 
       expect(thinkingStates).toEqual([true]);
+      expect(emitted).not.toContainEqual({ type: 'as:compact-start' });
 
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
-      await compactPromise;
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      expect(emitted).toContainEqual({ type: 'as:compact-start' });
 
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
@@ -523,7 +491,7 @@ describe('CodexAppServerAdapter', () => {
       expect(thinkingStates).toEqual([true, true, false]);
     });
 
-    it('replays the interrupted prompt once compaction completes', async () => {
+    it('replays the interrupted prompt once a Codex-initiated compaction completes', async () => {
       const { adapter, transport, written, onNotification, emitted } = setupAdapter();
 
       (adapter as any).threadId = 'thread-1';
@@ -535,23 +503,13 @@ describe('CodexAppServerAdapter', () => {
       );
       await firstTurnPromise;
 
-      const compactPromise = (adapter as any).triggerCompaction();
-      const compactRequestLine = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
-      });
-      expect(compactRequestLine).toBeDefined();
-      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
-
       onNotification('turn/completed', {
         turn: { status: 'interrupted' },
       });
 
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
-      await compactPromise;
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
 
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
@@ -572,13 +530,14 @@ describe('CodexAppServerAdapter', () => {
 
       expect(turnStartRequests).toHaveLength(2);
       expect(turnStartRequests[1].params.input[0].text).toBe('Continue working');
+      expect(emitted).toContainEqual({ type: 'as:compact-start' });
       expect(emitted).toContainEqual({
         type: 'as:info',
         message: 'Context compacted. Resuming response…',
       });
     });
 
-    it('replays the interrupted prompt when compaction completes before turn interruption is reported', async () => {
+    it('replays the interrupted prompt when Codex finishes compaction before reporting turn interruption', async () => {
       const { adapter, transport, written, onNotification } = setupAdapter();
       const thinkingStates: boolean[] = [];
 
@@ -596,19 +555,9 @@ describe('CodexAppServerAdapter', () => {
         turn: { id: 'turn-1' },
       });
 
-      const compactPromise = (adapter as any).triggerCompaction();
-      const compactRequestLine = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
       });
-      expect(compactRequestLine).toBeDefined();
-      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
-
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
-      await compactPromise;
 
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
@@ -656,32 +605,31 @@ describe('CodexAppServerAdapter', () => {
       );
       await firstTurnPromise;
 
-      const compactPromise = (adapter as any).triggerCompaction();
-      const compactRequestLine = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
-      });
-      expect(compactRequestLine).toBeDefined();
-      const compactRequest = JSON.parse(compactRequestLine!.trimEnd());
-
       onNotification('turn/completed', {
         turn: { status: 'interrupted' },
       });
 
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: compactRequest.id, result: {} }));
-      await compactPromise;
-
       onNotification('item/started', {
         item: { type: 'contextCompaction', id: 'compact-1' },
       });
+
+      let turnStartRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter((msg) => !!msg && msg.method === 'turn/start');
+
+      expect(turnStartRequests).toHaveLength(1);
+
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
       });
 
-      const turnStartRequests = written
+      turnStartRequests = written
         .map((line) => {
           try {
             return JSON.parse(line.trimEnd());
@@ -692,6 +640,101 @@ describe('CodexAppServerAdapter', () => {
         .filter((msg) => !!msg && msg.method === 'turn/start');
 
       expect(turnStartRequests).toHaveLength(2);
+    });
+
+    it('waits for Codex compaction completion before replaying the interrupted prompt', async () => {
+      const { adapter, transport, written, onNotification, emitted } = setupAdapter();
+
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+      await firstTurnPromise;
+
+      onNotification('turn/completed', {
+        turn: { status: 'interrupted' },
+      });
+
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      let turnStartRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (msg): msg is { method: string; params: { input: Array<{ text: string }> } } =>
+            !!msg && msg.method === 'turn/start',
+        );
+
+      expect(turnStartRequests).toHaveLength(1);
+      expect(emitted).not.toContainEqual({
+        type: 'as:info',
+        message: 'Context compacted. Resuming response…',
+      });
+
+      onNotification('item/completed', {
+        item: { type: 'contextCompaction', id: 'compact-1' },
+      });
+
+      turnStartRequests = written
+        .map((line) => {
+          try {
+            return JSON.parse(line.trimEnd());
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (msg): msg is { method: string; params: { input: Array<{ text: string }> } } =>
+            !!msg && msg.method === 'turn/start',
+        );
+
+      expect(turnStartRequests).toHaveLength(2);
+      expect(turnStartRequests[1].params.input[0].text).toBe('Continue working');
+      expect(emitted).toContainEqual({
+        type: 'as:info',
+        message: 'Context compacted. Resuming response…',
+      });
+    });
+
+    it('falls back to stopped thinking if no compaction signal arrives after an interrupted turn', () => {
+      vi.useFakeTimers();
+      const { adapter, transport, written, onNotification } = setupAdapter();
+      const thinkingStates: boolean[] = [];
+
+      adapter.onThinkingChange((thinking) => thinkingStates.push(thinking));
+      (adapter as any).threadId = 'thread-1';
+
+      const firstTurnPromise = (adapter as any).startTurn('Continue working');
+      const firstTurnRequest = JSON.parse(written[0].trimEnd());
+      transport.processLine(
+        JSON.stringify({ jsonrpc: '2.0', id: firstTurnRequest.id, result: {} }),
+      );
+
+      return firstTurnPromise.then(() => {
+        onNotification('turn/started', {
+          turn: { id: 'turn-1' },
+        });
+        onNotification('turn/completed', {
+          turn: { status: 'interrupted' },
+        });
+
+        expect(thinkingStates).toEqual([true]);
+
+        vi.advanceTimersByTime(2_100);
+
+        expect(thinkingStates).toEqual([true, false]);
+        vi.useRealTimers();
+      });
     });
   });
 
@@ -714,26 +757,10 @@ describe('CodexAppServerAdapter', () => {
       (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      // Trigger compaction by simulating high token usage
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
+      const compactPromise = (adapter as any).triggerCompaction();
 
-      // At this point the compaction RPC is in-flight. compacting is true.
       expect((adapter as any).compacting).toBe(true);
 
-      // Resolve the RPC successfully so the 60s watchdog gets started.
       const compactRequest = written.find((line) => {
         try {
           return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
@@ -744,68 +771,35 @@ describe('CodexAppServerAdapter', () => {
       expect(compactRequest).toBeDefined();
       const req = JSON.parse(compactRequest!.trimEnd());
       transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+      await compactPromise;
 
-      // Yield so triggerCompaction() sets the watchdog
-      await Promise.resolve();
-
-      // Watchdog is running
       expect((adapter as any).compactionWatchdog).not.toBeNull();
 
-      // Simulate compaction completing via item/completed notification (normal path).
       onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-1' },
       });
 
-      // compacting should be reset to false and watchdog cleared.
       expect((adapter as any).compacting).toBe(false);
       expect((adapter as any).compactionWatchdog).toBeNull();
 
-      // Advance past the watchdog timeout — it should NOT fire because it was cleared.
       vi.advanceTimersByTime(65_000);
 
-      // compacting should remain false (not flipped back by a spurious timer).
       expect((adapter as any).compacting).toBe(false);
     });
 
-    it('also clears the watchdog when compaction completes via item/started', async () => {
-      const { onNotification, adapter, transport, written } = setupAdapter();
+    it('keeps the watchdog running for a Codex-initiated compaction until item/completed', () => {
+      const { onNotification, adapter } = setupAdapter();
 
-      (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-2' },
       });
-
-      // Resolve the RPC so the watchdog starts
-      const compactRequest = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
-      });
-      expect(compactRequest).toBeDefined();
-      const req = JSON.parse(compactRequest!.trimEnd());
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
-      await Promise.resolve();
 
       expect((adapter as any).compacting).toBe(true);
       expect((adapter as any).compactionWatchdog).not.toBeNull();
 
-      // item/started also calls normalizeThreadItem — compaction can arrive there too.
-      onNotification('item/started', {
+      onNotification('item/completed', {
         item: { type: 'contextCompaction', id: 'compact-2' },
       });
 
@@ -814,30 +808,13 @@ describe('CodexAppServerAdapter', () => {
     });
 
     it('fires the watchdog after 60s when compaction stalls', async () => {
-      const { onNotification, adapter, transport, written } = setupAdapter();
+      const { adapter, transport, written } = setupAdapter();
 
       (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      // Trigger compaction — fire-and-forget via .catch() in handleNotification
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
-      });
+      const compactPromise = (adapter as any).triggerCompaction();
 
-      // The RPC is pending. compacting is true, but watchdog has NOT started yet
-      // (it starts only after the RPC resolves). Resolve the RPC successfully to
-      // simulate: "compact RPC succeeded but contextCompaction item never arrives."
       const compactRequest = written.find((line) => {
         try {
           return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
@@ -848,24 +825,17 @@ describe('CodexAppServerAdapter', () => {
       expect(compactRequest).toBeDefined();
       const req = JSON.parse(compactRequest!.trimEnd());
       transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
+      await compactPromise;
 
-      // Yield to the event loop so the async triggerCompaction() continues and
-      // sets the watchdog after receiving the RPC success response.
-      await Promise.resolve();
-
-      // compacting is still true (compaction item hasn't arrived), watchdog is running
       expect((adapter as any).compacting).toBe(true);
       expect((adapter as any).compactionWatchdog).not.toBeNull();
 
-      // Advance just under the watchdog threshold — should still be stalled.
       vi.advanceTimersByTime(59_000);
       expect((adapter as any).compacting).toBe(true);
 
-      // Advance past the 60s watchdog — it should fire and force-reset compacting.
       vi.advanceTimersByTime(2_000);
       expect((adapter as any).compacting).toBe(false);
 
-      // Watchdog handle should be null after it fires.
       expect((adapter as any).compactionWatchdog).toBeNull();
     });
 
@@ -940,46 +910,18 @@ describe('CodexAppServerAdapter', () => {
       expect((adapter as any).compacting).toBe(false);
     });
 
-    it('clears a pending watchdog when the process exits', async () => {
-      const { onNotification, adapter, transport, written } = setupAdapter();
+    it('clears a pending watchdog when the process exits', () => {
+      const { onNotification, adapter } = setupAdapter();
 
       (adapter as any).alive = true;
       (adapter as any).threadId = 'thread-1';
 
-      // Trigger compaction so a watchdog will be running once the RPC resolves
-      onNotification('thread/tokenUsage/updated', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          last: {
-            totalTokens: 170000,
-            inputTokens: 170000,
-            cachedInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 200000,
-        },
+      onNotification('item/started', {
+        item: { type: 'contextCompaction', id: 'compact-3' },
       });
-
-      // Resolve the RPC successfully so the watchdog gets started
-      const compactRequest = written.find((line) => {
-        try {
-          return JSON.parse(line.trimEnd()).method === 'thread/compact/start';
-        } catch {
-          return false;
-        }
-      });
-      expect(compactRequest).toBeDefined();
-      const req = JSON.parse(compactRequest!.trimEnd());
-      transport.processLine(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }));
-
-      // Yield to let triggerCompaction() set the watchdog
-      await Promise.resolve();
 
       expect((adapter as any).compactionWatchdog).not.toBeNull();
 
-      // Simulate process exit cleanup path
       (adapter as any).alive = false;
       (adapter as any).clearCompactionWatchdog();
 

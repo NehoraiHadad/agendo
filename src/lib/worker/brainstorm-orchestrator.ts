@@ -35,12 +35,14 @@ import {
   updateBrainstormStatus,
   updateBrainstormWave,
   updateBrainstormLogPath,
+  updateParticipantModel,
   updateParticipantSession,
   updateParticipantStatus,
   updateParticipantRole,
   setBrainstormSynthesis,
   getCompletedRoomsForProject,
 } from '@/lib/services/brainstorm-service';
+import { listAgents } from '@/lib/services/agent-service';
 import { FileLogWriter, resolveBrainstormLogPath } from '@/lib/worker/log-writer';
 import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import { buildTranscriptFromSessions } from '@/lib/worker/brainstorm-history';
@@ -48,10 +50,19 @@ import type {
   BrainstormEvent,
   BrainstormEventPayload,
   AgendoEvent,
+  BrainstormParticipantRecovery,
 } from '@/lib/realtime/event-types';
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import type { Provider } from '@/lib/services/model-service';
+import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
+import { classifySessionError } from '@/lib/worker/fallback/error-classifier';
+import {
+  decideFallback,
+  type FallbackDecision,
+  type FallbackAgentCandidate,
+} from '@/lib/worker/fallback/fallback-engine';
 
 const log = createLogger('brainstorm-orchestrator');
 
@@ -77,8 +88,12 @@ interface ParticipantState {
   agentId: string;
   agentName: string;
   agentSlug: string;
+  agentBinaryPath: string;
+  provider: Provider | null;
   sessionId: string | null;
   model?: string;
+  modelPinned: boolean;
+  role: string | null;
   waveStatus: WaveStatus;
   /** Accumulates agent:text chunks during the current wave turn */
   responseBuffer: string[];
@@ -96,6 +111,20 @@ interface ParticipantState {
   consecutiveTimeouts: number;
   /** Last session-level error observed for this participant. */
   lastError: string | null;
+  /** Current turn prompt to retry if an in-place fallback succeeds mid-wave. */
+  pendingPrompt: string | null;
+  /** True while the orchestrator is attempting automatic recovery for this participant. */
+  fallbackInFlight: boolean;
+  /** Original explicit error that triggered fallback. */
+  fallbackTriggerError: string | null;
+  /** Candidate model currently being attempted. */
+  fallbackTargetModel: string | null;
+  /** Previously attempted fallback models for this participant. */
+  fallbackAttemptedModels: string[];
+  /** Previously attempted replacement agents for this participant slot. */
+  fallbackAttemptedAgents: string[];
+  /** Structured automatic recovery state surfaced to the room UI. */
+  recovery: BrainstormParticipantRecovery | null;
 }
 
 function normalizeParticipantError(message: string | null | undefined): string | null {
@@ -108,6 +137,26 @@ function formatRateLimitError(event: Extract<AgendoEvent, { type: 'system:rate-l
   if (event.status) parts.push(`status=${event.status}`);
   if (event.overageStatus) parts.push(`overage=${event.overageStatus}`);
   return parts.join(' ');
+}
+
+function extractModelFromSystemInfo(message: string): string | null {
+  const switchedMatch = message.match(/Model switched to "([^"]+)"/);
+  if (switchedMatch?.[1]) return switchedMatch[1];
+
+  const setMatch = message.match(/Model set to ([^.\n]+)/);
+  if (setMatch?.[1]) return setMatch[1].trim();
+
+  const reroutedMatch = message.match(/Model rerouted:\s+.+\s+→\s+(.+)/);
+  if (reroutedMatch?.[1]) return reroutedMatch[1].trim();
+
+  return null;
+}
+
+function isModelSwitchFailureMessage(message: string): boolean {
+  return (
+    message.startsWith('Failed to switch model') ||
+    message === 'Model switching is not supported by this agent.'
+  );
 }
 
 interface BrainstormControlMessage {
@@ -142,6 +191,7 @@ const WAVE_0_EXTRA_TIMEOUT_SEC = 180; // +3 minutes on top of normal wave timeou
 export class BrainstormOrchestrator {
   private readonly roomId: string;
   private eventSeq = 0;
+  private room: BrainstormWithDetails | null = null;
   private participants: ParticipantState[] = [];
   private currentWave = 0;
   private maxWaves: number;
@@ -213,6 +263,9 @@ export class BrainstormOrchestrator {
   private previousWaveTexts: string[] = [];
   /** Wave number of the most recent reflection injection, or undefined if none */
   private lastReflectionWave: number | undefined = undefined;
+  private relatedSyntheses:
+    | Array<{ title: string; synthesis: string; createdAt: Date }>
+    | undefined = undefined;
 
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
@@ -254,6 +307,7 @@ export class BrainstormOrchestrator {
 
     try {
       const room = await getBrainstorm(this.roomId);
+      this.room = room;
 
       // Persist the log file path so the SSE endpoint can locate it on reconnect.
       // Use the room's existing logFilePath if already set (extension resume).
@@ -295,8 +349,12 @@ export class BrainstormOrchestrator {
         agentId: p.agentId,
         agentName: p.agentName,
         agentSlug: p.agentSlug,
+        agentBinaryPath: p.agentBinaryPath,
+        provider: binaryPathToProvider(p.agentBinaryPath),
         sessionId: p.sessionId ?? null,
         model: p.model ?? undefined,
+        modelPinned: p.model !== null,
+        role: p.role ?? null,
         waveStatus: 'pending' as WaveStatus,
         responseBuffer: [],
         hasPassed: false,
@@ -307,6 +365,13 @@ export class BrainstormOrchestrator {
         waveResponseCount: 0,
         consecutiveTimeouts: 0,
         lastError: null,
+        pendingPrompt: null,
+        fallbackInFlight: false,
+        fallbackTriggerError: null,
+        fallbackTargetModel: null,
+        fallbackAttemptedModels: [],
+        fallbackAttemptedAgents: [],
+        recovery: null,
       }));
 
       // Initialize DeltaBuffers after participants are created (needs `this` for emitEvent)
@@ -487,12 +552,8 @@ export class BrainstormOrchestrator {
         const role = Object.entries(this.playbook.roles || {}).find(
           ([, slug]) => slug === participant.agentSlug,
         )?.[0];
-        await this.emitEvent({
-          type: 'participant:joined',
-          agentId: participant.agentId,
-          agentName: participant.agentName,
-          role,
-        });
+        participant.role = role ?? null;
+        await this.emitParticipantJoined(participant);
 
         log.info(
           { roomId: this.roomId, sessionId: session.id, agentName: participant.agentName },
@@ -574,12 +635,7 @@ export class BrainstormOrchestrator {
 
             await updateParticipantStatus(p.participantId, 'left').catch(() => {});
 
-            await this.emitEvent({
-              type: 'participant:left',
-              agentId: p.agentId,
-              agentName: p.agentName,
-              error: failureReason,
-            }).catch(() => {});
+            await this.emitParticipantLeft(p, failureReason).catch(() => {});
           }
 
           // Check if all remaining (non-evicted) participants are ready.
@@ -1114,12 +1170,9 @@ export class BrainstormOrchestrator {
           );
           p.hasLeft = true;
           p.hasPassed = true;
-          await this.emitEvent({
-            type: 'participant:status',
-            agentId: p.agentId,
-            agentName: p.agentName,
-            status: 'evicted',
+          await this.emitParticipantStatus(p, 'evicted', {
             error: p.lastError,
+            model: p.model ?? null,
           });
           await updateParticipantStatus(p.participantId, 'left');
         }
@@ -1140,6 +1193,11 @@ export class BrainstormOrchestrator {
     // Reset reactive injection counter for the new wave
     this.pendingReactiveInjections = 0;
 
+    // Inject the content into each active participant's session.
+    // Prepend a wave status header so agents know which wave they're in.
+    const waveHeader = this.buildWaveStatusHeader(null);
+    const contentWithHeader = content ? `${waveHeader}\n\n${content}` : waveHeader;
+
     // Reset buffers and statuses for active participants
     for (const p of this.participants) {
       if (p.hasPassed) continue;
@@ -1147,21 +1205,15 @@ export class BrainstormOrchestrator {
       p.responseBuffer = [];
       p.waveResponseCount = 0;
       p.lastError = null;
+      p.pendingPrompt = contentWithHeader;
       // Clear any leftover delta state from the previous wave
       p.deltaBuffer.clear();
-      await this.emitEvent({
-        type: 'participant:status',
-        agentId: p.agentId,
-        agentName: p.agentName,
-        status: 'thinking',
+      await this.emitParticipantStatus(p, 'thinking', {
         error: null,
+        model: p.model ?? null,
       });
     }
 
-    // Inject the content into each active participant's session.
-    // Prepend a wave status header so agents know which wave they're in.
-    const waveHeader = this.buildWaveStatusHeader(null);
-    const contentWithHeader = content ? `${waveHeader}\n\n${content}` : waveHeader;
     const injectionPromises = this.participants
       .filter(
         (p): p is ParticipantState & { sessionId: string } => !p.hasPassed && p.sessionId !== null,
@@ -1197,12 +1249,9 @@ export class BrainstormOrchestrator {
           );
           p.waveStatus = 'timeout';
           timeoutFired = true;
-          void this.emitEvent({
-            type: 'participant:status',
-            agentId: p.agentId,
-            agentName: p.agentName,
-            status: 'timeout',
+          void this.emitParticipantStatus(p, 'timeout', {
             error: p.lastError,
+            model: p.model ?? null,
           });
         }
       }
@@ -1337,18 +1386,44 @@ export class BrainstormOrchestrator {
         }
         break;
 
+      case 'session:init':
+        participant.model = event.model ?? participant.model;
+        break;
+
       case 'agent:result':
         if (event.isError) {
           participant.lastError = normalizeParticipantError(event.errors?.join('; '));
+          void this.maybeTriggerParticipantFallback(participant);
         }
         break;
 
+      case 'system:info': {
+        const infoModel = extractModelFromSystemInfo(event.message);
+        if (infoModel) {
+          participant.model = infoModel;
+        }
+        if (
+          participant.fallbackInFlight &&
+          participant.fallbackTargetModel &&
+          infoModel === participant.fallbackTargetModel
+        ) {
+          void this.onParticipantFallbackSucceeded(participant, infoModel);
+        }
+        break;
+      }
+
       case 'system:error':
+        if (participant.fallbackInFlight && isModelSwitchFailureMessage(event.message)) {
+          void this.onParticipantFallbackSwitchFailed(participant, event.message);
+          break;
+        }
         participant.lastError = normalizeParticipantError(event.message);
+        void this.maybeTriggerParticipantFallback(participant);
         break;
 
       case 'system:rate-limit':
         participant.lastError = formatRateLimitError(event);
+        void this.maybeTriggerParticipantFallback(participant);
         break;
 
       case 'agent:tool-start': {
@@ -1358,11 +1433,7 @@ export class BrainstormOrchestrator {
         const input = event.input as Record<string, unknown> | undefined;
         const description = describeToolActivity(toolName, input);
         if (description) {
-          void this.emitEvent({
-            type: 'participant:activity',
-            agentId: participant.agentId,
-            description,
-          }).catch(() => {});
+          void this.emitParticipantActivity(participant, description).catch(() => {});
         }
         break;
       }
@@ -1371,11 +1442,7 @@ export class BrainstormOrchestrator {
         // Forward subagent progress descriptions
         const desc = event.description;
         if (desc) {
-          void this.emitEvent({
-            type: 'participant:activity',
-            agentId: participant.agentId,
-            description: desc,
-          }).catch(() => {});
+          void this.emitParticipantActivity(participant, desc).catch(() => {});
         }
         break;
       }
@@ -1391,9 +1458,141 @@ export class BrainstormOrchestrator {
     return new DeltaBuffer(DELTA_FLUSH_INTERVAL_MS, (text) => {
       void this.emitEvent({
         type: 'message:delta',
+        participantId: participant.participantId,
         agentId: participant.agentId,
         text,
       }).catch(() => {});
+    });
+  }
+
+  private getRoomConfig(): BrainstormConfig {
+    return (this.room?.config as BrainstormConfig | undefined) ?? this.playbook;
+  }
+
+  private async listFallbackAgentCandidates(
+    participant: ParticipantState,
+  ): Promise<FallbackAgentCandidate[]> {
+    const agents = await listAgents();
+    return agents
+      .filter((candidate) => candidate.id !== participant.agentId && candidate.isActive)
+      .map((candidate) => ({
+        agentId: candidate.id,
+        agentName: candidate.name,
+        agentSlug: candidate.slug,
+        provider: binaryPathToProvider(candidate.binaryPath),
+      }));
+  }
+
+  private supportsParticipantModelSwitch(participant: ParticipantState): boolean {
+    return participant.provider !== null;
+  }
+
+  private buildParticipantRecovery(
+    participant: ParticipantState,
+    input: Omit<BrainstormParticipantRecovery, 'attemptedModels' | 'attemptedAgents'>,
+  ): BrainstormParticipantRecovery {
+    return {
+      ...input,
+      attemptedModels:
+        participant.fallbackAttemptedModels.length > 0
+          ? [...participant.fallbackAttemptedModels]
+          : undefined,
+      attemptedAgents:
+        participant.fallbackAttemptedAgents.length > 0
+          ? [...participant.fallbackAttemptedAgents]
+          : undefined,
+    };
+  }
+
+  private async decideParticipantFallback(
+    participant: ParticipantState,
+    errorMessage: string | null | undefined,
+  ): Promise<FallbackDecision | null> {
+    const error = classifySessionError(errorMessage);
+    if (!error) {
+      return null;
+    }
+
+    return decideFallback({
+      policy: this.getRoomConfig().fallback,
+      error,
+      participant: {
+        agentId: participant.agentId,
+        agentName: participant.agentName,
+        agentSlug: participant.agentSlug,
+        provider: participant.provider,
+        model: participant.model ?? null,
+        modelPinned: participant.modelPinned,
+        supportsModelSwitch: this.supportsParticipantModelSwitch(participant),
+      },
+      attemptedModels: participant.fallbackAttemptedModels,
+      attemptedAgents: participant.fallbackAttemptedAgents,
+      availableAgents: await this.listFallbackAgentCandidates(participant),
+    });
+  }
+
+  private async emitParticipantStatus(
+    participant: ParticipantState,
+    status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted',
+    options?: {
+      error?: string | null;
+      model?: string | null;
+      recovery?: BrainstormParticipantRecovery | null;
+    },
+  ): Promise<void> {
+    await this.emitEvent({
+      type: 'participant:status',
+      participantId: participant.participantId,
+      agentId: participant.agentId,
+      agentName: participant.agentName,
+      agentSlug: participant.agentSlug,
+      status,
+      error: options?.error,
+      model: options?.model ?? participant.model ?? null,
+      recovery: options?.recovery === undefined ? participant.recovery : options.recovery,
+    });
+  }
+
+  private async emitParticipantActivity(
+    participant: ParticipantState,
+    description: string,
+    recovery: BrainstormParticipantRecovery | null | undefined = participant.recovery,
+  ): Promise<void> {
+    await this.emitEvent({
+      type: 'participant:activity',
+      participantId: participant.participantId,
+      agentId: participant.agentId,
+      description,
+      recovery,
+    });
+  }
+
+  private async emitParticipantJoined(participant: ParticipantState): Promise<void> {
+    await this.emitEvent({
+      type: 'participant:joined',
+      participantId: participant.participantId,
+      agentId: participant.agentId,
+      agentName: participant.agentName,
+      agentSlug: participant.agentSlug,
+      role: participant.role ?? undefined,
+      model: participant.model ?? null,
+      recovery: participant.recovery,
+    });
+  }
+
+  private async emitParticipantLeft(
+    participant: ParticipantState,
+    error?: string | null,
+    recovery: BrainstormParticipantRecovery | null | undefined = participant.recovery,
+  ): Promise<void> {
+    await this.emitEvent({
+      type: 'participant:left',
+      participantId: participant.participantId,
+      agentId: participant.agentId,
+      agentName: participant.agentName,
+      agentSlug: participant.agentSlug,
+      error,
+      recovery,
     });
   }
 
@@ -1405,6 +1604,7 @@ export class BrainstormOrchestrator {
       participant.waveStatus = 'done';
       participant.responseBuffer = [];
       participant.lastError = null;
+      participant.pendingPrompt = null;
       return;
     }
 
@@ -1431,6 +1631,7 @@ export class BrainstormOrchestrator {
     participant.waveStatus = isPass ? 'passed' : 'done';
     participant.waveResponseCount++;
     participant.lastError = null;
+    participant.pendingPrompt = null;
 
     void (async () => {
       try {
@@ -1439,6 +1640,7 @@ export class BrainstormOrchestrator {
           type: 'message',
           wave: this.currentWave,
           senderType: 'agent',
+          participantId: participant.participantId,
           agentId: participant.agentId,
           agentName: participant.agentName,
           content: rawResponse,
@@ -1446,12 +1648,9 @@ export class BrainstormOrchestrator {
         });
 
         // Emit participant status update
-        await this.emitEvent({
-          type: 'participant:status',
-          agentId: participant.agentId,
-          agentName: participant.agentName,
-          status: isPass ? 'passed' : 'done',
+        await this.emitParticipantStatus(participant, isPass ? 'passed' : 'done', {
           error: null,
+          model: participant.model ?? null,
         });
 
         // Reactive injection: inject this agent's response into other participants
@@ -1525,11 +1724,8 @@ export class BrainstormOrchestrator {
           target.responseBuffer = [];
           target.deltaBuffer.clear();
 
-          await this.emitEvent({
-            type: 'participant:status',
-            agentId: target.agentId,
-            agentName: target.agentName,
-            status: 'thinking',
+          await this.emitParticipantStatus(target, 'thinking', {
+            model: target.model ?? null,
           });
         }
 
@@ -1539,6 +1735,7 @@ export class BrainstormOrchestrator {
           // Build a per-target status header (response count is specific to each recipient)
           const statusHeader = this.buildWaveStatusHeader(target.agentId);
           const messageWithHeader = `${statusHeader}\n\n${formattedSenderResponse}`;
+          target.pendingPrompt = messageWithHeader;
           await this.injectMessage(targetSessionId, messageWithHeader);
         }
       } catch (err) {
@@ -1559,6 +1756,281 @@ export class BrainstormOrchestrator {
     });
 
     await Promise.allSettled(injectionPromises);
+  }
+
+  private async maybeTriggerParticipantFallback(participant: ParticipantState): Promise<void> {
+    if (participant.hasLeft || participant.fallbackInFlight) return;
+
+    const error = participant.lastError;
+    const decision = await this.decideParticipantFallback(participant, error);
+    if (!decision || !error || decision.type === 'none') return;
+
+    if (decision.reason === 'auth_error') {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `${decision.summary}. Automatic fallback is unavailable for authentication failures.`,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason: decision.reason,
+          summary: decision.summary,
+          triggerError: decision.triggerError,
+        }),
+      );
+      return;
+    }
+
+    if (decision.type === 'terminal') {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        decision.message,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason: decision.reason,
+          summary: decision.summary,
+          triggerError: decision.triggerError,
+          targetModel: participant.fallbackTargetModel,
+        }),
+      );
+      return;
+    }
+
+    if (decision.type === 'switch_agent') {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `${decision.summary}. Automatic agent fallback selected ${decision.agent.agentName}, but brainstorm participant replacement is not supported yet.`,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason: decision.reason,
+          summary: decision.summary,
+          triggerError: decision.triggerError,
+          targetAgentId: decision.agent.agentId,
+          targetAgentName: decision.agent.agentName,
+        }),
+      );
+      return;
+    }
+
+    if (!participant.sessionId) {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `${decision.summary}. Automatic fallback could not continue because the participant session was unavailable.`,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason: decision.reason,
+          summary: decision.summary,
+          triggerError: decision.triggerError,
+          targetModel: decision.model,
+        }),
+      );
+      return;
+    }
+
+    await this.attemptParticipantModelFallback(
+      participant,
+      decision.model,
+      decision.summary,
+      decision.triggerError,
+      decision.reason,
+    );
+  }
+
+  private async attemptParticipantModelFallback(
+    participant: ParticipantState,
+    model: string,
+    summary: string,
+    triggerError: string,
+    reason: BrainstormParticipantRecovery['reason'],
+  ): Promise<void> {
+    if (!participant.sessionId || participant.fallbackInFlight) return;
+
+    participant.fallbackInFlight = true;
+    participant.fallbackTriggerError = triggerError;
+    participant.fallbackTargetModel = model;
+    participant.fallbackAttemptedModels.push(model);
+    participant.recovery = this.buildParticipantRecovery(participant, {
+      state: 'attempting_model_fallback',
+      reason,
+      summary,
+      triggerError,
+      targetModel: model,
+    });
+
+    const fromModel = participant.model ?? 'default model';
+    await this.emitParticipantActivity(
+      participant,
+      `Automatic fallback: switching from ${fromModel} to ${model} after ${summary.toLowerCase()}.`,
+      participant.recovery,
+    ).catch(() => {});
+
+    try {
+      await sendSessionControl(participant.sessionId, { type: 'set-model', model });
+    } catch (err) {
+      await this.onParticipantFallbackSwitchFailed(
+        participant,
+        `Failed to dispatch automatic model fallback to "${model}": ${getErrorMessage(err)}`,
+      );
+    }
+  }
+
+  private async onParticipantFallbackSucceeded(
+    participant: ParticipantState,
+    model: string,
+  ): Promise<void> {
+    if (!participant.fallbackInFlight) return;
+
+    const previousRecovery = participant.recovery;
+    const previousTriggerError = participant.fallbackTriggerError;
+    participant.fallbackInFlight = false;
+    participant.fallbackTargetModel = null;
+    participant.fallbackTriggerError = null;
+    participant.model = model;
+    participant.lastError = null;
+    participant.recovery = this.buildParticipantRecovery(participant, {
+      state: 'model_fallback_succeeded',
+      reason:
+        classifySessionError(previousTriggerError ?? previousRecovery?.triggerError)?.category ??
+        previousRecovery?.reason ??
+        'provider_unavailable',
+      summary: `Automatic fallback switched to ${model}`,
+      triggerError:
+        previousTriggerError ?? previousRecovery?.triggerError ?? `Automatic fallback to ${model}`,
+      targetModel: model,
+    });
+
+    await updateParticipantModel(participant.participantId, model).catch(() => {});
+    await this.emitParticipantActivity(
+      participant,
+      `Automatic fallback succeeded: now using ${model}. Retrying the turn.`,
+      participant.recovery,
+    ).catch(() => {});
+
+    if (!this.waveStarted || participant.waveStatus !== 'thinking') {
+      return;
+    }
+
+    await this.emitParticipantStatus(participant, 'thinking', {
+      error: null,
+      model,
+      recovery: participant.recovery,
+    }).catch(() => {});
+
+    if (!participant.pendingPrompt) {
+      return;
+    }
+
+    if (!participant.sessionId) {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        'Automatic fallback succeeded, but the participant session was no longer available for retry.',
+      );
+      return;
+    }
+
+    try {
+      await this.injectMessage(participant.sessionId, participant.pendingPrompt);
+    } catch (err) {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `Automatic fallback switched to ${model}, but retrying the turn failed: ${getErrorMessage(err)}`,
+      );
+    }
+  }
+
+  private async onParticipantFallbackSwitchFailed(
+    participant: ParticipantState,
+    message: string,
+  ): Promise<void> {
+    const triggerError = participant.fallbackTriggerError ?? participant.lastError;
+
+    participant.fallbackInFlight = false;
+    participant.fallbackTargetModel = null;
+
+    const decision = await this.decideParticipantFallback(participant, triggerError ?? message);
+    if (!decision || decision.type === 'none') {
+      await this.finalizeParticipantFallbackFailure(participant, message);
+      return;
+    }
+
+    if (decision.type === 'switch_model') {
+      await this.emitParticipantActivity(
+        participant,
+        `Automatic fallback could not switch models (${message}). Trying ${decision.model}.`,
+        participant.recovery,
+      ).catch(() => {});
+      await this.attemptParticipantModelFallback(
+        participant,
+        decision.model,
+        decision.summary,
+        triggerError ?? message,
+        decision.reason,
+      );
+      return;
+    }
+
+    if (decision.type === 'switch_agent') {
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `${decision.summary}. Automatic agent fallback selected ${decision.agent.agentName}, but brainstorm participant replacement is not supported yet.`,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason: decision.reason,
+          summary: decision.summary,
+          triggerError: decision.triggerError,
+          targetAgentId: decision.agent.agentId,
+          targetAgentName: decision.agent.agentName,
+        }),
+      );
+      return;
+    }
+
+    await this.finalizeParticipantFallbackFailure(
+      participant,
+      `${decision.summary}. Automatic model fallback failed: ${message}`,
+      this.buildParticipantRecovery(participant, {
+        state: 'fallback_failed',
+        reason: decision.reason,
+        summary: decision.summary,
+        triggerError: decision.triggerError,
+      }),
+    );
+  }
+
+  private async finalizeParticipantFallbackFailure(
+    participant: ParticipantState,
+    message: string,
+    recovery?: BrainstormParticipantRecovery | null,
+  ): Promise<void> {
+    const failureMessage = normalizeParticipantError(message) ?? 'Automatic fallback failed.';
+    const fallbackError =
+      classifySessionError(
+        participant.fallbackTriggerError ?? participant.lastError ?? failureMessage,
+      ) ?? classifySessionError(failureMessage);
+    participant.fallbackInFlight = false;
+    participant.fallbackTargetModel = null;
+    participant.fallbackTriggerError = null;
+    participant.pendingPrompt = null;
+    participant.lastError = failureMessage;
+    participant.hasLeft = true;
+    participant.hasPassed = true;
+    participant.waveStatus = 'done';
+    participant.recovery =
+      recovery ??
+      this.buildParticipantRecovery(participant, {
+        state: 'fallback_failed',
+        reason: fallbackError?.category ?? 'provider_unavailable',
+        summary: fallbackError?.summary ?? failureMessage,
+        triggerError: fallbackError?.rawMessage ?? failureMessage,
+      });
+
+    await this.emitParticipantActivity(participant, failureMessage, participant.recovery).catch(
+      () => {},
+    );
+    await updateParticipantStatus(participant.participantId, 'left').catch(() => {});
+    await this.emitParticipantLeft(participant, failureMessage, participant.recovery).catch(
+      () => {},
+    );
+
+    this.checkWaveComplete();
   }
 
   // ============================================================================
@@ -1625,11 +2097,7 @@ export class BrainstormOrchestrator {
         target.waveStatus = 'done'; // Unblock any in-progress wave wait
 
         void updateParticipantStatus(target.participantId, 'left').catch(() => {});
-        void this.emitEvent({
-          type: 'participant:left',
-          agentId: target.agentId,
-          agentName: target.agentName,
-        }).catch(() => {});
+        void this.emitParticipantLeft(target).catch(() => {});
 
         // If this was the last active participant, complete the wave
         this.checkWaveComplete();

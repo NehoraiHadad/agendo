@@ -3,8 +3,25 @@ import { z } from 'zod';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { createBrainstorm, listBrainstorms } from '@/lib/services/brainstorm-service';
 import type { BrainstormStatus } from '@/lib/types';
+import { FALLBACK_MODES, FALLBACK_TRIGGER_ERRORS } from '@/lib/fallback/policy';
 
 const VALID_STATUSES = ['waiting', 'active', 'paused', 'synthesizing', 'ended'] as const;
+
+const fallbackPolicySchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    mode: z.enum(FALLBACK_MODES).optional(),
+    preservePinnedModel: z.boolean().optional(),
+    allowedFallbackModels: z
+      .object({
+        byProvider: z.record(z.string(), z.array(z.string().min(1))).optional(),
+        byAgent: z.record(z.string(), z.array(z.string().min(1))).optional(),
+      })
+      .optional(),
+    allowedFallbackAgents: z.array(z.string().min(1)).optional(),
+    triggerErrors: z.array(z.enum(FALLBACK_TRIGGER_ERRORS)).optional(),
+  })
+  .optional();
 
 /** Zod schema for the Playbook config (BrainstormConfig) */
 const brainstormConfigSchema = z
@@ -20,6 +37,7 @@ const brainstormConfigSchema = z
     roles: z.record(z.string(), z.string()).optional(),
     participantReadyTimeoutSec: z.number().int().min(60).max(1800).optional(),
     relatedRoomIds: z.array(z.string().uuid()).max(3).optional(),
+    fallback: fallbackPolicySchema,
   })
   .optional();
 

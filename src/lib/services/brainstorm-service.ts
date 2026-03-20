@@ -30,7 +30,9 @@ export interface CreateBrainstormInput {
 }
 
 export interface BrainstormWithDetails extends BrainstormRoom {
-  participants: Array<BrainstormParticipant & { agentName: string; agentSlug: string }>;
+  participants: Array<
+    BrainstormParticipant & { agentName: string; agentSlug: string; agentBinaryPath: string }
+  >;
   project: { id: string; name: string } | null;
   task: { id: string; title: string } | null;
 }
@@ -83,6 +85,7 @@ export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> 
       ...getTableColumns(brainstormParticipants),
       agentName: agents.name,
       agentSlug: agents.slug,
+      agentBinaryPath: agents.binaryPath,
     })
     .from(brainstormParticipants)
     .innerJoin(agents, eq(brainstormParticipants.agentId, agents.id))
@@ -275,6 +278,32 @@ export async function updateParticipantSession(
   await db
     .update(brainstormParticipants)
     .set({ sessionId })
+    .where(eq(brainstormParticipants.id, participantId));
+}
+
+/**
+ * Persist the participant's currently active model.
+ */
+export async function updateParticipantModel(
+  participantId: string,
+  model: string | null,
+): Promise<void> {
+  await db
+    .update(brainstormParticipants)
+    .set({ model })
+    .where(eq(brainstormParticipants.id, participantId));
+}
+
+/**
+ * Update the agent assigned to a participant slot.
+ */
+export async function updateParticipantAgent(
+  participantId: string,
+  agentId: string,
+): Promise<void> {
+  await db
+    .update(brainstormParticipants)
+    .set({ agentId })
     .where(eq(brainstormParticipants.id, participantId));
 }
 

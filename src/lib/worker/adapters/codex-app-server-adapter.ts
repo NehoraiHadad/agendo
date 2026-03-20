@@ -98,6 +98,8 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private developerInstructions: string | undefined;
   /** Token usage from thread/tokenUsage/updated notification. */
   private tokenUsage: { used: number; limit: number } | null = null;
+  /** Agendo can still initiate compaction for Codex in the future, but it is disabled for now. */
+  private static readonly AUTO_COMPACTION_ENABLED = false;
   /** Whether a context compaction is currently in progress. */
   private compacting = false;
   /** Timestamp (ms) of the last compaction attempt. Used to enforce a cooldown. */
@@ -115,6 +117,10 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   private compactionCompletedPendingResume = false;
   /** Guard against duplicate replay attempts when multiple compaction items arrive. */
   private compactionResumeInFlight = false;
+  /** Wait briefly after an interrupted turn so Codex-initiated compaction can announce itself. */
+  private interruptedTurnWatchdog: ReturnType<typeof setTimeout> | null = null;
+  /** Delay before treating an interrupted turn as a real stop instead of a compaction boundary. */
+  private static readonly INTERRUPTED_TURN_GRACE_MS = 2_000;
   /**
    * Watchdog timer for context compaction. Started after the `thread/compact/start`
    * RPC succeeds. If no `contextCompaction` item arrives within 60 seconds the
@@ -650,20 +656,27 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         const turn = params.turn as Record<string, unknown>;
         const status = (turn?.status as string) ?? 'completed';
         const error = turn?.error as { message: string; additionalDetails?: string | null } | null;
-        const shouldAutoResume =
-          status === 'interrupted' &&
-          !!this.currentTurnPrompt &&
-          (this.compacting || this.compactionCompletedPendingResume);
-        if (!shouldAutoResume) {
-          this.thinkingCallback?.(false);
-        }
         if (status === 'completed' || status === 'failed') {
+          this.clearInterruptedTurnWatchdog();
+          this.thinkingCallback?.(false);
           this.currentTurnPrompt = null;
           this.pendingCompactionResumePrompt = null;
           this.compactionCompletedPendingResume = false;
         } else if (status === 'interrupted') {
           this.pendingCompactionResumePrompt = this.currentTurnPrompt ?? null;
+          if (this.pendingCompactionResumePrompt) {
+            if (this.compacting || this.compactionCompletedPendingResume) {
+              this.clearInterruptedTurnWatchdog();
+            } else {
+              this.scheduleInterruptedTurnFallback();
+            }
+          } else {
+            this.thinkingCallback?.(false);
+          }
           this.resumeAfterCompactionIfReady();
+        } else {
+          this.clearInterruptedTurnWatchdog();
+          this.thinkingCallback?.(false);
         }
         this.emitSynthetic({ type: 'as:turn.completed', status, error: error ?? null });
         break;
@@ -671,14 +684,20 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
       case 'item/started': {
         const item = params.item as Record<string, unknown>;
-        const normalized = normalizeThreadItem(item, () => this.handleCompactionComplete());
+        const normalized = normalizeThreadItem(item);
+        if (normalized?.type === 'contextCompaction') {
+          this.handleCompactionStarted();
+        }
         if (normalized) this.emitSynthetic({ type: 'as:item.started', item: normalized });
         break;
       }
 
       case 'item/completed': {
         const item = params.item as Record<string, unknown>;
-        const normalized = normalizeThreadItem(item, () => this.handleCompactionComplete());
+        const normalized = normalizeThreadItem(item);
+        if (normalized?.type === 'contextCompaction') {
+          this.handleCompactionComplete();
+        }
         if (normalized) this.emitSynthetic({ type: 'as:item.completed', item: normalized });
         break;
       }
@@ -753,7 +772,7 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
             // Emit agent:usage so the frontend context bar works for Codex sessions
             this.emitSynthetic({ type: 'as:usage', used, size: limit });
           }
-          if (used > 0 && used / limit >= 0.8) {
+          if (CodexAppServerAdapter.AUTO_COMPACTION_ENABLED && used > 0 && used / limit >= 0.8) {
             this.triggerCompaction().catch((err: unknown) => {
               log.error({ err }, 'compaction error');
             });
@@ -1000,8 +1019,50 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
   }
 
+  /** Clear the short grace timer used to distinguish compaction from a real interruption. */
+  private clearInterruptedTurnWatchdog(): void {
+    if (this.interruptedTurnWatchdog) {
+      clearTimeout(this.interruptedTurnWatchdog);
+      this.interruptedTurnWatchdog = null;
+    }
+  }
+
+  /** Keep the turn alive briefly after interruption while waiting for a compaction signal. */
+  private scheduleInterruptedTurnFallback(): void {
+    this.clearInterruptedTurnWatchdog();
+    this.interruptedTurnWatchdog = setTimeout(() => {
+      this.interruptedTurnWatchdog = null;
+      if (this.compacting || this.compactionCompletedPendingResume) {
+        return;
+      }
+      this.pendingCompactionResumePrompt = null;
+      this.thinkingCallback?.(false);
+    }, CodexAppServerAdapter.INTERRUPTED_TURN_GRACE_MS);
+  }
+
+  /** Called when Codex itself announces that a context compaction has started. */
+  private handleCompactionStarted(): void {
+    this.clearInterruptedTurnWatchdog();
+    if (this.compacting) {
+      return;
+    }
+    this.compacting = true;
+    this.compactionCompletedPendingResume = false;
+    this.emitSynthetic({ type: 'as:compact-start' });
+    if (!this.compactionWatchdog) {
+      this.compactionWatchdog = setTimeout(() => {
+        if (this.compacting) {
+          log.warn({ threadId: this.threadId }, 'Compaction stall detected — forcing recovery');
+          this.compacting = false;
+        }
+        this.compactionWatchdog = null;
+      }, 60_000);
+    }
+  }
+
   private handleCompactionComplete(): void {
     this.clearCompactionWatchdog();
+    this.clearInterruptedTurnWatchdog();
     this.compacting = false;
     this.compactionCompletedPendingResume = true;
 

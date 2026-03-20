@@ -229,6 +229,19 @@ function AddParticipantRow({
 // ============================================================================
 
 function ParticipantRow({ participant, index }: { participant: ParticipantState; index: number }) {
+  const recoveryLabel =
+    participant.recovery?.state === 'attempting_model_fallback'
+      ? `Switching model to ${participant.recovery.targetModel ?? 'fallback model'}`
+      : participant.recovery?.state === 'model_fallback_succeeded'
+        ? `Model fallback succeeded${participant.model ? `: ${participant.model}` : ''}`
+        : participant.recovery?.state === 'attempting_agent_fallback'
+          ? `Switching agent to ${participant.recovery.targetAgentName ?? 'fallback agent'}`
+          : participant.recovery?.state === 'agent_fallback_succeeded'
+            ? `Agent fallback succeeded: ${participant.agentName}`
+            : participant.recovery?.state === 'fallback_failed'
+              ? 'Automatic fallback failed'
+              : null;
+
   return (
     <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-white/[0.02] transition-colors">
       {/* Avatar with color dot */}
@@ -251,6 +264,16 @@ function ParticipantRow({ participant, index }: { participant: ParticipantState;
         {participant.model && (
           <span className="text-[10px] text-muted-foreground/30 font-mono block truncate mt-0.5">
             {participant.model.replace('claude-', 'cl-').replace('gemini-', 'ge-').slice(0, 18)}
+          </span>
+        )}
+        {participant.activity && (
+          <span className="text-[10px] text-amber-300/75 block mt-0.5 line-clamp-2 break-words">
+            {participant.activity}
+          </span>
+        )}
+        {recoveryLabel && (
+          <span className="text-[10px] text-sky-300/70 block mt-0.5 line-clamp-2 break-words">
+            {recoveryLabel}
           </span>
         )}
         {participant.error && (
@@ -490,7 +513,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
           ) : (
             <div className="space-y-0.5">
               {participantList.map((p, idx) => (
-                <ParticipantRow key={p.agentId} participant={p} index={idx} />
+                <ParticipantRow key={p.participantId} participant={p} index={idx} />
               ))}
             </div>
           )}

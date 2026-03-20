@@ -27,6 +27,7 @@ import type {
   SnapshotFindings,
   WorkspaceLayout,
 } from '../types';
+import type { FallbackPolicy } from '@/lib/fallback/policy';
 
 /** Shape of a parsed CLI flag from --help output */
 export interface ParsedFlag {
@@ -590,6 +591,8 @@ export interface BrainstormConfig {
   autoReflection?: boolean;
   /** Minimum waves between reflection injections (default 3) */
   reflectionInterval?: number;
+  /** Automatic recovery policy for explicit provider/model/agent failures */
+  fallback?: FallbackPolicy;
 }
 
 // ============================================================================

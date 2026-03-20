@@ -193,7 +193,7 @@ function SynthesisPanel({ synthesis, taskId }: { synthesis: string; taskId: stri
 // ============================================================================
 
 interface SlugMap {
-  [agentId: string]: { slug: string; index: number };
+  [participantId: string]: { slug: string; index: number };
 }
 
 interface GroupedMessages {
@@ -247,13 +247,17 @@ const MessageList = memo(function MessageList({
           )}
           <div className="px-4 space-y-3">
             {group.messages.map((msg) => {
-              const agentInfo = msg.agentId ? slugMap[msg.agentId] : undefined;
-              const participant = msg.agentId ? participants.get(msg.agentId) : undefined;
+              const participant =
+                (msg.participantId ? participants.get(msg.participantId) : undefined) ??
+                (msg.agentId
+                  ? Array.from(participants.values()).find((entry) => entry.agentId === msg.agentId)
+                  : undefined);
+              const agentInfo = participant ? slugMap[participant.participantId] : undefined;
               return (
                 <MessageCard
                   key={`${msg.id}-${msg.ts}`}
                   message={msg}
-                  agentSlug={agentInfo?.slug ?? ''}
+                  agentSlug={agentInfo?.slug ?? participant?.agentSlug ?? ''}
                   agentIndex={agentInfo?.index ?? 0}
                   reviewState={reviewState}
                   roomId={roomId}
@@ -269,7 +273,7 @@ const MessageList = memo(function MessageList({
       {(() => {
         // Agents thinking (dispatched but no streaming text yet)
         const thinkingAgents = Array.from(participants.values()).filter(
-          (p) => p.status === 'thinking' && !streamingText.has(p.agentId),
+          (p) => p.status === 'thinking' && !streamingText.has(p.participantId),
         );
         // Agents actively writing (have streaming text)
         const hasThinking = thinkingAgents.length > 0;
@@ -278,10 +282,10 @@ const MessageList = memo(function MessageList({
         return (
           <div className="px-4 space-y-2 mt-3">
             {thinkingAgents.map((p) => {
-              const agentInfo = slugMap[p.agentId];
+              const agentInfo = slugMap[p.participantId];
               return (
                 <ThinkingCard
-                  key={p.agentId}
+                  key={p.participantId}
                   agentName={p.agentName}
                   agentSlug={agentInfo?.slug ?? ''}
                   agentIndex={agentInfo?.index ?? 0}
@@ -291,13 +295,13 @@ const MessageList = memo(function MessageList({
                 />
               );
             })}
-            {streamingEntries.map(([agentId, text]) => {
-              const participant = participants.get(agentId);
-              const agentInfo = slugMap[agentId];
+            {streamingEntries.map(([participantId, text]) => {
+              const participant = participants.get(participantId);
+              const agentInfo = slugMap[participantId];
               if (!participant) return null;
               return (
                 <StreamingCard
-                  key={agentId}
+                  key={participantId}
                   agentName={participant.agentName}
                   agentSlug={agentInfo?.slug ?? ''}
                   agentIndex={agentInfo?.index ?? 0}
@@ -372,8 +376,8 @@ export function RoomView({
   const slugMap = useMemo(() => {
     const map: SlugMap = {};
     let index = 0;
-    for (const [agentId, p] of participants) {
-      map[agentId] = { slug: p.agentSlug, index: index++ };
+    for (const [participantId, p] of participants) {
+      map[participantId] = { slug: p.agentSlug, index: index++ };
     }
     return map;
   }, [participants]);

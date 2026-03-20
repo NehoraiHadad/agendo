@@ -365,6 +365,7 @@ export async function handleBrainstormSSE(
         roomId: roomId,
         ts: Date.now(),
         type: 'participant:status',
+        participantId: p.id,
         agentId: p.agentId,
         agentName: p.agentName,
         status: eventStatus,

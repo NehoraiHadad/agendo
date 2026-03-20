@@ -1,7 +1,11 @@
 'use client';
 
 import { create } from 'zustand';
-import type { BrainstormEvent, BrainstormRoomStatus } from '@/lib/realtime/event-types';
+import type {
+  BrainstormEvent,
+  BrainstormParticipantRecovery,
+  BrainstormRoomStatus,
+} from '@/lib/realtime/event-types';
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 
 /** Re-export for convenient use in UI components */
@@ -12,6 +16,7 @@ export type { WaveQualityScore } from '@/lib/worker/brainstorm-quality';
 // ============================================================================
 
 export interface ParticipantState {
+  participantId: string;
   agentId: string;
   agentName: string;
   agentSlug: string;
@@ -23,12 +28,15 @@ export interface ParticipantState {
   activity: string | null;
   /** Last surfaced session error for this participant, if any. */
   error: string | null;
+  /** Structured automatic recovery state for fallback activity. */
+  recovery: BrainstormParticipantRecovery | null;
 }
 
 export interface BrainstormMessageItem {
   id: string | number;
   wave: number;
   senderType: 'agent' | 'user';
+  participantId?: string;
   agentId?: string;
   agentName?: string;
   content: string;
@@ -57,13 +65,13 @@ interface BrainstormState {
   project: { id: string; name: string } | null;
   task: { id: string; title: string } | null;
 
-  /** agentId → participant state */
+  /** participantId → participant state */
   participants: Map<string, ParticipantState>;
 
   /** Ordered messages, deduplicated */
   messages: BrainstormMessageItem[];
 
-  /** agentId → accumulated streaming text */
+  /** participantId → accumulated streaming text */
   streamingText: Map<string, string>;
 
   /** Whether the room has ended via converge or max-waves */
@@ -108,13 +116,33 @@ const initialState: Omit<BrainstormState, 'setRoom' | 'handleEvent' | 'reset'> =
   reflectionWaves: new Set(),
 };
 
+function resolveParticipantKey(
+  participants: Map<string, ParticipantState>,
+  input: { participantId?: string; agentId?: string },
+): string | null {
+  if (input.participantId && participants.has(input.participantId)) {
+    return input.participantId;
+  }
+
+  if (input.agentId) {
+    for (const [participantId, participant] of participants) {
+      if (participant.agentId === input.agentId) {
+        return participantId;
+      }
+    }
+  }
+
+  return input.participantId ?? null;
+}
+
 export const useBrainstormStore = create<BrainstormState>((set, get) => ({
   ...initialState,
 
   setRoom: (room) => {
     const participants = new Map<string, ParticipantState>();
     for (const p of room.participants) {
-      participants.set(p.agentId, {
+      participants.set(p.id, {
+        participantId: p.id,
         agentId: p.agentId,
         agentName: p.agentName,
         agentSlug: p.agentSlug,
@@ -124,6 +152,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         status: p.status as ParticipantState['status'],
         activity: null,
         error: null,
+        recovery: null,
       });
     }
 
@@ -177,7 +206,11 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
 
       case 'participant:status': {
         const participants = new Map(state.participants);
-        const existing = participants.get(event.agentId);
+        const participantKey = resolveParticipantKey(participants, {
+          participantId: event.participantId,
+          agentId: event.agentId,
+        });
+        const existing = participantKey ? participants.get(participantKey) : undefined;
         // 'evicted' is shown as 'left' in the UI (participant was removed due to consecutive timeouts)
         const displayStatus =
           event.status === 'evicted'
@@ -186,24 +219,31 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         if (existing) {
           // Clear activity when status changes to a terminal state (done/passed/timeout/evicted)
           const clearActivity = event.status !== 'thinking';
-          participants.set(event.agentId, {
+          participants.set(existing.participantId, {
             ...existing,
+            agentId: event.agentId,
+            agentName: event.agentName,
+            agentSlug: event.agentSlug ?? existing.agentSlug,
             status: displayStatus,
+            model: event.model === undefined ? existing.model : (event.model ?? null),
             activity: clearActivity ? null : existing.activity,
             error: event.status === 'thinking' ? null : (event.error ?? null),
+            recovery: event.recovery === undefined ? existing.recovery : (event.recovery ?? null),
           });
         } else {
           // Participant not yet in map — add with minimal info
-          participants.set(event.agentId, {
+          participants.set(event.participantId, {
+            participantId: event.participantId,
             agentId: event.agentId,
             agentName: event.agentName,
-            agentSlug: '',
+            agentSlug: event.agentSlug ?? '',
             sessionId: null,
-            model: null,
+            model: event.model ?? null,
             role: null,
             status: displayStatus,
             activity: null,
             error: event.status === 'thinking' ? null : (event.error ?? null),
+            recovery: event.recovery ?? null,
           });
         }
         set({ participants });
@@ -212,11 +252,16 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
 
       case 'participant:activity': {
         const participants = new Map(state.participants);
-        const existing = participants.get(event.agentId);
+        const participantKey = resolveParticipantKey(participants, {
+          participantId: event.participantId,
+          agentId: event.agentId,
+        });
+        const existing = participantKey ? participants.get(participantKey) : undefined;
         if (existing) {
-          participants.set(event.agentId, {
+          participants.set(existing.participantId, {
             ...existing,
             activity: event.description,
+            recovery: event.recovery === undefined ? existing.recovery : (event.recovery ?? null),
           });
         }
         set({ participants });
@@ -240,6 +285,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
           id: event.id,
           wave: event.wave,
           senderType: event.senderType,
+          participantId: event.participantId,
           agentId: event.agentId,
           agentName: event.agentName,
           content: event.content,
@@ -249,8 +295,13 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
 
         // Clear streaming text for this agent since final message arrived
         const newStreaming = new Map(state.streamingText);
-        if (event.agentId) {
-          newStreaming.delete(event.agentId);
+        const streamingKey =
+          event.participantId ??
+          (event.agentId
+            ? resolveParticipantKey(state.participants, { agentId: event.agentId })
+            : null);
+        if (streamingKey) {
+          newStreaming.delete(streamingKey);
         }
 
         set({
@@ -262,8 +313,12 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
 
       case 'message:delta': {
         const newStreaming = new Map(state.streamingText);
-        const existing = newStreaming.get(event.agentId) ?? '';
-        newStreaming.set(event.agentId, existing + event.text);
+        const participantKey =
+          event.participantId ??
+          resolveParticipantKey(state.participants, { agentId: event.agentId });
+        if (!participantKey) break;
+        const existing = newStreaming.get(participantKey) ?? '';
+        newStreaming.set(participantKey, existing + event.text);
         set({ streamingText: newStreaming });
         break;
       }
@@ -285,32 +340,59 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
 
       case 'participant:joined': {
         const participants = new Map(state.participants);
-        if (!participants.has(event.agentId)) {
-          participants.set(event.agentId, {
+        const participantKey = resolveParticipantKey(participants, {
+          participantId: event.participantId,
+          agentId: event.agentId,
+        });
+        if (!participantKey || !participants.has(participantKey)) {
+          participants.set(event.participantId, {
+            participantId: event.participantId,
             agentId: event.agentId,
             agentName: event.agentName,
-            agentSlug: '',
+            agentSlug: event.agentSlug ?? '',
             sessionId: null,
-            model: null,
+            model: event.model ?? null,
             role: event.role ?? null,
             status: 'pending',
             activity: null,
             error: null,
+            recovery: event.recovery ?? null,
           });
-          set({ participants });
+        } else {
+          const existing = participants.get(participantKey);
+          if (existing) {
+            participants.set(existing.participantId, {
+              ...existing,
+              agentId: event.agentId,
+              agentName: event.agentName,
+              agentSlug: event.agentSlug ?? existing.agentSlug,
+              model: event.model === undefined ? existing.model : (event.model ?? null),
+              role: event.role ?? existing.role,
+              recovery: event.recovery === undefined ? existing.recovery : (event.recovery ?? null),
+            });
+          }
         }
+        set({ participants });
         break;
       }
 
       case 'participant:left': {
         const participants = new Map(state.participants);
-        const existing = participants.get(event.agentId);
+        const participantKey = resolveParticipantKey(participants, {
+          participantId: event.participantId,
+          agentId: event.agentId,
+        });
+        const existing = participantKey ? participants.get(participantKey) : undefined;
         if (existing) {
-          participants.set(event.agentId, {
+          participants.set(existing.participantId, {
             ...existing,
+            agentId: event.agentId,
+            agentName: event.agentName,
+            agentSlug: event.agentSlug ?? existing.agentSlug,
             status: 'left',
-            activity: null,
+            activity: event.error ? existing.activity : null,
             error: event.error ?? existing.error ?? null,
+            recovery: event.recovery === undefined ? existing.recovery : (event.recovery ?? null),
           });
           set({ participants });
         }
