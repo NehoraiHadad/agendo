@@ -64,7 +64,6 @@ const PRIORITY_OPTIONS = [
 ];
 
 export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
-  const moveTask = useTaskBoardStore((s) => s.moveTask);
   const updateTask = useTaskBoardStore((s) => s.updateTask);
   const [isPending, setIsPending] = useState(false);
 
@@ -94,7 +93,7 @@ export function TaskDetailHeader({ task }: TaskDetailHeaderProps) {
     setIsPending(true);
     const result = await updateTaskStatusAction(task.id, newStatus);
     if (result.success) {
-      moveTask(task.id, newStatus as TaskStatus);
+      updateTask(result.data as Task);
     }
     setIsPending(false);
   };

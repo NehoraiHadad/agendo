@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useFetch } from '@/hooks/use-fetch';
 import { Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,32 +14,10 @@ import { TaskSubtasksList } from './task-subtasks-list';
 import { TaskDependenciesPanel } from './task-dependencies-panel';
 import { TaskExecutionHistory } from './task-execution-history';
 import { Separator } from '@/components/ui/separator';
+import { mergeTaskDetailSheetData, type TaskDetailSheetData } from './task-detail-sheet-state';
 
 interface TaskDetailSheetProps {
   taskId: string;
-}
-
-interface TaskWithDetails {
-  id: string;
-  title: string;
-  description: string | null;
-  status: string;
-  priority: number;
-  sortOrder: number;
-  executionOrder: number | null;
-  parentTaskId: string | null;
-  assigneeAgentId: string | null;
-  projectId: string | null;
-  inputContext: Record<string, unknown>;
-  dueAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  subtaskCount: number;
-  completedSubtaskCount: number;
-  dependencyCount: number;
-  blockedByCount: number;
-  assignee: { id: string; name: string; slug: string } | null;
-  parentTask: { id: string; title: string } | null;
 }
 
 /**
@@ -49,42 +27,14 @@ interface TaskWithDetails {
 export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
   const selectTask = useTaskBoardStore((s) => s.selectTask);
   const removeTask = useTaskBoardStore((s) => s.removeTask);
-  const tasksById = useTaskBoardStore((s) => s.tasksById);
-  const { data: fetchedDetails } = useFetch<TaskWithDetails>(`/api/tasks/${taskId}`, {
-    transform: (json: unknown) => (json as { data: TaskWithDetails }).data,
+  const storeTask = useTaskBoardStore((s) => s.tasksById[taskId] ?? null);
+  const storeTaskUpdatedAt = storeTask?.updatedAt?.toISOString?.() ?? null;
+  const { data: fetchedDetails } = useFetch<TaskDetailSheetData>(`/api/tasks/${taskId}`, {
+    deps: [storeTaskUpdatedAt],
+    transform: (json: unknown) => (json as { data: TaskDetailSheetData }).data,
   });
-  const [detailsOverride, setDetailsOverride] = useState<TaskWithDetails | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-
-  const details = detailsOverride ?? fetchedDetails ?? null;
-
-  // Sync editable fields from the store whenever a server action updates the task.
-  // The store is updated by updateTask() calls in child components; details is not,
-  // causing controlled Select/input values to revert without this sync.
-  useEffect(() => {
-    const storeTask = tasksById[taskId];
-    if (!storeTask) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDetailsOverride((prev) => {
-      if (!prev) return prev;
-      const rawDue = storeTask.dueAt;
-      const dueAt =
-        rawDue == null ? null : rawDue instanceof Date ? rawDue.toISOString() : String(rawDue);
-      return {
-        ...prev,
-        title: storeTask.title,
-        description: storeTask.description,
-        status: storeTask.status,
-        priority: storeTask.priority,
-        sortOrder: storeTask.sortOrder,
-        parentTaskId: storeTask.parentTaskId,
-        assigneeAgentId: storeTask.assigneeAgentId,
-        projectId: storeTask.projectId ?? null,
-        executionOrder: storeTask.executionOrder ?? null,
-        dueAt,
-      };
-    });
-  }, [tasksById, taskId]);
+  const details = mergeTaskDetailSheetData(fetchedDetails, storeTask);
 
   const close = () => selectTask(null);
 
