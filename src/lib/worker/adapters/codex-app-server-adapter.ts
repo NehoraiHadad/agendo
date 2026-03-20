@@ -699,36 +699,36 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       case 'thread/tokenUsage/updated': {
         // Actual type: { threadId, turnId, tokenUsage: { total: TokenUsageBreakdown, last: ..., modelContextWindow: number|null } }
         // TokenUsageBreakdown: { totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens }
+        // NOTE: `total` is a CUMULATIVE billing sum across the entire thread lifetime — it grows
+        // monotonically and must NOT be used to measure current context window occupancy.
+        // `last` reflects the most-recent turn's breakdown and is the correct source for "used" context.
         const tokenUsage = params.tokenUsage as {
-          total?: {
+          total?: Record<string, number>;
+          last?: {
             totalTokens?: number;
             inputTokens?: number;
             cachedInputTokens?: number;
             outputTokens?: number;
             reasoningOutputTokens?: number;
           };
-          last?: Record<string, number>;
           modelContextWindow?: number | null;
         } | null;
-        if (tokenUsage?.total) {
-          const total = tokenUsage.total;
-          // Use totalTokens if available, otherwise sum individual fields
-          const used =
-            total.totalTokens ??
-            (total.inputTokens ?? 0) +
-              (total.cachedInputTokens ?? 0) +
-              (total.outputTokens ?? 0) +
-              (total.reasoningOutputTokens ?? 0);
+        if (tokenUsage) {
+          const last = tokenUsage.last;
+          // Context window fill = input tokens sent on the last turn (cached + non-cached).
+          // This correctly reflects how much of the context window is occupied.
+          const used = last ? (last.inputTokens ?? 0) + (last.cachedInputTokens ?? 0) : 0;
           // Use the real modelContextWindow from Codex instead of hardcoded 200K
           const limit = tokenUsage.modelContextWindow ?? this.tokenUsage?.limit ?? 200_000;
-          this.tokenUsage = { used, limit };
-          // Emit agent:usage so the frontend context bar works for Codex sessions
-          this.emitSynthetic({ type: 'as:usage', used, size: limit });
-          if (used / limit >= 0.8) {
-            this.triggerCompaction().catch((err: unknown) => {
-              log.error({ err }, 'compaction error');
-            });
+          if (used > 0 || limit !== this.tokenUsage?.limit) {
+            this.tokenUsage = { used, limit };
+            // Emit agent:usage so the frontend context bar works for Codex sessions
+            this.emitSynthetic({ type: 'as:usage', used, size: limit });
           }
+          // NOTE: Do NOT trigger Agendo-side compaction here. Codex manages its own
+          // context compaction natively and emits the appropriate compaction events.
+          // Agendo-side compaction used cumulative `total.totalTokens` which caused a
+          // spurious compaction loop within seconds of session start.
         }
         break;
       }

@@ -271,6 +271,15 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
           { type: 'system:error', message: `Codex turn failed: ${errMsg}` },
         ];
       }
+      // A turn interrupted by compaction must NOT emit agent:result.
+      // Emitting agent:result here would transition the session to awaiting_input,
+      // requiring the user to manually re-send — and with the old token counter bug
+      // that would immediately trigger another compaction (infinite loop).
+      // Instead, return a system:info so the user sees what happened, then let
+      // Codex's native compaction complete and resume naturally.
+      if (event.status === 'interrupted') {
+        return [{ type: 'system:info', message: 'Turn interrupted — compacting context…' }];
+      }
       return [
         {
           type: 'agent:result',

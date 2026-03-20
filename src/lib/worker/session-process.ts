@@ -1026,7 +1026,19 @@ export class SessionProcess {
     // Write the structured event line to the session log file (optional audit trail).
     // CLI-native history (adapter.getHistory()) is now the primary source for SSE catchup.
     // Log file is the fallback for agents without getHistory() support (Gemini, Copilot).
-    if (config.LOG_EVENTS && this.logWriter) {
+    //
+    // NOTE: agent:text-delta and agent:thinking-delta are intentionally excluded from
+    // the log. They are high-frequency ephemeral streaming events — logging them causes
+    // two problems for ACP agents (Gemini/Copilot) that rely on the log file for SSE
+    // catchup: (1) hundreds of tiny fragments arrive as a wall of text on reconnect
+    // instead of streaming, (2) they inflate log size significantly with no benefit
+    // since the complete text arrives in the subsequent agent:result anyway.
+    if (
+      config.LOG_EVENTS &&
+      this.logWriter &&
+      event.type !== 'agent:text-delta' &&
+      event.type !== 'agent:thinking-delta'
+    ) {
       this.logWriter.write(serializeEvent(event), 'system');
     }
 

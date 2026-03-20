@@ -277,7 +277,14 @@ export async function handleSessionSSE(
   if (!catchupSent && !proc && session.logFilePath && existsSync(session.logFilePath)) {
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
-      const logEvents = readEventsFromLog(logContent, lastEventId);
+      const allLogEvents = readEventsFromLog(logContent, lastEventId);
+      // Filter out text/thinking deltas — they are ephemeral streaming fragments
+      // that should not be replayed from the log. Replaying them causes all text
+      // to appear instantly as a wall (no streaming effect) and can produce
+      // duplicates when the complete text is reconstructed from accumulateHistory().
+      const logEvents = allLogEvents.filter(
+        (e) => e.type !== 'agent:text-delta' && e.type !== 'agent:thinking-delta',
+      );
       if (logEvents.length > 0) {
         const fallbackEvent: AgendoEvent = {
           id: 0,

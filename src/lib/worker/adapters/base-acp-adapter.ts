@@ -91,6 +91,26 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
 
   /** Accumulate structural events for getHistory() fallback. */
   protected accumulateHistory(event: TEvent): void {
+    // Handle text-delta events by merging them into a single agent:text entry.
+    // ACP agents (Gemini, Copilot) only emit `${prefix}:text-delta`, never a
+    // complete `${prefix}:text` event, so without this the history would contain
+    // no text content — forcing an SSE catchup from the log file instead of the
+    // richer in-memory history.
+    const textDeltaType = `${this.agentPrefix}:text-delta`;
+    if (event.type === textDeltaType) {
+      const text = (event as unknown as { text: string }).text ?? '';
+      const history = this.transport.getMessageHistory();
+      const last = history.at(-1);
+      if (last?.type === 'agent:text') {
+        // Append to the existing in-progress text entry
+        (last as { type: 'agent:text'; text: string }).text += text;
+      } else {
+        // Start a new text entry
+        this.transport.pushToHistory({ type: 'agent:text', text });
+      }
+      return;
+    }
+
     const historyTypes = new Set([
       `${this.agentPrefix}:text`,
       `${this.agentPrefix}:tool-start`,
