@@ -94,6 +94,22 @@ interface RestartMarker {
   ts: number;
 }
 
+interface ErrorWithCode {
+  code?: unknown;
+  cause?: unknown;
+}
+
+function extractErrorCode(err: unknown): string | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const candidate = err as ErrorWithCode;
+  if (typeof candidate.code === 'string') return candidate.code;
+  return extractErrorCode(candidate.cause);
+}
+
+function isMissingRelationError(err: unknown): boolean {
+  return extractErrorCode(err) === '42P01';
+}
+
 /**
  * Read and consume the restart marker file (if present).
  * Returns the sessionId that triggered the restart, or null.
@@ -133,8 +149,18 @@ function consumeRestartMarker(): string | null {
  * Brainstorm rooms are global (no workerId) — checked via pg-boss job state.
  */
 export async function reconcileZombies(workerId: string): Promise<void> {
-  await reconcileOrphanedSessions(workerId);
-  await reconcileOrphanedBrainstorms();
+  try {
+    await reconcileOrphanedSessions(workerId);
+    await reconcileOrphanedBrainstorms();
+  } catch (err) {
+    // Prefer worker liveness over orphan cleanup if the deployed bundle or DB
+    // schema is temporarily out of sync. This keeps PM2 from fatal-looping on boot.
+    if (isMissingRelationError(err)) {
+      log.error({ err, workerId }, 'Skipping zombie reconciliation because a relation is missing');
+      return;
+    }
+    throw err;
+  }
 }
 
 /**

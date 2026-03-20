@@ -242,6 +242,23 @@ describe('reconcileZombies — sessions', () => {
 
     expect(mockDb.select).toHaveBeenCalled();
   });
+
+  it('skips startup reconciliation when a relation is missing', async () => {
+    mockDb.select.mockImplementation(() => {
+      const mockWhere = vi.fn().mockRejectedValue({
+        message: 'Failed query',
+        cause: { code: '42P01', message: 'relation "executions" does not exist' },
+      });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+      return { from: mockFrom } as never;
+    });
+
+    await expect(reconcileZombies('worker-1')).resolves.toBeUndefined();
+
+    expect(mockDb.update).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
