@@ -1332,9 +1332,13 @@ export class BrainstormOrchestrator {
         // empty and the wave records a blank message.
         if (!event.fromDelta) {
           participant.responseBuffer.push(event.text);
-          // Accumulate into delta buffer; a timer batches rapid bursts into a
-          // single PG NOTIFY publish to avoid flooding the channel.
-          participant.deltaBuffer.append(event.text);
+          // Only emit streaming deltas to the UI once a wave has actually started.
+          // Before waveStarted, this is the preamble ack ("I'm ready to participate…")
+          // which should be suppressed — onParticipantTurnComplete already guards
+          // the final message, but without this check the deltas leak to the UI.
+          if (this.waveStarted) {
+            participant.deltaBuffer.append(event.text);
+          }
         }
         break;
 
