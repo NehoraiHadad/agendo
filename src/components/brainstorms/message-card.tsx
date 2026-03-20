@@ -64,7 +64,7 @@ export function StreamingCard({
 
   return (
     <div
-      className={`flex gap-3 items-start ${colors.bg} rounded-xl p-3 border-l-2 ${colors.border}`}
+      className={`flex gap-3 items-start ${colors.bg} rounded-xl p-3 border-s-2 ${colors.border}`}
     >
       {/* Avatar */}
       <AgentAvatar
@@ -91,7 +91,7 @@ export function StreamingCard({
             Wave {wave}
           </span>
           {/* Streaming indicator */}
-          <span className="ml-auto flex items-center gap-0.5" aria-label="Agent is thinking">
+          <span className="ms-auto flex items-center gap-0.5" aria-label="Agent is thinking">
             <span
               className={`size-1 rounded-full ${colors.pulse} animate-bounce`}
               style={{ animationDelay: '0ms' }}
@@ -115,7 +115,7 @@ export function StreamingCard({
           >
             {text}
             <span
-              className={`inline-block w-0.5 h-3 ml-0.5 ${colors.pulse} animate-pulse align-middle`}
+              className={`inline-block w-0.5 h-3 ms-0.5 ${colors.pulse} animate-pulse align-middle`}
             />
           </div>
         )}
@@ -148,7 +148,7 @@ export function ThinkingCard({
 
   return (
     <div
-      className={`flex gap-3 items-center ${colors.bg} rounded-xl px-3 py-2.5 border-l-2 ${colors.border} opacity-50`}
+      className={`flex gap-3 items-center ${colors.bg} rounded-xl px-3 py-2.5 border-s-2 ${colors.border} opacity-50`}
       role="status"
       aria-label={`${agentName} is ${activity ?? 'thinking'}`}
     >
@@ -175,7 +175,7 @@ export function ThinkingCard({
         </span>
 
         {/* Bouncing dots */}
-        <span className="ml-auto flex items-center gap-0.5 shrink-0" aria-hidden="true">
+        <span className="ms-auto flex items-center gap-0.5 shrink-0" aria-hidden="true">
           <span
             className={`size-1 rounded-full ${colors.pulse} animate-bounce`}
             style={{ animationDelay: '0ms' }}
@@ -204,7 +204,7 @@ function UserMessage({ content, ts }: { content: string; ts: number }) {
   return (
     <div className="flex justify-end gap-2.5 items-end">
       <div className="max-w-[80%] group space-y-1">
-        <div className="bg-primary/[0.10] border border-primary/20 rounded-2xl rounded-br-sm px-3.5 py-2.5">
+        <div className="bg-primary/[0.10] border border-primary/20 rounded-2xl rtl:rounded-bl-sm ltr:rounded-br-sm px-3.5 py-2.5">
           <p
             dir="auto"
             className="text-xs text-foreground/85 leading-relaxed whitespace-pre-wrap break-words"
@@ -354,14 +354,14 @@ function AgentMessageCard({
           <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06]">
             Wave {message.wave}
           </span>
-          <span className="ml-auto text-[10px] text-muted-foreground/25 opacity-0 group-hover:opacity-100 transition-opacity tabular-nums">
+          <span className="ms-auto text-[10px] text-muted-foreground/25 opacity-0 group-hover:opacity-100 transition-opacity tabular-nums">
             {time}
           </span>
         </div>
 
         {/* Message bubble */}
         <div
-          className={`${colors.bg} rounded-xl rounded-tl-sm border-l-2 ${colors.border} px-3 py-2.5 relative`}
+          className={`${colors.bg} rounded-xl rtl:rounded-tr-sm ltr:rounded-tl-sm border-s-2 ${colors.border} px-3 py-2.5 relative`}
         >
           {/* Copy button — top right, hover revealed */}
           <button

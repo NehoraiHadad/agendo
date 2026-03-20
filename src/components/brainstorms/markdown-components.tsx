@@ -10,7 +10,9 @@ import type { Components } from 'react-markdown';
  */
 export const brainstormMdComponents: Components = {
   p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>
+    <p dir="auto" className="mb-1.5 last:mb-0 leading-relaxed">
+      {children}
+    </p>
   ),
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const isBlock = className?.includes('language-');
@@ -25,25 +27,40 @@ export const brainstormMdComponents: Components = {
     );
   },
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>
+    <ul dir="auto" className="list-disc ps-4 mb-1.5 space-y-0.5">
+      {children}
+    </ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>
+    <ol dir="auto" className="list-decimal ps-4 mb-1.5 space-y-0.5">
+      {children}
+    </ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="text-foreground/70 leading-relaxed">{children}</li>
+    <li dir="auto" className="text-foreground/70 leading-relaxed">
+      {children}
+    </li>
   ),
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-sm font-semibold text-foreground/90 mb-1 mt-3 first:mt-0">{children}</h1>
+    <h1 dir="auto" className="text-sm font-semibold text-foreground/90 mb-1 mt-3 first:mt-0">
+      {children}
+    </h1>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-xs font-semibold text-foreground/80 mb-1 mt-2.5 first:mt-0">{children}</h2>
+    <h2 dir="auto" className="text-xs font-semibold text-foreground/80 mb-1 mt-2.5 first:mt-0">
+      {children}
+    </h2>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">{children}</h3>
+    <h3 dir="auto" className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">
+      {children}
+    </h3>
   ),
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-white/20 pl-3 text-foreground/55 italic my-1.5">
+    <blockquote
+      dir="auto"
+      className="border-s-2 border-white/20 ps-3 text-foreground/55 italic my-1.5"
+    >
       {children}
     </blockquote>
   ),
@@ -69,25 +86,39 @@ export const brainstormMdComponents: Components = {
  */
 export const synthesisMdComponents: Components = {
   p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
+    <p dir="auto" className="mb-2 last:mb-0 leading-relaxed">
+      {children}
+    </p>
   ),
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-sm font-semibold text-foreground/90 mb-2 mt-4 first:mt-0">{children}</h1>
+    <h1 dir="auto" className="text-sm font-semibold text-foreground/90 mb-2 mt-4 first:mt-0">
+      {children}
+    </h1>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-xs font-semibold text-foreground/80 mb-1.5 mt-3 first:mt-0">{children}</h2>
+    <h2 dir="auto" className="text-xs font-semibold text-foreground/80 mb-1.5 mt-3 first:mt-0">
+      {children}
+    </h2>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">{children}</h3>
+    <h3 dir="auto" className="text-xs font-medium text-foreground/75 mb-1 mt-2 first:mt-0">
+      {children}
+    </h3>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>
+    <ul dir="auto" className="list-disc ps-4 mb-2 space-y-0.5">
+      {children}
+    </ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>
+    <ol dir="auto" className="list-decimal ps-4 mb-2 space-y-0.5">
+      {children}
+    </ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="text-foreground/70 leading-relaxed">{children}</li>
+    <li dir="auto" className="text-foreground/70 leading-relaxed">
+      {children}
+    </li>
   ),
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const isBlock = className?.includes('language-');
@@ -102,7 +133,10 @@ export const synthesisMdComponents: Components = {
     );
   },
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-violet-500/30 pl-3 text-foreground/65 italic my-2">
+    <blockquote
+      dir="auto"
+      className="border-s-2 border-violet-500/30 ps-3 text-foreground/65 italic my-2"
+    >
       {children}
     </blockquote>
   ),

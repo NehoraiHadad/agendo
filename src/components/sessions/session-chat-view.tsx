@@ -128,7 +128,7 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
     );
   },
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-primary/40 pl-3 my-1 text-muted-foreground italic">
+    <blockquote className="border-s-2 border-primary/40 ps-3 my-1 text-muted-foreground italic">
       {children}
     </blockquote>
   ),
@@ -1033,7 +1033,7 @@ function UserBubble({
       <div className="flex flex-col items-end gap-1 min-w-0">
         <div
           dir="auto"
-          className="group/userbubble relative rounded-2xl rounded-tr-sm ml-auto px-3.5 py-2.5 text-sm max-w-[85%] space-y-2 shadow-sm"
+          className="group/userbubble relative rounded-2xl rtl:rounded-tl-sm ltr:rounded-tr-sm ms-auto px-3.5 py-2.5 text-sm max-w-[85%] space-y-2 shadow-sm"
           style={{
             background:
               'linear-gradient(135deg, oklch(0.7 0.18 280 / 0.18) 0%, oklch(0.65 0.2 260 / 0.12) 100%)',
