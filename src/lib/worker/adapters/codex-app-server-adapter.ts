@@ -716,7 +716,11 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         if (tokenUsage) {
           const last = tokenUsage.last;
           // Context window fill = input tokens sent on the last turn (cached + non-cached).
-          // This correctly reflects how much of the context window is occupied.
+          // This is what will be re-sent as context on the next turn, i.e. how much of
+          // the context window is currently occupied.
+          // NOTE: Do NOT use `total.totalTokens` — that is a cumulative billing sum across
+          // the entire thread lifetime. It grows monotonically and was causing a compaction
+          // loop (91% "full" within 53 seconds because it counted every token ever spent).
           const used = last ? (last.inputTokens ?? 0) + (last.cachedInputTokens ?? 0) : 0;
           // Use the real modelContextWindow from Codex instead of hardcoded 200K
           const limit = tokenUsage.modelContextWindow ?? this.tokenUsage?.limit ?? 200_000;
@@ -725,10 +729,11 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
             // Emit agent:usage so the frontend context bar works for Codex sessions
             this.emitSynthetic({ type: 'as:usage', used, size: limit });
           }
-          // NOTE: Do NOT trigger Agendo-side compaction here. Codex manages its own
-          // context compaction natively and emits the appropriate compaction events.
-          // Agendo-side compaction used cumulative `total.totalTokens` which caused a
-          // spurious compaction loop within seconds of session start.
+          if (used > 0 && used / limit >= 0.8) {
+            this.triggerCompaction().catch((err: unknown) => {
+              log.error({ err }, 'compaction error');
+            });
+          }
         }
         break;
       }
