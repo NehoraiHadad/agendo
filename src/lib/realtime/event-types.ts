@@ -338,6 +338,7 @@ export type BrainstormEvent =
       type: 'participant:joined';
       agentId: string;
       agentName: string;
+      role?: string;
     })
   | (BrainstormEventBase & {
       type: 'participant:left';

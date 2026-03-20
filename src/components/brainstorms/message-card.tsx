@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronUp, ChevronsRight, Copy, Check } from 'lucide-react';
 import { getAgentColor } from '@/lib/utils/brainstorm-colors';
+import { Badge } from '@/components/ui/badge';
 import { AgentAvatar } from '@/components/shared/agent-avatar';
 import type { BrainstormMessageItem, ReviewState } from '@/stores/brainstorm-store';
 import { brainstormMdComponents } from './markdown-components';
@@ -50,12 +51,14 @@ export function StreamingCard({
   agentIndex,
   text,
   wave,
+  role,
 }: {
   agentName: string;
   agentSlug: string;
   agentIndex: number;
   text: string;
   wave: number;
+  role?: string | null;
 }) {
   const colors = getAgentColor(agentSlug, agentIndex);
 
@@ -76,6 +79,14 @@ export function StreamingCard({
         {/* Header */}
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-medium text-foreground/80">{agentName}</span>
+          {role && (
+            <Badge
+              variant="outline"
+              className="text-[9px] h-[14px] px-1 py-0 font-medium capitalize bg-white/[0.02] border-white/[0.08]"
+            >
+              {role}
+            </Badge>
+          )}
           <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06]">
             Wave {wave}
           </span>
@@ -123,6 +134,7 @@ export function ThinkingCard({
   agentIndex,
   wave,
   activity,
+  role,
 }: {
   agentName: string;
   agentSlug: string;
@@ -130,6 +142,7 @@ export function ThinkingCard({
   wave: number;
   /** Optional description of what the agent is currently doing */
   activity?: string | null;
+  role?: string | null;
 }) {
   const colors = getAgentColor(agentSlug, agentIndex);
 
@@ -144,6 +157,14 @@ export function ThinkingCard({
 
       <div className="flex flex-1 min-w-0 items-center gap-2">
         <span className="text-xs font-medium text-foreground/60 truncate">{agentName}</span>
+        {role && (
+          <Badge
+            variant="outline"
+            className="text-[9px] h-[14px] px-1 py-0 font-medium capitalize bg-white/[0.02] border-white/[0.08]"
+          >
+            {role}
+          </Badge>
+        )}
         {activity ? (
           <span className="text-[10px] text-muted-foreground/35 truncate max-w-[200px]">
             {activity}
@@ -281,6 +302,7 @@ interface AgentMessageProps {
   /** Active review window — when set, shows feedback buttons */
   reviewState?: ReviewState | null;
   roomId?: string;
+  role?: string | null;
 }
 
 const COLLAPSE_LINE_COUNT = 20;
@@ -291,6 +313,7 @@ function AgentMessageCard({
   agentIndex,
   reviewState,
   roomId,
+  role,
 }: AgentMessageProps) {
   const colors = getAgentColor(agentSlug, agentIndex);
   const [expanded, setExpanded] = useState(true);
@@ -320,6 +343,14 @@ function AgentMessageCard({
         {/* Header */}
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-medium text-foreground/80">{agentName}</span>
+          {role && (
+            <Badge
+              variant="outline"
+              className="text-[9px] h-[14px] px-1 py-0 font-medium capitalize bg-white/[0.02] border-white/[0.08]"
+            >
+              {role}
+            </Badge>
+          )}
           <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06]">
             Wave {message.wave}
           </span>
@@ -400,6 +431,7 @@ export interface MessageCardProps {
   reviewState?: ReviewState | null;
   /** Brainstorm room ID — required for posting feedback */
   roomId?: string;
+  role?: string | null;
 }
 
 export const MessageCard = memo(function MessageCard({
@@ -408,6 +440,7 @@ export const MessageCard = memo(function MessageCard({
   agentIndex = 0,
   reviewState,
   roomId,
+  role,
 }: MessageCardProps) {
   if (message.senderType === 'user') {
     return <UserMessage content={message.content} ts={message.ts} />;
@@ -430,6 +463,7 @@ export const MessageCard = memo(function MessageCard({
       agentIndex={agentIndex}
       reviewState={reviewState}
       roomId={roomId}
+      role={role}
     />
   );
 });

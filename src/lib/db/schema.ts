@@ -534,6 +534,7 @@ export const brainstormParticipants = pgTable(
       .references(() => agents.id),
     sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
     model: text('model'),
+    role: text('role'),
     status: brainstormParticipantStatusEnum('status').notNull().default('pending'),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   },

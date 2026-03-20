@@ -248,6 +248,7 @@ const MessageList = memo(function MessageList({
           <div className="px-4 space-y-3">
             {group.messages.map((msg) => {
               const agentInfo = msg.agentId ? slugMap[msg.agentId] : undefined;
+              const participant = msg.agentId ? participants.get(msg.agentId) : undefined;
               return (
                 <MessageCard
                   key={`${msg.id}-${msg.ts}`}
@@ -256,6 +257,7 @@ const MessageList = memo(function MessageList({
                   agentIndex={agentInfo?.index ?? 0}
                   reviewState={reviewState}
                   roomId={roomId}
+                  role={participant?.role}
                 />
               );
             })}
@@ -285,6 +287,7 @@ const MessageList = memo(function MessageList({
                   agentIndex={agentInfo?.index ?? 0}
                   wave={currentWave}
                   activity={p.activity}
+                  role={p.role}
                 />
               );
             })}
@@ -300,6 +303,7 @@ const MessageList = memo(function MessageList({
                   agentIndex={agentInfo?.index ?? 0}
                   text={text}
                   wave={currentWave}
+                  role={participant.role}
                 />
               );
             })}

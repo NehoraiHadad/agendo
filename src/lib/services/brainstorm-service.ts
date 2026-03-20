@@ -292,6 +292,16 @@ export async function updateParticipantStatus(
 }
 
 /**
+ * Update the role of a participant.
+ */
+export async function updateParticipantRole(participantId: string, role: string): Promise<void> {
+  await db
+    .update(brainstormParticipants)
+    .set({ role })
+    .where(eq(brainstormParticipants.id, participantId));
+}
+
+/**
  * Persist the log file path for a brainstorm room.
  * Called by the orchestrator after it resolves and opens the log file.
  */

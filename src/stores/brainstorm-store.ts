@@ -17,6 +17,7 @@ export interface ParticipantState {
   agentSlug: string;
   sessionId: string | null;
   model: string | null;
+  role: string | null;
   status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout' | 'evicted';
   /** Human-readable description of current activity, e.g. "Reading orchestrator.ts" */
   activity: string | null;
@@ -117,6 +118,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         agentSlug: p.agentSlug,
         sessionId: p.sessionId ?? null,
         model: p.model ?? null,
+        role: p.role ?? null,
         status: p.status as ParticipantState['status'],
         activity: null,
       });
@@ -194,6 +196,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             agentSlug: '',
             sessionId: null,
             model: null,
+            role: null,
             status: displayStatus,
             activity: null,
           });
@@ -284,6 +287,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
             agentSlug: '',
             sessionId: null,
             model: null,
+            role: event.role ?? null,
             status: 'pending',
             activity: null,
           });

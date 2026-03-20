@@ -37,6 +37,7 @@ import {
   updateBrainstormLogPath,
   updateParticipantSession,
   updateParticipantStatus,
+  updateParticipantRole,
   setBrainstormSynthesis,
   getCompletedRoomsForProject,
 } from '@/lib/services/brainstorm-service';
@@ -383,6 +384,14 @@ export class BrainstormOrchestrator {
           { roomId: this.roomId, roles: autoRolesMap },
           'Auto-assigned roles based on participant count',
         );
+        // Save roles to the database
+        for (const role in autoRolesMap) {
+          const agentSlug = autoRolesMap[role];
+          const participant = this.participants.find((p) => p.agentSlug === agentSlug);
+          if (participant) {
+            await updateParticipantRole(participant.participantId, role);
+          }
+        }
       }
     }
 
@@ -460,10 +469,14 @@ export class BrainstormOrchestrator {
         await enqueueSession({ sessionId: session.id });
 
         // Emit joined event
+        const role = Object.entries(this.playbook.roles || {}).find(
+          ([, slug]) => slug === participant.agentSlug,
+        )?.[0];
         await this.emitEvent({
           type: 'participant:joined',
           agentId: participant.agentId,
           agentName: participant.agentName,
+          role,
         });
 
         log.info(

@@ -235,11 +235,21 @@ function ParticipantRow({ participant, index }: { participant: ParticipantState;
       <AgentAvatar name={participant.agentName} slug={participant.agentSlug || ''} index={index} />
 
       <div className="flex-1 min-w-0">
-        <span className="text-xs font-medium text-foreground/80 truncate block">
-          {participant.agentName}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-foreground/80 truncate block">
+            {participant.agentName}
+          </span>
+          {participant.role && (
+            <Badge
+              variant="outline"
+              className="text-[9px] h-[14px] px-1 py-0 font-medium capitalize bg-white/[0.02] border-white/[0.08]"
+            >
+              {participant.role}
+            </Badge>
+          )}
+        </div>
         {participant.model && (
-          <span className="text-[10px] text-muted-foreground/30 font-mono block truncate">
+          <span className="text-[10px] text-muted-foreground/30 font-mono block truncate mt-0.5">
             {participant.model.replace('claude-', 'cl-').replace('gemini-', 'ge-').slice(0, 18)}
           </span>
         )}
