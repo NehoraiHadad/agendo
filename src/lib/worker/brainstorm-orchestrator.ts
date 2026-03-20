@@ -160,7 +160,7 @@ function isModelSwitchFailureMessage(message: string): boolean {
 }
 
 interface BrainstormControlMessage {
-  type: 'steer' | 'end' | 'remove-participant' | 'extend';
+  type: 'steer' | 'end' | 'remove-participant' | 'extend' | 'ping';
   text?: string;
   synthesize?: boolean;
   agentId?: string;
@@ -2103,6 +2103,9 @@ export class BrainstormOrchestrator {
         this.checkWaveComplete();
         break;
       }
+
+      case 'ping':
+        break;
     }
   }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import {
   getBrainstorm,
   addParticipant,
@@ -49,11 +50,12 @@ export const DELETE = withErrorBoundary(
     // Soft-remove: set status to 'left'
     await removeParticipant(id, body.agentId);
 
-    // Notify the orchestrator so it stops routing waves to this agent
-    await sendBrainstormControl(id, {
-      type: 'remove-participant',
-      agentId: body.agentId,
-    });
+    if (await isBrainstormOrchestratorLive(id)) {
+      await sendBrainstormControl(id, {
+        type: 'remove-participant',
+        agentId: body.agentId,
+      });
+    }
 
     // 204 No Content — body must be empty per HTTP spec
     return new NextResponse(null, { status: 204 });

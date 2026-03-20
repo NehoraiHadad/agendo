@@ -6,6 +6,7 @@ import {
   getBrainstorm,
   updateBrainstormMaxWaves,
 } from '@/lib/services/brainstorm-service';
+import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
@@ -24,14 +25,17 @@ export const POST = withErrorBoundary(
     const room = await getBrainstorm(id);
 
     if (room.status === 'paused') {
-      // Orchestrator is alive and waiting — update maxWaves in DB and send
-      // an extend control message so the orchestrator picks up the new limit
-      // and resumes the wave loop.
-      const updated = await updateBrainstormMaxWaves(id, room.maxWaves + body.additionalWaves);
-      await sendBrainstormControl(id, {
-        type: 'extend',
-        additionalWaves: body.additionalWaves,
-      });
+      if (await isBrainstormOrchestratorLive(id)) {
+        await sendBrainstormControl(id, {
+          type: 'extend',
+          additionalWaves: body.additionalWaves,
+        });
+        const updated = await updateBrainstormMaxWaves(id, room.maxWaves + body.additionalWaves);
+        return NextResponse.json({ data: updated });
+      }
+
+      const updated = await extendBrainstorm(id, body.additionalWaves);
+      await enqueueBrainstorm({ roomId: id });
       return NextResponse.json({ data: updated });
     }
 

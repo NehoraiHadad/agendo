@@ -58,6 +58,12 @@ export async function sendBrainstormControl(
   return postToWorker(`/brainstorms/${roomId}/control`, payload);
 }
 
+/** Probe whether a brainstorm currently has a live orchestrator handler in the worker. */
+export async function probeBrainstormOrchestrator(roomId: string): Promise<boolean> {
+  const result = await sendBrainstormControl(roomId, { type: 'ping' });
+  return result.ok && result.dispatched === true;
+}
+
 /** Send a synthetic event to a brainstorm room running in the worker. */
 export async function sendBrainstormEvent(
   roomId: string,

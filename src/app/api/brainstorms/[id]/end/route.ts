@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
+import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { getBrainstorm, updateBrainstormStatus } from '@/lib/services/brainstorm-service';
 import { sendBrainstormControl, sendBrainstormEvent } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
@@ -22,20 +23,21 @@ export const POST = withErrorBoundary(
       throw new ConflictError('BrainstormRoom is already ended');
     }
 
-    // Signal the orchestrator to wrap up (and optionally synthesize).
-    // If the orchestrator is alive, it will handle the transition cleanly
-    // (including synthesis if requested).
-    await sendBrainstormControl(id, {
-      type: 'end',
-      synthesize: body.synthesize,
-    });
+    const orchestratorLive = await isBrainstormOrchestratorLive(id);
+
+    if (orchestratorLive) {
+      await sendBrainstormControl(id, {
+        type: 'end',
+        synthesize: body.synthesize,
+      });
+    }
 
     // Fallback: if the orchestrator is NOT running (e.g. worker restarted,
     // room was paused/waiting), the PG NOTIFY goes nowhere. Directly update
     // the DB status and emit a room:state event so the frontend reflects it.
     // For rooms with a live orchestrator this is a harmless idempotent write
     // (the orchestrator also sets status='ended' on its exit path).
-    if (room.status === 'waiting' || room.status === 'paused') {
+    if (!orchestratorLive) {
       await updateBrainstormStatus(id, 'ended');
       await sendBrainstormEvent(id, {
         id: Date.now(),

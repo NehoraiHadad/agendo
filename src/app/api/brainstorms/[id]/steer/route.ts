@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { sendBrainstormControl, sendBrainstormEvent } from '@/lib/realtime/worker-client';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
 import { FileLogWriter } from '@/lib/worker/log-writer';
@@ -67,22 +68,13 @@ export const POST = withErrorBoundary(
 
     const room = await getBrainstorm(id);
 
-    if (room.status === 'paused') {
-      // Room is paused — orchestrator has exited. Re-enqueue it first so we
-      // know whether it was alive before deciding how to persist the message.
-      const jobId = await enqueueBrainstorm({ roomId: id });
-      if (jobId) {
-        // Orchestrator was dead — persist the steer message to the log file
-        // so the resumed orchestrator finds it on startup.
-        if (room.logFilePath) {
-          await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text);
-        }
-        // Emit immediate SSE so the user sees their message without waiting.
-        await emitUserMessageEvent(id, room.currentWave + 1, body.text);
-        return NextResponse.json({ data: { sent: true, resumed: true } });
+    if (room.status === 'paused' && !(await isBrainstormOrchestratorLive(id))) {
+      if (room.logFilePath) {
+        await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text);
       }
-      // Orchestrator IS alive (singletonKey conflict) — fall through to PG NOTIFY.
-      // The orchestrator will write the message to the log via emitEvent().
+      await enqueueBrainstorm({ roomId: id });
+      await emitUserMessageEvent(id, room.currentWave + 1, body.text);
+      return NextResponse.json({ data: { sent: true, resumed: true } });
     }
 
     // Orchestrator is alive — send control signal via PG NOTIFY.

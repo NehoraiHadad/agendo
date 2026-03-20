@@ -1,6 +1,7 @@
 import { eq, desc, asc, isNotNull, getTableColumns, count, and } from 'drizzle-orm';
 import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
+import type { BrainstormConfig } from '@/lib/db/schema';
 import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { getById } from '@/lib/services/db-helpers';
@@ -22,7 +23,7 @@ export interface CreateBrainstormInput {
   title: string;
   topic: string;
   maxWaves?: number;
-  config?: Record<string, unknown>;
+  config?: BrainstormConfig;
   participants: Array<{
     agentId: string;
     model?: string;

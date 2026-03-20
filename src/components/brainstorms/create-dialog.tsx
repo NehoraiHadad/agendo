@@ -96,6 +96,8 @@ interface DraftState {
   targetAudience?: string;
 }
 
+const DEFAULT_DELIVERABLE_TYPE: BrainstormConfig['deliverableType'] = 'exploration';
+
 // ============================================================================
 // Section header
 // ============================================================================
@@ -236,10 +238,7 @@ function FormContent({
   );
 
   const hasSetupValues =
-    goal.trim().length > 0 ||
-    constraints.length > 0 ||
-    deliverableType !== undefined ||
-    targetAudience.trim().length > 0;
+    goal.trim().length > 0 || constraints.length > 0 || targetAudience.trim().length > 0;
   const hasRecoveryOverrides =
     fallbackMode !== undefined ||
     preservePinnedModel !== true ||
@@ -280,6 +279,38 @@ function FormContent({
         />
       </div>
 
+      <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] px-3 py-3 space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs font-semibold text-sky-200/90">Deliverable Type</Label>
+            <p className="text-[11px] text-sky-100/55 leading-relaxed">
+              Guides how the brainstorm should shape its synthesis. Default is exploratory, but you
+              can clear or change it.
+            </p>
+          </div>
+        </div>
+        <Select
+          value={deliverableType ?? '__none__'}
+          onValueChange={(v) =>
+            setDeliverableType(
+              v === '__none__' ? undefined : (v as BrainstormConfig['deliverableType']),
+            )
+          }
+        >
+          <SelectTrigger className="text-sm border-sky-500/20 bg-black/20">
+            <SelectValue placeholder="None" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            <SelectItem value="decision">Decision</SelectItem>
+            <SelectItem value="options_list">Options List</SelectItem>
+            <SelectItem value="action_plan">Action Plan</SelectItem>
+            <SelectItem value="risk_assessment">Risk Assessment</SelectItem>
+            <SelectItem value="exploration">Exploration</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       {/* Setup (optional) — collapsible */}
       <div className="rounded-md border border-white/[0.06] overflow-hidden">
         <button
@@ -305,31 +336,6 @@ function FormContent({
 
         {setupOpen && (
           <div className="px-3 pb-3 pt-1 space-y-3 border-t border-white/[0.06]">
-            {/* Deliverable type */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-foreground/70">Deliverable Type</Label>
-              <Select
-                value={deliverableType ?? '__none__'}
-                onValueChange={(v) =>
-                  setDeliverableType(
-                    v === '__none__' ? undefined : (v as BrainstormConfig['deliverableType']),
-                  )
-                }
-              >
-                <SelectTrigger className="text-sm">
-                  <SelectValue placeholder="None" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  <SelectItem value="decision">Decision</SelectItem>
-                  <SelectItem value="options_list">Options List</SelectItem>
-                  <SelectItem value="action_plan">Action Plan</SelectItem>
-                  <SelectItem value="risk_assessment">Risk Assessment</SelectItem>
-                  <SelectItem value="exploration">Exploration</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
             {/* Goal */}
             <div className="space-y-1.5">
               <Label htmlFor="brainstorm-goal" className="text-xs font-medium text-foreground/70">
@@ -823,7 +829,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
   const [goal, setGoal] = useState('');
   const [constraints, setConstraints] = useState<string[]>([]);
   const [deliverableType, setDeliverableType] =
-    useState<BrainstormConfig['deliverableType']>(undefined);
+    useState<BrainstormConfig['deliverableType']>(DEFAULT_DELIVERABLE_TYPE);
   const [targetAudience, setTargetAudience] = useState('');
   const [fallbackMode, setFallbackMode] =
     useState<NonNullable<BrainstormConfig['fallback']>['mode']>(undefined);
@@ -901,7 +907,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       if (draft.config) setConfig(draft.config);
       if (draft.goal) setGoal(draft.goal);
       if (draft.constraints) setConstraints(draft.constraints);
-      if (draft.deliverableType) setDeliverableType(draft.deliverableType);
+      setDeliverableType(draft.deliverableType ?? DEFAULT_DELIVERABLE_TYPE);
       if (draft.targetAudience) setTargetAudience(draft.targetAudience);
       if (draft.config?.fallback?.mode !== undefined) {
         setFallbackMode(draft.config.fallback.mode);
@@ -1138,7 +1144,7 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
       setSelectedRelatedIds([]);
       setGoal('');
       setConstraints([]);
-      setDeliverableType(undefined);
+      setDeliverableType(DEFAULT_DELIVERABLE_TYPE);
       setTargetAudience('');
       setFallbackMode(undefined);
       setPreservePinnedModel(true);
