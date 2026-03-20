@@ -236,23 +236,41 @@ const MessageList = memo(function MessageList({
   reviewState: ReviewState | null;
   roomId: string;
 }) {
-  const groups = groupMessagesByWave(messages);
-  const streamingEntries = Array.from(streamingText.entries());
+  // Memoize wave grouping — only recomputes when the messages array reference changes
+  const groups = useMemo(() => groupMessagesByWave(messages), [messages]);
+
+  // Memoize streaming entries to avoid Array.from() on every render
+  const streamingEntries = useMemo(() => Array.from(streamingText.entries()), [streamingText]);
+
+  // Build a reverse index for agentId → participantId so per-message lookups are O(1)
+  const agentIdIndex = useMemo(() => {
+    const idx = new Map<string, string>();
+    for (const [participantId, p] of participants) {
+      idx.set(p.agentId, participantId);
+    }
+    return idx;
+  }, [participants]);
 
   return (
     <>
       {groups.map((group, idx) => (
-        <div key={`wave-${group.wave}-${idx}`}>
+        <div
+          key={`wave-${group.wave}-${idx}`}
+          style={{
+            // Skip layout/paint for off-screen wave groups during large history render
+            contentVisibility: 'auto',
+            containIntrinsicBlockSize: '200px',
+          }}
+        >
           {group.wave > 0 && (
             <WaveDivider wave={group.wave} isReflection={reflectionWaves.has(group.wave)} />
           )}
           <div className="px-4 space-y-3">
             {group.messages.map((msg) => {
-              const participant =
-                (msg.participantId ? participants.get(msg.participantId) : undefined) ??
-                (msg.agentId
-                  ? Array.from(participants.values()).find((entry) => entry.agentId === msg.agentId)
-                  : undefined);
+              // O(1) participant lookup via direct Map access + agentId index
+              const participantId =
+                msg.participantId ?? (msg.agentId ? agentIdIndex.get(msg.agentId) : undefined);
+              const participant = participantId ? participants.get(participantId) : undefined;
               const agentInfo = participant ? slugMap[participant.participantId] : undefined;
               return (
                 <MessageCard
