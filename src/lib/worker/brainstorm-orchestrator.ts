@@ -42,7 +42,7 @@ import {
   setBrainstormSynthesis,
   getCompletedRoomsForProject,
 } from '@/lib/services/brainstorm-service';
-import { listAgents } from '@/lib/services/agent-service';
+import { listAgents, getAgentById } from '@/lib/services/agent-service';
 import { FileLogWriter, resolveBrainstormLogPath } from '@/lib/worker/log-writer';
 import { readBrainstormEventsFromLog } from '@/lib/realtime/event-utils';
 import { buildTranscriptFromSessions } from '@/lib/worker/brainstorm-history';
@@ -160,7 +160,7 @@ function isModelSwitchFailureMessage(message: string): boolean {
 }
 
 interface BrainstormControlMessage {
-  type: 'steer' | 'end' | 'remove-participant' | 'extend' | 'ping';
+  type: 'steer' | 'end' | 'remove-participant' | 'add-participant' | 'extend' | 'ping';
   text?: string;
   synthesize?: boolean;
   agentId?: string;
@@ -182,8 +182,10 @@ interface BrainstormControlMessage {
  */
 const MIN_PARTICIPANT_READY_TIMEOUT_SEC = 600; // 10 minutes — global safety net, rarely triggers with per-participant timeouts
 
-/** Per-participant startup timeout. Agents that fail to reach awaiting_input within this window are evicted. */
-const PER_PARTICIPANT_READY_TIMEOUT_SEC = 300; // 5 minutes — agents may research codebase on first turn
+/** Per-participant startup timeout. Agents that fail to reach awaiting_input within this window are evicted.
+ *  Set to 8 minutes — ACP-based agents (Gemini, Copilot) can take 5-8 minutes for the full ACP
+ *  handshake + MCP server registration + initial awaiting_input cycle. 5 minutes was too tight. */
+const PER_PARTICIPANT_READY_TIMEOUT_SEC = 480; // 8 minutes
 
 /** Extra time budget for wave 0 (research wave). Agents explore the codebase before responding. */
 const WAVE_0_EXTRA_TIMEOUT_SEC = 180; // +3 minutes on top of normal wave timeout
@@ -708,6 +710,137 @@ export class BrainstormOrchestrator {
 
     const activeCount = this.participants.filter((p) => !p.hasLeft).length;
     log.info({ roomId: this.roomId, activeCount }, 'All participant sessions ready');
+  }
+
+  // ============================================================================
+  // Hot-add participant (mid-brainstorm)
+  // ============================================================================
+
+  /**
+   * Add a new participant to a running brainstorm. Creates their session,
+   * waits for it to reach awaiting_input, and integrates them into future waves.
+   * The DB row is already created by the API route before this is called.
+   */
+  private async hotAddParticipant(agentId: string, model?: string): Promise<void> {
+    // Check if this agent is already an active participant
+    const existing = this.participants.find((p) => p.agentId === agentId && !p.hasLeft);
+    if (existing) {
+      log.warn({ roomId: this.roomId, agentId }, 'Agent is already an active participant');
+      return;
+    }
+
+    // Fetch agent details
+    const agent = await getAgentById(agentId);
+
+    // Refresh room to get the new participant's DB record
+    const room = await getBrainstorm(this.roomId);
+    const dbParticipant = room.participants.find(
+      (p) => p.agentId === agentId && p.status !== 'left',
+    );
+    if (!dbParticipant) {
+      log.error({ roomId: this.roomId, agentId }, 'New participant not found in DB');
+      return;
+    }
+
+    // Build the participant state
+    const participant: ParticipantState = {
+      participantId: dbParticipant.id,
+      agentId,
+      agentName: agent.name,
+      agentSlug: agent.slug,
+      agentBinaryPath: agent.binaryPath,
+      provider: binaryPathToProvider(agent.binaryPath),
+      sessionId: null,
+      model: model ?? dbParticipant.model ?? undefined,
+      modelPinned:
+        (model ?? dbParticipant.model) !== null && (model ?? dbParticipant.model) !== undefined,
+      role: null,
+      waveStatus: 'pending',
+      responseBuffer: [],
+      hasPassed: false,
+      hasLeft: false,
+      readyAt: null,
+      deltaBuffer: this.createParticipantDeltaBuffer({} as ParticipantState), // temp, replaced below
+      waveResponseCount: 0,
+      consecutiveTimeouts: 0,
+      lastError: null,
+      pendingPrompt: null,
+      fallbackInFlight: false,
+      fallbackTriggerError: null,
+      fallbackTargetModel: null,
+      fallbackAttemptedModels: [],
+      fallbackAttemptedAgents: [],
+      recovery: null,
+    };
+    // Create a proper delta buffer bound to this participant
+    participant.deltaBuffer = this.createParticipantDeltaBuffer(participant);
+
+    this.participants.push(participant);
+
+    // Build preamble with current participants
+    const otherNames = this.participants
+      .filter((p) => !p.hasLeft && p.agentId !== agentId)
+      .map((p) => p.agentName);
+    const preamble = this.buildPreamble(room, otherNames, agent.slug);
+
+    log.info(
+      { roomId: this.roomId, agentId, agentName: agent.name, wave: this.currentWave },
+      'Hot-adding participant to running brainstorm',
+    );
+
+    // Create the session
+    const session = await createSession({
+      agentId,
+      projectId: room.projectId,
+      taskId: room.taskId ?? undefined,
+      initialPrompt: preamble,
+      permissionMode: 'bypassPermissions',
+      kind: 'conversation',
+      idleTimeoutSec: 3600,
+    });
+
+    participant.sessionId = session.id;
+    await updateParticipantSession(participant.participantId, session.id);
+    await updateParticipantStatus(participant.participantId, 'active');
+    await this.subscribeToSession(participant);
+    await enqueueSession({ sessionId: session.id });
+    await this.emitParticipantJoined(participant);
+
+    // Wait for the new participant to reach awaiting_input (with timeout)
+    const timeoutMs = PER_PARTICIPANT_READY_TIMEOUT_SEC * 1000;
+    const startedAt = Date.now();
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (participant.waveStatus === 'done' || participant.hasLeft) {
+          resolve();
+          return;
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          log.warn(
+            { roomId: this.roomId, agentId, agentName: agent.name },
+            'Hot-added participant timed out waiting for ready state',
+          );
+          participant.hasLeft = true;
+          void updateParticipantStatus(participant.participantId, 'left').catch(() => {});
+          void this.emitParticipantLeft(participant).catch(() => {});
+          resolve();
+          return;
+        }
+        setTimeout(check, 2000);
+      };
+      check();
+    });
+
+    if (!participant.hasLeft) {
+      // Reset to pending so they participate in the next wave
+      participant.waveStatus = 'pending';
+      participant.responseBuffer = [];
+      participant.deltaBuffer.clear();
+      log.info(
+        { roomId: this.roomId, agentId, agentName: agent.name },
+        'Hot-added participant is ready and will join next wave',
+      );
+    }
   }
 
   // ============================================================================
@@ -2105,6 +2238,19 @@ export class BrainstormOrchestrator {
 
         // If this was the last active participant, complete the wave
         this.checkWaveComplete();
+        break;
+      }
+
+      case 'add-participant': {
+        if (!msg.agentId) return;
+        // Hot-add: spin up the new participant in the background.
+        // The orchestrator will integrate them into the next wave.
+        void this.hotAddParticipant(msg.agentId, msg.text).catch((err) => {
+          log.error(
+            { roomId: this.roomId, agentId: msg.agentId, err },
+            'Failed to hot-add participant',
+          );
+        });
         break;
       }
 

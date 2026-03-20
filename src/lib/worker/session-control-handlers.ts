@@ -78,7 +78,11 @@ export async function handleCancel(ctx: SessionControlCtx): Promise<void> {
   // Drain pending tool approvals so any adapter blocked on handleApprovalRequest unblocks.
   ctx.approvalHandler.drain('deny');
   await ctx.adapter.interrupt();
-  // Allow graceful shutdown; escalate to SIGKILL after grace period.
+  // Send SIGTERM immediately to force the process to stop. adapter.interrupt()
+  // is a polite request (e.g. stdin command) that the agent can ignore if it's
+  // mid-reasoning or tool execution. SIGTERM ensures timely shutdown.
+  ctx.managedProcess?.kill('SIGTERM');
+  // Escalate to SIGKILL after grace period in case SIGTERM is also ignored.
   const t = setTimeout(() => {
     ctx.managedProcess?.kill('SIGKILL');
   }, SIGKILL_DELAY_MS);

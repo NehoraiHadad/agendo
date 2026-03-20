@@ -426,7 +426,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   // Synthesis requires the orchestrator to still be running — only possible when paused.
   // An ended room has no orchestrator listening; the synthesis button would silently fail.
   const canSynthesize = status === 'paused';
-  const canAddParticipant = status === 'waiting';
+  const canAddParticipant = status === 'waiting' || status === 'active' || status === 'paused';
   const canContinue = status === 'ended' || status === 'paused';
   const canDelete = status === 'ended' || status === 'waiting';
 

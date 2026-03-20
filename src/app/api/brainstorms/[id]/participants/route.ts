@@ -36,6 +36,15 @@ export const POST = withErrorBoundary(
     }
 
     const participant = await addParticipant(id, body.agentId, body.model);
+
+    // Notify the orchestrator so it can hot-add the participant's session
+    if (await isBrainstormOrchestratorLive(id)) {
+      await sendBrainstormControl(id, {
+        type: 'add-participant',
+        agentId: body.agentId,
+      });
+    }
+
     return NextResponse.json({ data: participant }, { status: 201 });
   },
 );
