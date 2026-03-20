@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { shouldCloseBrainstormStream } from '../use-brainstorm-stream';
+import {
+  shouldCloseBrainstormStream,
+  shouldKeepBrainstormHistoryLoader,
+} from '../use-brainstorm-stream';
 import type { BrainstormEvent } from '@/lib/realtime/event-types';
 
 describe('shouldCloseBrainstormStream', () => {
@@ -37,5 +40,37 @@ describe('shouldCloseBrainstormStream', () => {
     };
 
     expect(shouldCloseBrainstormStream(event)).toBe(false);
+  });
+});
+
+describe('shouldKeepBrainstormHistoryLoader', () => {
+  it('keeps the loader visible for ended rooms until history arrives', () => {
+    expect(
+      shouldKeepBrainstormHistoryLoader({
+        status: 'ended',
+        messageCount: 0,
+        streamingCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it('disables the loader for waiting rooms', () => {
+    expect(
+      shouldKeepBrainstormHistoryLoader({
+        status: 'waiting',
+        messageCount: 0,
+        streamingCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('disables the loader once replayed messages already exist', () => {
+    expect(
+      shouldKeepBrainstormHistoryLoader({
+        status: 'paused',
+        messageCount: 3,
+        streamingCount: 0,
+      }),
+    ).toBe(false);
   });
 });

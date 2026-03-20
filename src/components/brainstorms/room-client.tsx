@@ -62,13 +62,17 @@ function RoomClientInner({ room }: { room: BrainstormWithDetails }) {
   }, [room.id, setRoom, reset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to SSE stream
-  useBrainstormStream(room.id);
+  const { isInitialCatchupPending } = useBrainstormStream(room.id);
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Main conversation area */}
       <div className="flex flex-col flex-1 min-h-0 min-w-0 relative">
-        <RoomView roomId={room.id} onOpenMobileSidebar={openMobileSidebar} />
+        <RoomView
+          roomId={room.id}
+          onOpenMobileSidebar={openMobileSidebar}
+          isInitialCatchupPending={isInitialCatchupPending}
+        />
       </div>
 
       {/* Sidebar — hidden on mobile (accessible via Sheet), visible on desktop */}
@@ -102,7 +106,7 @@ function RoomClientInner({ room }: { room: BrainstormWithDetails }) {
 export function RoomClient({ room }: { room: BrainstormWithDetails }) {
   const isClient = useIsClient();
   if (!isClient) return null;
-  return <RoomClientInner room={room} />;
+  return <RoomClientInner key={room.id} room={room} />;
 }
 
 // Re-export trigger so the room page header can use it

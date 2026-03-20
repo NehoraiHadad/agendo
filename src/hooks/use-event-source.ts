@@ -60,6 +60,9 @@ export function useEventSource(options: UseEventSourceOptions): UseEventSourceRe
       esRef.current.close();
       esRef.current = null;
     }
+    if (isMountedRef.current) {
+      setIsConnected(false);
+    }
   }, []);
 
   const resetLastEventId = useCallback(() => {

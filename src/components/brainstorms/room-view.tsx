@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -340,6 +341,22 @@ function EmptyState({ status }: { status: string }) {
   );
 }
 
+function HistoryLoadingState() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
+      <div className="size-12 rounded-2xl bg-sky-500/[0.06] border border-sky-500/15 flex items-center justify-center">
+        <Loader2 className="size-5 text-sky-300/70 animate-spin" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground/55">Collecting discussion history</p>
+        <p className="text-xs text-muted-foreground/30 max-w-xs mx-auto leading-relaxed">
+          Replaying saved brainstorm messages so the room opens with its full context.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Main RoomView
 // ============================================================================
@@ -347,10 +364,12 @@ function EmptyState({ status }: { status: string }) {
 export function RoomView({
   roomId,
   onOpenMobileSidebar,
+  isInitialCatchupPending = false,
 }: {
   roomId: string;
   /** Called when the user taps the participants button on mobile. */
   onOpenMobileSidebar?: () => void;
+  isInitialCatchupPending?: boolean;
 }) {
   // Individual selectors — each returns a stable primitive or reference.
   // Zustand 5 requires `getSnapshot` to be cached; object selectors `(s) => ({...})`
@@ -397,6 +416,7 @@ export function RoomView({
   };
 
   const isEmpty = messages.length === 0 && streamingText.size === 0;
+  const showHistoryLoader = isInitialCatchupPending && isEmpty;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 relative">
@@ -409,7 +429,9 @@ export function RoomView({
         aria-label="Brainstorm messages"
         aria-live="polite"
       >
-        {isEmpty ? (
+        {showHistoryLoader ? (
+          <HistoryLoadingState />
+        ) : isEmpty ? (
           <EmptyState status={status} />
         ) : (
           <div className="py-5 space-y-0">
