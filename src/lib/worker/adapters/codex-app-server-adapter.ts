@@ -59,6 +59,29 @@ function getSandboxMode(mode?: string): SandboxMode {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Known context window sizes per model (from OpenAI API docs).
+// The Codex CLI's `modelContextWindow` field in `thread/tokenUsage/updated`
+// reports a stale conservative default of 258,400 for ALL models — it does NOT
+// reflect the actual model capacity. This is a known CLI bug:
+//   - https://github.com/openai/codex/issues/14133
+//   - https://github.com/openai/codex/issues/9857
+//   - https://github.com/openai/codex/issues/13738
+// The `Model` type from `model/list` also lacks a contextWindow field entirely.
+// Until Codex fixes this upstream, we maintain a manual mapping here.
+// ---------------------------------------------------------------------------
+const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  'gpt-5.2-codex': 400_000,
+  'gpt-5.3-codex': 400_000,
+  'gpt-5.4': 1_050_000,
+  // Older / less common models — add as needed
+  o3: 200_000,
+  'o4-mini': 200_000,
+};
+
+/** Stale default that Codex CLI hardcodes — used to detect unreliable values. */
+const CODEX_STALE_CONTEXT_WINDOW = 258_400;
+
 /**
  * Persistent adapter for the Codex `app-server` JSON-RPC protocol.
  *
@@ -758,15 +781,25 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
         } | null;
         if (tokenUsage) {
           const last = tokenUsage.last;
-          // Context window fill = input tokens sent on the last turn (cached + non-cached).
-          // This is what will be re-sent as context on the next turn, i.e. how much of
-          // the context window is currently occupied.
+          // Context window fill = inputTokens from the last turn.
+          // `inputTokens` already includes `cachedInputTokens` as a subset (per OpenAI API
+          // semantics — cached tokens are a billing discount, not additional tokens).
+          // Previously this line added inputTokens + cachedInputTokens which double-counted
+          // the cached portion and inflated the usage bar.
           // NOTE: Do NOT use `total.totalTokens` — that is a cumulative billing sum across
           // the entire thread lifetime. It grows monotonically and was causing a compaction
           // loop (91% "full" within 53 seconds because it counted every token ever spent).
-          const used = last ? (last.inputTokens ?? 0) + (last.cachedInputTokens ?? 0) : 0;
-          // Use the real modelContextWindow from Codex instead of hardcoded 200K
-          const limit = tokenUsage.modelContextWindow ?? this.tokenUsage?.limit ?? 200_000;
+          const used = last?.inputTokens ?? 0;
+          // Prefer our known mapping over the CLI's modelContextWindow (which is
+          // stuck at 258,400 for all models — see CODEX_MODEL_CONTEXT_WINDOWS).
+          // Fall back to the CLI value only if it's NOT the stale 258,400 default.
+          const cliWindow = tokenUsage.modelContextWindow ?? null;
+          const knownWindow = CODEX_MODEL_CONTEXT_WINDOWS[this.threadModel] ?? null;
+          const limit =
+            knownWindow ??
+            (cliWindow !== null && cliWindow !== CODEX_STALE_CONTEXT_WINDOW ? cliWindow : null) ??
+            this.tokenUsage?.limit ??
+            200_000;
           if (used > 0 || limit !== this.tokenUsage?.limit) {
             this.tokenUsage = { used, limit };
             // Emit agent:usage so the frontend context bar works for Codex sessions

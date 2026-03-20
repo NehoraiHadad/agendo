@@ -219,7 +219,7 @@ describe('CodexAppServerAdapter', () => {
       expect((adapter as any).model).toBe('gpt-4.1-mini');
     });
 
-    it('handles thread/tokenUsage/updated with real modelContextWindow', () => {
+    it('handles thread/tokenUsage/updated with non-stale modelContextWindow', () => {
       const { onNotification, emitted, adapter } = setupAdapter();
 
       onNotification('thread/tokenUsage/updated', {
@@ -240,24 +240,59 @@ describe('CodexAppServerAdapter', () => {
             outputTokens: 0,
             reasoningOutputTokens: 0,
           },
+          // 128000 is NOT the stale 258400 default, so it should be trusted
           modelContextWindow: 128000,
         },
       });
 
-      // Should emit as:usage with real context window
+      // used = last.inputTokens only (cachedInputTokens is a subset, not additive)
       expect(emitted).toHaveLength(1);
       expect(emitted[0]).toEqual({
         type: 'as:usage',
-        used: 45000,
+        used: 30000,
         size: 128000,
       });
 
-      // Internal tokenUsage should reflect real values
       const tokenUsage = (adapter as any).tokenUsage;
-      expect(tokenUsage).toEqual({ used: 45000, limit: 128000 });
+      expect(tokenUsage).toEqual({ used: 30000, limit: 128000 });
     });
 
-    it('falls back to 200K when modelContextWindow is null', () => {
+    it('overrides stale 258400 modelContextWindow with known model mapping', () => {
+      const { onNotification, emitted, adapter } = setupAdapter();
+      // Simulate thread/start having set the model
+      (adapter as any).threadModel = 'gpt-5.3-codex';
+
+      onNotification('thread/tokenUsage/updated', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: {
+            totalTokens: 50000,
+            inputTokens: 40000,
+            cachedInputTokens: 0,
+            outputTokens: 10000,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 50000,
+            inputTokens: 40000,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 258400, // stale CLI default
+        },
+      });
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toEqual({
+        type: 'as:usage',
+        used: 40000,
+        size: 400000, // known actual context window for gpt-5.3-codex
+      });
+    });
+
+    it('falls back to 200K when modelContextWindow is null and model is unknown', () => {
       const { onNotification, emitted } = setupAdapter();
 
       onNotification('thread/tokenUsage/updated', {
@@ -282,10 +317,11 @@ describe('CodexAppServerAdapter', () => {
         },
       });
 
+      // used = last.inputTokens (not inputTokens + cachedInputTokens)
       expect(emitted).toHaveLength(1);
       expect(emitted[0]).toEqual({
         type: 'as:usage',
-        used: 10000,
+        used: 7000,
         size: 200000,
       });
     });
