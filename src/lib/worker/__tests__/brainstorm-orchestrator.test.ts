@@ -430,6 +430,7 @@ describe('delta batching', () => {
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
     const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
+      waveStarted: boolean;
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -447,6 +448,9 @@ describe('delta batching', () => {
         event: unknown,
       ) => void;
     };
+
+    // waveStarted must be true for deltas to flow to deltaBuffer
+    orchestrator.waveStarted = true;
 
     const participant = {
       sessionId: 'session-xyz',
@@ -515,6 +519,7 @@ describe('delta batching', () => {
     mockBrainstormEventListeners.set(roomId, listenerSet);
 
     const orchestrator = new BrainstormOrchestrator(roomId, 3, 120) as unknown as {
+      waveStarted: boolean;
       handleSessionEvent: (
         participant: {
           sessionId: string | null;
@@ -532,6 +537,9 @@ describe('delta batching', () => {
         event: unknown,
       ) => void;
     };
+
+    // waveStarted must be true for deltas to flow to deltaBuffer
+    orchestrator.waveStarted = true;
 
     const participant = {
       sessionId: 'session-xyz',
@@ -1064,7 +1072,8 @@ describe('participant error propagation', () => {
     const readyPromise = expect(orchestrator.waitForAllParticipantsReady()).rejects.toThrow(
       'All participants failed to start within the per-participant timeout',
     );
-    await vi.advanceTimersByTimeAsync(305000);
+    // PER_PARTICIPANT_READY_TIMEOUT_SEC is 480s (8 min) — advance past it
+    await vi.advanceTimersByTimeAsync(490000);
     await readyPromise;
 
     const leftEvent = capturedEvents.find(
@@ -2203,13 +2212,13 @@ describe('reactive injection', () => {
     expect(agentA.waveResponseCount).toBe(2);
   });
 
-  it('reactiveInjection defaults to true', () => {
+  it('reactiveInjection defaults to false', () => {
     const orchestrator = new BrainstormOrchestrator(
       'room-reactive-default',
       5,
       120,
     ) as unknown as TestOrchestrator;
-    expect(orchestrator.reactiveInjection).toBe(true);
+    expect(orchestrator.reactiveInjection).toBe(false);
   });
 
   it('does NOT inject reactively when reactiveInjection is disabled', async () => {
