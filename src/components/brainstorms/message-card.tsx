@@ -88,7 +88,7 @@ export function StreamingCard({
             </Badge>
           )}
           <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06]">
-            Wave {wave}
+            Wave {wave + 1}
           </span>
           {/* Streaming indicator */}
           <span className="ms-auto flex items-center gap-0.5" aria-label="Agent is thinking">
@@ -171,7 +171,7 @@ export function ThinkingCard({
           </span>
         ) : null}
         <span className="text-[10px] text-muted-foreground/30 bg-white/[0.04] rounded px-1.5 py-0.5 border border-white/[0.06] shrink-0">
-          Wave {wave}
+          Wave {wave + 1}
         </span>
 
         {/* Bouncing dots */}
