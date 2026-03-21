@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1773840882869,
+      "when": 1774124282658,
       "tag": "0000_baseline",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1773950892804,
-      "tag": "0001_graceful_chimera",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1774123895762,
-      "tag": "0002_allow_duplicate_brainstorm_agents",
       "breakpoints": true
     }
   ]

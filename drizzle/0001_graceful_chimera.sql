@@ -1,1 +1,0 @@
-ALTER TABLE "brainstorm_participants" ADD COLUMN "role" text;

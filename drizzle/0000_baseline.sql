@@ -61,6 +61,7 @@ CREATE TABLE "brainstorm_participants" (
 	"agent_id" uuid NOT NULL,
 	"session_id" uuid,
 	"model" text,
+	"role" text,
 	"status" "brainstorm_participant_status" DEFAULT 'pending' NOT NULL,
 	"joined_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -288,7 +289,7 @@ CREATE INDEX "idx_agents_workspace" ON "agents" USING btree ("workspace_id","is_
 CREATE INDEX "idx_artifacts_session" ON "artifacts" USING btree ("session_id","created_at");--> statement-breakpoint
 CREATE INDEX "idx_artifacts_plan" ON "artifacts" USING btree ("plan_id","created_at");--> statement-breakpoint
 CREATE INDEX "idx_brainstorm_participants_room" ON "brainstorm_participants" USING btree ("room_id","status");--> statement-breakpoint
-CREATE UNIQUE INDEX "idx_brainstorm_participants_room_agent" ON "brainstorm_participants" USING btree ("room_id","agent_id");--> statement-breakpoint
+CREATE INDEX "idx_brainstorm_participants_room_agent" ON "brainstorm_participants" USING btree ("room_id","agent_id");--> statement-breakpoint
 CREATE INDEX "idx_brainstorm_rooms_project" ON "brainstorm_rooms" USING btree ("project_id","status","created_at");--> statement-breakpoint
 CREATE INDEX "idx_snapshots_project" ON "context_snapshots" USING btree ("project_id","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_plan_versions_unique" ON "plan_versions" USING btree ("plan_id","version");--> statement-breakpoint

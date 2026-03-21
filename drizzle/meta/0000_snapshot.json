@@ -1,5 +1,5 @@
 {
-  "id": "32d256f7-f365-424a-9bd8-3ae335401db6",
+  "id": "caa74987-2957-40b9-9004-cb062bc8804a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -467,6 +467,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "status": {
           "name": "status",
           "type": "brainstorm_participant_status",
@@ -521,7 +527,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
