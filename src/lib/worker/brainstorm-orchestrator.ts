@@ -604,6 +604,14 @@ export class BrainstormOrchestrator {
         const check = async () => {
           if (cancelled) return;
 
+          // If end was requested during startup, resolve immediately so
+          // the wave loop's this.stopped check terminates the orchestrator.
+          if (this.stopped) {
+            log.info({ roomId: this.roomId }, 'End received during startup — aborting wait');
+            resolve();
+            return;
+          }
+
           const elapsed = Date.now() - startedAt;
 
           // Check per-participant timeouts for participants still pending/thinking.
