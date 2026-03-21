@@ -52,10 +52,17 @@ interface ProjectOption {
 }
 
 interface ParticipantSelection {
+  /** Unique instance key — allows multiple instances of the same agent */
+  instanceId: string;
   agentId: string;
   agentName: string;
   agentSlug: string;
   model: string;
+}
+
+let instanceCounter = 0;
+function nextInstanceId(): string {
+  return `inst-${++instanceCounter}`;
 }
 
 interface ModelOption {
@@ -129,9 +136,10 @@ interface FormContentProps {
   presetId: string;
   onPresetChange: (presetId: string) => void;
   participants: ParticipantSelection[];
-  toggleAgent: (agent: AgentOption) => void;
-  isAgentSelected: (id: string) => boolean;
-  setParticipantModel: (agentId: string, model: string) => void;
+  addAgent: (agent: AgentOption) => void;
+  agentInstanceCount: (agentId: string) => number;
+  removeParticipantInstance: (instanceId: string) => void;
+  setParticipantModel: (instanceId: string, model: string) => void;
   agents: AgentOption[];
   projects: ProjectOption[];
   isLoadingAgents: boolean;
@@ -172,8 +180,9 @@ function FormContent({
   presetId,
   onPresetChange,
   participants,
-  toggleAgent,
-  isAgentSelected,
+  addAgent,
+  agentInstanceCount,
+  removeParticipantInstance,
   setParticipantModel,
   agents,
   projects,
@@ -640,14 +649,9 @@ function FormContent({
 
       <SectionHeader>Participants</SectionHeader>
 
-      {/* Participants */}
+      {/* Participants — agent catalog + selected instances */}
       <div className="space-y-3">
-        <div className="flex items-center justify-end">
-          <span className="text-[10px] text-muted-foreground/40">
-            {participants.length} selected · min 2
-          </span>
-        </div>
-
+        {/* Agent catalog: click to add an instance */}
         {isLoadingAgents ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground/50 py-4 justify-center">
             <Loader2 className="size-3 animate-spin" />
@@ -658,83 +662,138 @@ function FormContent({
             No agents found. Add agents first.
           </p>
         ) : (
-          <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
             {agents.map((agent, agentIndex) => {
-              const selected = isAgentSelected(agent.id);
-              const participant = participants.find((p) => p.agentId === agent.id);
+              const count = agentInstanceCount(agent.id);
               const colors = getAgentColor(agent.slug, agentIndex);
-              const borderColorClass = colors.border.replace('border-l-', 'border-');
               return (
-                <div
+                <button
                   key={agent.id}
-                  className={`rounded-lg border transition-colors ${
-                    selected
-                      ? `${borderColorClass} bg-white/[0.02]`
-                      : 'border-white/[0.06] bg-white/[0.01]'
+                  type="button"
+                  onClick={() => addAgent(agent)}
+                  className={`group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-all hover:bg-white/[0.04] active:scale-95 ${
+                    count > 0
+                      ? `${colors.border.replace('border-l-', 'border-')} bg-white/[0.02]`
+                      : 'border-white/[0.08] bg-white/[0.01]'
                   }`}
                 >
-                  <div
-                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
-                    onClick={() => toggleAgent(agent)}
-                  >
-                    <Checkbox
-                      checked={selected}
-                      onCheckedChange={() => toggleAgent(agent)}
-                      className="shrink-0"
-                    />
-                    <AgentAvatar name={agent.name} slug={agent.slug} index={agentIndex} size="sm" />
-                    <span className="text-sm text-foreground/80 flex-1">{agent.name}</span>
-                    <span className="text-[10px] text-muted-foreground/35 font-mono hidden sm:inline">
-                      {agent.slug}
+                  <Plus className="size-3 text-muted-foreground/50 group-hover:text-foreground/70 transition-colors" />
+                  <AgentAvatar name={agent.name} slug={agent.slug} index={agentIndex} size="xs" />
+                  <span className="text-foreground/70">{agent.name}</span>
+                  {count > 0 && (
+                    <span className="text-[9px] font-mono text-muted-foreground/50 bg-white/[0.04] rounded-full px-1.5 min-w-[18px] text-center">
+                      {count}
                     </span>
-                  </div>
-
-                  {selected && participant && (
-                    <div
-                      className="px-3 pb-2.5 flex items-center gap-2"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <span className="text-[10px] text-muted-foreground/40 shrink-0">Model:</span>
-                      {(() => {
-                        const provider = deriveProvider(agent.binaryPath);
-                        const models = modelsByProvider[provider] ?? [];
-                        const isLoading = loadingProviders.has(provider);
-
-                        if (isLoading) {
-                          return (
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/40">
-                              <Loader2 className="size-3 animate-spin" />
-                              Loading...
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <Select
-                            value={participant.model || '__default__'}
-                            onValueChange={(v) =>
-                              setParticipantModel(agent.id, v === '__default__' ? '' : v)
-                            }
-                          >
-                            <SelectTrigger className="h-7 text-[11px] flex-1 border-white/[0.08] bg-transparent">
-                              <SelectValue placeholder="Default model" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__default__">Default</SelectItem>
-                              {models.map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        );
-                      })()}
-                    </div>
                   )}
-                </div>
+                </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Selected participants list */}
+        {participants.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider font-medium">
+                Roster
+              </span>
+              <span className="text-[10px] text-muted-foreground/40">
+                {participants.length} participant{participants.length !== 1 ? 's' : ''}{' '}
+                {participants.length < 2 && '· need at least 2'}
+              </span>
+            </div>
+            <div className="space-y-1">
+              {participants.map((participant) => {
+                const agentIndex = agents.findIndex((a) => a.id === participant.agentId);
+                const agent = agents[agentIndex];
+                const colors = getAgentColor(participant.agentSlug, agentIndex);
+                const borderColorClass = colors.border.replace('border-l-', 'border-l-');
+                const sameAgentInstances = participants.filter(
+                  (p) => p.agentId === participant.agentId,
+                );
+                const instanceNumber =
+                  sameAgentInstances.length > 1
+                    ? sameAgentInstances.findIndex((p) => p.instanceId === participant.instanceId) +
+                      1
+                    : 0;
+
+                return (
+                  <div
+                    key={participant.instanceId}
+                    className={`rounded-lg border-l-2 ${borderColorClass} border border-white/[0.06] bg-white/[0.015] transition-colors`}
+                  >
+                    <div className="flex items-center gap-2 px-2.5 py-1.5">
+                      <AgentAvatar
+                        name={participant.agentName}
+                        slug={participant.agentSlug}
+                        index={agentIndex}
+                        size="xs"
+                      />
+                      <span className="text-xs text-foreground/75 flex-1">
+                        {participant.agentName}
+                        {instanceNumber > 0 && (
+                          <span className="text-muted-foreground/40 ms-1">#{instanceNumber}</span>
+                        )}
+                      </span>
+
+                      {/* Inline model selector */}
+                      {agent && (
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {(() => {
+                            const provider = deriveProvider(agent.binaryPath);
+                            const models = modelsByProvider[provider] ?? [];
+                            const isLoading = loadingProviders.has(provider);
+
+                            if (isLoading) {
+                              return (
+                                <Loader2 className="size-3 animate-spin text-muted-foreground/30" />
+                              );
+                            }
+
+                            return (
+                              <Select
+                                value={participant.model || '__default__'}
+                                onValueChange={(v) =>
+                                  setParticipantModel(
+                                    participant.instanceId,
+                                    v === '__default__' ? '' : v,
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-6 text-[10px] w-[130px] border-white/[0.06] bg-transparent px-2">
+                                  <SelectValue placeholder="Default" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__default__">Default</SelectItem>
+                                  {models.map((m) => (
+                                    <SelectItem key={m.id} value={m.id}>
+                                      {m.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => removeParticipantInstance(participant.instanceId)}
+                        className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-foreground/60 hover:bg-white/[0.05] transition-colors"
+                        aria-label={`Remove ${participant.agentName}`}
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -1007,31 +1066,36 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     }
   }, []);
 
-  const isAgentSelected = useCallback(
-    (agentId: string) => participants.some((p) => p.agentId === agentId),
+  const agentInstanceCount = useCallback(
+    (agentId: string) => participants.filter((p) => p.agentId === agentId).length,
     [participants],
   );
 
-  const toggleAgent = useCallback(
+  const addAgent = useCallback(
     (agent: AgentOption) => {
-      setParticipants((prev) => {
-        if (prev.some((p) => p.agentId === agent.id)) {
-          return prev.filter((p) => p.agentId !== agent.id);
-        }
-        // Fetch models for this agent's provider
-        const provider = deriveProvider(agent.binaryPath);
-        void fetchModelsForProvider(provider);
-        return [
-          ...prev,
-          { agentId: agent.id, agentName: agent.name, agentSlug: agent.slug, model: '' },
-        ];
-      });
+      // Fetch models for this agent's provider
+      const provider = deriveProvider(agent.binaryPath);
+      void fetchModelsForProvider(provider);
+      setParticipants((prev) => [
+        ...prev,
+        {
+          instanceId: nextInstanceId(),
+          agentId: agent.id,
+          agentName: agent.name,
+          agentSlug: agent.slug,
+          model: '',
+        },
+      ]);
     },
     [fetchModelsForProvider],
   );
 
-  const setParticipantModel = useCallback((agentId: string, model: string) => {
-    setParticipants((prev) => prev.map((p) => (p.agentId === agentId ? { ...p, model } : p)));
+  const removeParticipantInstance = useCallback((instanceId: string) => {
+    setParticipants((prev) => prev.filter((p) => p.instanceId !== instanceId));
+  }, []);
+
+  const setParticipantModel = useCallback((instanceId: string, model: string) => {
+    setParticipants((prev) => prev.map((p) => (p.instanceId === instanceId ? { ...p, model } : p)));
   }, []);
 
   const toggleFallbackTriggerError = useCallback((value: string) => {
@@ -1191,8 +1255,9 @@ export function CreateBrainstormDialog({ open, onOpenChange, projectId }: Create
     presetId,
     onPresetChange: handlePresetChange,
     participants,
-    toggleAgent,
-    isAgentSelected,
+    addAgent,
+    agentInstanceCount,
+    removeParticipantInstance,
     setParticipantModel,
     agents,
     projects,
