@@ -541,7 +541,7 @@ export const brainstormParticipants = pgTable(
   },
   (table) => [
     index('idx_brainstorm_participants_room').on(table.roomId, table.status),
-    uniqueIndex('idx_brainstorm_participants_room_agent').on(table.roomId, table.agentId),
+    index('idx_brainstorm_participants_room_agent').on(table.roomId, table.agentId),
   ],
 );
 

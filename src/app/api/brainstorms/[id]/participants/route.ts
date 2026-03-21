@@ -35,13 +35,25 @@ export const POST = withErrorBoundary(
       );
     }
 
-    const participant = await addParticipant(id, body.agentId, body.model);
+    let participant;
+    try {
+      participant = await addParticipant(id, body.agentId, body.model);
+    } catch (err: unknown) {
+      // PostgreSQL 23505 = unique_violation (if migration hasn't been applied yet)
+      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+        throw new ConflictError(
+          'This agent is already a participant. Run the latest migration to allow duplicate agents.',
+        );
+      }
+      throw err;
+    }
 
     // Notify the orchestrator so it can hot-add the participant's session
     if (await isBrainstormOrchestratorLive(id)) {
       await sendBrainstormControl(id, {
         type: 'add-participant',
         agentId: body.agentId,
+        participantId: participant.id,
       });
     }
 

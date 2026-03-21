@@ -115,7 +115,7 @@ function AddParticipantRow({
   existingAgentIds,
 }: {
   roomId: string;
-  existingAgentIds: Set<string>;
+  existingAgentIds: string[];
 }) {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -133,14 +133,15 @@ function AddParticipantRow({
       const res = await fetch('/api/agents');
       if (!res.ok) throw new Error('Failed to fetch agents');
       const body = (await res.json()) as { data: AgentOption[] };
-      setAgents((body.data ?? []).filter((a) => !existingAgentIds.has(a.id)));
+      // Allow all agents — duplicates are permitted (multiple instances per agent)
+      setAgents(body.data ?? []);
       setIsOpen(true);
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
-  }, [agents.length, existingAgentIds]);
+  }, [agents.length]);
 
   const handleAdd = useCallback(async () => {
     if (!selectedId || isAdding) return;
@@ -180,7 +181,11 @@ function AddParticipantRow({
     );
   }
 
-  const availableAgents = agents.filter((a) => !existingAgentIds.has(a.id));
+  // Count how many instances of each agent are already in the room (from parent)
+  const instanceCounts = new Map<string, number>();
+  for (const agentId of existingAgentIds) {
+    instanceCounts.set(agentId, (instanceCounts.get(agentId) ?? 0) + 1);
+  }
 
   return (
     <div className="flex gap-1.5">
@@ -189,16 +194,22 @@ function AddParticipantRow({
           <SelectValue placeholder="Select agent..." />
         </SelectTrigger>
         <SelectContent>
-          {availableAgents.length === 0 ? (
+          {agents.length === 0 ? (
             <SelectItem value="__none" disabled>
               No agents available
             </SelectItem>
           ) : (
-            availableAgents.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.name}
-              </SelectItem>
-            ))
+            agents.map((a) => {
+              const count = instanceCounts.get(a.id) ?? 0;
+              return (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                  {count > 0 && (
+                    <span className="text-muted-foreground/40 ms-1">(+{count + 1})</span>
+                  )}
+                </SelectItem>
+              );
+            })
           )}
         </SelectContent>
       </Select>
@@ -317,7 +328,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const participantList = Array.from(participants.values());
-  const existingAgentIds = new Set(participantList.map((p) => p.agentId));
+  const existingAgentIds = participantList.map((p) => p.agentId);
 
   const handleEnd = useCallback(async () => {
     if (isEnding) return;
