@@ -28,6 +28,10 @@ describe('PLAYBOOK_DEFAULTS', () => {
     expect(PLAYBOOK_DEFAULTS.fallback).toEqual(DEFAULT_FALLBACK_POLICY);
   });
 
+  it('has reactiveInjection disabled by default', () => {
+    expect(PLAYBOOK_DEFAULTS.reactiveInjection).toBe(false);
+  });
+
   it('DEFAULT_MAX_WAVES is 10', () => {
     expect(DEFAULT_MAX_WAVES).toBe(10);
   });
@@ -129,6 +133,16 @@ describe('resolvePlaybook', () => {
     expect(resolved.minWavesBeforePass).toBe(2);
     expect(resolved.requiredObjections).toBe(0);
     expect(resolved.synthesisMode).toBe('single');
+  });
+
+  it('defaults reactiveInjection to false (strict wave-bounded behavior)', () => {
+    const resolved = resolvePlaybook(null);
+    expect(resolved.reactiveInjection).toBe(false);
+  });
+
+  it('allows explicit opt-in to reactiveInjection', () => {
+    const resolved = resolvePlaybook({ reactiveInjection: true });
+    expect(resolved.reactiveInjection).toBe(true);
   });
 
   it('passes through optional fields when set', () => {

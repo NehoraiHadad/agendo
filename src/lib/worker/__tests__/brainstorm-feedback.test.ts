@@ -124,6 +124,7 @@ vi.mock('@/lib/worker/synthesis-decision-log', () => ({
   STRUCTURED_SYNTHESIS_PROMPT_SUFFIX: '',
   SYNTHESIS_TEMPLATES: {},
   DEFAULT_SYNTHESIS_TEMPLATE: '',
+  buildSynthesisPrompt: vi.fn().mockReturnValue(''),
   createTasksFromSynthesis: vi.fn().mockResolvedValue([]),
 }));
 

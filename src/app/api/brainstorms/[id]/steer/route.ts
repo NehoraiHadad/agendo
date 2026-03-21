@@ -1,30 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
-import { sendBrainstormControl, sendBrainstormEvent } from '@/lib/realtime/worker-client';
+import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
 import { FileLogWriter } from '@/lib/worker/log-writer';
 
 const steerSchema = z.object({
   text: z.string().min(1),
 });
-
-/** Emit an immediate SSE event so the UI shows the user's message without waiting for the orchestrator. */
-async function emitUserMessageEvent(roomId: string, wave: number, text: string): Promise<void> {
-  await sendBrainstormEvent(roomId, {
-    type: 'message',
-    wave,
-    senderType: 'user',
-    agentId: undefined,
-    agentName: undefined,
-    content: text,
-    isPass: false,
-    id: Date.now(),
-    ts: Date.now(),
-  });
-}
 
 /**
  * Write a user steer message directly to the brainstorm log file.
@@ -41,6 +27,7 @@ async function writeSteerToLog(
   roomId: string,
   wave: number,
   text: string,
+  steerId: string,
 ): Promise<void> {
   const writer = new FileLogWriter(logFilePath);
   writer.open();
@@ -55,6 +42,7 @@ async function writeSteerToLog(
     agentName: undefined,
     content: text,
     isPass: false,
+    steerId,
   });
   await writer.close();
 }
@@ -65,28 +53,29 @@ export const POST = withErrorBoundary(
     assertUUID(id, 'BrainstormRoom');
 
     const body = steerSchema.parse(await req.json());
+    const steerId = randomUUID();
 
     const room = await getBrainstorm(id);
 
     if (room.status === 'paused' && !(await isBrainstormOrchestratorLive(id))) {
       if (room.logFilePath) {
-        await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text);
+        await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text, steerId);
       }
       await enqueueBrainstorm({ roomId: id });
-      await emitUserMessageEvent(id, room.currentWave + 1, body.text);
-      return NextResponse.json({ data: { sent: true, resumed: true } });
+      // No SSE emission here — the orchestrator is the single writer of steer events.
+      // It will emit the user message when it processes the steer from the log on resume.
+      return NextResponse.json({ data: { sent: true, resumed: true, steerId } });
     }
 
     // Orchestrator is alive — send control signal via PG NOTIFY.
     // Do NOT write to log here; the orchestrator is the sole log writer for live events.
+    // Do NOT emit SSE here; the orchestrator emits the user message when it processes the steer.
     await sendBrainstormControl(id, {
       type: 'steer',
       text: body.text,
+      steerId,
     });
-    // Emit immediate SSE so the user sees their message right away rather than
-    // waiting for the orchestrator to start the next wave.
-    await emitUserMessageEvent(id, room.currentWave + 1, body.text);
 
-    return NextResponse.json({ data: { sent: true } });
+    return NextResponse.json({ data: { sent: true, steerId } });
   },
 );

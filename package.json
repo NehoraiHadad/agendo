@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed:integrations": "tsx scripts/seed-repo-integration-capabilities.ts",
+    "analyze:brainstorms": "tsx scripts/analyze-brainstorms.ts",
     "vapid:generate": "npx web-push generate-vapid-keys",
     "prepare": "husky"
   },

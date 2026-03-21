@@ -511,6 +511,7 @@ export const brainstormRooms = pgTable(
     maxWaves: integer('max_waves').notNull().default(10),
     config: jsonb('config').notNull().$type<BrainstormConfig>().default({}),
     synthesis: text('synthesis'),
+    outcome: jsonb('outcome').$type<BrainstormOutcome>(),
     logFilePath: text('log_file_path'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -544,6 +545,22 @@ export const brainstormParticipants = pgTable(
     index('idx_brainstorm_participants_room_agent').on(table.roomId, table.agentId),
   ],
 );
+
+/** brainstorm_rooms.outcome — structured outcome data for post-hoc analysis */
+export interface BrainstormOutcome {
+  endState: 'converged' | 'max_waves' | 'stalled' | 'manual_end' | 'error';
+  totalWaves: number;
+  totalParticipants: number;
+  activeParticipantsAtEnd: number;
+  evictedCount: number;
+  timeoutCount: number;
+  synthesisParseSuccess: boolean;
+  taskCreationCount: number;
+  totalDurationMs: number;
+  convergenceWave: number | null;
+  reflectionWavesTriggered: number;
+  deliverableType: string | null;
+}
 
 /** brainstorm_rooms.config — the "Playbook" schema for configuring brainstorm mechanics */
 export interface BrainstormConfig {

@@ -228,6 +228,19 @@ export async function updateBrainstormMaxWaves(
 }
 
 /**
+ * Store the structured outcome data on a completed room.
+ */
+export async function setBrainstormOutcome(
+  id: string,
+  outcome: import('@/lib/db/schema').BrainstormOutcome,
+): Promise<void> {
+  await db
+    .update(brainstormRooms)
+    .set({ outcome, updatedAt: new Date() })
+    .where(eq(brainstormRooms.id, id));
+}
+
+/**
  * Store the final synthesis text on a completed room.
  */
 export async function setBrainstormSynthesis(id: string, synthesis: string): Promise<void> {

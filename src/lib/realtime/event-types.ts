@@ -407,7 +407,11 @@ export type BrainstormEvent =
         agreementRatio: number;
       };
     })
-  | (BrainstormEventBase & { type: 'wave:reflection'; wave: number });
+  | (BrainstormEventBase & { type: 'wave:reflection'; wave: number })
+  | (BrainstormEventBase & {
+      type: 'brainstorm:outcome';
+      outcome: import('@/lib/db/schema').BrainstormOutcome;
+    });
 
 export type BrainstormRoomStatus = 'waiting' | 'active' | 'paused' | 'synthesizing' | 'ended';
 

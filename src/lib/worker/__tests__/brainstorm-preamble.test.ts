@@ -76,6 +76,7 @@ vi.mock('@/lib/realtime/event-utils', () => ({
 
 vi.mock('@/lib/worker/synthesis-decision-log', () => ({
   STRUCTURED_SYNTHESIS_PROMPT_SUFFIX: '',
+  buildSynthesisPrompt: vi.fn().mockReturnValue(''),
   createTasksFromSynthesis: vi.fn(),
 }));
 

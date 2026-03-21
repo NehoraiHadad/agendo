@@ -19,10 +19,10 @@ import type { BrainstormConfig } from '@/lib/db/schema';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 import {
   STRUCTURED_SYNTHESIS_PROMPT_SUFFIX,
-  SYNTHESIS_TEMPLATES,
-  DEFAULT_SYNTHESIS_TEMPLATE,
+  buildSynthesisPrompt,
   createTasksFromSynthesis,
 } from '@/lib/worker/synthesis-decision-log';
+import type { DeliverableType } from '@/lib/brainstorm/synthesis-contract';
 import { createLogger } from '@/lib/logger';
 import { brainstormEventListeners, addSessionEventListener } from '@/lib/worker/worker-sse';
 import { liveBrainstormHandlers, liveBrainstormFeedbackHandlers } from '@/lib/worker/worker-http';
@@ -40,6 +40,7 @@ import {
   updateParticipantStatus,
   updateParticipantRole,
   setBrainstormSynthesis,
+  setBrainstormOutcome,
   getCompletedRoomsForProject,
 } from '@/lib/services/brainstorm-service';
 import { listAgents, getAgentById } from '@/lib/services/agent-service';
@@ -55,6 +56,8 @@ import type {
 import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { computeBrainstormOutcome } from '@/lib/worker/brainstorm-outcome';
+import type { BrainstormOutcome } from '@/lib/db/schema';
 import type { Provider } from '@/lib/services/model-service';
 import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
 import { classifySessionError } from '@/lib/worker/fallback/error-classifier';
@@ -162,6 +165,7 @@ function isModelSwitchFailureMessage(message: string): boolean {
 interface BrainstormControlMessage {
   type: 'steer' | 'end' | 'remove-participant' | 'add-participant' | 'extend' | 'ping';
   text?: string;
+  steerId?: string;
   synthesize?: boolean;
   agentId?: string;
   additionalWaves?: number;
@@ -224,7 +228,9 @@ export class BrainstormOrchestrator {
   /** Resolved playbook — holds optional fields like language, roles, synthesisAgentId */
   private playbook!: ReturnType<typeof resolvePlaybook>;
   /** Steer messages received mid-wave, applied at the start of the next wave. */
-  private pendingSteer: string[] = [];
+  private pendingSteer: Array<{ text: string; steerId?: string }> = [];
+  /** Tracks processed steer IDs for idempotency (prevents duplicate emission on crash-retry). */
+  private processedSteerIds = new Set<string>();
   private unsubscribers: Array<() => void> = [];
   private waveCompleteResolve: (() => void) | null = null;
   private waveTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -269,6 +275,15 @@ export class BrainstormOrchestrator {
     | Array<{ title: string; synthesis: string; createdAt: Date }>
     | undefined = undefined;
 
+  // Outcome tracking fields — accumulated during run, computed at end
+  private outcomeEndState: BrainstormOutcome['endState'] = 'manual_end';
+  private outcomeConvergenceWave: number | null = null;
+  private outcomeReflectionWavesTriggered = 0;
+  private outcomeTotalTimeoutCount = 0;
+  private outcomeSynthesisParseSuccess = false;
+  private outcomeTaskCreationCount = 0;
+  private outcomeStartTimeMs = 0;
+
   constructor(roomId: string, maxWaves: number, waveTimeoutSec = 120, config?: BrainstormConfig) {
     this.roomId = roomId;
     this.maxWaves = maxWaves;
@@ -300,6 +315,7 @@ export class BrainstormOrchestrator {
   /** Main entry point — called by the worker job handler */
   async run(): Promise<void> {
     log.info({ roomId: this.roomId }, 'Brainstorm orchestrator starting');
+    this.outcomeStartTimeMs = Date.now();
 
     // Resolve and open the log file for this room. All events emitted via
     // emitEvent() are written here for SSE reconnect replay.
@@ -397,6 +413,7 @@ export class BrainstormOrchestrator {
       await this.runWaveLoop(room);
     } catch (err) {
       log.error({ err, roomId: this.roomId }, 'Brainstorm orchestrator error');
+      this.outcomeEndState = 'error';
       await this.emitEvent({
         type: 'room:error',
         message: getErrorMessage(err),
@@ -406,6 +423,32 @@ export class BrainstormOrchestrator {
       await updateBrainstormStatus(this.roomId, 'paused').catch(() => {});
       await this.emitEvent({ type: 'room:state', status: 'paused' }).catch(() => {});
     } finally {
+      // Compute and persist structured outcome for post-hoc analysis
+      try {
+        const roomConfig = this.room?.config as BrainstormConfig | undefined;
+        const outcome = computeBrainstormOutcome({
+          endState: this.outcomeEndState,
+          totalWaves: this.currentWave + 1,
+          participants: this.participants.map((p) => ({
+            hasPassed: p.hasPassed,
+            hasLeft: p.hasLeft,
+          })),
+          startTimeMs: this.outcomeStartTimeMs,
+          endTimeMs: Date.now(),
+          convergenceWave: this.outcomeConvergenceWave,
+          reflectionWavesTriggered: this.outcomeReflectionWavesTriggered,
+          synthesisParseSuccess: this.outcomeSynthesisParseSuccess,
+          taskCreationCount: this.outcomeTaskCreationCount,
+          deliverableType: roomConfig?.deliverableType ?? null,
+          totalTimeoutCount: this.outcomeTotalTimeoutCount,
+        });
+        await setBrainstormOutcome(this.roomId, outcome);
+        await this.emitEvent({ type: 'brainstorm:outcome', outcome });
+        log.info({ roomId: this.roomId, outcome }, 'Brainstorm outcome recorded');
+      } catch (outcomeErr) {
+        log.error({ err: outcomeErr, roomId: this.roomId }, 'Failed to record brainstorm outcome');
+      }
+
       // Always cancel participant sessions — whether clean exit or crash.
       // Leaving them in awaiting_input wastes worker slots for up to 1 hour
       // (idle timeout). When the room resumes, createParticipantSessions()
@@ -1045,15 +1088,24 @@ export class BrainstormOrchestrator {
         // User sent a steer while paused — resume with their message.
         // The steer event was already written to the log by the steer route;
         // re-emit it here so live subscribers see the resume without duplication.
-        log.info({ roomId: this.roomId, wave }, 'Found pending user steer from log, resuming');
-        await this.resetPassedParticipants();
-        await this.emitEvent({
-          type: 'message',
-          wave,
-          senderType: 'user',
-          content: userSteer.content,
-          isPass: false,
-        });
+        const steerId = (userSteer as unknown as { steerId?: string }).steerId;
+        if (steerId && this.processedSteerIds.has(steerId)) {
+          log.info({ roomId: this.roomId, wave, steerId }, 'Duplicate steer from log skipped');
+        } else {
+          if (steerId) this.processedSteerIds.add(steerId);
+          log.info(
+            { roomId: this.roomId, wave, steerId },
+            'Found pending user steer from log, resuming',
+          );
+          await this.resetPassedParticipants();
+          await this.emitEvent({
+            type: 'message',
+            wave,
+            senderType: 'user',
+            content: userSteer.content,
+            isPass: false,
+          });
+        }
         waveContent = this.formatUserSteer(userSteer.content, agentMessages);
       } else {
         waveContent =
@@ -1083,6 +1135,9 @@ export class BrainstormOrchestrator {
           isPass: p.waveStatus === 'passed',
           isTimeout: p.waveStatus === 'timeout',
         }));
+
+      // Track total timeout count for outcome instrumentation
+      this.outcomeTotalTimeoutCount += responses.filter((r) => r.isTimeout).length;
 
       // Update hasPassed for participants who passed this wave
       for (const p of this.participants) {
@@ -1137,6 +1192,7 @@ export class BrainstormOrchestrator {
           { roomId: this.roomId, wave, timedOutCount },
           'All participants timed out — room stalled',
         );
+        this.outcomeEndState = 'stalled';
         await this.emitEvent({ type: 'room:stalled', wave });
         break;
       }
@@ -1161,6 +1217,8 @@ export class BrainstormOrchestrator {
           { roomId: this.roomId, wave, mode: this.convergenceMode, unanimousConverged },
           'Convergence detected',
         );
+        this.outcomeEndState = 'converged';
+        this.outcomeConvergenceWave = wave;
         if (this.stopped) break;
         await updateBrainstormStatus(this.roomId, 'paused');
         await this.emitEvent({ type: 'room:converged', wave });
@@ -1172,6 +1230,8 @@ export class BrainstormOrchestrator {
         if (this.stopped) break;
 
         if (control.type === 'steer' && control.text) {
+          // Mark as processed for idempotency
+          if (control.steerId) this.processedSteerIds.add(control.steerId);
           // Resume: reset all passes, inject user message as next wave content
           await this.resetPassedParticipants();
           // Emit the user steer as a message event — emitEvent() writes it to the log file.
@@ -1197,6 +1257,7 @@ export class BrainstormOrchestrator {
       // Check max waves
       if (wave >= this.maxWaves - 1) {
         log.info({ roomId: this.roomId, wave }, 'Max waves reached');
+        this.outcomeEndState = 'max_waves';
         if (this.stopped) break;
         await updateBrainstormStatus(this.roomId, 'paused');
         await this.emitEvent({ type: 'room:max-waves', wave });
@@ -1208,6 +1269,8 @@ export class BrainstormOrchestrator {
         if (this.stopped) break;
 
         if (control.type === 'steer' && control.text) {
+          // Mark as processed for idempotency
+          if (control.steerId) this.processedSteerIds.add(control.steerId);
           await this.resetPassedParticipants();
           // Emit the user steer as a message event — emitEvent() writes it to the log file.
           await this.emitEvent({
@@ -1230,7 +1293,11 @@ export class BrainstormOrchestrator {
 
       // Check for pending steers from mid-wave injection (may be multiple)
       if (this.pendingSteer.length > 0) {
-        const steerText = this.pendingSteer.join('\n\n');
+        // Mark all as processed for idempotency
+        for (const s of this.pendingSteer) {
+          if (s.steerId) this.processedSteerIds.add(s.steerId);
+        }
+        const steerText = this.pendingSteer.map((s) => s.text).join('\n\n');
         this.pendingSteer = [];
         await this.emitEvent({
           type: 'message',
@@ -1259,6 +1326,7 @@ export class BrainstormOrchestrator {
           'Stall detected — injecting reflection wave',
         );
         this.lastReflectionWave = wave + 1;
+        this.outcomeReflectionWavesTriggered++;
         await this.emitEvent({ type: 'wave:reflection', wave: wave + 1 });
         waveContent = REFLECTION_PROMPT;
         await this.resetPassedParticipants();
@@ -2189,6 +2257,11 @@ export class BrainstormOrchestrator {
       case 'steer':
         if (!msg.text) return;
 
+        if (msg.steerId && this.processedSteerIds.has(msg.steerId)) {
+          log.info({ roomId: this.roomId, steerId: msg.steerId }, 'Duplicate steer skipped');
+          return;
+        }
+
         if (this.paused) {
           // Room is paused (converged or max-waves) — resolve the waitForControl promise
           const resolve = this.controlResolve;
@@ -2197,8 +2270,8 @@ export class BrainstormOrchestrator {
         } else {
           // Mid-wave steer — queue for injection at start of next wave.
           // Multiple steers are joined; none are silently dropped.
-          this.pendingSteer.push(msg.text);
-          log.info({ roomId: this.roomId }, 'Steer queued for next wave');
+          this.pendingSteer.push({ text: msg.text, steerId: msg.steerId });
+          log.info({ roomId: this.roomId, steerId: msg.steerId }, 'Steer queued for next wave');
         }
         break;
 
@@ -2327,9 +2400,8 @@ export class BrainstormOrchestrator {
       }
 
       const roomConfig = room.config as BrainstormConfig | undefined;
-      const synthesisTemplate = roomConfig?.deliverableType
-        ? (SYNTHESIS_TEMPLATES[roomConfig.deliverableType] ?? DEFAULT_SYNTHESIS_TEMPLATE)
-        : DEFAULT_SYNTHESIS_TEMPLATE;
+      const deliverableType = roomConfig?.deliverableType as DeliverableType | undefined;
+      const synthesisTemplate = buildSynthesisPrompt(deliverableType);
 
       const synthesisPrompt = `You are synthesizing a brainstorm discussion.
 
@@ -2381,6 +2453,7 @@ ${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
 
       await setBrainstormSynthesis(this.roomId, synthesisText);
       await this.emitEvent({ type: 'room:synthesis', synthesis: synthesisText });
+      this.outcomeSynthesisParseSuccess = true;
 
       // Auto-create tasks from "Next Steps" if the brainstorm is linked to a task
       if (room.taskId) {
@@ -2388,7 +2461,9 @@ ${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
           const taskIds = await createTasksFromSynthesis(synthesisText, {
             parentTaskId: room.taskId,
             projectId: room.projectId ?? undefined,
+            deliverableType,
           });
+          this.outcomeTaskCreationCount = taskIds.length;
           if (taskIds.length > 0) {
             log.info(
               { roomId: this.roomId, taskCount: taskIds.length },
