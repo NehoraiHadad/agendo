@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { getBrainstorm, extendBrainstorm } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
@@ -57,13 +57,24 @@ export const POST = withErrorBoundary(
 
     const room = await getBrainstorm(id);
 
-    if (room.status === 'paused' && !(await isBrainstormOrchestratorLive(id))) {
+    // Room is dormant (paused/ended with no live orchestrator) — write the steer
+    // to the log file so the new orchestrator picks it up on resume, then enqueue
+    // a fresh orchestrator job to restart the room.
+    const isDormant =
+      (room.status === 'paused' || room.status === 'ended') &&
+      !(await isBrainstormOrchestratorLive(id));
+
+    if (isDormant) {
       if (room.logFilePath) {
         await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text, steerId);
       }
+      // Ended rooms have exhausted their wave budget — extend with 5 extra waves
+      // so the new orchestrator doesn't immediately hit max_waves and stop.
+      // extendBrainstorm also transitions status to 'waiting' for a clean restart.
+      if (room.status === 'ended') {
+        await extendBrainstorm(id, 5);
+      }
       await enqueueBrainstorm({ roomId: id });
-      // No SSE emission here — the orchestrator is the single writer of steer events.
-      // It will emit the user message when it processes the steer from the log on resume.
       return NextResponse.json({ data: { sent: true, resumed: true, steerId } });
     }
 
