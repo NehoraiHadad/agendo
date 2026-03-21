@@ -1,4 +1,4 @@
-import { eq, desc, asc, isNotNull, getTableColumns, count, and } from 'drizzle-orm';
+import { eq, desc, asc, isNotNull, getTableColumns, count, and, sql } from 'drizzle-orm';
 import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
 import type { BrainstormConfig } from '@/lib/db/schema';
@@ -399,6 +399,21 @@ export async function extendBrainstorm(
 
   requireFound(updated, 'BrainstormRoom', id);
   return updated;
+}
+
+/**
+ * Add wave budget to any room (regardless of status).
+ * Unlike extendBrainstorm, this does NOT change the room status —
+ * it just bumps maxWaves so the orchestrator has room to continue.
+ */
+export async function addWaveBudget(id: string, additionalWaves: number): Promise<void> {
+  await db
+    .update(brainstormRooms)
+    .set({
+      maxWaves: sql`${brainstormRooms.maxWaves} + ${additionalWaves}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(brainstormRooms.id, id));
 }
 
 // ============================================================================

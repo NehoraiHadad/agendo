@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getBrainstorm, extendBrainstorm } from '@/lib/services/brainstorm-service';
+import { getBrainstorm, extendBrainstorm, addWaveBudget } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
@@ -68,11 +68,15 @@ export const POST = withErrorBoundary(
       if (room.logFilePath) {
         await writeSteerToLog(room.logFilePath, id, room.currentWave + 1, body.text, steerId);
       }
-      // Ended rooms have exhausted their wave budget — extend with 5 extra waves
-      // so the new orchestrator doesn't immediately hit max_waves and stop.
-      // extendBrainstorm also transitions status to 'waiting' for a clean restart.
+      // Ensure the room has wave budget so the new orchestrator doesn't
+      // immediately hit max_waves and stop.
+      const needsMoreWaves = room.currentWave >= room.maxWaves - 1;
       if (room.status === 'ended') {
+        // extendBrainstorm transitions status ended→waiting and adds waves.
         await extendBrainstorm(id, 5);
+      } else if (needsMoreWaves) {
+        // Paused at max waves — just bump the budget (no status change needed).
+        await addWaveBudget(id, 5);
       }
       await enqueueBrainstorm({ roomId: id });
       return NextResponse.json({ data: { sent: true, resumed: true, steerId } });
