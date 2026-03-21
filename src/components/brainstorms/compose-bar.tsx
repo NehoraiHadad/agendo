@@ -47,9 +47,10 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
 
     setIsSending(true);
     try {
-      // For non-active rooms, start/restart first, then steer
-      if (status === 'waiting' || status === 'ended' || status === 'paused') {
-        // Start the brainstorm (works for waiting, ended, paused)
+      // For waiting rooms (never started), call start to enqueue the orchestrator.
+      // Paused/ended rooms are handled directly by the steer endpoint (it detects
+      // the dormant state, extends waves if needed, and enqueues a new orchestrator).
+      if (status === 'waiting') {
         const startRes = await fetch(`/api/brainstorms/${roomId}/start`, {
           method: 'POST',
         });
@@ -59,7 +60,7 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
         }
       }
 
-      // Send the steer message
+      // Send the steer message (also resumes paused/ended rooms)
       const res = await fetch(`/api/brainstorms/${roomId}/steer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
-import { getBrainstorm } from '@/lib/services/brainstorm-service';
+import { getBrainstorm, extendBrainstorm } from '@/lib/services/brainstorm-service';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
 import { ConflictError } from '@/lib/errors';
 
@@ -16,6 +16,12 @@ export const POST = withErrorBoundary(
       throw new ConflictError(
         `Cannot start a brainstorm room with status '${room.status}'. Only ${startableStatuses.join(', ')} rooms can be started.`,
       );
+    }
+
+    // Ended rooms have exhausted their wave budget — extend with 5 extra waves
+    // so the new orchestrator doesn't immediately hit max_waves and stop.
+    if (room.status === 'ended') {
+      await extendBrainstorm(id, 5);
     }
 
     // Do NOT set status here — the orchestrator sets 'active' atomically
