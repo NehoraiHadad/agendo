@@ -207,6 +207,10 @@ export const projects = pgTable('projects', {
   color: varchar('color', { length: 7 }).notNull().default('#6366f1'),
   icon: varchar('icon', { length: 50 }),
   isActive: boolean('is_active').notNull().default(true),
+  // GitHub integration: "owner/repo" format, auto-detected from git remote.
+  githubRepo: text('github_repo'),
+  // ISO timestamp of last successful GitHub sync (polling cursor).
+  githubSyncCursor: timestamp('github_sync_cursor', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

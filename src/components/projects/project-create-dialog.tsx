@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useFormSubmit } from '@/hooks/use-form-submit';
-import { Check, Folder, FolderPlus, Loader2, Plus, Search, XCircle } from 'lucide-react';
+import { Check, Folder, FolderPlus, GitBranch, Loader2, Plus, Search, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -58,6 +58,7 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [pathStatus, setPathStatus] = useState<PathStatus>('idle');
   const [pathDeniedReason, setPathDeniedReason] = useState('');
+  const [detectedRepo, setDetectedRepo] = useState<string | null>(null);
   const checkAbortRef = useRef<AbortController | null>(null);
 
   const { saveDraft, getDraft, clearDraft } = useDraft('draft:project:new');
@@ -99,16 +100,18 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
     setShowSuggestions(false);
     setPathStatus('idle');
     setPathDeniedReason('');
+    setDetectedRepo(null);
   }
 
   // Auto-suggest rootPath from project name — removed hardcoded path;
   // use the Discover button to pick a project directory instead.
 
-  // Debounced path check
+  // Debounced path check + GitHub repo detection
   useEffect(() => {
     if (!rootPath || !rootPath.startsWith('/')) {
       setPathStatus('idle');
       setPathDeniedReason('');
+      setDetectedRepo(null);
       return;
     }
 
@@ -128,6 +131,28 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
         };
         setPathStatus(json.data.status);
         setPathDeniedReason(json.data.reason ?? '');
+
+        // Auto-detect GitHub repo when path exists
+        if (json.data.status === 'exists') {
+          try {
+            const ghRes = await fetch('/api/integrations/github', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'detect-repo', rootPath }),
+              signal: controller.signal,
+            });
+            if (ghRes.ok) {
+              const ghJson = (await ghRes.json()) as {
+                data: { repo: { fullName: string } | null };
+              };
+              setDetectedRepo(ghJson.data.repo?.fullName ?? null);
+            }
+          } catch {
+            // GitHub detection is optional, don't block
+          }
+        } else {
+          setDetectedRepo(null);
+        }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setPathStatus('idle');
@@ -308,6 +333,12 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
                 <p className="flex items-center gap-1.5 text-xs text-destructive">
                   <XCircle className="size-3" />
                   {pathDeniedReason || 'Path not allowed'}
+                </p>
+              )}
+              {detectedRepo && (
+                <p className="flex items-center gap-1.5 text-xs text-emerald-400">
+                  <GitBranch className="size-3" />
+                  GitHub: {detectedRepo}
                 </p>
               )}
             </div>

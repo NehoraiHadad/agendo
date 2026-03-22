@@ -5,6 +5,7 @@ import { taskMachine } from '@/lib/state-machines';
 import { getById } from '@/lib/services/db-helpers';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
+import { syncTaskStatusToGitHub } from '@/lib/services/github-sync-service';
 import type { Task, TaskStatus } from '@/lib/types';
 
 // --- Types ---
@@ -74,6 +75,8 @@ async function emitStatusChangeEvent(
   if (to === 'done') {
     void sendPushToAll({ title: 'Task completed', body: taskTitle, url: '/tasks' });
   }
+  // Sync status change to linked GitHub issue (fire-and-forget)
+  void getTaskById(taskId).then((task) => syncTaskStatusToGitHub(task, from, to));
 }
 
 async function getNextSortOrder(status: TaskStatus): Promise<number> {

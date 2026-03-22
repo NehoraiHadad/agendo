@@ -7,6 +7,7 @@ import { allowedWorkingDirs } from '@/lib/config';
 import { projects, tasks } from '@/lib/db/schema';
 import { NotFoundError, ValidationError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
+import { detectGitHubRepo } from '@/lib/services/github-service';
 import type { Project } from '@/lib/types';
 
 // --- Types ---
@@ -29,6 +30,7 @@ export interface UpdateProjectInput {
   color?: string;
   icon?: string;
   isActive?: boolean;
+  githubRepo?: string | null;
 }
 
 // --- Implementation ---
@@ -92,6 +94,9 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     }
   }
 
+  // Auto-detect GitHub repo from git remotes
+  const repoInfo = await detectGitHubRepo(normalized);
+
   const [project] = await db
     .insert(projects)
     .values({
@@ -101,6 +106,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
       envOverrides: input.envOverrides ?? {},
       color: input.color ?? '#6366f1',
       icon: input.icon,
+      githubRepo: repoInfo?.fullName ?? null,
     })
     .returning();
 
@@ -110,19 +116,23 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
 export async function updateProject(id: string, input: UpdateProjectInput): Promise<Project> {
   await getProject(id);
 
-  // If rootPath is changing, validate the new path exists.
+  // If rootPath is changing, validate the new path exists and re-detect GitHub repo.
+  let githubRepo: string | null | undefined;
   if (input.rootPath) {
     try {
       await access(input.rootPath);
     } catch {
       throw new Error(`rootPath does not exist on disk: ${input.rootPath}`);
     }
+    const repoInfo = await detectGitHubRepo(input.rootPath);
+    githubRepo = repoInfo?.fullName ?? null;
   }
 
   const [updated] = await db
     .update(projects)
     .set({
       ...input,
+      ...(githubRepo !== undefined ? { githubRepo } : {}),
       updatedAt: new Date(),
     })
     .where(eq(projects.id, id))

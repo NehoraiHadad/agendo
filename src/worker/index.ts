@@ -7,11 +7,17 @@ import {
   type RunBrainstormJobData,
   registerBrainstormWorker,
 } from '../lib/worker/brainstorm-queue';
+import {
+  type GitHubSyncJobData,
+  registerGitHubSyncSchedule,
+  registerGitHubSyncWorker,
+} from '../lib/worker/github-sync-queue';
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { installSkills } from '../lib/worker/skills/install-skills';
 import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
 import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
+import { runGitHubSync } from '../lib/services/github-sync-service';
 import { startWorkerHttp, stopWorkerHttp } from '../lib/worker/worker-http';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { createLogger } from '@/lib/logger';
@@ -120,6 +126,24 @@ async function main(): Promise<void> {
   // Register brainstorm orchestration job handler
   await registerBrainstormWorker(handleBrainstormJob);
   log.info('Listening for brainstorm jobs');
+
+  // Register GitHub sync scheduled job (every 5 minutes)
+  await registerGitHubSyncSchedule();
+  await registerGitHubSyncWorker(async (data: GitHubSyncJobData) => {
+    log.info({ projectId: data.projectId }, 'Running GitHub sync');
+    try {
+      const results = await runGitHubSync();
+      const totalCreated = results.reduce((sum, r) => sum + r.tasksCreated, 0);
+      const totalUpdated = results.reduce((sum, r) => sum + r.tasksUpdated, 0);
+      log.info(
+        { projects: results.length, tasksCreated: totalCreated, tasksUpdated: totalUpdated },
+        'GitHub sync completed',
+      );
+    } catch (err) {
+      log.error({ err }, 'GitHub sync job failed');
+    }
+  });
+  log.info('GitHub sync worker registered');
 
   // Heartbeat loop
   const heartbeatInterval = setInterval(updateHeartbeat, config.HEARTBEAT_INTERVAL_MS);

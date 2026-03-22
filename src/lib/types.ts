@@ -71,6 +71,10 @@ export interface TaskInputContext {
   envOverrides?: Record<string, string>;
   args?: Record<string, unknown>;
   promptAdditions?: string;
+  /** GitHub issue number linked to this task (for bidirectional sync). */
+  githubIssueNumber?: number;
+  /** GitHub issue URL for quick linking. */
+  githubIssueUrl?: string;
 }
 
 /** agent_capabilities.args_schema */
