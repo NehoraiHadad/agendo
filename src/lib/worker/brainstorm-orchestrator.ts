@@ -58,6 +58,10 @@ import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 import { computeBrainstormOutcome } from '@/lib/worker/brainstorm-outcome';
+import {
+  buildBrainstormProviderLens,
+  inferProviderFromAgentSlug,
+} from '@/lib/worker/brainstorm-personas';
 import type { Provider } from '@/lib/services/model-service';
 import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
 import { classifySessionError } from '@/lib/worker/fallback/error-classifier';
@@ -592,6 +596,7 @@ export class BrainstormOrchestrator {
           otherNames,
           participant.agentSlug,
           relatedSyntheses,
+          participant.provider,
         );
 
         log.info(
@@ -869,7 +874,13 @@ export class BrainstormOrchestrator {
     const otherNames = this.participants
       .filter((p) => !p.hasLeft && p.agentId !== agentId)
       .map((p) => p.agentName);
-    const preamble = this.buildPreamble(room, otherNames, agent.slug);
+    const preamble = this.buildPreamble(
+      room,
+      otherNames,
+      agent.slug,
+      undefined,
+      binaryPathToProvider(agent.binaryPath),
+    );
 
     log.info(
       { roomId: this.roomId, agentId, agentName: agent.name, wave: this.currentWave },
@@ -2973,6 +2984,7 @@ ${correctionsText}`;
     otherParticipantNames: string[],
     currentParticipantSlug: string,
     relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
+    currentParticipantProvider?: Provider | null,
   ): string {
     const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
     const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + this.wave0ExtraTimeoutSec) / 60);
@@ -3007,6 +3019,8 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
       );
     }
 
+    let myRole: string | null = null;
+
     // Inject role assignments from playbook
     if (this.playbook.roles && Object.keys(this.playbook.roles).length > 0) {
       const roleLines = Object.entries(this.playbook.roles).map(([role, agentSlug]) => {
@@ -3018,9 +3032,10 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
 
       // Inject personalized role instructions for this participant
       const roleInstructions = (room.config as BrainstormConfig)?.roleInstructions;
-      const myRole = Object.entries(this.playbook.roles).find(
-        ([, slug]) => slug === currentParticipantSlug,
-      )?.[0];
+      myRole =
+        Object.entries(this.playbook.roles).find(
+          ([, slug]) => slug === currentParticipantSlug,
+        )?.[0] ?? null;
 
       if (myRole) {
         const instructions =
@@ -3029,6 +3044,16 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
           `Your assigned role is: ${myRole}`;
         sections.push(`\n## Your Role\n${instructions}`);
       }
+    }
+
+    const resolvedProvider =
+      currentParticipantProvider ??
+      this.participants.find((participant) => participant.agentSlug === currentParticipantSlug)
+        ?.provider ??
+      inferProviderFromAgentSlug(currentParticipantSlug);
+    const providerLens = buildBrainstormProviderLens(resolvedProvider, myRole);
+    if (providerLens) {
+      sections.push(`\n## Your Provider Lens\n${providerLens}`);
     }
 
     // Inject setup context if configured

@@ -13,6 +13,7 @@ import { registerSessionTools } from './session-tools.js';
 import { registerSnapshotTools } from './snapshot-tools.js';
 import { registerPlanTools } from './plan-tools.js';
 import { registerArtifactTools } from './artifact-tools.js';
+import { registerTeamTools } from './team-tools.js';
 
 export function registerAll(server: McpServer): void {
   registerTaskTools(server);
@@ -23,6 +24,7 @@ export function registerAll(server: McpServer): void {
   registerSnapshotTools(server);
   registerPlanTools(server);
   registerArtifactTools(server);
+  registerTeamTools(server);
 }
 
 // Re-export handlers for testing
@@ -42,3 +44,4 @@ export { handleStartAgentSession, handleAssignTask } from './session-tools.js';
 export { handleSaveSnapshot, handleUpdateSnapshot } from './snapshot-tools.js';
 export { handleSavePlan } from './plan-tools.js';
 export { handleRenderArtifact } from './artifact-tools.js';
+export { handleCreateTeam, handleSendTeamMessage, handleGetTeamStatus } from './team-tools.js';

@@ -408,6 +408,109 @@ describe('buildPreamble — role instructions', () => {
   });
 });
 
+describe('buildPreamble — provider personas', () => {
+  it('injects a provider lens even when no explicit role is assigned', () => {
+    const room = makeRoom();
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120);
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
+
+    expect(preamble).toContain('Your Provider Lens');
+    expect(preamble).toContain('Claude');
+    expect(preamble).toContain('architectural consistency');
+  });
+
+  it('composes the role block with a role-specific Codex provider lens', () => {
+    const room = makeRoom({
+      participants: [
+        {
+          id: 'p1',
+          roomId: 'room-1',
+          agentId: 'agent-1',
+          agentName: 'Claude',
+          agentSlug: 'claude-code-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p2',
+          roomId: 'room-1',
+          agentId: 'agent-2',
+          agentName: 'Codex',
+          agentSlug: 'codex-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+      ],
+      config: {
+        roles: { critic: 'claude-code-1', pragmatist: 'codex-cli-1' },
+      },
+    });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, {
+      roles: { critic: 'claude-code-1', pragmatist: 'codex-cli-1' },
+    });
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Claude'], 'codex-cli-1');
+
+    expect(preamble).toContain('Your Role');
+    expect(preamble).toContain('PRAGMATIST');
+    expect(preamble).toContain('Your Provider Lens');
+    expect(preamble).toContain('Codex');
+    expect(preamble).toContain('As Codex in the pragmatist seat');
+  });
+
+  it('infers the Gemini provider lens from the participant slug', () => {
+    const room = makeRoom({
+      participants: [
+        {
+          id: 'p1',
+          roomId: 'room-1',
+          agentId: 'agent-1',
+          agentName: 'Gemini',
+          agentSlug: 'gemini-cli-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+        {
+          id: 'p2',
+          roomId: 'room-1',
+          agentId: 'agent-2',
+          agentName: 'Claude',
+          agentSlug: 'claude-code-1',
+          sessionId: null,
+          model: null,
+          status: 'joined',
+          joinedAt: new Date(),
+        },
+      ],
+      config: {
+        roles: { optimist: 'gemini-cli-1', critic: 'claude-code-1' },
+      },
+    });
+
+    const orchestrator = new BrainstormOrchestrator('room-1', 5, 120, {
+      roles: { optimist: 'gemini-cli-1', critic: 'claude-code-1' },
+    });
+    const buildPreamble = getPreambleBuilder(orchestrator);
+
+    const preamble = buildPreamble(room, ['Claude'], 'gemini-cli-1');
+
+    expect(preamble).toContain('Your Provider Lens');
+    expect(preamble).toContain('Gemini');
+    expect(preamble).toContain('As Gemini in the optimist seat');
+  });
+});
+
 describe('buildPreamble — auto-assignment', () => {
   it('assigns critic role to first participant when 2 agents have no explicit roles', () => {
     const room = makeRoom(); // 2 participants: claude-code-1 (p1), gemini-cli-1 (p2)

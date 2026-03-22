@@ -22,6 +22,7 @@ import {
   generateExecutionPreamble,
   generatePlanningPreamble,
   generateSupportPreamble,
+  generateTeamLeadPreamble,
   generateResumeContext,
 } from '@/lib/worker/session-preambles';
 import type { AcpMcpServer, SpawnOpts } from '@/lib/worker/adapters/types';
@@ -164,8 +165,11 @@ export async function runSession(
     }
   } else if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
+    const isTeamLead = prompt.includes('[team-lead]');
     const preamble = session.taskId
-      ? generateExecutionPreamble(projectName, session.taskId)
+      ? isTeamLead
+        ? generateTeamLeadPreamble(projectName, session.taskId)
+        : generateExecutionPreamble(projectName, session.taskId)
       : generatePlanningPreamble(projectName);
     if (binaryName === 'codex') {
       codexDeveloperInstructions = preamble;

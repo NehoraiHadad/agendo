@@ -1,5 +1,5 @@
 /**
- * Install/update SKILL.md files for native CLI discovery.
+ * Install/update skill files for native CLI discovery.
  *
  * Called once at worker startup. Idempotent — only writes when content differs.
  *
@@ -7,6 +7,11 @@
  * - Files written to ~/.agents/skills/ (Agent Skills standard — single source of truth)
  * - Symlinks created from ~/.claude/skills/ → ~/.agents/skills/ (Claude Code discovery)
  * - Same pattern already used by remotion-best-practices and agent-browser
+ *
+ * Supports two skill layouts:
+ * - Single file: `skill-name.md` → deployed as `SKILL.md`
+ * - Multi-file directory: `skill-name/SKILL.md` + `skill-name/references/*.md`
+ *   → entire directory deployed (SKILL.md + references/)
  */
 
 import { createHash } from 'node:crypto';
@@ -14,6 +19,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   symlinkSync,
@@ -28,8 +34,19 @@ import { loadAllSkills, type Skill } from './skill-registry';
 
 const log = createLogger('skill-installer');
 
+/** Additional files to deploy alongside SKILL.md for multi-file skills. */
+interface SkillExtraFiles {
+  /** Source directory containing additional files (relative to skills/) */
+  sourceDir: string;
+  /** Subdirectories to copy (e.g. ['references']) */
+  subdirs: string[];
+}
+
 /** Map registry skill names to the SKILL.md directory names and frontmatter descriptions. */
-const SKILL_META: Record<string, { dirName: string; description: string }> = {
+const SKILL_META: Record<
+  string,
+  { dirName: string; description: string; extraFiles?: SkillExtraFiles }
+> = {
   'agendo-workflow': {
     dirName: 'agendo',
     description: `Expert guidance for working inside Agendo task management sessions.
@@ -40,10 +57,38 @@ const SKILL_META: Record<string, { dirName: string; description: string }> = {
   update_task, create_task, add_progress_note, start_agent_session, or save_plan.
   Also use when coordinating work across multiple AI agents, managing task status
   transitions (todo/in_progress/done/blocked), or spawning agent sessions.`,
+    extraFiles: {
+      sourceDir: 'agendo',
+      subdirs: ['references'],
+    },
   },
   'artifact-design': {
     dirName: 'agendo-artifact-design',
     description: `Design guidelines for render_artifact: typography, color, motion, layout, and technical constraints.`,
+  },
+  'brainstorm-persona-claude': {
+    dirName: 'brainstorm-persona-claude',
+    description: `Provider-aware brainstorm persona for Claude participants.
+  Use when a brainstorm agent should emphasize architectural reasoning, deep critique,
+  and coherent convergence.`,
+  },
+  'brainstorm-persona-codex': {
+    dirName: 'brainstorm-persona-codex',
+    description: `Provider-aware brainstorm persona for Codex participants.
+  Use when a brainstorm agent should emphasize implementation realism, testing gaps,
+  integration hazards, and focused execution.`,
+  },
+  'brainstorm-persona-gemini': {
+    dirName: 'brainstorm-persona-gemini',
+    description: `Provider-aware brainstorm persona for Gemini participants.
+  Use when a brainstorm agent should widen the option space, introduce alternatives,
+  and add ecosystem context.`,
+  },
+  'brainstorm-persona-copilot': {
+    dirName: 'brainstorm-persona-copilot',
+    description: `Provider-aware brainstorm persona for Copilot participants.
+  Use when a brainstorm agent should emphasize workflow hygiene, guardrails,
+  concise execution support, and reviewability.`,
   },
 };
 
@@ -111,20 +156,91 @@ function ensureSymlink(dirName: string): void {
 }
 
 /**
- * Install all SKILL.md files to ~/.agents/skills/ and symlink from ~/.claude/skills/.
+ * Resolve the source directory for skill files.
+ * In production (esbuild bundle), __dirname is dist/worker/.
+ * In dev (tsx), __dirname is src/lib/worker/skills/.
+ * We detect by checking if the source dir exists.
+ */
+function resolveSkillSourceDir(): string {
+  // Try source directory first (dev mode with tsx)
+  const srcDir = join(__dirname);
+  const devDir = join(srcDir);
+  if (existsSync(join(devDir, 'agendo', 'references'))) {
+    return devDir;
+  }
+  // In esbuild bundle, fall back to the project's source directory
+  // (extra files aren't bundled — read from the repo checkout)
+  const projectRoot = process.env.AGENDO_PROJECT_ROOT ?? join(homedir(), 'projects', 'agendo');
+  return join(projectRoot, 'src', 'lib', 'worker', 'skills');
+}
+
+/**
+ * Install extra files (references/, etc.) from a skill's source directory.
+ * Writes each file individually, only when content has changed.
+ */
+function installExtraFiles(
+  extraFiles: SkillExtraFiles,
+  destDir: string,
+): { installed: number; skipped: number } {
+  const sourceBase = resolveSkillSourceDir();
+  let installed = 0;
+  let skipped = 0;
+
+  for (const subdir of extraFiles.subdirs) {
+    const srcSubdir = join(sourceBase, extraFiles.sourceDir, subdir);
+    const destSubdir = join(destDir, subdir);
+
+    if (!existsSync(srcSubdir)) {
+      log.warn({ srcSubdir }, 'Skill extra files source directory not found — skipping');
+      continue;
+    }
+
+    mkdirSync(destSubdir, { recursive: true });
+
+    const files = readdirSync(srcSubdir).filter((f) => f.endsWith('.md'));
+    for (const file of files) {
+      const srcPath = join(srcSubdir, file);
+      const destPath = join(destSubdir, file);
+
+      const newContent = readFileSync(srcPath, 'utf-8');
+      const newHash = md5(newContent);
+
+      if (existsSync(destPath)) {
+        try {
+          const existing = readFileSync(destPath, 'utf-8');
+          if (md5(existing) === newHash) {
+            skipped++;
+            continue;
+          }
+        } catch {
+          // Can't read existing — overwrite
+        }
+      }
+
+      writeFileSync(destPath, newContent, 'utf-8');
+      installed++;
+      log.info({ path: destPath }, 'Installed skill reference file');
+    }
+  }
+
+  return { installed, skipped };
+}
+
+/**
+ * Install all skill files to ~/.agents/skills/ and symlink from ~/.claude/skills/.
  * Idempotent: only writes when content has changed, only creates symlinks when missing.
  */
 export async function installSkills(): Promise<void> {
   const skills = loadAllSkills();
   if (skills.length === 0) {
-    log.warn('No skills loaded from registry — skipping SKILL.md installation');
+    log.warn('No skills loaded from registry — skipping skill installation');
     return;
   }
 
   try {
     mkdirSync(AGENTS_SKILLS_DIR, { recursive: true });
   } catch (err) {
-    log.warn({ err }, `Cannot create ${AGENTS_SKILLS_DIR} — skipping SKILL.md installation`);
+    log.warn({ err }, `Cannot create ${AGENTS_SKILLS_DIR} — skipping skill installation`);
     return;
   }
 
@@ -144,33 +260,41 @@ export async function installSkills(): Promise<void> {
     const newHash = md5(newContent);
 
     // Check if existing file matches
+    let skillChanged = true;
     if (existsSync(skillFile)) {
       try {
         const existing = readFileSync(skillFile, 'utf-8');
         if (md5(existing) === newHash) {
+          skillChanged = false;
           skipped++;
-          // Still ensure symlink exists even if content hasn't changed
-          ensureSymlink(meta.dirName);
-          continue;
         }
       } catch {
         // Can't read existing file — overwrite it
       }
     }
 
-    try {
-      mkdirSync(skillDir, { recursive: true });
-      writeFileSync(skillFile, newContent, 'utf-8');
-      installed++;
-      log.info({ skill: meta.dirName, path: skillFile }, 'Installed SKILL.md');
-    } catch (err) {
-      log.warn({ err, skill: meta.dirName }, 'Failed to write SKILL.md — skipping');
-      continue;
+    if (skillChanged) {
+      try {
+        mkdirSync(skillDir, { recursive: true });
+        writeFileSync(skillFile, newContent, 'utf-8');
+        installed++;
+        log.info({ skill: meta.dirName, path: skillFile }, 'Installed SKILL.md');
+      } catch (err) {
+        log.warn({ err, skill: meta.dirName }, 'Failed to write SKILL.md — skipping');
+        continue;
+      }
+    }
+
+    // Install extra files (references/, etc.) for multi-file skills
+    if (meta.extraFiles) {
+      const extraResult = installExtraFiles(meta.extraFiles, skillDir);
+      installed += extraResult.installed;
+      skipped += extraResult.skipped;
     }
 
     // Symlink from ~/.claude/skills/ → ~/.agents/skills/ for Claude discovery
     ensureSymlink(meta.dirName);
   }
 
-  log.info({ installed, skipped, total: skills.length }, 'SKILL.md installation complete');
+  log.info({ installed, skipped, total: skills.length }, 'Skill installation complete');
 }

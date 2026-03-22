@@ -27,13 +27,37 @@ const SKILL_DEFS = [
     name: 'agendo-workflow',
     description:
       'Agendo task management workflow: task lifecycle, MCP tool reference, multi-agent coordination',
-    filename: 'agendo-workflow.md',
+    filename: 'agendo/SKILL.md',
   },
   {
     name: 'artifact-design',
     description:
       'Design guidelines for render_artifact: typography, color, motion, layout, and technical constraints',
     filename: 'artifact-design.md',
+  },
+  {
+    name: 'brainstorm-persona-claude',
+    description:
+      'Provider-aware brainstorm persona for Claude participants: architecture, critique, and convergence strengths',
+    filename: 'brainstorm-persona-claude.md',
+  },
+  {
+    name: 'brainstorm-persona-codex',
+    description:
+      'Provider-aware brainstorm persona for Codex participants: implementation realism, testing, and focused execution',
+    filename: 'brainstorm-persona-codex.md',
+  },
+  {
+    name: 'brainstorm-persona-gemini',
+    description:
+      'Provider-aware brainstorm persona for Gemini participants: alternatives, ecosystem context, and broad exploration',
+    filename: 'brainstorm-persona-gemini.md',
+  },
+  {
+    name: 'brainstorm-persona-copilot',
+    description:
+      'Provider-aware brainstorm persona for Copilot participants: workflow hygiene, guardrails, and concise execution support',
+    filename: 'brainstorm-persona-copilot.md',
   },
 ] as const;
 

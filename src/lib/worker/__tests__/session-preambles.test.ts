@@ -3,6 +3,7 @@ import {
   generateSupportPreamble,
   generateExecutionPreamble,
   generatePlanningPreamble,
+  generateTeamLeadPreamble,
 } from '../session-preambles';
 
 describe('generateSupportPreamble', () => {
@@ -51,5 +52,42 @@ describe('generatePlanningPreamble', () => {
     const preamble = generatePlanningPreamble('my-project');
     expect(preamble).toContain('mode=planning');
     expect(preamble).toContain('project=my-project');
+  });
+});
+
+describe('generateTeamLeadPreamble', () => {
+  it('includes task and project context', () => {
+    const preamble = generateTeamLeadPreamble('my-project', 'task-uuid-123');
+    expect(preamble).toContain('task_id=task-uuid-123');
+    expect(preamble).toContain('project=my-project');
+  });
+
+  it('includes team orchestration tool names', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble).toContain('create_team');
+    expect(preamble).toContain('get_team_status');
+    expect(preamble).toContain('send_team_message');
+  });
+
+  it('includes agent slug examples', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble).toContain('claude-code-1');
+    expect(preamble).toContain('codex-cli-1');
+    expect(preamble).toContain('gemini-cli-1');
+  });
+
+  it('includes progress tracking guidance', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble).toContain('add_progress_note');
+  });
+
+  it('mentions monitoring pattern', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble.toLowerCase()).toContain('monitor');
+  });
+
+  it('includes team-lead mode marker', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble).toContain('mode=team-lead');
   });
 });
