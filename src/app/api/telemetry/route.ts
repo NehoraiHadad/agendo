@@ -1,44 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { withErrorBoundary } from '@/lib/api-handler';
 import { createLogger } from '@/lib/logger';
 import { formatAsGitHubIssue, type BrainstormTelemetryReport } from '@/lib/brainstorm/telemetry';
 import { ValidationError } from '@/lib/errors';
 
 const log = createLogger('telemetry-api');
+const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve the target GitHub repo for telemetry issues.
+ * Priority: TELEMETRY_GITHUB_REPO env var > git remote origin.
+ */
+async function resolveRepo(): Promise<string | null> {
+  // Explicit override
+  const envRepo = process.env.TELEMETRY_GITHUB_REPO;
+  if (envRepo) return envRepo;
+
+  // Auto-detect from git remote
+  try {
+    const { stdout } = await execFileAsync(
+      'gh',
+      ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
+      { timeout: 5000 },
+    );
+    const detected = stdout.trim();
+    return detected || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * GET /api/telemetry — check telemetry config status
- * Returns whether GitHub telemetry is configured and the target repo.
+ * Returns whether GitHub telemetry is available (repo resolvable + gh CLI authenticated).
  */
 export const GET = withErrorBoundary(async () => {
-  const repo = process.env.TELEMETRY_GITHUB_REPO;
-  const token = process.env.TELEMETRY_GITHUB_TOKEN;
+  const repo = await resolveRepo();
+
+  // Check if gh CLI is authenticated
+  let ghAuthed = false;
+  if (repo) {
+    try {
+      await execFileAsync('gh', ['auth', 'status'], { timeout: 5000 });
+      ghAuthed = true;
+    } catch {
+      // gh not installed or not authenticated
+    }
+  }
 
   return NextResponse.json({
     data: {
-      githubEnabled: Boolean(repo && token),
+      githubEnabled: Boolean(repo) && ghAuthed,
       repo: repo ?? null,
     },
   });
 });
 
 /**
- * POST /api/telemetry — submit a telemetry report to GitHub Issues
+ * POST /api/telemetry — submit a telemetry report as a GitHub Issue
  *
- * The frontend shows the full report to the user for confirmation
- * before calling this endpoint. This ensures user sees exactly what is sent.
+ * Uses `gh issue create` (which uses the user's existing gh auth).
+ * No separate token needed — just `gh auth login` once on the machine.
  *
- * Required env vars:
- * - TELEMETRY_GITHUB_REPO: e.g. "username/agendo"
- * - TELEMETRY_GITHUB_TOKEN: GitHub PAT with `repo` or `public_repo` scope
+ * Auto-detects repo from git remote if TELEMETRY_GITHUB_REPO is not set.
  */
 export const POST = withErrorBoundary(async (req: NextRequest) => {
-  const repo = process.env.TELEMETRY_GITHUB_REPO;
-  const token = process.env.TELEMETRY_GITHUB_TOKEN;
+  const repo = await resolveRepo();
 
-  if (!repo || !token) {
+  if (!repo) {
     throw new ValidationError(
-      'GitHub telemetry not configured. Set TELEMETRY_GITHUB_REPO and TELEMETRY_GITHUB_TOKEN.',
+      'Cannot determine GitHub repo. Set TELEMETRY_GITHUB_REPO or ensure this is a GitHub repo.',
     );
   }
 
@@ -51,51 +84,48 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
 
   const issue = formatAsGitHubIssue(report);
 
-  // Create GitHub Issue via REST API
-  const ghResponse = await fetch(`https://api.github.com/repos/${repo}/issues`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/vnd.github.v3+json',
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'User-Agent': `agendo/${report.agendoVersion}`,
-    },
-    body: JSON.stringify({
-      title: issue.title,
-      body: issue.body,
-      labels: issue.labels,
-    }),
-  });
-
-  if (!ghResponse.ok) {
-    const errorBody = await ghResponse.text();
-    log.error(
-      { repo, status: ghResponse.status, errorBody },
-      'Failed to create GitHub telemetry issue',
+  try {
+    const { stdout } = await execFileAsync(
+      'gh',
+      [
+        'issue',
+        'create',
+        '--repo',
+        repo,
+        '--title',
+        issue.title,
+        '--body',
+        issue.body,
+        '--label',
+        issue.labels.join(','),
+      ],
+      { timeout: 30000 },
     );
+
+    // gh issue create prints the URL of the created issue
+    const issueUrl = stdout.trim();
+    const issueNumber = issueUrl.match(/\/issues\/(\d+)/)?.[1];
+
+    log.info({ repo, issueNumber, url: issueUrl }, 'Telemetry issue created on GitHub');
+
+    return NextResponse.json({
+      data: {
+        submitted: true,
+        issueUrl: issueUrl || null,
+        issueNumber: issueNumber ? Number(issueNumber) : null,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    log.error({ repo, err }, 'Failed to create GitHub telemetry issue');
     return NextResponse.json(
       {
         error: {
           code: 'GITHUB_ERROR',
-          message: `GitHub API returned ${ghResponse.status}`,
+          message: `gh issue create failed: ${message}`,
         },
       },
       { status: 502 },
     );
   }
-
-  const ghData = (await ghResponse.json()) as { html_url?: string; number?: number };
-
-  log.info(
-    { repo, issueNumber: ghData.number, url: ghData.html_url },
-    'Telemetry issue created on GitHub',
-  );
-
-  return NextResponse.json({
-    data: {
-      submitted: true,
-      issueUrl: ghData.html_url ?? null,
-      issueNumber: ghData.number ?? null,
-    },
-  });
 });
