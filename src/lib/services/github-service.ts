@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { Octokit } from '@octokit/rest';
 import { createLogger } from '@/lib/logger';
@@ -48,7 +51,7 @@ export async function getGitHubToken(): Promise<GitHubTokenInfo | null> {
     return cachedToken;
   }
 
-  // 2. gh CLI
+  // 2. gh CLI (`gh auth token` on newer versions)
   try {
     const { stdout } = await execFileAsync('gh', ['auth', 'token'], {
       timeout: 5000,
@@ -62,10 +65,29 @@ export async function getGitHubToken(): Promise<GitHubTokenInfo | null> {
       return cachedToken;
     }
   } catch {
-    log.debug('gh CLI not available or not authenticated');
+    log.debug('gh auth token not available, trying config file');
   }
 
-  // 3. No token
+  // 3. gh CLI config file (fallback for older gh versions without `auth token`)
+  try {
+    const configPath = join(
+      process.env.GH_CONFIG_DIR ?? join(homedir(), '.config', 'gh'),
+      'hosts.yml',
+    );
+    const content = await readFile(configPath, 'utf-8');
+    // Simple YAML parse: look for `oauth_token: <token>` under github.com
+    const tokenMatch = content.match(/github\.com:[\s\S]*?oauth_token:\s*(\S+)/);
+    if (tokenMatch?.[1]) {
+      log.info('GitHub token found via gh config file');
+      const info = await validateToken(tokenMatch[1], 'gh-cli');
+      cachedToken = info;
+      return cachedToken;
+    }
+  } catch {
+    log.debug('gh config file not available');
+  }
+
+  // 4. No token
   log.warn('No GitHub token available (set GITHUB_TOKEN or install gh CLI)');
   cachedToken = null;
   return null;
