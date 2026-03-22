@@ -15,7 +15,8 @@ import {
 } from '@/lib/worker/brainstorm-quality';
 import type { WaveQualityScore } from '@/lib/worker/brainstorm-quality';
 import { DEFAULT_ROLE_INSTRUCTIONS, AUTO_ROLE_ASSIGNMENTS } from '@/lib/brainstorm/role-templates';
-import type { BrainstormConfig } from '@/lib/db/schema';
+import type { BrainstormConfig, BrainstormOutcome } from '@/lib/db/schema';
+import { buildTelemetryReport, appendToLocalLog } from '@/lib/brainstorm/telemetry';
 import { describeToolActivity } from '@/lib/utils/tool-descriptions';
 import {
   STRUCTURED_SYNTHESIS_PROMPT_SUFFIX,
@@ -57,7 +58,6 @@ import type { BrainstormWithDetails } from '@/lib/services/brainstorm-service';
 import { DeltaBuffer } from '@/lib/utils/delta-buffer';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 import { computeBrainstormOutcome } from '@/lib/worker/brainstorm-outcome';
-import type { BrainstormOutcome } from '@/lib/db/schema';
 import type { Provider } from '@/lib/services/model-service';
 import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
 import { classifySessionError } from '@/lib/worker/fallback/error-classifier';
@@ -472,6 +472,9 @@ export class BrainstormOrchestrator {
         await setBrainstormOutcome(this.roomId, outcome);
         await this.emitEvent({ type: 'brainstorm:outcome', outcome });
         log.info({ roomId: this.roomId, outcome }, 'Brainstorm outcome recorded');
+
+        // Telemetry: build anonymous report and write to local JSONL
+        this.recordTelemetry(outcome, roomConfig);
       } catch (outcomeErr) {
         log.error({ err: outcomeErr, roomId: this.roomId }, 'Failed to record brainstorm outcome');
       }
@@ -1130,6 +1133,49 @@ export class BrainstormOrchestrator {
     }
 
     return sections.join('\n\n');
+  }
+
+  /**
+   * Record anonymous telemetry for this brainstorm session.
+   * Always writes to local JSONL. Emits SSE event for opt-in GitHub reporting.
+   */
+  private recordTelemetry(
+    outcome: BrainstormOutcome,
+    _roomConfig: BrainstormConfig | undefined,
+  ): void {
+    try {
+      const report = buildTelemetryReport({
+        outcome,
+        waveQualityScores: this.waveQualityScores,
+        feedbackMap: this.feedbackMap,
+        participants: this.participants.map((p) => ({
+          agentSlug: p.agentSlug,
+          agentId: p.agentId,
+        })),
+        config: {
+          convergenceMode: this.convergenceMode,
+          synthesisMode: this.synthesisMode,
+          waveTimeoutSec: this.waveTimeoutSec,
+          minWavesBeforePass: this.minWavesBeforePass,
+          reactiveInjection: this.reactiveInjection,
+          autoReflection: this.playbook.autoReflection,
+          reviewPauseSec: this.reviewPauseSec,
+        },
+        maxWaves: this.maxWaves,
+        presetId: null, // Not tracked at orchestrator level
+      });
+
+      // Always write to local log
+      const logDir = process.env.LOG_DIR ?? './logs';
+      appendToLocalLog(report, logDir);
+
+      // Emit SSE event so frontend can show confirmation dialog for GitHub opt-in
+      void this.emitEvent({ type: 'room:telemetry', report }).catch(() => {});
+
+      log.info({ roomId: this.roomId }, 'Telemetry report generated');
+    } catch (err) {
+      log.warn({ err, roomId: this.roomId }, 'Failed to generate telemetry report');
+    }
   }
 
   /** Register the control message handler in the Worker HTTP dispatch map. */

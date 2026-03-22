@@ -4,6 +4,7 @@ import { useEffect, useSyncExternalStore, useState, useCallback } from 'react';
 import { Users } from 'lucide-react';
 import { RoomView } from './room-view';
 import { ParticipantSidebar } from './participant-sidebar';
+import { TelemetryDialog } from './telemetry-dialog';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import { useBrainstormStream } from '@/hooks/use-brainstorm-stream';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -64,6 +65,12 @@ function RoomClientInner({ room }: { room: BrainstormWithDetails }) {
   // Subscribe to SSE stream
   const { isInitialCatchupPending } = useBrainstormStream(room.id);
 
+  // Telemetry dialog
+  const pendingTelemetryReport = useBrainstormStore((s) => s.pendingTelemetryReport);
+  const dismissTelemetry = useCallback(() => {
+    useBrainstormStore.setState({ pendingTelemetryReport: null });
+  }, []);
+
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Main conversation area */}
@@ -95,6 +102,9 @@ function RoomClientInner({ room }: { room: BrainstormWithDetails }) {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Telemetry confirmation dialog — shown after brainstorm ends */}
+      <TelemetryDialog report={pendingTelemetryReport} onDismiss={dismissTelemetry} />
     </div>
   );
 }

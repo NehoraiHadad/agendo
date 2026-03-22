@@ -412,6 +412,10 @@ export type BrainstormEvent =
   | (BrainstormEventBase & {
       type: 'brainstorm:outcome';
       outcome: import('@/lib/db/schema').BrainstormOutcome;
+    })
+  | (BrainstormEventBase & {
+      type: 'room:telemetry';
+      report: import('@/lib/brainstorm/telemetry').BrainstormTelemetryReport;
     });
 
 export type BrainstormRoomStatus = 'waiting' | 'active' | 'paused' | 'synthesizing' | 'ended';

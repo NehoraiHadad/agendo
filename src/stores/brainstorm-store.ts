@@ -90,6 +90,9 @@ interface BrainstormState {
   /** Set of wave numbers that were reflection waves */
   reflectionWaves: Set<number>;
 
+  /** Pending telemetry report — shown to user for opt-in GitHub submission */
+  pendingTelemetryReport: import('@/lib/brainstorm/telemetry').BrainstormTelemetryReport | null;
+
   // Actions
   setRoom: (room: BrainstormWithDetails) => void;
   handleEvent: (event: BrainstormEvent) => void;
@@ -120,6 +123,7 @@ const initialState: Omit<
   reviewState: null,
   waveQualityScores: new Map(),
   reflectionWaves: new Set(),
+  pendingTelemetryReport: null,
 };
 
 // ============================================================================
@@ -184,6 +188,7 @@ interface MutableState {
   streamingText: Map<string, string>;
   waveQualityScores: Map<number, import('@/lib/worker/brainstorm-quality').WaveQualityScore>;
   reflectionWaves: Set<number>;
+  pendingTelemetryReport: import('@/lib/brainstorm/telemetry').BrainstormTelemetryReport | null;
 }
 
 /**
@@ -335,6 +340,11 @@ function processEvent(s: MutableState, dedupSet: Set<string>, event: BrainstormE
       break;
     }
 
+    case 'room:telemetry': {
+      s.pendingTelemetryReport = event.report;
+      break;
+    }
+
     case 'participant:joined': {
       const participantKey = resolveParticipantKey(s.participants, {
         participantId: event.participantId,
@@ -477,6 +487,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       streamingText: new Map(state.streamingText),
       waveQualityScores: new Map(state.waveQualityScores),
       reflectionWaves: new Set(state.reflectionWaves),
+      pendingTelemetryReport: state.pendingTelemetryReport,
     };
 
     const prevMsgCount = mutable.messages.length;
@@ -509,6 +520,9 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         return;
       case 'room:synthesis':
         set({ synthesis: mutable.synthesis });
+        return;
+      case 'room:telemetry':
+        set({ pendingTelemetryReport: mutable.pendingTelemetryReport });
         return;
       case 'room:error':
       case 'room:soft-converged':
@@ -580,6 +594,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       streamingText: new Map(state.streamingText),
       waveQualityScores: new Map(state.waveQualityScores),
       reflectionWaves: new Set(state.reflectionWaves),
+      pendingTelemetryReport: state.pendingTelemetryReport,
     };
 
     // Process all events in a single pass with O(1) dedup
