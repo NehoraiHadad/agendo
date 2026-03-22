@@ -81,6 +81,7 @@ type WaveStatus = 'pending' | 'thinking' | 'done' | 'passed' | 'timeout';
 /** Feedback signal submitted by a user on behalf of a participant after a wave */
 interface WaveFeedback {
   agentId: string;
+  participantId: string;
   signal: 'thumbs_up' | 'thumbs_down' | 'focus';
   receivedAt: Date;
 }
@@ -168,6 +169,7 @@ interface BrainstormControlMessage {
   steerId?: string;
   synthesize?: boolean;
   agentId?: string;
+  participantId?: string;
   additionalWaves?: number;
 }
 
@@ -797,24 +799,31 @@ export class BrainstormOrchestrator {
    * waits for it to reach awaiting_input, and integrates them into future waves.
    * The DB row is already created by the API route before this is called.
    */
-  private async hotAddParticipant(agentId: string, model?: string): Promise<void> {
-    // Check if this agent is already an active participant
-    const existing = this.participants.find((p) => p.agentId === agentId && !p.hasLeft);
-    if (existing) {
-      log.warn({ roomId: this.roomId, agentId }, 'Agent is already an active participant');
-      return;
+  private async hotAddParticipant(
+    agentId: string,
+    model?: string,
+    participantId?: string,
+  ): Promise<void> {
+    // Check if this exact participant slot is already tracked
+    if (participantId) {
+      const existing = this.participants.find((p) => p.participantId === participantId);
+      if (existing) {
+        log.warn({ roomId: this.roomId, participantId }, 'Participant already tracked');
+        return;
+      }
     }
 
     // Fetch agent details
     const agent = await getAgentById(agentId);
 
-    // Refresh room to get the new participant's DB record
+    // Refresh room to get the new participant's DB record.
+    // Use participantId for exact match (critical for duplicate agents).
     const room = await getBrainstorm(this.roomId);
-    const dbParticipant = room.participants.find(
-      (p) => p.agentId === agentId && p.status !== 'left',
-    );
+    const dbParticipant = participantId
+      ? room.participants.find((p) => p.id === participantId)
+      : room.participants.find((p) => p.agentId === agentId && p.status !== 'left');
     if (!dbParticipant) {
-      log.error({ roomId: this.roomId, agentId }, 'New participant not found in DB');
+      log.error({ roomId: this.roomId, agentId, participantId }, 'New participant not found in DB');
       return;
     }
 
@@ -959,20 +968,37 @@ export class BrainstormOrchestrator {
     wave: number,
     agentId: string,
     signal: 'thumbs_up' | 'thumbs_down' | 'focus',
+    participantId?: string,
   ): void {
-    const entry: WaveFeedback = { agentId, signal, receivedAt: new Date() };
+    // Resolve participantId: if not provided, look up from agentId (backward compat).
+    // For duplicate agents this may match the wrong slot, but feedback is best-effort.
+    const resolvedParticipantId =
+      participantId ??
+      this.participants.find((p) => p.agentId === agentId && !p.hasLeft)?.participantId ??
+      agentId;
+
+    const entry: WaveFeedback = {
+      agentId,
+      participantId: resolvedParticipantId,
+      signal,
+      receivedAt: new Date(),
+    };
     const existing = this.feedbackMap.get(wave) ?? [];
     existing.push(entry);
     this.feedbackMap.set(wave, existing);
 
-    log.info({ roomId: this.roomId, wave, agentId, signal }, 'Feedback received');
+    log.info(
+      { roomId: this.roomId, wave, agentId, participantId: resolvedParticipantId, signal },
+      'Feedback received',
+    );
 
     // Early resolution: if we are currently waiting for feedback on this wave,
     // check whether all active participants have now submitted.
+    // Key by participantId to correctly handle duplicate agents.
     if (this.reviewingWave === wave && this.feedbackResolve) {
       const activeParticipants = this.participants.filter((p) => !p.hasLeft && !p.hasPassed);
-      const activeIds = new Set(activeParticipants.map((p) => p.agentId));
-      const respondedIds = new Set(existing.map((f) => f.agentId));
+      const activeIds = new Set(activeParticipants.map((p) => p.participantId));
+      const respondedIds = new Set(existing.map((f) => f.participantId));
       const allResponded = [...activeIds].every((id) => respondedIds.has(id));
 
       if (allResponded) {
@@ -1009,8 +1035,8 @@ export class BrainstormOrchestrator {
       const activeParticipants = this.participants.filter((p) => !p.hasLeft && !p.hasPassed);
       if (activeParticipants.length > 0 && this.reviewingWave !== null) {
         const existing = this.feedbackMap.get(this.reviewingWave) ?? [];
-        const respondedIds = new Set(existing.map((f) => f.agentId));
-        const allResponded = activeParticipants.every((p) => respondedIds.has(p.agentId));
+        const respondedIds = new Set(existing.map((f) => f.participantId));
+        const allResponded = activeParticipants.every((p) => respondedIds.has(p.participantId));
         if (allResponded) {
           clearTimeout(timer);
           this.feedbackResolve = null;
@@ -1197,8 +1223,8 @@ export class BrainstormOrchestrator {
         this.reviewingWave = wave;
         await this.emitEvent({ type: 'wave:review', wave, timeoutSec: this.reviewPauseSec });
         // Register feedback handler so the Worker HTTP endpoint can deliver signals
-        liveBrainstormFeedbackHandlers.set(this.roomId, (w, agentId, signal) => {
-          this.receiveFeedback(w, agentId, signal);
+        liveBrainstormFeedbackHandlers.set(this.roomId, (w, agentId, signal, participantId) => {
+          this.receiveFeedback(w, agentId, signal, participantId);
         });
         const activeCount = this.participants.filter((p) => !p.hasLeft && !p.hasPassed).length;
         await this.waitForFeedback(this.reviewPauseSec * 1000, activeCount);
@@ -2340,8 +2366,11 @@ export class BrainstormOrchestrator {
       }
 
       case 'remove-participant': {
-        if (!msg.agentId) return;
-        const target = this.participants.find((p) => p.agentId === msg.agentId);
+        // Prefer participantId (targets exact slot for duplicate agents),
+        // fall back to agentId for backward compatibility.
+        const target = msg.participantId
+          ? this.participants.find((p) => p.participantId === msg.participantId)
+          : this.participants.find((p) => p.agentId === msg.agentId);
         if (!target) return;
 
         target.hasPassed = true; // Exclude from future waves
@@ -2360,9 +2389,9 @@ export class BrainstormOrchestrator {
         if (!msg.agentId) return;
         // Hot-add: spin up the new participant in the background.
         // The orchestrator will integrate them into the next wave.
-        void this.hotAddParticipant(msg.agentId, msg.text).catch((err) => {
+        void this.hotAddParticipant(msg.agentId, msg.text, msg.participantId).catch((err) => {
           log.error(
-            { roomId: this.roomId, agentId: msg.agentId, err },
+            { roomId: this.roomId, agentId: msg.agentId, participantId: msg.participantId, err },
             'Failed to hot-add participant',
           );
         });

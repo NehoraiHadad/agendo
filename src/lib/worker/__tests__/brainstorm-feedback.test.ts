@@ -152,7 +152,7 @@ vi.mock('@/lib/worker/brainstorm-quality', () => ({
 const mockLiveBrainstormHandlers = new Map<string, (payload: string) => void>();
 const mockLiveBrainstormFeedbackHandlers = new Map<
   string,
-  (wave: number, agentId: string, signal: string) => void
+  (wave: number, agentId: string, signal: string, participantId?: string) => void
 >();
 
 vi.mock('@/lib/worker/worker-http', () => ({
@@ -175,6 +175,7 @@ type OrchestratorInternals = {
     wave: number,
     agentId: string,
     signal: 'thumbs_up' | 'thumbs_down' | 'focus',
+    participantId?: string,
   ) => void;
   waitForFeedback: (timeoutMs: number, participantCount: number) => Promise<void>;
   formatFeedbackNote: (wave: number) => string | null;
@@ -296,10 +297,22 @@ describe('waitForFeedback — early resolution', () => {
     vi.useFakeTimers();
     const orchestrator = makeOrchestrator();
 
-    // Set up 2 active participants
+    // Set up 2 active participants (with participantId for correct dedup)
     orchestrator.participants.push(
-      { agentId: 'agent-1', agentName: 'Alpha', hasPassed: false, hasLeft: false } as never,
-      { agentId: 'agent-2', agentName: 'Beta', hasPassed: false, hasLeft: false } as never,
+      {
+        participantId: 'p-1',
+        agentId: 'agent-1',
+        agentName: 'Alpha',
+        hasPassed: false,
+        hasLeft: false,
+      } as never,
+      {
+        participantId: 'p-2',
+        agentId: 'agent-2',
+        agentName: 'Beta',
+        hasPassed: false,
+        hasLeft: false,
+      } as never,
     );
 
     // Set the reviewing wave BEFORE starting to wait (mirrors actual orchestrator flow)
@@ -307,8 +320,8 @@ describe('waitForFeedback — early resolution', () => {
     const waitPromise = orchestrator.waitForFeedback(10000, 2);
 
     // Simulate both participants submitting feedback before the timeout
-    orchestrator.receiveFeedback(1, 'agent-1', 'thumbs_up');
-    orchestrator.receiveFeedback(1, 'agent-2', 'thumbs_down');
+    orchestrator.receiveFeedback(1, 'agent-1', 'thumbs_up', 'p-1');
+    orchestrator.receiveFeedback(1, 'agent-2', 'thumbs_down', 'p-2');
 
     // Advance time a tiny bit to allow microtasks to flush
     await Promise.resolve();
@@ -322,9 +335,27 @@ describe('waitForFeedback — early resolution', () => {
     const orchestrator = makeOrchestrator();
 
     orchestrator.participants.push(
-      { agentId: 'agent-1', agentName: 'Alpha', hasPassed: false, hasLeft: false } as never,
-      { agentId: 'agent-2', agentName: 'Beta', hasPassed: false, hasLeft: false } as never,
-      { agentId: 'agent-3', agentName: 'Gamma', hasPassed: false, hasLeft: false } as never,
+      {
+        participantId: 'p-1',
+        agentId: 'agent-1',
+        agentName: 'Alpha',
+        hasPassed: false,
+        hasLeft: false,
+      } as never,
+      {
+        participantId: 'p-2',
+        agentId: 'agent-2',
+        agentName: 'Beta',
+        hasPassed: false,
+        hasLeft: false,
+      } as never,
+      {
+        participantId: 'p-3',
+        agentId: 'agent-3',
+        agentName: 'Gamma',
+        hasPassed: false,
+        hasLeft: false,
+      } as never,
     );
 
     let resolved = false;
@@ -333,7 +364,7 @@ describe('waitForFeedback — early resolution', () => {
     });
 
     // Only one participant submits
-    orchestrator.receiveFeedback(1, 'agent-1', 'thumbs_up');
+    orchestrator.receiveFeedback(1, 'agent-1', 'thumbs_up', 'p-1');
 
     await Promise.resolve();
     vi.advanceTimersByTime(100);

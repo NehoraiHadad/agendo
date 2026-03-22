@@ -6,6 +6,11 @@ import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from
 import { requireFound } from '@/lib/api-handler';
 import { getById } from '@/lib/services/db-helpers';
 import { ConflictError, ValidationError } from '@/lib/errors';
+
+/**
+ * Room statuses that allow participant mutations (add/remove).
+ */
+const MUTABLE_STATUSES: readonly string[] = ['waiting', 'active', 'paused'];
 import type {
   BrainstormRoom,
   BrainstormParticipant,
@@ -44,8 +49,25 @@ export interface BrainstormWithDetails extends BrainstormRoom {
 
 /**
  * Create a brainstorm room and its initial participants in a single transaction.
+ * Validates minimum participant count at the service layer.
  */
 export async function createBrainstorm(input: CreateBrainstormInput): Promise<BrainstormRoom> {
+  if (input.participants.length < 2) {
+    throw new ValidationError('At least 2 participants are required to create a brainstorm.');
+  }
+
+  // Validate all agentIds exist
+  const agentIds = input.participants.map((p) => p.agentId);
+  const existingAgents = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(sql`${agents.id} IN ${agentIds}`);
+  const existingIds = new Set(existingAgents.map((a) => a.id));
+  const missing = agentIds.filter((id) => !existingIds.has(id));
+  if (missing.length > 0) {
+    throw new ValidationError(`Agent(s) not found: ${missing.join(', ')}`);
+  }
+
   return db.transaction(async (tx) => {
     const [room] = await tx
       .insert(brainstormRooms)
@@ -256,30 +278,81 @@ export async function setBrainstormSynthesis(id: string, synthesis: string): Pro
 
 /**
  * Add a new participant to a room. Returns the created participant record.
+ * Validates room status and agent existence at the service layer.
+ * Uses SELECT FOR UPDATE to prevent concurrent mutations.
  */
 export async function addParticipant(
   roomId: string,
   agentId: string,
   model?: string,
 ): Promise<BrainstormParticipant> {
-  const [participant] = await db
-    .insert(brainstormParticipants)
-    .values({ roomId, agentId, model: model ?? null })
-    .returning();
-  return participant;
+  return db.transaction(async (tx) => {
+    // Lock the room row and validate status atomically
+    const result = await tx.execute(
+      sql`SELECT id, status FROM brainstorm_rooms WHERE id = ${roomId} FOR UPDATE`,
+    );
+    const room = result.rows[0] as { id: string; status: string } | undefined;
+    if (!room) {
+      throw new ValidationError(`BrainstormRoom '${roomId}' not found.`);
+    }
+    if (!MUTABLE_STATUSES.includes(room.status)) {
+      throw new ConflictError(
+        `Cannot add participants to a brainstorm room with status '${room.status}'.`,
+      );
+    }
+
+    // Validate agent exists
+    const [agent] = await tx
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    if (!agent) {
+      throw new ValidationError(`Agent '${agentId}' not found.`);
+    }
+
+    const [participant] = await tx
+      .insert(brainstormParticipants)
+      .values({ roomId, agentId, model: model ?? null })
+      .returning();
+    return participant;
+  });
 }
 
 /**
  * Soft-remove a participant by setting their status to 'left'.
- * History is preserved for replay.
+ * Uses participantId (not agentId) to target exactly one slot,
+ * which is critical when duplicate agents are in the room.
+ * Validates room status before allowing removal.
  */
-export async function removeParticipant(roomId: string, agentId: string): Promise<void> {
-  await db
+export async function removeParticipant(roomId: string, participantId: string): Promise<void> {
+  // Validate room status
+  const [room] = await db
+    .select({ id: brainstormRooms.id, status: brainstormRooms.status })
+    .from(brainstormRooms)
+    .where(eq(brainstormRooms.id, roomId))
+    .limit(1);
+
+  if (!room) {
+    throw new ValidationError(`BrainstormRoom '${roomId}' not found.`);
+  }
+  if (!MUTABLE_STATUSES.includes(room.status)) {
+    throw new ConflictError(
+      `Cannot remove participants from a brainstorm room with status '${room.status}'.`,
+    );
+  }
+
+  const [updated] = await db
     .update(brainstormParticipants)
     .set({ status: 'left' })
     .where(
-      and(eq(brainstormParticipants.roomId, roomId), eq(brainstormParticipants.agentId, agentId)),
-    );
+      and(eq(brainstormParticipants.id, participantId), eq(brainstormParticipants.roomId, roomId)),
+    )
+    .returning({ id: brainstormParticipants.id });
+
+  if (!updated) {
+    throw new ValidationError(`Participant '${participantId}' not found in room '${roomId}'.`);
+  }
 }
 
 /**

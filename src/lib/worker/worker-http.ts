@@ -18,7 +18,12 @@ export const liveBrainstormHandlers = new Map<string, (payload: string) => void>
  */
 export const liveBrainstormFeedbackHandlers = new Map<
   string,
-  (wave: number, agentId: string, signal: 'thumbs_up' | 'thumbs_down' | 'focus') => void
+  (
+    wave: number,
+    agentId: string,
+    signal: 'thumbs_up' | 'thumbs_down' | 'focus',
+    participantId?: string,
+  ) => void
 >();
 
 let server: http.Server | null = null;
@@ -186,10 +191,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       badRequest(res, 'Invalid JSON body');
       return;
     }
-    const { wave, agentId, signal } = parsed as {
+    const { wave, agentId, signal, participantId } = parsed as {
       wave?: unknown;
       agentId?: unknown;
       signal?: unknown;
+      participantId?: unknown;
     };
     if (
       typeof wave !== 'number' ||
@@ -205,7 +211,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       ok(res, { dispatched: false, reason: 'brainstorm not found on this worker' });
       return;
     }
-    feedbackHandler(wave, agentId, signal as 'thumbs_up' | 'thumbs_down' | 'focus');
+    feedbackHandler(
+      wave,
+      agentId,
+      signal as 'thumbs_up' | 'thumbs_down' | 'focus',
+      typeof participantId === 'string' ? participantId : undefined,
+    );
     ok(res, { dispatched: true });
     return;
   }

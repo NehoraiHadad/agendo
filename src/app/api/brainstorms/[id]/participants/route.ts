@@ -2,15 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
-import {
-  getBrainstorm,
-  addParticipant,
-  removeParticipant,
-} from '@/lib/services/brainstorm-service';
+import { addParticipant, removeParticipant } from '@/lib/services/brainstorm-service';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
-import { ConflictError } from '@/lib/errors';
-
-const MUTABLE_STATUSES = ['waiting', 'active', 'paused'] as const;
 
 const addParticipantSchema = z.object({
   agentId: z.string().uuid(),
@@ -18,7 +11,7 @@ const addParticipantSchema = z.object({
 });
 
 const removeParticipantSchema = z.object({
-  agentId: z.string().uuid(),
+  participantId: z.string().uuid(),
 });
 
 export const POST = withErrorBoundary(
@@ -28,25 +21,8 @@ export const POST = withErrorBoundary(
 
     const body = addParticipantSchema.parse(await req.json());
 
-    const room = await getBrainstorm(id);
-    if (!(MUTABLE_STATUSES as readonly string[]).includes(room.status)) {
-      throw new ConflictError(
-        `Cannot add participants to a brainstorm room with status '${room.status}'.`,
-      );
-    }
-
-    let participant;
-    try {
-      participant = await addParticipant(id, body.agentId, body.model);
-    } catch (err: unknown) {
-      // PostgreSQL 23505 = unique_violation (if migration hasn't been applied yet)
-      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
-        throw new ConflictError(
-          'This agent is already a participant. Run the latest migration to allow duplicate agents.',
-        );
-      }
-      throw err;
-    }
+    // Service validates room status, agent existence, and locks the room row
+    const participant = await addParticipant(id, body.agentId, body.model);
 
     // Notify the orchestrator so it can hot-add the participant's session
     if (await isBrainstormOrchestratorLive(id)) {
@@ -68,13 +44,13 @@ export const DELETE = withErrorBoundary(
 
     const body = removeParticipantSchema.parse(await req.json());
 
-    // Soft-remove: set status to 'left'
-    await removeParticipant(id, body.agentId);
+    // Service validates room status and targets exactly one participant slot
+    await removeParticipant(id, body.participantId);
 
     if (await isBrainstormOrchestratorLive(id)) {
       await sendBrainstormControl(id, {
         type: 'remove-participant',
-        agentId: body.agentId,
+        participantId: body.participantId,
       });
     }
 

@@ -10,6 +10,7 @@ const log = createLogger('brainstorm-feedback-api');
 const feedbackSchema = z.object({
   wave: z.number().int().min(0),
   agentId: z.string().min(1),
+  participantId: z.string().uuid().optional(),
   signal: z.enum(['thumbs_up', 'thumbs_down', 'focus']),
 });
 
