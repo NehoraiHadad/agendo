@@ -85,6 +85,17 @@ export const POST = withErrorBoundary(
     // Orchestrator is alive — send control signal via PG NOTIFY.
     // Do NOT write to log here; the orchestrator is the sole log writer for live events.
     // Do NOT emit SSE here; the orchestrator emits the user message when it processes the steer.
+
+    // If the room is at max-waves, add wave budget so the orchestrator doesn't
+    // immediately re-pause after one wave. Also send an extend control so the
+    // orchestrator's in-memory maxWaves is updated (and a room:config event is
+    // emitted for the UI).
+    const needsMoreWaves = room.currentWave >= room.maxWaves - 1;
+    if (needsMoreWaves) {
+      await addWaveBudget(id, 5);
+      await sendBrainstormControl(id, { type: 'extend', additionalWaves: 5 });
+    }
+
     await sendBrainstormControl(id, {
       type: 'steer',
       text: body.text,

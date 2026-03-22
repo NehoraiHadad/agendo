@@ -393,6 +393,7 @@ export type BrainstormEvent =
       error?: string | null;
       recovery?: BrainstormParticipantRecovery | null;
     })
+  | (BrainstormEventBase & { type: 'room:config'; maxWaves: number })
   | (BrainstormEventBase & { type: 'room:error'; message: string })
   | (BrainstormEventBase & { type: 'wave:review'; wave: number; timeoutSec: number })
   | (BrainstormEventBase & {

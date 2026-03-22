@@ -174,6 +174,7 @@ function resolveParticipantKey(
 interface MutableState {
   status: BrainstormRoomStatus;
   currentWave: number;
+  maxWaves: number;
   synthesis: string | null;
   converged: boolean;
   maxWavesReached: boolean;
@@ -303,6 +304,11 @@ function processEvent(s: MutableState, dedupSet: Set<string>, event: BrainstormE
       if (!participantKey) break;
       const existingText = s.streamingText.get(participantKey) ?? '';
       s.streamingText.set(participantKey, existingText + event.text);
+      break;
+    }
+
+    case 'room:config': {
+      s.maxWaves = event.maxWaves;
       break;
     }
 
@@ -461,6 +467,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
     const mutable: MutableState = {
       status: state.status,
       currentWave: state.currentWave,
+      maxWaves: state.maxWaves,
       synthesis: state.synthesis,
       converged: state.converged,
       maxWavesReached: state.maxWavesReached,
@@ -490,6 +497,9 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
         return;
       case 'wave:complete':
         set({ streamingText: mutable.streamingText });
+        return;
+      case 'room:config':
+        set({ maxWaves: mutable.maxWaves });
         return;
       case 'room:converged':
         set({ status: mutable.status, converged: true });
@@ -560,6 +570,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
     const mutable: MutableState = {
       status: state.status,
       currentWave: state.currentWave,
+      maxWaves: state.maxWaves,
       synthesis: state.synthesis,
       converged: state.converged,
       maxWavesReached: state.maxWavesReached,
@@ -580,6 +591,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
     set({
       status: mutable.status,
       currentWave: mutable.currentWave,
+      maxWaves: mutable.maxWaves,
       synthesis: mutable.synthesis,
       converged: mutable.converged,
       maxWavesReached: mutable.maxWavesReached,

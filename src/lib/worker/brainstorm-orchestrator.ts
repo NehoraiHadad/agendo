@@ -422,6 +422,9 @@ export class BrainstormOrchestrator {
       // Mark room as active
       await updateBrainstormStatus(this.roomId, 'active');
       await this.emitEvent({ type: 'room:state', status: 'active' });
+      // Emit the current maxWaves so the UI stays in sync (especially on resume
+      // after extensions — the store's maxWaves may be stale from initial page load).
+      await this.emitEvent({ type: 'room:config', maxWaves: this.maxWaves });
 
       // Register the control handler BEFORE creating sessions so that any steer
       // sent by the user during the (potentially 10+ min) startup window is
@@ -2323,6 +2326,8 @@ export class BrainstormOrchestrator {
         const extra = msg.additionalWaves ?? 5;
         this.maxWaves += extra;
         log.info({ roomId: this.roomId, extra, maxWaves: this.maxWaves }, 'Max waves extended');
+        // Fire-and-forget — handleControlMessage is synchronous (PG NOTIFY callback)
+        void this.emitEvent({ type: 'room:config', maxWaves: this.maxWaves });
 
         if (this.paused) {
           // Resume the wave loop — treat like a steer with no text so it
