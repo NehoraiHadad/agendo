@@ -2,6 +2,7 @@
 
 import { useReducer, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
+import { createScopedDedup } from '@/lib/utils/scoped-dedup';
 
 const MAX_EVENTS_PER_PANEL = 500;
 const MAX_CONCURRENT_CONNECTIONS = 6;
@@ -23,6 +24,12 @@ type MultiStreamAction =
 
 type MultiStreamState = Record<string, PanelStreamState>;
 
+/**
+ * Module-level O(1) dedup for multi-session panels.
+ * Scoped by sessionId so each panel has independent dedup tracking.
+ */
+const panelDedup = createScopedDedup<number>();
+
 function createInitialPanelState(): PanelStreamState {
   return {
     events: [],
@@ -35,6 +42,10 @@ function createInitialPanelState(): PanelStreamState {
 function reducer(state: MultiStreamState, action: MultiStreamAction): MultiStreamState {
   switch (action.type) {
     case 'APPEND_EVENT': {
+      // O(1) dedup — skip if already seen
+      if (!panelDedup.add(action.sessionId, action.event.id)) {
+        return state;
+      }
       const existing = state[action.sessionId] ?? createInitialPanelState();
       const events = [...existing.events, action.event];
       const trimmed =
@@ -67,9 +78,11 @@ function reducer(state: MultiStreamState, action: MultiStreamAction): MultiStrea
     }
     case 'REMOVE_SESSION': {
       const { [action.sessionId]: _removed, ...rest } = state;
+      panelDedup.clear(action.sessionId);
       return rest;
     }
     case 'RESET_SESSION': {
+      panelDedup.clear(action.sessionId);
       return { ...state, [action.sessionId]: createInitialPanelState() };
     }
     default:

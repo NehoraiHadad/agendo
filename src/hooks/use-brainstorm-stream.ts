@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BrainstormEvent, BrainstormRoomStatus } from '@/lib/realtime/event-types';
+import { createRAFBatcher } from '@/lib/utils/raf-batcher';
 import { useBrainstormStore } from '@/stores/brainstorm-store';
 import { useEventSource } from './use-event-source';
 
@@ -22,8 +23,9 @@ const STREAM_CLOSE_DEBOUNCE_MS = 300;
  * last-event-id tracking for catch-up on reconnect.
  *
  * Performance: incoming SSE events are coalesced via requestAnimationFrame
- * so that rapid catchup replay results in a single batch store update per
- * animation frame instead of one re-render per event.
+ * (shared `createRAFBatcher` utility) so that rapid catchup replay results
+ * in a single batch store update per animation frame instead of one
+ * re-render per event.
  */
 export function shouldCloseBrainstormStream(event: BrainstormEvent): boolean {
   return event.type === 'room:state' && event.status === 'ended' && event.id > 0;
@@ -48,27 +50,32 @@ export function useBrainstormStream(roomId: string | null): {
   const [isInitialCatchupPending, setIsInitialCatchupPending] = useState(() => Boolean(roomId));
   const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // --- rAF batching ---
+  // --- rAF batching via shared utility ---
   // Events are queued and flushed once per animation frame. During rapid SSE
   // catchup, this coalesces hundreds of events into a single handleEventBatch()
   // call (one React re-render). During live operation, events typically arrive
   // one at a time so each frame flushes a batch of 1.
-  const batchRef = useRef<BrainstormEvent[]>([]);
-  const rafRef = useRef<number>(0);
+  const batcherRef = useRef(
+    createRAFBatcher<BrainstormEvent>((batch) => {
+      if (batch.length === 1) {
+        handleEvent(batch[0]);
+      } else {
+        handleEventBatch(batch);
+      }
+    }),
+  );
   /** Debounced stream close timer — prevents premature close during log replay */
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flushBatch = useCallback(() => {
-    rafRef.current = 0;
-    const batch = batchRef.current;
-    if (batch.length === 0) return;
-    batchRef.current = [];
-
-    if (batch.length === 1) {
-      handleEvent(batch[0]);
-    } else {
-      handleEventBatch(batch);
-    }
+  // Keep batcher's flush callback in sync with latest store methods
+  useEffect(() => {
+    batcherRef.current = createRAFBatcher<BrainstormEvent>((batch) => {
+      if (batch.length === 1) {
+        handleEvent(batch[0]);
+      } else {
+        handleEventBatch(batch);
+      }
+    });
   }, [handleEvent, handleEventBatch]);
 
   const clearPendingTimeout = useCallback(() => {
@@ -120,10 +127,7 @@ export function useBrainstormStream(roomId: string | null): {
       }
 
       // Queue the event for the next animation frame (always, even for ended)
-      batchRef.current.push(parsed);
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(flushBatch);
-      }
+      batcherRef.current.push(parsed);
 
       if (shouldCloseBrainstormStream(parsed)) {
         // Don't close immediately — during log replay, a historical
@@ -134,11 +138,7 @@ export function useBrainstormStream(roomId: string | null): {
           closeTimerRef.current = null;
           stopInitialCatchup();
           // Flush any remaining events before closing
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = 0;
-          }
-          flushBatch();
+          batcherRef.current.flush();
           markDone();
         }, STREAM_CLOSE_DEBOUNCE_MS);
       }
@@ -153,21 +153,8 @@ export function useBrainstormStream(roomId: string | null): {
         clearTimeout(closeTimerRef.current);
         closeTimerRef.current = null;
       }
-      // Flush any pending events on unmount
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = 0;
-      }
-      // Process remaining batch synchronously so state is consistent
-      if (batchRef.current.length > 0) {
-        const batch = batchRef.current;
-        batchRef.current = [];
-        if (batch.length === 1) {
-          useBrainstormStore.getState().handleEvent(batch[0]);
-        } else {
-          useBrainstormStore.getState().handleEventBatch(batch);
-        }
-      }
+      // Flush remaining events synchronously so state is consistent
+      batcherRef.current.flush();
     };
   }, [clearPendingTimeout]);
 
