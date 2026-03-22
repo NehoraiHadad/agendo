@@ -76,6 +76,8 @@ export {
   handleSetExecutionOrder,
   handleListReadyTasks,
   handleRenderArtifact,
+  handleGetTeammates,
+  buildTeamContextMessage,
 } from './tools/index.js';
 export {
   apiCall,

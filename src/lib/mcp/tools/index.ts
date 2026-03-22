@@ -44,4 +44,10 @@ export { handleStartAgentSession, handleAssignTask } from './session-tools.js';
 export { handleSaveSnapshot, handleUpdateSnapshot } from './snapshot-tools.js';
 export { handleSavePlan } from './plan-tools.js';
 export { handleRenderArtifact } from './artifact-tools.js';
-export { handleCreateTeam, handleSendTeamMessage, handleGetTeamStatus } from './team-tools.js';
+export {
+  handleCreateTeam,
+  handleSendTeamMessage,
+  handleGetTeamStatus,
+  handleGetTeammates,
+  buildTeamContextMessage,
+} from './team-tools.js';

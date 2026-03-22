@@ -57,3 +57,4 @@ next-env.d.ts
 
 # agendo local runtime data
 .agendo/
+agendo-skill-workspace/

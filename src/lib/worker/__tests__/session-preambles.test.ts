@@ -90,4 +90,12 @@ describe('generateTeamLeadPreamble', () => {
     const preamble = generateTeamLeadPreamble('proj', 'task-1');
     expect(preamble).toContain('mode=team-lead');
   });
+
+  it('mentions that workers may send messages back', () => {
+    const preamble = generateTeamLeadPreamble('proj', 'task-1');
+    expect(preamble.toLowerCase()).toContain('worker');
+    expect(preamble.toLowerCase()).toContain('message');
+    // Should instruct the lead to check and respond to worker messages
+    expect(preamble.toLowerCase()).toContain('respond');
+  });
 });

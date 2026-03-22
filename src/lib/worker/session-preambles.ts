@@ -272,6 +272,11 @@ export function generateTeamLeadPreamble(projectName: string, taskId: string): s
     `- **Avoid file conflicts**: Assign different files/modules to different agents. Note conflicts in prompts.\n` +
     `- **Monitor, don't micromanage**: Check status every few minutes, intervene only when blocked or off-track.\n` +
     `- **Handle failures**: If a member's session ends unexpectedly, you can spawn a new session on the same subtask.\n` +
+    `\n` +
+    `## Worker Messages\n` +
+    `\n` +
+    `Workers may send you messages to escalate blockers, ask questions, or coordinate handoffs. ` +
+    `You will receive them as user messages. Check and respond promptly — a blocked worker wastes time.\n` +
     `---\n`
   );
 }

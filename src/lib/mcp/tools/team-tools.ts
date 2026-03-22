@@ -25,6 +25,7 @@ interface TeamMemberInput {
 
 interface TeamMemberResult {
   agent: string;
+  role: string;
   subtaskId: string;
   sessionId: string;
 }
@@ -94,12 +95,75 @@ export async function handleCreateTeam(args: {
 
     results.push({
       agent: member.agent,
+      role: member.role,
       subtaskId: subtask.id,
       sessionId: session.id,
     });
   }
 
+  // 3. Broadcast team context to each worker so they know their teammates
+  const leadSessionId = process.env.AGENDO_SESSION_ID;
+  if (leadSessionId) {
+    await broadcastTeamContext(leadSessionId, results);
+  }
+
   return { teamId: args.taskId, members: results };
+}
+
+/**
+ * Send a team context message to each worker session so they know:
+ * - The team lead's sessionId (for escalations)
+ * - Their sibling sessions (for peer coordination)
+ * - That send_team_message is available
+ *
+ * Fire-and-forget: errors are silently ignored to avoid blocking team creation.
+ */
+async function broadcastTeamContext(
+  leadSessionId: string,
+  members: TeamMemberResult[],
+): Promise<void> {
+  const sends = members.map((member) => {
+    const message = buildTeamContextMessage(leadSessionId, members, member.sessionId);
+    return apiCall(`/api/sessions/${member.sessionId}/message`, {
+      method: 'POST',
+      body: { message },
+    }).catch(() => {
+      // Silently ignore — worker may not be ready yet
+    });
+  });
+
+  await Promise.all(sends);
+}
+
+/**
+ * Build the team context message that gets sent to a worker.
+ * Tells the worker about the team lead and their sibling agents.
+ */
+export function buildTeamContextMessage(
+  leadSessionId: string,
+  members: TeamMemberResult[],
+  currentSessionId: string,
+): string {
+  const siblings = members.filter((m) => m.sessionId !== currentSessionId);
+
+  let msg =
+    `[Team Context]\n` +
+    `You are part of a team. Use \`send_team_message\` to communicate with your team.\n\n` +
+    `## Team Lead\n` +
+    `- Session: ${leadSessionId}\n` +
+    `- Use \`send_team_message({sessionId: "${leadSessionId}", message: "..."})\` to escalate blockers or ask questions.\n`;
+
+  if (siblings.length > 0) {
+    msg += `\n## Teammates\n`;
+    for (const sibling of siblings) {
+      msg += `- **${sibling.role}** (${sibling.agent}): session ${sibling.sessionId}\n`;
+    }
+    msg +=
+      `\nUse \`send_team_message({sessionId, message})\` to coordinate with teammates ` +
+      `(e.g. "I finished the API, you can start integration now").\n`;
+  }
+
+  return msg;
 }
 
 export async function handleSendTeamMessage(args: {
@@ -110,6 +174,62 @@ export async function handleSendTeamMessage(args: {
     method: 'POST',
     body: { message: args.message },
   });
+}
+
+export async function handleGetTeammates(): Promise<{
+  parentTaskId: string;
+  mySessionId: string;
+  teammates: Array<{
+    subtaskId: string;
+    role: string;
+    agent: string | null;
+    sessionId: string | null;
+    status: string;
+  }>;
+}> {
+  const taskId = process.env.AGENDO_TASK_ID;
+  if (!taskId) {
+    throw new Error('AGENDO_TASK_ID not set — cannot determine team membership');
+  }
+
+  const mySessionId = process.env.AGENDO_SESSION_ID ?? '';
+
+  // Get my task to find parent
+  const myTask = (await apiCall(`/api/tasks/${taskId}`)) as {
+    id: string;
+    parentTaskId: string | null;
+  };
+
+  if (!myTask.parentTaskId) {
+    throw new Error('This task is not part of a team (no parentTaskId)');
+  }
+
+  // Get all sibling subtasks under the parent
+  const subtasks = (await apiCall(
+    `/api/tasks/${myTask.parentTaskId}/subtasks`,
+  )) as SubtaskWithAssignee[];
+
+  // For each subtask, look up its active session
+  const teammates = await Promise.all(
+    subtasks.map(async (subtask) => {
+      const sessions = (await apiCall(`/api/sessions?taskId=${subtask.id}`)) as SessionInfo[];
+      const activeSession = sessions.length > 0 ? sessions[0] : null;
+
+      return {
+        subtaskId: subtask.id,
+        role: subtask.title,
+        agent: subtask.assignee?.slug ?? null,
+        sessionId: activeSession?.id ?? null,
+        status: subtask.status,
+      };
+    }),
+  );
+
+  return {
+    parentTaskId: myTask.parentTaskId,
+    mySessionId,
+    teammates,
+  };
 }
 
 export async function handleGetTeamStatus(args: { taskId: string }): Promise<{
@@ -227,5 +347,13 @@ export function registerTeamTools(server: McpServer): void {
     },
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     (args) => wrapToolCall(() => handleGetTeamStatus(args)),
+  );
+
+  server.tool(
+    'get_teammates',
+    'Get your team roster — team lead and sibling agents working on the same parent task. Use this to discover who you can message with send_team_message. Only works for agents that are part of a team (task has a parentTaskId).',
+    {},
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    () => wrapToolCall(() => handleGetTeammates()),
   );
 }
