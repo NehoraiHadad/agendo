@@ -59,9 +59,13 @@ function readEventsFromLogGeneric<T extends { id: number }>(
     if (!event) continue;
 
     // Detect ID reset: if the current event's ID drops significantly below
-    // the max we've seen, a session restart happened. Reset the filter
-    // threshold so all events from the new run are included.
-    if (event.id < maxSeenId - 100 && filterThreshold > 0) {
+    // the max we've seen, a session/orchestrator restart happened. Reset the
+    // filter threshold so all events from the new run are included.
+    // Use a relative threshold (50% drop) instead of a fixed one — short
+    // orchestrator lifecycles (<100 events) would not trigger the old
+    // fixed threshold of 100, causing events from resumed runs to be skipped.
+    const resetThreshold = Math.max(maxSeenId - 5, Math.floor(maxSeenId * 0.5));
+    if (event.id < resetThreshold && filterThreshold > 0) {
       filterThreshold = 0;
     }
     if (event.id > maxSeenId) {

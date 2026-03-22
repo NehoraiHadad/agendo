@@ -128,4 +128,47 @@ describe('readEventsFromLog', () => {
     expect(result[1].id).toBe(500);
     expect(result[2].id).toBe(50);
   });
+
+  it('detects ID reset after short orchestrator lifecycle (<100 events)', () => {
+    // Simulates a brainstorm room with a short lifecycle: run 1 has only 20
+    // events, then the orchestrator restarts at ID 1. The old fixed threshold
+    // of 100 would NOT detect this reset (20 - 100 = -80, and 1 < -80 is false).
+    const run1Events: AgendoEvent[] = [
+      { ...baseEvent, id: 18, type: 'agent:text', text: 'run1-a' },
+      { ...baseEvent, id: 19, type: 'agent:text', text: 'run1-b' },
+      { ...baseEvent, id: 20, type: 'agent:result', costUsd: 0.01, turns: 1, durationMs: 100 },
+    ];
+    const run2Events: AgendoEvent[] = [
+      { ...baseEvent, id: 1, type: 'agent:text', text: 'run2-start' },
+      { ...baseEvent, id: 2, type: 'agent:text', text: 'run2-response' },
+    ];
+
+    const logContent = [...run1Events, ...run2Events].map(serializeEvent).join('');
+
+    // Client saw all of run 1 (afterSeq=20)
+    const result = readEventsFromLog(logContent, 20);
+
+    // Should include ALL events from run 2 (after the ID reset)
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe(1);
+    expect((result[0] as { text: string }).text).toBe('run2-start');
+    expect(result[1].id).toBe(2);
+  });
+
+  it('does not false-positive on small ID gaps within the same run', () => {
+    // IDs with small gaps (e.g., 10 → 8 due to out-of-order write) should
+    // NOT be treated as a reset.
+    const events: AgendoEvent[] = [
+      { ...baseEvent, id: 8, type: 'agent:text', text: 'a' },
+      { ...baseEvent, id: 10, type: 'agent:text', text: 'b' },
+      { ...baseEvent, id: 9, type: 'agent:text', text: 'c' },
+      { ...baseEvent, id: 11, type: 'agent:text', text: 'd' },
+    ];
+
+    const logContent = events.map(serializeEvent).join('');
+
+    // afterSeq=7 — should get all 4 events, no false reset
+    const result = readEventsFromLog(logContent, 7);
+    expect(result).toHaveLength(4);
+  });
 });

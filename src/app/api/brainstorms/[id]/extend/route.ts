@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import {
+  addWaveBudget,
   extendBrainstorm,
   getBrainstorm,
   updateBrainstormMaxWaves,
+  updateBrainstormStatus,
 } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
@@ -34,7 +36,9 @@ export const POST = withErrorBoundary(
         return NextResponse.json({ data: updated });
       }
 
-      const updated = await extendBrainstorm(id, body.additionalWaves);
+      // No live orchestrator — bump wave budget, reset status, and re-enqueue.
+      await addWaveBudget(id, body.additionalWaves);
+      const updated = await updateBrainstormStatus(id, 'waiting');
       await enqueueBrainstorm({ roomId: id });
       return NextResponse.json({ data: updated });
     }

@@ -8,6 +8,15 @@ import { useEventSource } from './use-event-source';
 const INITIAL_HISTORY_LOADER_MS = 1500;
 
 /**
+ * Delay before closing the SSE stream after receiving a `room:state ended` event.
+ * This prevents premature close during log replay: when a room has been extended
+ * after ending, the log contains historical `room:state ended` events followed by
+ * events from subsequent orchestrator lifecycles. The debounce ensures we only close
+ * if no further events arrive (i.e., the room is truly finished).
+ */
+const STREAM_CLOSE_DEBOUNCE_MS = 300;
+
+/**
  * Subscribes to the SSE event stream for a brainstorm room and feeds events
  * into the Zustand store. Handles reconnection with exponential backoff and
  * last-event-id tracking for catch-up on reconnect.
@@ -46,6 +55,8 @@ export function useBrainstormStream(roomId: string | null): {
   // one at a time so each frame flushes a batch of 1.
   const batchRef = useRef<BrainstormEvent[]>([]);
   const rafRef = useRef<number>(0);
+  /** Debounced stream close timer — prevents premature close during log replay */
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flushBatch = useCallback(() => {
     rafRef.current = 0;
@@ -101,27 +112,35 @@ export function useBrainstormStream(roomId: string | null): {
         stopInitialCatchup();
       }
 
+      // Cancel any pending debounced close — more events arrived, so the
+      // earlier `room:state ended` was historical (room was extended/steered).
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+
+      // Queue the event for the next animation frame (always, even for ended)
+      batchRef.current.push(parsed);
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(flushBatch);
+      }
+
       if (shouldCloseBrainstormStream(parsed)) {
-        stopInitialCatchup();
-        // Flush any pending batch immediately before closing
-        if (batchRef.current.length > 0) {
-          batchRef.current.push(parsed);
+        // Don't close immediately — during log replay, a historical
+        // `room:state ended` event may be followed by events from a
+        // subsequent orchestrator lifecycle (room was extended/steered).
+        // Debounce: close only if no more events arrive within the window.
+        closeTimerRef.current = setTimeout(() => {
+          closeTimerRef.current = null;
+          stopInitialCatchup();
+          // Flush any remaining events before closing
           if (rafRef.current) {
             cancelAnimationFrame(rafRef.current);
             rafRef.current = 0;
           }
           flushBatch();
-        } else {
-          handleEvent(parsed);
-        }
-        markDone();
-        return;
-      }
-
-      // Queue the event for the next animation frame
-      batchRef.current.push(parsed);
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(flushBatch);
+          markDone();
+        }, STREAM_CLOSE_DEBOUNCE_MS);
       }
     },
   });
@@ -129,6 +148,11 @@ export function useBrainstormStream(roomId: string | null): {
   useEffect(() => {
     return () => {
       clearPendingTimeout();
+      // Cancel any pending debounced close
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
       // Flush any pending events on unmount
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);

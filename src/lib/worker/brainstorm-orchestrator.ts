@@ -338,6 +338,28 @@ export class BrainstormOrchestrator {
         this.logFilePath = room.logFilePath;
         this.logWriter = new FileLogWriter(this.logFilePath);
         this.logWriter.open();
+
+        // Continue event IDs from the last event in the log file to prevent
+        // ID resets across orchestrator lifecycles. Without this, each new
+        // orchestrator starts at eventSeq=0, producing overlapping IDs that
+        // can confuse SSE reconnect catchup filtering.
+        try {
+          const logContent = readFileSync(this.logFilePath, 'utf-8');
+          const lines = logContent.trimEnd().split('\n');
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const match = lines[i].match(/^\[(\d+)\|/);
+            if (match) {
+              this.eventSeq = parseInt(match[1], 10);
+              log.info(
+                { roomId: this.roomId, resumeFromEventSeq: this.eventSeq },
+                'Resuming event sequence from log file',
+              );
+              break;
+            }
+          }
+        } catch {
+          // Log file unreadable — start from 0 (safe fallback)
+        }
       }
 
       // Re-resolve playbook from DB config (authoritative — may differ from
