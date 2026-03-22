@@ -215,16 +215,18 @@ export interface AgentAdapter {
    *
    * - Claude: calls getSessionMessages() from the SDK (reads JSONL on disk — works offline)
    * - Codex: calls thread/read via JSON-RPC (requires a running app-server process)
-   * - Gemini/Copilot: not available (ACP session/load requires a running process and
-   *   is designed for context restoration, not read-only history replay)
+   * - Gemini/Copilot/OpenCode: in-memory only; falls back to Agendo log file when
+   *   in-memory history is empty (e.g. after a worker restart)
    *
    * @param sessionRef - CLI-native session/thread ID (Claude UUID or Codex threadId)
    * @param cwd - Working directory hint (helps Claude find the right project JSONL)
+   * @param logFilePath - Path to the Agendo session log file (used as fallback by ACP adapters)
    * @returns AgendoEventPayload[] or null if history is unavailable
    */
   getHistory?(
     sessionRef: string,
     cwd?: string,
+    logFilePath?: string,
   ): Promise<import('@/lib/realtime/events').AgendoEventPayload[] | null>;
 }
 

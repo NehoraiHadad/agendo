@@ -280,7 +280,7 @@
 
 - `--resume=<sessionId>` flag for session resume.
 - ACP session created/loaded via shared `AbstractAcpAdapter` base.
-- In-memory history only.
+- In-memory history via `accumulateHistory()`; falls back to Agendo log file after worker restart.
 
 **Streaming**:
 
@@ -299,7 +299,6 @@
 **Known Limitations**:
 
 - Model switching via unstable API.
-- No history persistence beyond in-memory.
 
 **Evidence**: `copilot-adapter.ts` (89 lines), inherits from `base-acp-adapter.ts`.
 
@@ -339,6 +338,7 @@
 
 - No `--resume` flag handling in `buildArgs()`.
 - ACP session created but resume not explicitly supported.
+- In-memory history via `accumulateHistory()`; falls back to Agendo log file after worker restart.
 
 **Streaming**:
 

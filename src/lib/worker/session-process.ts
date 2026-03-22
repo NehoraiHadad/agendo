@@ -641,6 +641,7 @@ export class SessionProcess {
     return this.adapter.getHistory(
       this.sessionRef ?? this.session.sessionRef ?? '',
       this.spawnCwd ?? undefined,
+      this.session.logFilePath ?? undefined,
     );
   }
 

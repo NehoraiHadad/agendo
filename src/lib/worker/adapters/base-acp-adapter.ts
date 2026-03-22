@@ -1,8 +1,10 @@
 import { createLogger } from '@/lib/logger';
+import { existsSync, readFileSync } from 'node:fs';
 import { AsyncLock } from '@/lib/utils/async-lock';
 import type { AttachmentRef } from '@/lib/attachments';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { extractMessage, AcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
+import { readEventsFromLog } from '@/lib/realtime/event-utils';
 import type { Client } from '@agentclientprotocol/sdk';
 import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
@@ -215,9 +217,50 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     return true;
   }
 
-  async getHistory(_sessionRef: string): Promise<AgendoEventPayload[] | null> {
+  async getHistory(
+    _sessionRef: string,
+    _cwd?: string,
+    logFilePath?: string,
+  ): Promise<AgendoEventPayload[] | null> {
+    // Fast path: in-memory history accumulated by accumulateHistory() during the session.
     const history = this.transport.getMessageHistory();
-    return history.length > 0 ? history : null;
+    if (history.length > 0) return history;
+
+    // Fallback: parse Agendo session log file.
+    // Fires after a worker restart when in-memory state is empty but the log
+    // file on disk still contains the full conversation history.
+    if (!logFilePath || !existsSync(logFilePath)) return null;
+
+    try {
+      const logContent = readFileSync(logFilePath, 'utf-8');
+      // afterSeq=0: read ALL events from this log file (full history reconstruction).
+      const allEvents = readEventsFromLog(logContent, 0);
+      // Keep only renderable conversation events; strip ephemeral streaming fragments
+      // and low-level system/state events that are not meaningful to replay.
+      const renderable = allEvents.filter(
+        (e) =>
+          e.type === 'agent:text' ||
+          e.type === 'agent:tool-start' ||
+          e.type === 'agent:tool-end' ||
+          e.type === 'agent:result' ||
+          e.type === 'user:message' ||
+          e.type === 'system:info' ||
+          e.type === 'session:init',
+      );
+      if (renderable.length === 0) return null;
+      log.info(
+        { logFilePath, eventCount: renderable.length, agentLabel: this.agentLabel },
+        'ACP history reconstructed from log file (worker restart fallback)',
+      );
+      // Return as AgendoEventPayload[] by stripping the id/sessionId/ts envelope fields.
+      // worker-sse.ts re-assigns sequential IDs when emitting these as SSE events.
+      return renderable.map(
+        ({ id: _id, sessionId: _sid, ts: _ts, ...payload }) => payload as AgendoEventPayload,
+      );
+    } catch (err) {
+      log.debug({ err, logFilePath }, 'ACP log file history fallback failed');
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------
