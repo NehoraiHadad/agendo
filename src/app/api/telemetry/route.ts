@@ -10,26 +10,15 @@ const log = createLogger('telemetry-api');
 const execFileAsync = promisify(execFile);
 
 /**
- * Resolve the target GitHub repo for telemetry issues.
- * Priority: TELEMETRY_GITHUB_REPO env var > git remote origin.
+ * The upstream agendo repo where telemetry issues are collected.
+ * This is hardcoded so that forked instances send telemetry to the
+ * maintainer, not to the user's own fork.
+ * Can be overridden via TELEMETRY_GITHUB_REPO env var.
  */
-async function resolveRepo(): Promise<string | null> {
-  // Explicit override
-  const envRepo = process.env.TELEMETRY_GITHUB_REPO;
-  if (envRepo) return envRepo;
+const UPSTREAM_REPO = 'NehoraiHadad/agendo';
 
-  // Auto-detect from git remote
-  try {
-    const { stdout } = await execFileAsync(
-      'gh',
-      ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
-      { timeout: 5000 },
-    );
-    const detected = stdout.trim();
-    return detected || null;
-  } catch {
-    return null;
-  }
+function resolveRepo(): string {
+  return process.env.TELEMETRY_GITHUB_REPO ?? UPSTREAM_REPO;
 }
 
 /**
@@ -37,23 +26,21 @@ async function resolveRepo(): Promise<string | null> {
  * Returns whether GitHub telemetry is available (repo resolvable + gh CLI authenticated).
  */
 export const GET = withErrorBoundary(async () => {
-  const repo = await resolveRepo();
+  const repo = resolveRepo();
 
-  // Check if gh CLI is authenticated
+  // Check if gh CLI is installed and authenticated
   let ghAuthed = false;
-  if (repo) {
-    try {
-      await execFileAsync('gh', ['auth', 'status'], { timeout: 5000 });
-      ghAuthed = true;
-    } catch {
-      // gh not installed or not authenticated
-    }
+  try {
+    await execFileAsync('gh', ['auth', 'status'], { timeout: 5000 });
+    ghAuthed = true;
+  } catch {
+    // gh not installed or not authenticated
   }
 
   return NextResponse.json({
     data: {
-      githubEnabled: Boolean(repo) && ghAuthed,
-      repo: repo ?? null,
+      githubEnabled: ghAuthed,
+      repo,
     },
   });
 });
@@ -64,16 +51,11 @@ export const GET = withErrorBoundary(async () => {
  * Uses `gh issue create` (which uses the user's existing gh auth).
  * No separate token needed — just `gh auth login` once on the machine.
  *
- * Auto-detects repo from git remote if TELEMETRY_GITHUB_REPO is not set.
+ * Sends to the upstream agendo repo (NehoraiHadad/agendo) by default,
+ * so forked instances report back to the maintainer.
  */
 export const POST = withErrorBoundary(async (req: NextRequest) => {
-  const repo = await resolveRepo();
-
-  if (!repo) {
-    throw new ValidationError(
-      'Cannot determine GitHub repo. Set TELEMETRY_GITHUB_REPO or ensure this is a GitHub repo.',
-    );
-  }
+  const repo = resolveRepo();
 
   const report = (await req.json()) as BrainstormTelemetryReport;
 
@@ -85,22 +67,25 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   const issue = formatAsGitHubIssue(report);
 
   try {
-    const { stdout } = await execFileAsync(
-      'gh',
-      [
-        'issue',
-        'create',
-        '--repo',
-        repo,
-        '--title',
-        issue.title,
-        '--body',
-        issue.body,
-        '--label',
-        issue.labels.join(','),
-      ],
-      { timeout: 30000 },
-    );
+    // Try with labels first; if labels don't exist in the repo, retry without
+    const args = ['issue', 'create', '--repo', repo, '--title', issue.title, '--body', issue.body];
+    let stdout: string;
+    try {
+      const result = await execFileAsync('gh', [...args, '--label', issue.labels.join(',')], {
+        timeout: 30000,
+      });
+      stdout = result.stdout;
+    } catch (labelErr) {
+      const msg = labelErr instanceof Error ? labelErr.message : '';
+      if (msg.includes('not found') || msg.includes('label')) {
+        // Labels don't exist in the repo — create issue without them
+        log.info({ repo }, 'Labels not found in repo, creating issue without labels');
+        const result = await execFileAsync('gh', args, { timeout: 30000 });
+        stdout = result.stdout;
+      } else {
+        throw labelErr;
+      }
+    }
 
     // gh issue create prints the URL of the created issue
     const issueUrl = stdout.trim();
