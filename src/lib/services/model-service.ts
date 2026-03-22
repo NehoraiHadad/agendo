@@ -21,14 +21,20 @@ export type Provider = 'anthropic' | 'openai' | 'google' | 'github';
 // In-memory cache (1 hour TTL)
 // ---------------------------------------------------------------------------
 
-const CACHE_TTL_MS = 60 * 60 * 1000;
+/** Cache TTL — short to avoid showing stale models after CLI upgrades.
+ *  Model discovery spawns a child process (~1-5s) so some caching is needed
+ *  to keep the UI snappy, but 5 minutes is short enough that a CLI upgrade
+ *  or new model release is reflected quickly. */
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 interface CacheEntry {
   models: ModelOption[];
   fetchedAt: number;
 }
 const cache = new Map<Provider, CacheEntry>();
 
-function getCached(provider: Provider): ModelOption[] | null {
+function getCached(provider: Provider, skipCache?: boolean): ModelOption[] | null {
+  if (skipCache) return null;
   const entry = cache.get(provider);
   if (!entry) return null;
   if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
@@ -40,6 +46,12 @@ function getCached(provider: Provider): ModelOption[] | null {
 
 function setCache(provider: Provider, models: ModelOption[]) {
   cache.set(provider, { models, fetchedAt: Date.now() });
+}
+
+/** Get the cache timestamp for a provider (for API transparency). */
+export function getCacheAge(provider: Provider): number | null {
+  const entry = cache.get(provider);
+  return entry ? Date.now() - entry.fetchedAt : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,50 +149,6 @@ function safeExecFile(
     cp.execFile(cmd, args, opts, (err, stdout) => {
       if (err) reject(err);
       else resolve(String(stdout));
-    });
-  });
-}
-
-/**
- * Spawn two processes piped together: cmd1 | cmd2.
- * Both use spawn (no shell). Returns cmd2's stdout.
- */
-function safePipe(
-  cmd1: string,
-  args1: string[],
-  cmd2: string,
-  args2: string[],
-  opts: { timeout?: number },
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const cp = require('node:child_process') as typeof import('node:child_process');
-    const timeout = opts.timeout ?? 15000;
-
-    const proc1 = cp.spawn(cmd1, args1, { stdio: ['ignore', 'pipe', 'ignore'] });
-    const proc2 = cp.spawn(cmd2, args2, { stdio: [proc1.stdout, 'pipe', 'ignore'] });
-
-    const chunks: Buffer[] = [];
-    proc2.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-
-    const timer = setTimeout(() => {
-      proc1.kill();
-      proc2.kill();
-      reject(new Error('safePipe timeout'));
-    }, timeout);
-
-    proc2.on('close', () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString('utf-8'));
-    });
-    proc2.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    proc1.on('error', (err) => {
-      clearTimeout(timer);
-      proc2.kill();
-      reject(err);
     });
   });
 }
@@ -365,97 +333,10 @@ async function readClaudeModels(): Promise<ModelOption[]> {
   } catch (err) {
     console.error('[model-service] SDK readClaudeModelsViaSdk failed:', (err as Error).message);
   }
-  return readClaudeModelsLegacy();
-}
-
-/**
- * Legacy fallback: extract model picker entries from the Claude CLI binary.
- *
- * Parses the same picker labels that Claude's own `/model` command shows:
- *   "Opus 4.6 - most capable for complex work"
- *   "Sonnet 4.6 with 1M context window - for long sessions with large codebases"
- *
- * This gives us exactly the models a user would see in the Claude picker —
- * no aliases (claude-opus-4), no legacy versions (claude-opus-4-0), no noise.
- */
-async function readClaudeModelsLegacy(): Promise<ModelOption[]> {
-  try {
-    const binaryPath = await resolveClaudeBinary();
-    if (!binaryPath) return [];
-
-    // Extract picker label lines: "Family X.Y - description" and "Family X.Y with 1M context window - description"
-    const stdout = await safePipe(
-      'strings',
-      [binaryPath],
-      'grep',
-      ['-P', '^(Opus|Sonnet|Haiku) [\\d.]+(?: with 1M context window)? - '],
-      { timeout: 15000 },
-    );
-
-    const pickerRe = /^(Opus|Sonnet|Haiku) ([\d.]+)(?: with 1M context window)? - (.+)$/gm;
-    const models: ModelOption[] = [];
-    const seen = new Set<string>();
-
-    let match: RegExpExecArray | null;
-    while ((match = pickerRe.exec(stdout)) !== null) {
-      const fullLine = match[0];
-      const family = match[1];
-      const version = match[2];
-      const description = match[3].trim();
-      const is1M = fullLine.includes('with 1M context window');
-
-      const vParts = version.split('.');
-      const id = 'claude-' + family.toLowerCase() + '-' + vParts.join('-') + (is1M ? '[1m]' : '');
-
-      if (seen.has(id)) continue;
-      seen.add(id);
-
-      models.push({
-        id,
-        label: `${family} ${version}${is1M ? ' (1M)' : ''}`,
-        description,
-      });
-    }
-
-    // Sort: opus first, then sonnet, then haiku. Within family: highest version first, 1M after base.
-    models.sort((a, b) => {
-      const fa = a.id.includes('opus') ? 0 : a.id.includes('sonnet') ? 1 : 2;
-      const fb = b.id.includes('opus') ? 0 : b.id.includes('sonnet') ? 1 : 2;
-      if (fa !== fb) return fa - fb;
-      const baseA = a.id.replace('[1m]', '');
-      const baseB = b.id.replace('[1m]', '');
-      if (baseA !== baseB) return baseB.localeCompare(baseA);
-      return (a.id.includes('[1m]') ? 1 : 0) - (b.id.includes('[1m]') ? 1 : 0);
-    });
-
-    return models;
-  } catch {
-    return [];
-  }
-}
-
-/** Resolve the claude binary path following symlinks. */
-async function resolveClaudeBinary(): Promise<string | null> {
-  const candidates = [
-    join(homedir(), '.local', 'bin', 'claude'),
-    '/usr/local/bin/claude',
-    '/usr/bin/claude',
-  ];
-  for (const candidate of candidates) {
-    try {
-      return await realpath(candidate);
-    } catch {
-      continue;
-    }
-  }
-  try {
-    const stdout = await safeExecFile('which', ['claude'], { timeout: 5000 });
-    const path = stdout.trim();
-    if (path) return await realpath(path);
-  } catch {
-    // not found
-  }
-  return null;
+  // No legacy fallback — the SDK is the authoritative source.
+  // The old `strings` binary extraction was brittle and could return
+  // stale model IDs that no longer match the API. Empty is better.
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -716,7 +597,9 @@ async function readCopilotModels(): Promise<ModelOption[]> {
   try {
     return await readCopilotModelsFromHelp();
   } catch {
-    return getCopilotModelsFallback();
+    // No hardcoded fallback — return empty rather than stale model IDs.
+    // The CLI is the only source of truth for available models.
+    return [];
   }
 }
 
@@ -778,22 +661,6 @@ function describeCopilotModel(modelId: string): string {
   return modelId;
 }
 
-/** Hardcoded fallback list in case the CLI is not available. */
-function getCopilotModelsFallback(): ModelOption[] {
-  const ids = [
-    'claude-sonnet-4.6',
-    'claude-opus-4.6',
-    'gpt-5.4',
-    'gpt-5.2',
-    'gemini-3-pro-preview',
-  ];
-  return ids.map((id) => ({
-    id,
-    label: formatCopilotLabel(id),
-    description: describeCopilotModel(id),
-  }));
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -815,9 +682,13 @@ export async function getDefaultModel(provider: Provider): Promise<string | null
   return models[0].id;
 }
 
-/** Get models for a given provider by reading from the CLI tool's local data. */
-export async function getModelsForProvider(provider: Provider): Promise<ModelOption[]> {
-  const cached = getCached(provider);
+/** Get models for a given provider by reading from the CLI tool's local data.
+ *  Pass `skipCache: true` to force a fresh query (e.g. user clicked refresh). */
+export async function getModelsForProvider(
+  provider: Provider,
+  opts?: { skipCache?: boolean },
+): Promise<ModelOption[]> {
+  const cached = getCached(provider, opts?.skipCache);
   if (cached) return cached;
 
   let models: ModelOption[];
