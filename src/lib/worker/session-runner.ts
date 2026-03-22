@@ -117,14 +117,19 @@ export async function runSession(
     log.info({ sessionId }, 'Claude SDK MCP servers generated');
   }
 
-  // Phase A2: For Gemini and Codex, inject MCP servers with session identity.
+  // Phase A2: For Gemini, Codex, Copilot, and OpenCode, inject MCP servers with session identity.
   // Gemini: passed via ACP session/new mcpServers field.
   // Codex: passed via SpawnOpts.mcpServers → config/batchWrite in the adapter.
+  // Copilot: passed via SpawnOpts.mcpServers → --additional-mcp-config CLI flag in buildArgs().
+  // OpenCode: passed via SpawnOpts.mcpServers → OPENCODE_CONFIG_CONTENT env var in prepareOpts().
   let mcpServers: AcpMcpServer[] | undefined;
   if (
     agent.mcpEnabled &&
     config.MCP_SERVER_PATH &&
-    (binaryName === 'gemini' || binaryName === 'codex')
+    (binaryName === 'gemini' ||
+      binaryName === 'codex' ||
+      binaryName === 'copilot' ||
+      binaryName === 'opencode')
   ) {
     const identity = {
       sessionId,
@@ -142,7 +147,11 @@ export async function runSession(
   // so only per-session dynamic context (task ID, project name) is injected here.
   const hasMcp =
     agent.mcpEnabled &&
-    (binaryName === 'claude' || binaryName === 'gemini' || binaryName === 'codex');
+    (binaryName === 'claude' ||
+      binaryName === 'gemini' ||
+      binaryName === 'codex' ||
+      binaryName === 'copilot' ||
+      binaryName === 'opencode');
 
   let codexDeveloperInstructions: string | undefined;
 

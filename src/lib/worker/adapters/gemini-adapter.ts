@@ -175,6 +175,25 @@ export class GeminiAdapter extends AbstractAcpAdapter<GeminiEvent> {
   async setModel(model: string): Promise<boolean> {
     if (!this.storedOpts || !this.sessionId) return false;
 
+    // Try in-place ACP model switch first (available since Gemini CLI v0.33.0, PR #20991)
+    const conn = this.transport.getConnection();
+    if (conn) {
+      try {
+        await (
+          conn as unknown as {
+            unstable_setSessionModel: (params: {
+              sessionId: string;
+              modelId: string;
+            }) => Promise<void>;
+          }
+        ).unstable_setSessionModel({ sessionId: this.sessionId, modelId: model });
+        this.storedOpts = { ...this.storedOpts, model };
+        return true;
+      } catch {
+        // ACP set_model not supported on this Gemini CLI version — fall back to process restart
+      }
+    }
+
     this.modelSwitching = true;
     this.storedOpts = { ...this.storedOpts, model };
 

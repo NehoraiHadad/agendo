@@ -882,6 +882,13 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
     }
 
     if (method === 'item/fileChange/requestApproval') {
+      // acceptEdits: auto-approve file changes without prompting the user.
+      // This mirrors Claude's acceptEdits behaviour (Read/Write/Edit auto-allowed)
+      // while still forwarding command execution requests to the UI.
+      if (this.permissionMode === 'acceptEdits') {
+        this.transport.respond(id, { decision: 'accept' });
+        return;
+      }
       const decision = await handleCodexFileChangeApproval(params, this.approvalHandler);
       this.transport.respond(id, { decision });
       return;

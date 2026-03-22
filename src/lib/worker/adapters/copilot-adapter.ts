@@ -31,7 +31,9 @@ export class CopilotAdapter extends AbstractAcpAdapter<CopilotEvent> {
 
     if (opts.permissionMode === 'bypassPermissions' || opts.permissionMode === 'dontAsk') {
       args.push('--yolo');
-    } else if (opts.permissionMode === 'acceptEdits' || opts.permissionMode === 'plan') {
+    } else if (opts.permissionMode === 'plan') {
+      args.push('--deny-tool=write', '--deny-tool=shell');
+    } else if (opts.permissionMode === 'acceptEdits') {
       args.push('--allow-all-tools', '--allow-all-paths');
     }
 

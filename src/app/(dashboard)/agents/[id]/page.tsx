@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { RefreshFlagsButton } from '@/components/agents/refresh-flags-button';
 import { McpConfigCard } from '@/components/agents/mcp-config-card';
+import { CapabilityMatrix } from '@/components/agents/capability-matrix';
 import { getAgentById } from '@/lib/services/agent-service';
 
 export default async function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -100,6 +101,17 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
           </CardContent>
         </Card>
       )}
+
+      <Card className="border-white/[0.06]">
+        <CardHeader>
+          <CardTitle className="text-xs uppercase tracking-widest text-muted-foreground/60 mb-3">
+            Capabilities
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CapabilityMatrix agentId={id} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

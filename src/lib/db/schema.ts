@@ -1,6 +1,7 @@
 import {
   pgTable,
   pgEnum,
+  unique,
   uuid,
   text,
   varchar,
@@ -76,6 +77,29 @@ export const agentKindEnum = pgEnum('agent_kind', ['builtin', 'custom']);
 // How an agent was discovered: auto-scan, preset match, or manual add.
 export const discoveryMethodEnum = pgEnum('discovery_method', ['preset', 'path_scan', 'manual']);
 
+// How a capability was registered: manually created, built-in preset, scanned, etc.
+export const capabilitySourceEnum = pgEnum('capability_source', [
+  'manual',
+  'builtin',
+  'preset',
+  'scan_help',
+  'scan_completion',
+  'scan_fig',
+  'scan_mcp',
+  'scan_man',
+  'llm_generated',
+]);
+
+// Template = fire-and-forget CLI command; Prompt = interactive AI session.
+export const interactionModeEnum = pgEnum('interaction_mode', ['template', 'prompt']);
+
+// Provider compatibility status for a capability.
+export const supportStatusEnum = pgEnum('support_status', [
+  'verified', // Tested and confirmed working
+  'untested', // Not yet tested
+  'unsupported', // Known to not work with this agent
+]);
+
 // ============================================================================
 // Tables
 // ============================================================================
@@ -117,6 +141,56 @@ export const agents = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('idx_agents_workspace').on(table.workspaceId, table.isActive)],
+);
+
+// --- Agent Capabilities -----------------------------------------------------
+// Each row describes one thing an agent can do. Per-agent (not global) because
+// each agent's adapter has different protocol capabilities.
+
+export const agentCapabilities = pgTable(
+  'agent_capabilities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    description: text('description'),
+    source: capabilitySourceEnum('source').notNull().default('manual'),
+    // Determines template vs prompt execution path in the worker.
+    interactionMode: interactionModeEnum('interaction_mode').notNull().default('template'),
+    // Nullable: prompt-mode capabilities have no command template.
+    commandTokens: jsonb('command_tokens').$type<string[]>(),
+    // Prompt-mode: template with placeholders like {{task_title}}.
+    promptTemplate: text('prompt_template'),
+    argsSchema: jsonb('args_schema')
+      .notNull()
+      .$type<import('../types').JsonSchemaObject>()
+      .default({}),
+    requiresApproval: boolean('requires_approval').notNull().default(false),
+    isEnabled: boolean('is_enabled').notNull().default(true),
+    // 0=safe, 1=caution, 2=dangerous, 3=destructive.
+    dangerLevel: smallint('danger_level').notNull().default(0),
+    timeoutSec: integer('timeout_sec').notNull().default(300),
+    maxOutputBytes: integer('max_output_bytes')
+      .notNull()
+      .default(10 * 1024 * 1024), // 10MB
+    // --- Provider compatibility metadata ---
+    supportStatus: supportStatusEnum('support_status').notNull().default('untested'),
+    providerNotes: text('provider_notes'),
+    lastTestedAt: timestamp('last_tested_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('uq_agent_capability_key').on(table.agentId, table.key),
+    index('idx_capabilities_agent').on(table.agentId, table.isEnabled),
+    // Template-mode must have command_tokens; prompt-mode may have null.
+    check(
+      'capability_mode_consistency',
+      sql`(interaction_mode = 'template' AND command_tokens IS NOT NULL) OR (interaction_mode = 'prompt')`,
+    ),
+  ],
 );
 
 // --- Projects ---------------------------------------------------------------

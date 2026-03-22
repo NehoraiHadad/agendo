@@ -158,12 +158,12 @@ describe('CopilotAdapter', () => {
     expect(args).toContain('--allow-all-paths');
   });
 
-  it('passes --allow-all-tools --allow-all-paths for plan mode', () => {
+  it('passes --deny-tool flags for plan mode', () => {
     const adapter = new CopilotAdapter();
     adapter.spawn('test prompt', { ...opts, permissionMode: 'plan' });
     const args = (nodeSpawn as ReturnType<typeof vi.fn>).mock.calls[0][1] as string[];
-    expect(args).toContain('--allow-all-tools');
-    expect(args).toContain('--allow-all-paths');
+    expect(args).toContain('--deny-tool=write');
+    expect(args).toContain('--deny-tool=shell');
   });
 
   it('passes --model when model is specified', () => {
