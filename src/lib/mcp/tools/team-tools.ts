@@ -185,7 +185,12 @@ const memberSchema = z.object({
     .enum(['default', 'bypassPermissions', 'acceptEdits'])
     .optional()
     .describe('Permission mode (default: bypassPermissions)'),
-  model: z.string().optional().describe('Override AI model for this member'),
+  model: z
+    .string()
+    .optional()
+    .describe(
+      'AI model override. IMPORTANT: match model to task complexity. Use "haiku" for simple/quick tasks (file ops, formatting, counting, small edits). Use "sonnet" for moderate tasks (feature implementation, refactoring, code review). Use "opus" only for complex reasoning (architecture design, multi-file features, debugging subtle issues). Omitting defaults to the agent\'s configured model (often the most expensive).',
+    ),
 });
 
 export function registerTeamTools(server: McpServer): void {
