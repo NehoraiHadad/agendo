@@ -1072,6 +1072,66 @@ export class BrainstormOrchestrator {
     return `## Moderator Feedback (Wave ${wave})\n${lines.join('\n')}`;
   }
 
+  /**
+   * Build a bounded metadata section for the synthesis prompt.
+   * Includes wave quality scores, pass history, user feedback signals,
+   * and a short discussion arc summary.
+   * Capped at ~500 tokens to avoid bloating the synthesis context.
+   */
+  private buildSynthesisMetadata(): string {
+    const sections: string[] = [];
+
+    // --- Discussion overview ---
+    const totalWaves = this.currentWave + 1;
+    const activeCount = this.participants.filter((p) => !p.hasLeft).length;
+    const passedCount = this.participants.filter((p) => p.hasPassed && !p.hasLeft).length;
+    sections.push(
+      `DISCUSSION METADATA:\n- Total waves: ${totalWaves}\n- Participants: ${activeCount} (${passedCount} passed/converged)`,
+    );
+
+    // --- Wave quality scores (compact, last 10 waves max) ---
+    if (this.waveQualityScores.length > 0) {
+      const scores = this.waveQualityScores.slice(-10);
+      const scoreLines = scores.map(
+        (s) =>
+          `  Wave ${s.wave}: novelty=${s.newIdeasCount}, repeat=${(s.repeatRatio * 100).toFixed(0)}%, passes=${s.passCount}, agreement=${(s.agreementRatio * 100).toFixed(0)}%`,
+      );
+      sections.push(`Wave Quality:\n${scoreLines.join('\n')}`);
+    }
+
+    // --- Pass history ---
+    const passHistory: string[] = [];
+    for (const p of this.participants) {
+      if (p.hasPassed && !p.hasLeft) {
+        passHistory.push(`  ${p.agentName}: passed`);
+      } else if (p.hasLeft) {
+        passHistory.push(`  ${p.agentName}: left/evicted`);
+      }
+    }
+    if (passHistory.length > 0) {
+      sections.push(`Participant Status:\n${passHistory.join('\n')}`);
+    }
+
+    // --- User feedback signals ---
+    const feedbackEntries: string[] = [];
+    for (const [wave, entries] of this.feedbackMap) {
+      const agentNameMap = new Map(this.participants.map((p) => [p.agentId, p.agentName]));
+      for (const f of entries) {
+        const name = agentNameMap.get(f.agentId) ?? 'User';
+        const signalLabel =
+          f.signal === 'thumbs_up' ? 'positive' : f.signal === 'thumbs_down' ? 'negative' : 'focus';
+        feedbackEntries.push(`  Wave ${wave}: ${name} → ${signalLabel}`);
+      }
+    }
+    if (feedbackEntries.length > 0) {
+      // Cap to last 15 entries
+      const capped = feedbackEntries.slice(-15);
+      sections.push(`User Feedback Signals:\n${capped.join('\n')}`);
+    }
+
+    return sections.join('\n\n');
+  }
+
   /** Register the control message handler in the Worker HTTP dispatch map. */
   private subscribeToControl(): void {
     const handler = (rawPayload: string) => {
@@ -2459,9 +2519,13 @@ export class BrainstormOrchestrator {
       const deliverableType = roomConfig?.deliverableType as DeliverableType | undefined;
       const synthesisTemplate = buildSynthesisPrompt(deliverableType);
 
+      const synthesisMetadata = this.buildSynthesisMetadata();
+
       const synthesisPrompt = `You are synthesizing a brainstorm discussion.
 
 TOPIC: ${room.topic}
+
+${synthesisMetadata}
 
 DISCUSSION TRANSCRIPT:
 ${transcript}
