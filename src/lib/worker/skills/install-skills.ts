@@ -34,7 +34,12 @@ const SKILL_META: Record<string, { dirName: string; description: string }> = {
     dirName: 'agendo',
     description: `Expert guidance for working inside Agendo task management sessions.
   Use when mcp__agendo__* tools are available. Covers task lifecycle, progress tracking,
-  multi-agent orchestration, status transitions, planning mode, and permission modes.`,
+  multi-agent orchestration, status transitions, planning mode, and permission modes.
+  Activate this skill whenever the system prompt mentions "Agendo", "task_id", or
+  "mcp__agendo__", or when deferred tools include agendo MCP tools like get_my_task,
+  update_task, create_task, add_progress_note, start_agent_session, or save_plan.
+  Also use when coordinating work across multiple AI agents, managing task status
+  transitions (todo/in_progress/done/blocked), or spawning agent sessions.`,
   },
   'artifact-design': {
     dirName: 'agendo-artifact-design',
