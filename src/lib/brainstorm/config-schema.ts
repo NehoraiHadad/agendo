@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { BrainstormConfig } from '@/lib/db/schema';
 import { FALLBACK_MODES, FALLBACK_TRIGGER_ERRORS } from '@/lib/fallback/policy';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('brainstorm-config');
 
 export const brainstormFallbackPolicySchema = z
   .object({
@@ -24,7 +27,22 @@ export const brainstormConfigSchema: z.ZodType<BrainstormConfig> = z
     wave0ExtraTimeoutSec: z.number().int().min(0).max(600).optional(),
     convergenceMode: z.enum(['unanimous', 'majority']).optional(),
     minWavesBeforePass: z.number().int().min(0).max(50).optional(),
-    requiredObjections: z.number().int().min(0).max(50).optional(),
+    /** @deprecated Accepted for backward compat but not enforced. Will be removed. */
+    requiredObjections: z
+      .number()
+      .int()
+      .min(0)
+      .max(50)
+      .optional()
+      .transform((val) => {
+        if (val !== undefined && val > 0) {
+          log.warn(
+            { requiredObjections: val },
+            'requiredObjections is deprecated and not enforced — value will be ignored',
+          );
+        }
+        return val;
+      }),
     synthesisMode: z.enum(['single', 'validated']).optional(),
     synthesisAgentId: z.string().uuid().optional(),
     language: z.string().trim().min(1).max(100).optional(),

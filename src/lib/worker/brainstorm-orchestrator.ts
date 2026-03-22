@@ -223,7 +223,7 @@ export class BrainstormOrchestrator {
   convergenceMode: 'unanimous' | 'majority' = 'unanimous';
   /** Minimum wave number before PASS responses are honored. Default 2. */
   minWavesBeforePass = 2;
-  /** Number of required objections to block convergence (default 0) */
+  /** @deprecated Not enforced in convergence logic. Kept for backward compat. */
   requiredObjections = 0;
   /** Synthesis mode: 'single' = one agent, 'validated' = synthesize then validate */
   synthesisMode: 'single' | 'validated' = 'single';

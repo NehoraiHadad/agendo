@@ -61,7 +61,7 @@ describe('PLAYBOOK_PRESETS', () => {
     expect(preset.label).toBe('Architecture Review');
     expect(preset.maxWaves).toBe(10);
     expect(preset.config.synthesisMode).toBe('validated');
-    expect(preset.config.requiredObjections).toBe(2);
+    // requiredObjections removed from preset (deprecated — never enforced)
   });
 
   it('Deep Debate preset has correct values', () => {

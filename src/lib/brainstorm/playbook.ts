@@ -31,6 +31,7 @@ export const PLAYBOOK_DEFAULTS: Required<
   wave0ExtraTimeoutSec: 180,
   convergenceMode: 'unanimous',
   minWavesBeforePass: 2,
+  /** @deprecated Not enforced in convergence logic. Kept for backward compat. */
   requiredObjections: 0,
   synthesisMode: 'single',
   reactiveInjection: false,
@@ -72,11 +73,10 @@ export const PLAYBOOK_PRESETS: PlaybookPreset[] = [
   {
     id: 'architecture-review',
     label: 'Architecture Review',
-    description: 'Thorough review with validated synthesis — 10 waves, requires 2 objections',
+    description: 'Thorough review with validated synthesis — 10 waves',
     maxWaves: 10,
     config: {
       synthesisMode: 'validated',
-      requiredObjections: 2,
     },
   },
   {
