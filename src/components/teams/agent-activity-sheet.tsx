@@ -80,7 +80,8 @@ export function AgentActivitySheet({
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="right"
-        className="w-[380px] sm:w-[420px] flex flex-col p-0"
+        showCloseButton={false}
+        className="w-[380px] sm:w-[420px] sm:max-w-[420px] flex flex-col p-0 gap-0 overflow-hidden"
         style={{
           background: 'rgba(8,8,16,0.98)',
           borderLeft: '1px solid rgba(255,255,255,0.07)',
@@ -152,21 +153,19 @@ export function AgentActivitySheet({
         </SheetHeader>
 
         {/* ── Chat view ── */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {sessionId ? (
-            <SessionChatView
-              sessionId={sessionId}
-              stream={stream}
-              currentStatus={liveState?.status ?? null}
-              agentSlug={member.agentType}
-              compact
-            />
-          ) : (
-            <div className="flex items-center justify-center h-32 text-zinc-700 text-[10px] font-mono tracking-widest">
-              NO SESSION CONNECTED
-            </div>
-          )}
-        </div>
+        {sessionId ? (
+          <SessionChatView
+            sessionId={sessionId}
+            stream={stream}
+            currentStatus={liveState?.status ?? null}
+            agentSlug={member.agentType}
+            compact
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-zinc-700 text-[10px] font-mono tracking-widest">
+            NO SESSION CONNECTED
+          </div>
+        )}
 
         {/* ── Intervention controls ── */}
         {sessionId && (
