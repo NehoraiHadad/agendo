@@ -580,7 +580,12 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       options: { toolUseID: string; signal: AbortSignal },
     ): Promise<PermissionResult> => {
       if (!this.approvalHandler) {
-        return { behavior: 'allow' };
+        // Always include updatedInput — the SDK's runtime Zod schema (Vr6)
+        // requires it even though the TypeScript type marks it optional.
+        // Without it, tools targeting files outside the project root (e.g.
+        // ~/.claude/skills/) fail with a ZodError because the SDK's built-in
+        // PreToolUse hooks don't auto-approve those paths.
+        return { behavior: 'allow', updatedInput: input };
       }
 
       const decision = await this.approvalHandler({
@@ -589,28 +594,33 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
         toolInput: input,
       });
 
-      return this.mapDecisionToPermissionResult(decision);
+      return this.mapDecisionToPermissionResult(decision, input);
     };
   }
 
-  private mapDecisionToPermissionResult(decision: PermissionDecision): PermissionResult {
+  private mapDecisionToPermissionResult(
+    decision: PermissionDecision,
+    originalInput: Record<string, unknown>,
+  ): PermissionResult {
     if (decision === 'deny') {
       return { behavior: 'deny', message: 'User denied' };
     }
 
+    // Always include updatedInput — the SDK's runtime Zod schema (Vr6)
+    // requires it even though the TypeScript type marks it optional.
     if (decision === 'allow' || decision === 'allow-session') {
-      return { behavior: 'allow' };
+      return { behavior: 'allow', updatedInput: originalInput };
     }
 
     // Object form with potential updatedInput
     if (typeof decision === 'object') {
       return {
         behavior: 'allow',
-        ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}),
+        updatedInput: decision.updatedInput ?? originalInput,
       };
     }
 
     // Fallback
-    return { behavior: 'allow' };
+    return { behavior: 'allow', updatedInput: originalInput };
   }
 }
