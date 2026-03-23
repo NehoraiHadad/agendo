@@ -118,8 +118,33 @@ export interface RawAssistantRecord {
   message: RawMessageAssistant;
 }
 
-/** Union of the two record types we care about. */
+/**
+ * A queue-operation record from the JSONL file.
+ *
+ * Claude SDK writes these when messages are enqueued/dequeued/removed via
+ * the message queue (sendMessage). They represent the queue lifecycle:
+ *   - enqueue: user message entered the queue (may be consumed mid-turn
+ *              as a system-reminder, or dequeued as the next user turn)
+ *   - dequeue: message was consumed from the queue
+ *   - remove:  message was cancelled before consumption
+ *
+ * These are NOT part of the uuid-linked conversation chain — they exist
+ * alongside it with their own timestamp-based ordering.
+ */
+export interface RawQueueOperationRecord {
+  type: 'queue-operation';
+  operation: 'enqueue' | 'dequeue' | 'remove';
+  timestamp: string;
+  sessionId: string;
+  /** Message content — only present on 'enqueue' operations. */
+  content?: string;
+}
+
+/** Union of the conversation record types. */
 export type RawRecord = RawUserRecord | RawAssistantRecord;
+
+/** Union including queue operations for the full JSONL parse. */
+type RawJsonlRecord = RawRecord | RawQueueOperationRecord;
 
 // ---------------------------------------------------------------------------
 // Types matching the Claude SDK's SessionMessage shape (typed as unknown)
@@ -140,12 +165,11 @@ interface SessionMessage {
 
 /**
  * Encode a working directory path to the format Claude uses for project directories.
- * Claude encodes the cwd by replacing all `/` with `-` and prepending `-`.
+ * Claude replaces all `/` with `-`. The leading `/` naturally becomes the leading `-`.
  * Example: `/home/ubuntu/projects/agendo` → `-home-ubuntu-projects-agendo`
  */
 function encodeProjectPath(cwd: string): string {
-  // Replace all forward slashes with dashes, then prepend a dash
-  return '-' + cwd.replace(/\//g, '-');
+  return cwd.replace(/\//g, '-');
 }
 
 /**
@@ -185,6 +209,19 @@ function isConversationRecord(value: unknown): value is RawRecord {
   if (typeof obj['message'] !== 'object' || obj['message'] === null) return false;
 
   return true;
+}
+
+/**
+ * Type guard: check if a parsed JSON value is a queue-operation record.
+ */
+function isQueueOperationRecord(value: unknown): value is RawQueueOperationRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    obj['type'] === 'queue-operation' &&
+    typeof obj['operation'] === 'string' &&
+    typeof obj['timestamp'] === 'string'
+  );
 }
 
 /**
@@ -256,10 +293,14 @@ function buildConversationChain(allRecords: RawRecord[]): RawRecord[] {
  * @param sessionRef - The Claude session ID (used as the filename stem).
  * @param cwd - The working directory the session was started in. Used to locate
  *   the project subdirectory under ~/.claude/projects/.
- * @returns Ordered array of user + assistant records (oldest first), or null if
- *   the file cannot be found or parsed.
+ * @returns Ordered array of user + assistant + queue-operation records (oldest
+ *   first), or null if the file cannot be found or parsed. Queue operations
+ *   are merged into the chain at their chronological positions.
  */
-export function readClaudeJsonl(sessionRef: string, cwd?: string): RawRecord[] | null {
+export function readClaudeJsonl(
+  sessionRef: string,
+  cwd?: string,
+): ReadonlyArray<RawRecord | RawQueueOperationRecord> | null {
   if (!cwd) return null;
 
   const filePath = buildJsonlPath(sessionRef, cwd);
@@ -272,8 +313,12 @@ export function readClaudeJsonl(sessionRef: string, cwd?: string): RawRecord[] |
     return null;
   }
 
-  // Parse each non-empty line as JSON, skip lines that fail to parse
+  // Parse each non-empty line as JSON, collecting conversation records and
+  // queue-operation records separately. Queue operations (enqueue/dequeue/remove)
+  // are not part of the uuid-linked conversation chain — they are merged by
+  // timestamp after the chain is built.
   const allRecords: RawRecord[] = [];
+  const queueOps: RawQueueOperationRecord[] = [];
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -281,16 +326,114 @@ export function readClaudeJsonl(sessionRef: string, cwd?: string): RawRecord[] |
       const parsed: unknown = JSON.parse(trimmed);
       if (isConversationRecord(parsed)) {
         allRecords.push(parsed);
+      } else if (isQueueOperationRecord(parsed)) {
+        queueOps.push(parsed);
       }
     } catch {
       // Skip malformed lines (partial writes, corruption, etc.)
     }
   }
 
-  if (allRecords.length === 0) return null;
+  if (allRecords.length === 0 && queueOps.length === 0) return null;
 
   const chain = buildConversationChain(allRecords);
-  return chain.length > 0 ? chain : null;
+  if (chain.length === 0 && queueOps.length === 0) return null;
+
+  // Merge queue operations into the conversation chain at their chronological
+  // positions. This surfaces mid-turn user messages and cancellations that
+  // would otherwise be invisible in the CLI history.
+  return mergeQueueOperations(chain, queueOps);
+}
+
+// ---------------------------------------------------------------------------
+// Queue operation merging
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge queue-operation records into the conversation chain at the correct
+ * chronological positions.
+ *
+ * Queue operations represent the message queue lifecycle:
+ *   - enqueue: user sent a message (may be mid-turn or awaiting_input)
+ *   - dequeue: Claude consumed the message from the queue
+ *   - remove:  user cancelled the message before consumption
+ *
+ * An enqueue immediately followed by a dequeue (same second) means the message
+ * became a regular user turn — it already exists as a `user` record in the chain.
+ * These are filtered out to avoid duplicates.
+ *
+ * Remaining enqueue records are mid-turn messages that Claude received as
+ * system-reminders — they need to be inserted into the chain so the UI shows them.
+ *
+ * Remove records are cancelled messages — inserted as synthetic user records
+ * so the UI can show "message cancelled" indicators.
+ */
+function mergeQueueOperations(
+  chain: RawRecord[],
+  queueOps: RawQueueOperationRecord[],
+): RawJsonlRecord[] {
+  if (queueOps.length === 0) return chain;
+
+  // Build a set of enqueue timestamps that have a matching dequeue within 1 second.
+  // These messages became regular user turns and already exist in the chain.
+  const dequeuedTimestamps = new Set<string>();
+  for (let i = 0; i < queueOps.length; i++) {
+    const op = queueOps[i];
+    if (op.operation !== 'enqueue') continue;
+    // Look for a dequeue within 1 second after this enqueue
+    const enqueueTime = new Date(op.timestamp).getTime();
+    for (let j = i + 1; j < queueOps.length; j++) {
+      const next = queueOps[j];
+      const nextTime = new Date(next.timestamp).getTime();
+      if (nextTime - enqueueTime > 1000) break; // too far away
+      if (next.operation === 'dequeue') {
+        dequeuedTimestamps.add(op.timestamp);
+        break;
+      }
+    }
+  }
+
+  // Filter to only the queue ops we need to insert:
+  //   - enqueue WITHOUT immediate dequeue (mid-turn messages)
+  //   - remove (cancelled messages)
+  const toInsert = queueOps.filter((op) => {
+    if (op.operation === 'enqueue' && op.content) {
+      return !dequeuedTimestamps.has(op.timestamp);
+    }
+    if (op.operation === 'remove') {
+      return true;
+    }
+    return false;
+  });
+
+  if (toInsert.length === 0) return chain;
+
+  // Merge by timestamp: interleave queue ops into the conversation chain.
+  const merged: RawJsonlRecord[] = [];
+  let qIdx = 0;
+
+  for (const record of chain) {
+    const recordTs = new Date(record.timestamp).getTime();
+    // Insert all queue ops that come before this record
+    while (qIdx < toInsert.length) {
+      const opTs = new Date(toInsert[qIdx].timestamp).getTime();
+      if (opTs <= recordTs) {
+        merged.push(toInsert[qIdx]);
+        qIdx++;
+      } else {
+        break;
+      }
+    }
+    merged.push(record);
+  }
+
+  // Append any remaining queue ops after the last chain record
+  while (qIdx < toInsert.length) {
+    merged.push(toInsert[qIdx]);
+    qIdx++;
+  }
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +449,9 @@ export function readClaudeJsonl(sessionRef: string, cwd?: string): RawRecord[] |
  * data (timestamps, model, stop_reason) improves content fidelity but the
  * payload shape remains the same as mapClaudeSessionMessages().
  */
-export function mapClaudeJsonlToEvents(records: RawRecord[]): AgendoEventPayload[] {
+export function mapClaudeJsonlToEvents(
+  records: ReadonlyArray<RawRecord | RawQueueOperationRecord>,
+): AgendoEventPayload[] {
   const events: AgendoEventPayload[] = [];
 
   // Build a map of tool_use_id → tool_result content for pairing.
@@ -333,6 +478,8 @@ export function mapClaudeJsonlToEvents(records: RawRecord[]): AgendoEventPayload
       events.push(...mapJsonlUserRecord(record));
     } else if (record.type === 'assistant') {
       events.push(...mapJsonlAssistantRecord(record, toolResults));
+    } else if (record.type === 'queue-operation') {
+      events.push(...mapQueueOperationRecord(record));
     }
   }
 
@@ -378,6 +525,18 @@ function mapJsonlUserRecord(record: RawUserRecord): AgendoEventPayload[] {
     return [{ type: 'user:message', text, ...(hasImage ? { hasImage: true } : {}) }];
   }
 
+  return [];
+}
+
+function mapQueueOperationRecord(record: RawQueueOperationRecord): AgendoEventPayload[] {
+  if (record.operation === 'enqueue' && record.content) {
+    const cleaned = stripPreamble(record.content);
+    if (!cleaned) return [];
+    return [{ type: 'user:message', text: cleaned }];
+  }
+  // 'remove' operations could map to user:message-cancelled, but they lack
+  // a clientId (required by the event type). Skip for now — the enqueue
+  // event is the important one to show.
   return [];
 }
 
