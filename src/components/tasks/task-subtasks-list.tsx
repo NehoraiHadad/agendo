@@ -11,7 +11,8 @@ import {
   updateTaskStatusAction,
 } from '@/lib/actions/task-actions';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
-import { ChevronDown, ChevronRight, GitBranch, X as XIcon } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, Monitor, X as XIcon } from 'lucide-react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import type { Task } from '@/lib/types';
 import type { TaskBoardItem } from '@/lib/services/task-service';
@@ -273,9 +274,19 @@ export function TaskSubtasksList({ taskId }: TaskSubtasksListProps) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Subtasks</h3>
-        <Button variant="ghost" size="sm" onClick={() => setIsAdding(true)}>
-          + Add
-        </Button>
+        <div className="flex items-center gap-1">
+          {subtasks.length > 0 && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link href={`/teams/${taskId}`} className="gap-1.5">
+                <Monitor className="h-3.5 w-3.5" />
+                Canvas
+              </Link>
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => setIsAdding(true)}>
+            + Add
+          </Button>
+        </div>
       </div>
 
       {subtasks.map((sub) => (

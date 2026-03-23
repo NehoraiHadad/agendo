@@ -24,6 +24,7 @@ import {
   GitFork,
   Network,
   MessageCircleQuestion,
+  Monitor,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -133,6 +134,7 @@ interface SessionDetailClientProps {
   projectName: string;
   parentAgentName: string;
   parentTurns: number | null;
+  teamCanvasTaskId: string | null;
 }
 
 function SessionStatusIndicator({ status }: { status: SessionStatus | null }) {
@@ -159,6 +161,7 @@ export function SessionDetailClient({
   projectName,
   parentAgentName,
   parentTurns,
+  teamCanvasTaskId,
 }: SessionDetailClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -183,6 +186,11 @@ export function SessionDetailClient({
   const currentStatus = stream.sessionStatus ?? session.status;
   const logStream = useSessionLogStream(session.id);
   const teamState = useTeamState(stream.events);
+  // Detect Agendo MCP teams (separate from Claude-native teams)
+  const agendoTeamTaskId = useMemo(() => {
+    const event = stream.events.find((e) => e.type === 'agendo:team-created');
+    return event?.type === 'agendo:team-created' ? event.taskId : null;
+  }, [stream.events]);
   const gitContext = useGitContext(stream.events);
   const contention = useFileContention(stream.events);
   const setContention = useContentionStore((s) => s.setContention);
@@ -536,6 +544,18 @@ export function SessionDetailClient({
                   <Users className="size-3" />
                   <span>{teamState.members.length} agents</span>
                 </button>
+              )}
+
+              {/* Team Canvas link — shown when this session spawned an Agendo team */}
+              {(agendoTeamTaskId ?? teamCanvasTaskId) && (
+                <Link
+                  href={`/teams/${agendoTeamTaskId ?? teamCanvasTaskId}`}
+                  title="Open Team Canvas"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 border transition-all bg-purple-500/10 border-purple-500/20 text-purple-400 hover:bg-purple-500/20 hover:border-purple-500/30"
+                >
+                  <Monitor className="size-3" />
+                  <span>Canvas</span>
+                </Link>
               )}
 
               {/* File contention alert pill */}

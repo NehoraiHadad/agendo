@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, count } from 'drizzle-orm';
 import { SessionDetailWrapper } from './session-detail-wrapper';
 
 export default async function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -28,6 +28,28 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
   if (rows.length === 0) notFound();
 
   const { session, agentName, agentSlug, agentBinaryPath, taskTitle, projectName } = rows[0];
+
+  // Resolve Team Canvas taskId — works for both team leads and team members.
+  // Relies on parentSessionId being set by create_team MCP tool.
+  // - Member: has parentSessionId → canvas taskId = parent session's taskId
+  // - Lead: has child sessions (their parentSessionId = this session) → own taskId
+  let teamCanvasTaskId: string | null = null;
+  if (session.parentSessionId) {
+    const parentSessionRows = await db
+      .select({ taskId: sessions.taskId })
+      .from(sessions)
+      .where(eq(sessions.id, session.parentSessionId))
+      .limit(1);
+    teamCanvasTaskId = parentSessionRows[0]?.taskId ?? null;
+  } else if (session.taskId) {
+    const childCountRows = await db
+      .select({ cnt: count() })
+      .from(sessions)
+      .where(eq(sessions.parentSessionId, session.id));
+    if ((childCountRows[0]?.cnt ?? 0) > 0) {
+      teamCanvasTaskId = session.taskId;
+    }
+  }
 
   // Fetch parent session agent name for lineage display
   let parentAgentName = '';
@@ -56,6 +78,7 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       projectName={projectName ?? ''}
       parentAgentName={parentAgentName}
       parentTurns={parentTurns}
+      teamCanvasTaskId={teamCanvasTaskId}
     />
   );
 }

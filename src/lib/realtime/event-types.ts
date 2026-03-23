@@ -295,6 +295,18 @@ export type AgendoEvent =
         branch: string;
         taskTitle?: string;
       }>;
+    })
+  /** Emitted when MCP create_team spawns an Agendo team (distinct from Claude-native TeamCreate) */
+  | (EventBase & {
+      type: 'agendo:team-created';
+      /** Parent task ID — used to navigate to /teams/[taskId] canvas */
+      taskId: string;
+      members: Array<{
+        agent: string;
+        role: string;
+        sessionId: string;
+        subtaskId: string;
+      }>;
     });
 
 export type SessionStatus = 'active' | 'awaiting_input' | 'idle' | 'ended';

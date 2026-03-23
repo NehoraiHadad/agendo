@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useFetch } from '@/hooks/use-fetch';
-import { Trash2, X } from 'lucide-react';
+import { Trash2, X, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
@@ -67,6 +68,16 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
               Task Details
             </p>
             <div className="flex items-center gap-1">
+              {details && details.subtaskCount > 0 && (
+                <Link
+                  href={`/teams/${taskId}`}
+                  className="rounded-md p-1.5 text-muted-foreground/60 hover:text-purple-400 hover:bg-purple-500/10 transition-colors"
+                  aria-label="Open in Team Canvas"
+                  title="Open in Team Canvas"
+                >
+                  <Monitor className="h-4 w-4" />
+                </Link>
+              )}
               <button
                 onClick={() => setDeleteOpen(true)}
                 className="rounded-md p-1.5 text-muted-foreground/60 hover:text-destructive hover:bg-white/[0.06] transition-colors"

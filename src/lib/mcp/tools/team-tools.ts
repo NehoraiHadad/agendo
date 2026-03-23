@@ -80,6 +80,7 @@ export async function handleCreateTeam(args: {
     })) as { id: string };
 
     // 2. Spawn agent session on the subtask
+    const leadSessionId = process.env.AGENDO_SESSION_ID;
     const sessionBody: Record<string, unknown> = {
       taskId: subtask.id,
       agentId,
@@ -87,6 +88,7 @@ export async function handleCreateTeam(args: {
       permissionMode: member.permissionMode ?? 'bypassPermissions',
     };
     if (member.model) sessionBody.model = member.model;
+    if (leadSessionId) sessionBody.parentSessionId = leadSessionId;
 
     const session = (await apiCall('/api/sessions', {
       method: 'POST',

@@ -234,6 +234,32 @@
   100% { offset-distance: 100%; opacity: 0; }
 }
 
+/* Live agent card — ambient glow breathing for active status */
+@keyframes cardGlowEmerald {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(16,185,129,0.35), 0 0 14px rgba(16,185,129,0.12), inset 0 1px 0 rgba(16,185,129,0.04); }
+  50%       { box-shadow: 0 0 0 1px rgba(16,185,129,0.7),  0 0 28px rgba(16,185,129,0.3),  inset 0 1px 0 rgba(16,185,129,0.08); }
+}
+
+/* Live agent card — amber glow for awaiting_input */
+@keyframes cardGlowAmber {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(245,158,11,0.35), 0 0 12px rgba(245,158,11,0.1); }
+  50%       { box-shadow: 0 0 0 1px rgba(245,158,11,0.65), 0 0 22px rgba(245,158,11,0.22); }
+}
+
+/* Tool activity pulse dot */
+@keyframes toolPulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.4); }
+}
+
+/* Scan sweep — horizontal bar for thinking state */
+@keyframes scanSweep {
+  0%   { transform: translateX(-100%); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateX(200%); opacity: 0; }
+}
+
 /* ─── Utility classes ─────────────────────────────────────── */
 
 @layer utilities {

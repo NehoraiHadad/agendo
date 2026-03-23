@@ -27,6 +27,7 @@ interface Props {
   projectName: string;
   parentAgentName: string;
   parentTurns: number | null;
+  teamCanvasTaskId: string | null;
 }
 
 export function SessionDetailWrapper(props: Props) {

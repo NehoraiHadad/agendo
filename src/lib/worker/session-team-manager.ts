@@ -44,6 +44,7 @@ export class SessionTeamManager {
   private configPollTimer: ReturnType<typeof setInterval> | null = null;
   private lastMemberCount = 0;
   private pendingCreateId: string | null = null;
+  private pendingMcpCreateId: string | null = null;
   /** Pending subagent Tool call: toolUseId → pending info. */
   private pendingSubagentByToolUseId: Map<string, PendingSubagent> = new Map();
   /**
@@ -73,8 +74,13 @@ export class SessionTeamManager {
    * Must be called for every agent:tool-start and agent:tool-end event.
    */
   onToolEvent(event: AgendoEventPayload): void {
+    // --- Claude-native TeamCreate (file-based ~/.claude/teams/) ---
     if (event.type === 'agent:tool-start' && event.toolName === 'TeamCreate') {
       this.pendingCreateId = event.toolUseId;
+    }
+    // --- Agendo MCP create_team (API-based, no ~/.claude/teams/) ---
+    if (event.type === 'agent:tool-start' && event.toolName === 'mcp__agendo__create_team') {
+      this.pendingMcpCreateId = event.toolUseId;
     }
     if (event.type === 'agent:tool-end' && this.pendingCreateId === event.toolUseId) {
       this.pendingCreateId = null;
@@ -84,6 +90,12 @@ export class SessionTeamManager {
       const resultText = this.extractTextContent(event.content);
       const teamNameMatch = resultText.match(/"team_name"\s*:\s*"([^"]+)"/);
       this.tryAttach(teamNameMatch?.[1] ?? null);
+    }
+    if (event.type === 'agent:tool-end' && this.pendingMcpCreateId === event.toolUseId) {
+      this.pendingMcpCreateId = null;
+      // Agendo MCP create_team doesn't use ~/.claude/teams/ — emit team:config
+      // directly from the tool result JSON.
+      this.emitMcpTeamConfig(event);
     }
     if (event.type === 'agent:tool-start' && event.toolName === 'TeamDelete') {
       if (this.monitor) {
@@ -376,6 +388,40 @@ export class SessionTeamManager {
       teamName: config.name,
       members: config.members,
     });
+  }
+
+  /**
+   * For Agendo MCP create_team: emit agendo:team-created (NOT team:config).
+   * This is a separate UI path — Canvas (/teams/[taskId]) vs Claude-native team panel.
+   */
+  private emitMcpTeamConfig(event: AgendoEventPayload): void {
+    if (event.type !== 'agent:tool-end') return;
+    const resultText = this.extractTextContent(event.content);
+
+    let parsed: {
+      teamId?: string;
+      members?: Array<{ agent: string; role: string; sessionId: string; subtaskId: string }>;
+    };
+    try {
+      parsed = JSON.parse(resultText) as typeof parsed;
+    } catch {
+      log.warn({ resultText }, 'Failed to parse MCP create_team result');
+      return;
+    }
+
+    if (!parsed.members || parsed.members.length === 0 || !parsed.teamId) return;
+
+    void this.cb.emitEvent({
+      type: 'agendo:team-created',
+      taskId: parsed.teamId,
+      members: parsed.members,
+    });
+
+    log.info(
+      { taskId: parsed.teamId, memberCount: parsed.members.length, sessionId: this.cb.sessionId },
+      'Agendo team created (MCP)',
+    );
+    this.cb.recordActivity();
   }
 
   private extractTextContent(content: unknown): string {

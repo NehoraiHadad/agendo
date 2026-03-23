@@ -17,6 +17,7 @@ import {
   Search,
   Lightbulb,
   HelpCircle,
+  Monitor,
 } from 'lucide-react';
 import { VersionBadge } from '@/components/version-badge';
 import { cn } from '@/lib/utils';
@@ -71,6 +72,7 @@ const navItems = [
     icon: MessageSquare,
     badgeKey: 'activeSessions' as const,
   },
+  { href: '/teams/new', label: 'Teams', icon: Monitor, badgeKey: null },
   { href: '/brainstorms', label: 'Brainstorms', icon: Lightbulb, badgeKey: null },
   { href: '/plans', label: 'Plans', icon: FileText, badgeKey: null },
   { href: '/workspace', label: 'Workspace', icon: PanelTop, badgeKey: null },
