@@ -234,6 +234,12 @@ export function buildDisplayItems(
   // can offer a branch button (Claude only — only set when messageUuid is present).
   let lastAgentResultUuid: string | undefined;
 
+  // Track the index of the current turn's assistant/thinking bubble so that
+  // interleaved user:message events (sent mid-stream) don't break merging.
+  // Reset on agent:result (turn complete), NOT on user:message.
+  let currentAssistantIdx: number | null = null;
+  let currentThinkingIdx: number | null = null;
+
   for (const ev of events) {
     switch (ev.type) {
       case 'agent:text': {
@@ -248,9 +254,9 @@ export function buildDisplayItems(
 
         if (!cleanText) break; // pure protocol noise — skip text bubble
 
-        const last = items[items.length - 1];
-        if (last && last.kind === 'assistant') {
-          const lastPart = last.parts[last.parts.length - 1];
+        const target = currentAssistantIdx != null ? items[currentAssistantIdx] : undefined;
+        if (target && target.kind === 'assistant') {
+          const lastPart = target.parts[target.parts.length - 1];
           if (lastPart && lastPart.kind === 'text' && lastPart.fromDelta) {
             // Replace the delta-accumulated text with the complete text.
             lastPart.text = cleanText;
@@ -259,9 +265,10 @@ export function buildDisplayItems(
             // Append to existing non-delta text (consecutive assistant messages)
             lastPart.text += cleanText;
           } else {
-            last.parts.push({ kind: 'text', text: cleanText });
+            target.parts.push({ kind: 'text', text: cleanText });
           }
         } else {
+          currentAssistantIdx = items.length;
           items.push({
             kind: 'assistant',
             id: ev.id,
@@ -275,15 +282,16 @@ export function buildDisplayItems(
       case 'agent:text-delta': {
         // Streaming delta — accumulate into the current assistant text bubble.
         // Mark with fromDelta so the subsequent agent:text can replace (not append).
-        const lastD = items[items.length - 1];
-        if (lastD && lastD.kind === 'assistant') {
-          const lastPartD = lastD.parts[lastD.parts.length - 1];
+        const targetD = currentAssistantIdx != null ? items[currentAssistantIdx] : undefined;
+        if (targetD && targetD.kind === 'assistant') {
+          const lastPartD = targetD.parts[targetD.parts.length - 1];
           if (lastPartD && lastPartD.kind === 'text' && lastPartD.fromDelta) {
             lastPartD.text += ev.text;
           } else {
-            lastD.parts.push({ kind: 'text', text: ev.text, fromDelta: true });
+            targetD.parts.push({ kind: 'text', text: ev.text, fromDelta: true });
           }
         } else {
+          currentAssistantIdx = items.length;
           items.push({
             kind: 'assistant',
             id: ev.id,
@@ -294,13 +302,14 @@ export function buildDisplayItems(
       }
 
       case 'agent:thinking': {
-        // If the last item is a thinking bubble (from thinking-delta streaming),
+        // If there's an active thinking bubble (from thinking-delta streaming),
         // replace its text with the complete thinking text instead of creating
         // a duplicate bubble.
-        const lastThComplete = items[items.length - 1];
-        if (lastThComplete && lastThComplete.kind === 'thinking') {
-          lastThComplete.text = ev.text;
+        const thinkTarget = currentThinkingIdx != null ? items[currentThinkingIdx] : undefined;
+        if (thinkTarget && thinkTarget.kind === 'thinking') {
+          thinkTarget.text = ev.text;
         } else {
+          currentThinkingIdx = items.length;
           items.push({ kind: 'thinking', id: ev.id, text: ev.text });
         }
         break;
@@ -308,10 +317,11 @@ export function buildDisplayItems(
 
       case 'agent:thinking-delta': {
         // Streaming thinking delta — accumulate into the current thinking bubble.
-        const lastTh = items[items.length - 1];
-        if (lastTh && lastTh.kind === 'thinking') {
-          lastTh.text += ev.text;
+        const thinkTargetD = currentThinkingIdx != null ? items[currentThinkingIdx] : undefined;
+        if (thinkTargetD && thinkTargetD.kind === 'thinking') {
+          thinkTargetD.text += ev.text;
         } else {
+          currentThinkingIdx = items.length;
           items.push({ kind: 'thinking', id: ev.id, text: ev.text });
         }
         break;
@@ -330,10 +340,11 @@ export function buildDisplayItems(
         pendingTools.set(ev.toolUseId, toolState);
 
         // Append tool part in order within the current assistant bubble
-        const last = items[items.length - 1];
-        if (last && last.kind === 'assistant') {
-          last.parts.push({ kind: 'tool', tool: toolState });
+        const toolTarget = currentAssistantIdx != null ? items[currentAssistantIdx] : undefined;
+        if (toolTarget && toolTarget.kind === 'assistant') {
+          toolTarget.parts.push({ kind: 'tool', tool: toolState });
         } else {
+          currentAssistantIdx = items.length;
           items.push({
             kind: 'assistant',
             id: ev.id,
@@ -398,6 +409,9 @@ export function buildDisplayItems(
       }
 
       case 'agent:result': {
+        // Turn complete — reset bubble tracking so next turn starts fresh.
+        currentAssistantIdx = null;
+        currentThinkingIdx = null;
         const webSearches = ev.serverToolUse?.webSearchRequests ?? 0;
         const denials = ev.permissionDenials?.length ?? 0;
         if (ev.costUsd != null) sessionCostUsd += ev.costUsd;
