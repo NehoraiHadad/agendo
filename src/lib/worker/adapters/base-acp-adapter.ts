@@ -393,10 +393,16 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     if (!this.sessionId) throw new Error('No active session');
     this.thinkingCallback?.(true);
 
+    // Push user message to in-memory history so it survives SSE reconnect.
+    // Without this, getHistory()'s fast in-memory path would miss user messages
+    // (accumulateHistory only captures agent-side events from emitNdjson).
+    const messageText = buildMessageWithAttachments(text, attachments);
+    this.transport.pushToHistory({ type: 'user:message', text: messageText });
+
     try {
       const promptResponse = await this.transport.sendPrompt(
         this.sessionId,
-        buildMessageWithAttachments(text, attachments),
+        messageText,
         readNativeImageContents(attachments).map(({ attachment, data }) => ({
           data,
           mimeType: attachment.mimeType,

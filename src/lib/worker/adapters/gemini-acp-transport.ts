@@ -53,7 +53,7 @@ export class AcpTransport {
   private messageHistory: AgendoEventPayload[] = [];
 
   /** Append a structural event to the history buffer.
-   *  Only call for agent:text, agent:tool-start, agent:tool-end, agent:result.
+   *  Call for user:message, agent:text, agent:tool-start, agent:tool-end, agent:result.
    *  Do NOT call for agent:text-delta (high-volume streaming) or agent:thinking. */
   pushToHistory(event: AgendoEventPayload): void {
     this.messageHistory.push(event);
