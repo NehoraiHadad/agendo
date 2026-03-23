@@ -65,11 +65,7 @@ function nextInstanceId(): string {
   return `inst-${++instanceCounter}`;
 }
 
-interface ModelOption {
-  id: string;
-  label: string;
-  description: string;
-}
+import type { ModelOption } from '@/lib/services/model-service';
 
 interface CompletedRoom {
   id: string;

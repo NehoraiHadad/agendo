@@ -345,18 +345,36 @@ async function readClaudeModels(): Promise<ModelOption[]> {
 
 /** Shape of the models.js module exports from @google/gemini-cli-core */
 interface GeminiModelsModule {
+  // Concrete model constants
   DEFAULT_GEMINI_MODEL?: string;
   DEFAULT_GEMINI_FLASH_MODEL?: string;
   DEFAULT_GEMINI_FLASH_LITE_MODEL?: string;
   PREVIEW_GEMINI_MODEL?: string;
   PREVIEW_GEMINI_3_1_MODEL?: string;
+  PREVIEW_GEMINI_3_1_CUSTOM_TOOLS_MODEL?: string;
   PREVIEW_GEMINI_FLASH_MODEL?: string;
+  PREVIEW_GEMINI_3_1_FLASH_LITE_MODEL?: string;
+  // Auto model constants
   PREVIEW_GEMINI_MODEL_AUTO?: string;
   DEFAULT_GEMINI_MODEL_AUTO?: string;
+  // Alias constants
   GEMINI_MODEL_ALIAS_AUTO?: string;
+  GEMINI_MODEL_ALIAS_PRO?: string;
+  GEMINI_MODEL_ALIAS_FLASH?: string;
+  GEMINI_MODEL_ALIAS_FLASH_LITE?: string;
+  // Model set
   VALID_GEMINI_MODELS?: Set<string>;
+  // Functions
   getDisplayString?: (model: string) => string;
   isPreviewModel?: (model: string) => boolean;
+  isActiveModel?: (model: string, useGemini3_1?: boolean, useCustomToolModel?: boolean) => boolean;
+  isAutoModel?: (model: string) => boolean;
+  resolveModel?: (
+    model: string,
+    useGemini3_1?: boolean,
+    useCustomToolModel?: boolean,
+    hasAccessToPreview?: boolean,
+  ) => string;
 }
 
 /**
@@ -393,69 +411,71 @@ async function readGeminiModels(): Promise<ModelOption[]> {
  * Primary approach: load models.js via createRequire() and use its exported
  * constants and functions directly. This automatically picks up new models
  * added to VALID_GEMINI_MODELS without needing code changes.
+ *
+ * Strategy:
+ * 1. Iterate VALID_GEMINI_MODELS, filter via isActiveModel() — shows only
+ *    models the CLI considers usable for the current config.
+ * 2. Add the two auto entries (preview + stable) with labels from getDisplayString().
+ * 3. Skip shorthand aliases (auto, pro, flash, flash-lite) — they resolve to
+ *    concrete models already listed.
  */
 async function readGeminiModelsViaRequire(modelsJsPath: string): Promise<ModelOption[]> {
   const req = createRequire(modelsJsPath);
   const mod = req(modelsJsPath) as GeminiModelsModule;
 
+  if (!mod.VALID_GEMINI_MODELS) return [];
+
   const previewEnabled = await isGeminiPreviewEnabled();
   const models: ModelOption[] = [];
   const seen = new Set<string>();
 
-  const addModel = (id: string, description: string) => {
-    if (!id || seen.has(id)) return;
-    seen.add(id);
+  // Collect the alias values to skip them when iterating VALID_GEMINI_MODELS
+  const aliasValues = new Set<string | undefined>([
+    mod.GEMINI_MODEL_ALIAS_AUTO,
+    mod.GEMINI_MODEL_ALIAS_PRO,
+    mod.GEMINI_MODEL_ALIAS_FLASH,
+    mod.GEMINI_MODEL_ALIAS_FLASH_LITE,
+  ]);
+
+  // 1. Auto entries first (these are not in VALID_GEMINI_MODELS but are valid picks)
+  if (mod.PREVIEW_GEMINI_MODEL_AUTO) {
+    const id = mod.PREVIEW_GEMINI_MODEL_AUTO;
     const label = mod.getDisplayString ? mod.getDisplayString(id) : formatGeminiLabel(id);
-    models.push({ id, label, description });
-  };
-
-  // 1. Primary pro model (preview or stable depending on settings)
-  if (previewEnabled && mod.PREVIEW_GEMINI_MODEL) {
-    addModel(mod.PREVIEW_GEMINI_MODEL, 'Pro - preview');
-  }
-  if (mod.DEFAULT_GEMINI_MODEL) {
-    addModel(mod.DEFAULT_GEMINI_MODEL, previewEnabled ? 'Pro - stable' : 'Pro - default');
-  }
-
-  // 2. Preview 3.1 model (if preview enabled)
-  if (previewEnabled && mod.PREVIEW_GEMINI_3_1_MODEL) {
-    addModel(mod.PREVIEW_GEMINI_3_1_MODEL, 'Pro 3.1 - preview');
-  }
-
-  // 3. Flash models
-  if (previewEnabled && mod.PREVIEW_GEMINI_FLASH_MODEL) {
-    addModel(mod.PREVIEW_GEMINI_FLASH_MODEL, 'Flash - preview');
-  }
-  if (mod.DEFAULT_GEMINI_FLASH_MODEL) {
-    addModel(mod.DEFAULT_GEMINI_FLASH_MODEL, 'Flash - fast');
-  }
-
-  // 4. Flash Lite
-  if (mod.DEFAULT_GEMINI_FLASH_LITE_MODEL) {
-    addModel(mod.DEFAULT_GEMINI_FLASH_LITE_MODEL, 'Flash Lite - cheapest');
-  }
-
-  // 5. Auto aliases
-  if (previewEnabled && mod.PREVIEW_GEMINI_MODEL_AUTO) {
-    addModel(mod.PREVIEW_GEMINI_MODEL_AUTO, 'Automatic model selection (preview)');
+    models.push({
+      id,
+      label,
+      description: 'Automatic model selection (Gemini 3)',
+      isDefault: previewEnabled,
+    });
+    seen.add(id);
   }
   if (mod.DEFAULT_GEMINI_MODEL_AUTO) {
-    addModel(mod.DEFAULT_GEMINI_MODEL_AUTO, 'Automatic model selection');
-  }
-  if (mod.GEMINI_MODEL_ALIAS_AUTO) {
-    addModel(mod.GEMINI_MODEL_ALIAS_AUTO, 'Automatic model selection');
+    const id = mod.DEFAULT_GEMINI_MODEL_AUTO;
+    const label = mod.getDisplayString ? mod.getDisplayString(id) : formatGeminiLabel(id);
+    models.push({
+      id,
+      label,
+      description: 'Automatic model selection (Gemini 2.5)',
+      isDefault: !previewEnabled,
+    });
+    seen.add(id);
   }
 
-  // 6. Any remaining models in VALID_GEMINI_MODELS not yet listed
-  if (mod.VALID_GEMINI_MODELS) {
-    for (const modelId of mod.VALID_GEMINI_MODELS) {
-      if (seen.has(modelId)) continue;
-      // Skip internal-only models (e.g. customtools variant)
-      if (modelId.includes('customtools')) continue;
-      const isPreview = mod.isPreviewModel ? mod.isPreviewModel(modelId) : false;
-      if (isPreview && !previewEnabled) continue;
-      addModel(modelId, isPreview ? 'Preview' : 'Stable');
-    }
+  // 2. Concrete models from VALID_GEMINI_MODELS, filtered by isActiveModel()
+  for (const modelId of mod.VALID_GEMINI_MODELS) {
+    if (seen.has(modelId)) continue;
+    // Skip shorthand aliases — they resolve to concrete models already listed
+    if (aliasValues.has(modelId)) continue;
+    // Use isActiveModel() to determine if this model is usable
+    if (mod.isActiveModel && !mod.isActiveModel(modelId)) continue;
+    // Use isPreviewModel to generate description
+    const isPreview = mod.isPreviewModel ? mod.isPreviewModel(modelId) : false;
+    models.push({
+      id: modelId,
+      label: formatGeminiLabel(modelId),
+      description: isPreview ? 'Preview' : 'Stable',
+    });
+    seen.add(modelId);
   }
 
   return models;
@@ -533,10 +553,40 @@ async function readGeminiModelsViaRegex(modelsJsPath: string): Promise<ModelOpti
   return models;
 }
 
+/**
+ * Format a Gemini model ID into a user-friendly label.
+ *
+ * Rules:
+ * - Strip `-preview` suffix (preview status shown via description badge)
+ * - Strip `-customtools` suffix (internal variant, not user-facing)
+ * - Capitalize "gemini" → "Gemini"
+ * - Keep version numbers as-is (e.g. "2.5", "3.1")
+ * - Capitalize tier words (Pro, Flash, Lite)
+ *
+ * Examples:
+ *   "gemini-3-pro-preview"          → "Gemini 3 Pro"
+ *   "gemini-3.1-pro-preview"        → "Gemini 3.1 Pro"
+ *   "gemini-2.5-pro"                → "Gemini 2.5 Pro"
+ *   "gemini-3-flash-preview"        → "Gemini 3 Flash"
+ *   "gemini-2.5-flash"              → "Gemini 2.5 Flash"
+ *   "gemini-2.5-flash-lite"         → "Gemini 2.5 Flash Lite"
+ *   "gemini-3.1-flash-lite-preview" → "Gemini 3.1 Flash Lite"
+ *   "auto"                          → "Auto"
+ */
 function formatGeminiLabel(modelId: string): string {
-  return modelId
+  // Strip suffixes that aren't user-facing
+  let cleaned = modelId.replace(/-preview$/, '').replace(/-customtools$/, '');
+  // Also strip the combined variant suffix
+  cleaned = cleaned.replace(/-preview-customtools$/, '');
+
+  return cleaned
     .split('-')
-    .map((part) => (part === 'gemini' ? 'Gemini' : part.charAt(0).toUpperCase() + part.slice(1)))
+    .map((part) => {
+      if (part === 'gemini') return 'Gemini';
+      // Version numbers stay as-is
+      if (/^\d/.test(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
     .join(' ');
 }
 
@@ -674,10 +724,9 @@ export async function getDefaultModel(provider: Provider): Promise<string | null
   const models = await getModelsForProvider(provider);
   if (models.length === 0) return null;
   if (provider === 'google') {
-    const stable = models.find(
-      (m) => m.description.includes('stable') || m.description === 'Pro - default',
-    );
-    if (stable) return stable.id;
+    // Return 'auto' — the CLI resolves it to the right concrete model
+    // based on the user's previewFeatures setting.
+    return 'auto';
   }
   return models[0].id;
 }

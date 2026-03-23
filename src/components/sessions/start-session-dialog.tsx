@@ -34,12 +34,7 @@ import { apiFetch, type ApiResponse, type ApiListResponse } from '@/lib/api-type
 import type { Agent, McpServer, Task } from '@/lib/types';
 import { deriveProvider } from '@/lib/utils/session-controls';
 
-interface ModelOption {
-  id: string;
-  label: string;
-  description: string;
-  isDefault?: boolean;
-}
+import type { ModelOption } from '@/lib/services/model-service';
 
 interface StartSessionDialogProps {
   taskId: string;
