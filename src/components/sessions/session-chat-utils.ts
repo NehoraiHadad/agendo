@@ -234,9 +234,10 @@ export function buildDisplayItems(
   // can offer a branch button (Claude only — only set when messageUuid is present).
   let lastAgentResultUuid: string | undefined;
 
-  // Track the index of the current turn's assistant/thinking bubble so that
-  // interleaved user:message events (sent mid-stream) don't break merging.
-  // Reset on agent:result (turn complete), NOT on user:message.
+  // Track the index of the current turn's assistant/thinking bubble.
+  // Reset on agent:result (turn complete) AND on user:message (mid-turn split).
+  // Mid-turn user messages split the assistant bubble so the user message
+  // appears between the text before and after it — preserving chronological order.
   let currentAssistantIdx: number | null = null;
   let currentThinkingIdx: number | null = null;
 
@@ -476,6 +477,11 @@ export function buildDisplayItems(
         // in its conversation turns — these are already handled by the Team Panel.
         const { cleanText: cleanUserText } = stripProtocolXml(ev.text ?? '');
         if (!cleanUserText) break; // pure protocol noise — skip
+
+        // Split assistant bubble: reset tracking so text/tools arriving AFTER
+        // this user message go into a new bubble, preserving chronological order.
+        currentAssistantIdx = null;
+        currentThinkingIdx = null;
 
         items.push({
           kind: 'user',
