@@ -155,6 +155,14 @@ export type AgendoEvent =
       clientId?: string;
     })
   | (EventBase & { type: 'user:message-cancelled'; clientId: string })
+  /**
+   * Emitted when the Claude SDK dequeues a mid-turn user message from its internal
+   * message queue (i.e. when the message enters Claude's context as a system-reminder).
+   * Used as a split-point signal in buildDisplayItems: the assistant bubble is split here
+   * so pre-dequeue and post-dequeue content appear on opposite sides of the user message.
+   * Carries no text — the corresponding user:message was already emitted at enqueue time.
+   */
+  | (EventBase & { type: 'user:message-dequeued' })
   | (EventBase & {
       type: 'system:info';
       message: string;

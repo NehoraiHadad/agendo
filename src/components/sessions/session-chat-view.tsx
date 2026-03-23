@@ -72,6 +72,14 @@ import {
   type DisplayAttachment,
   type TurnMeta,
 } from './session-chat-utils';
+import {
+  enqueueQueuedMessage,
+  parsePersistedQueuedMessages,
+  patchQueuedMessage,
+  removeQueuedMessage,
+  resolveQueuedMessages,
+  type QueuedMessage,
+} from './session-chat-queue';
 
 // ---------------------------------------------------------------------------
 // Markdown renderer configuration
@@ -1241,6 +1249,7 @@ export function SessionChatView({
 }: SessionChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -1260,35 +1269,26 @@ export function SessionChatView({
   // Accumulates local attachment previews in send order so we can re-hydrate
   // user:message display items after the SSE event arrives.
   const attachmentPreviewQueueRef = useRef<QueuedAttachmentPayload[][]>([]);
+  const initialQueuedMessagesRef = useRef<QueuedMessage[]>([]);
+  const recoveredPersistedQueueRef = useRef(false);
 
-  // Queued message: shown as a pill while the POST with priority:'next' is in flight.
-  // Persisted to sessionStorage so it survives page refresh.
+  // Queued messages: shown as pills while the POST with priority:'next' is in flight.
+  // Persisted to sessionStorage so they survive page refresh.
   const QUEUE_KEY = `queued-msg:${sessionId}`;
-  type QueuedMessage = {
-    text: string;
-    attachments?: QueuedAttachmentPayload[];
-    /** True while the POST is in flight */
-    isSending?: boolean;
-    /** Client-generated UUID nonce for dedup — pill clears when SSE with matching clientId arrives */
-    clientId?: string;
-  };
 
-  function persistQueue(msg: QueuedMessage | null) {
-    if (msg) sessionStorage.setItem(QUEUE_KEY, JSON.stringify(msg));
+  function persistQueue(queue: QueuedMessage[]) {
+    if (queue.length > 0) sessionStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
     else sessionStorage.removeItem(QUEUE_KEY);
   }
 
-  const [queuedMessage, setQueuedMessage] = useState<QueuedMessage | null>(() => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const saved = sessionStorage.getItem(`queued-msg:${sessionId}`);
-      return saved ? (JSON.parse(saved) as QueuedMessage) : null;
-    } catch {
-      return null;
-    }
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const restored = parsePersistedQueuedMessages(sessionStorage.getItem(QUEUE_KEY));
+    initialQueuedMessagesRef.current = restored;
+    return restored;
   });
-  // AbortController for in-flight queued message POST
-  const queueAbortRef = useRef<AbortController | null>(null);
+  // Each queued message owns its own in-flight POST, so aborts are tracked per pill.
+  const queueAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   // restoreKey increments on every edit-queued action to ensure the useEffect
   // in SessionMessageInput re-fires even if the text is the same.
   const restoreKeyRef = useRef(0);
@@ -1363,22 +1363,20 @@ export function SessionChatView({
   );
 
   // Queue a message and POST immediately with priority:'next'.
-  // Shows pill in "sending" state; on success clears pill and shows optimistic bubble.
-  // On failure reverts pill to editable state. Edit/cancel abort the in-flight request.
+  // Each queued message keeps its own pill until the worker confirms delivery via SSE.
   const handleQueue = useCallback(
     async (text: string, attachments?: QueuedAttachmentPayload[]) => {
-      // Abort any previous in-flight queued POST
-      queueAbortRef.current?.abort();
-
-      const controller = new AbortController();
-      queueAbortRef.current = controller;
-
-      // Generate a client nonce so we can match the SSE user:message event later.
-      // The pill stays visible until the SSE event with this clientId arrives.
       const clientId = generateId();
-
-      // Show pill in sending state immediately
-      setQueuedMessage({ text, attachments, isSending: true, clientId });
+      const queuedMessage: QueuedMessage = {
+        id: clientId,
+        text,
+        attachments,
+        isSending: true,
+        clientId,
+      };
+      const controller = new AbortController();
+      queueAbortControllersRef.current.set(queuedMessage.id, controller);
+      setQueuedMessages((prev) => enqueueQueuedMessage(prev, queuedMessage));
 
       try {
         await apiFetch(`/api/sessions/${sessionId}/message`, {
@@ -1387,19 +1385,17 @@ export function SessionChatView({
           signal: controller.signal,
         });
 
-        // Success — do NOT call handleSent() or clear the pill here.
-        // The SSE user:message event with matching clientId will clear the pill
-        // (see the clientId dedup effect below). This avoids the race condition
-        // where handleSent() captures baseline AFTER the SSE already arrived.
-        queueAbortRef.current = null;
         if (attachments?.length) attachmentPreviewQueueRef.current.push(attachments);
-        setQueuedMessage((prev) => (prev ? { ...prev, isSending: false } : null));
+        setQueuedMessages((prev) =>
+          patchQueuedMessage(prev, queuedMessage.id, { isSending: false }),
+        );
       } catch (err: unknown) {
-        // If aborted (edit/cancel), don't touch state — the abort handler already did
         if (err instanceof DOMException && err.name === 'AbortError') return;
-        // POST failed — revert pill to editable state (not sending)
-        queueAbortRef.current = null;
-        setQueuedMessage({ text, attachments, isSending: false, clientId });
+        setQueuedMessages((prev) =>
+          patchQueuedMessage(prev, queuedMessage.id, { isSending: false }),
+        );
+      } finally {
+        queueAbortControllersRef.current.delete(queuedMessage.id);
       }
     },
     [sessionId],
@@ -1422,77 +1418,105 @@ export function SessionChatView({
     [sessionId, handleSent],
   );
 
-  // Edit: abort in-flight POST (if any), cancel from worker queue if already delivered,
-  // and move queued message back to the textarea
-  const handleEditQueued = useCallback(() => {
-    if (!queuedMessage) return;
-    queueAbortRef.current?.abort();
-    queueAbortRef.current = null;
-    // If POST already succeeded (not sending), try to cancel from worker queue
-    if (!queuedMessage.isSending && queuedMessage.clientId) {
-      void apiFetch(`/api/sessions/${sessionId}/control`, {
-        method: 'POST',
-        body: JSON.stringify({ type: 'cancel-queued', clientId: queuedMessage.clientId }),
-      }).catch(() => {});
-    }
-    setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
-    setRestoredAttachments(
-      queuedMessage.attachments?.map((attachment) => ({
-        id: generateId(),
-        ...attachment,
-      })) ?? null,
+  const requestQueuedMessageCancel = useCallback(
+    (queuedMessage: QueuedMessage) => {
+      if (!queuedMessage.isSending && queuedMessage.clientId) {
+        return apiFetch(`/api/sessions/${sessionId}/control`, {
+          method: 'POST',
+          body: JSON.stringify({ type: 'cancel-queued', clientId: queuedMessage.clientId }),
+        }).catch(() => {});
+      }
+      return Promise.resolve();
+    },
+    [sessionId],
+  );
+
+  // Edit a specific queued message without disturbing the rest of the queue.
+  const handleEditQueued = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find((message) => message.id === id);
+      if (!queuedMessage) return;
+
+      queueAbortControllersRef.current.get(id)?.abort();
+      queueAbortControllersRef.current.delete(id);
+      void requestQueuedMessageCancel(queuedMessage);
+      setRestoredDraft({ text: queuedMessage.text, key: ++restoreKeyRef.current });
+      setRestoredAttachments(
+        queuedMessage.attachments?.map((attachment) => ({
+          id: generateId(),
+          ...attachment,
+        })) ?? null,
+      );
+      setQueuedMessages((prev) => removeQueuedMessage(prev, id));
+    },
+    [queuedMessages, requestQueuedMessageCancel],
+  );
+
+  // Cancel a specific queued message.
+  const handleCancelQueued = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find((message) => message.id === id);
+      if (!queuedMessage) return;
+
+      queueAbortControllersRef.current.get(id)?.abort();
+      queueAbortControllersRef.current.delete(id);
+      void requestQueuedMessageCancel(queuedMessage);
+      setQueuedMessages((prev) => removeQueuedMessage(prev, id));
+    },
+    [queuedMessages, requestQueuedMessageCancel],
+  );
+
+  // Promote a specific queued message to "send now".
+  const handleSendNowFromPill = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find((message) => message.id === id);
+      if (!queuedMessage) return;
+
+      queueAbortControllersRef.current.get(id)?.abort();
+      queueAbortControllersRef.current.delete(id);
+      setQueuedMessages((prev) => removeQueuedMessage(prev, id));
+      void (async () => {
+        await requestQueuedMessageCancel(queuedMessage);
+        await handleSendNow(queuedMessage.text, queuedMessage.attachments);
+      })();
+    },
+    [queuedMessages, requestQueuedMessageCancel, handleSendNow],
+  );
+
+  // Sync queued messages to sessionStorage so they survive page refresh.
+  useEffect(() => {
+    persistQueue(queuedMessages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedMessages]);
+
+  // Recovery: if queued messages were restored from sessionStorage and the session is ready
+  // for input, re-enqueue those restored entries exactly once.
+  useEffect(() => {
+    if (recoveredPersistedQueueRef.current) return;
+    if (!currentStatus || !INPUT_READY.has(currentStatus)) return;
+
+    recoveredPersistedQueueRef.current = true;
+    const recoverableMessages = initialQueuedMessagesRef.current.filter(
+      (message) => !message.isSending,
     );
-    setQueuedMessage(null);
-  }, [queuedMessage, sessionId]);
+    if (recoverableMessages.length === 0) return;
 
-  // Cancel: abort in-flight POST (if any), cancel from worker queue if already delivered,
-  // and discard the queued message
-  const handleCancelQueued = useCallback(() => {
-    queueAbortRef.current?.abort();
-    queueAbortRef.current = null;
-    // If POST already succeeded (not sending), try to cancel from worker queue
-    if (queuedMessage && !queuedMessage.isSending && queuedMessage.clientId) {
-      void apiFetch(`/api/sessions/${sessionId}/control`, {
-        method: 'POST',
-        body: JSON.stringify({ type: 'cancel-queued', clientId: queuedMessage.clientId }),
-      }).catch(() => {});
+    const recoverableIds = new Set(recoverableMessages.map((message) => message.id));
+    setQueuedMessages((prev) => prev.filter((message) => !recoverableIds.has(message.id)));
+    for (const message of recoverableMessages) {
+      void handleQueue(message.text, message.attachments);
     }
-    setQueuedMessage(null);
-  }, [queuedMessage, sessionId]);
+  }, [currentStatus, handleQueue]);
 
-  // Send Now from pill: abort in-flight queue POST and re-send with priority:'now'
-  const handleSendNowFromPill = useCallback(() => {
-    if (!queuedMessage) return;
-    queueAbortRef.current?.abort();
-    queueAbortRef.current = null;
-    const { text, attachments } = queuedMessage;
-    setQueuedMessage(null);
-    void handleSendNow(text, attachments);
-  }, [queuedMessage, handleSendNow]);
-
-  // Sync queuedMessage to sessionStorage so it survives page refresh
   useEffect(() => {
-    persistQueue(queuedMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queuedMessage]);
-
-  // Recovery: if there's a queued message from sessionStorage (page refresh) and
-  // the agent is ready for input, POST it now.
-  useEffect(() => {
-    if (
-      !queuedMessage ||
-      queuedMessage.isSending ||
-      !currentStatus ||
-      !INPUT_READY.has(currentStatus)
-    )
-      return;
-
-    // Re-send the recovered queued message through handleQueue (which POSTs with priority)
-    const msg = queuedMessage;
-    setQueuedMessage(null);
-    void handleQueue(msg.text, msg.attachments);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStatus]);
+    const controllers = queueAbortControllersRef.current;
+    return () => {
+      for (const controller of controllers.values()) {
+        controller.abort();
+      }
+      controllers.clear();
+    };
+  }, []);
 
   const handleApprovalResolved = useCallback((approvalId: string) => {
     setResolvedApprovals((prev) => new Set(prev).add(approvalId));
@@ -1513,23 +1537,12 @@ export function SessionChatView({
     currentUserMsgCountRef.current = streamUserMessages.length;
   }, [streamUserMessages]);
 
-  // Clear queued message pill once the real SSE user:message with matching clientId arrives,
-  // OR when a user:message-cancelled event confirms the cancel was successful.
-  // This is the primary dedup mechanism for the queue path — the pill stays visible until
-  // the SSE event confirms the message was processed by the worker.
+  // Clear queued pills once the worker confirms delivery or cancellation for their clientId.
   useEffect(() => {
-    if (!queuedMessage?.clientId) return;
-    const clientId = queuedMessage.clientId;
-    const delivered = streamUserMessages.findLast(
-      (e) => 'clientId' in e && e.clientId === clientId,
+    setQueuedMessages((prev) =>
+      resolveQueuedMessages(prev, streamUserMessages, streamCancelledMessages),
     );
-    const cancelled = streamCancelledMessages.findLast(
-      (e) => 'clientId' in e && e.clientId === clientId,
-    );
-    if (delivered ?? cancelled) {
-      setQueuedMessage(null);
-    }
-  }, [streamUserMessages, streamCancelledMessages, queuedMessage]);
+  }, [streamUserMessages, streamCancelledMessages]);
 
   // Clear optimistic messages once the real user:message SSE event arrives.
   // Matches by clientId when available (reliable), falls back to text matching.
@@ -1565,13 +1578,13 @@ export function SessionChatView({
     setUserScrolledUp(!near);
   }, []);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const el = scrollContainerRef.current;
     if (el) {
       // Use direct container scroll to avoid propagating to page-level scrollers
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      el.scrollTo({ top: el.scrollHeight, behavior });
     } else {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      bottomRef.current?.scrollIntoView({ behavior });
     }
     setUserScrolledUp(false);
     isNearBottomRef.current = true;
@@ -1594,14 +1607,27 @@ export function SessionChatView({
   // Auto-scroll only when the user hasn't scrolled up
   useEffect(() => {
     if (!isNearBottomRef.current) return;
-    const el = scrollContainerRef.current;
-    if (el) {
-      // Scroll within the container to avoid propagating to page-level scrollers
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    } else {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [stream.events.length, optimisticMessages.length]);
+    const frame = requestAnimationFrame(() => scrollToBottom('smooth'));
+    return () => cancelAnimationFrame(frame);
+  }, [stream.events.length, optimisticMessages.length, queuedMessages.length, scrollToBottom]);
+
+  // Keep the latest content anchored when queue pills or the composer change footer height.
+  useEffect(() => {
+    const footer = footerRef.current;
+    if (!footer || typeof ResizeObserver === 'undefined') return;
+
+    let previousHeight = footer.getBoundingClientRect().height;
+    const observer = new ResizeObserver(([entry]) => {
+      const nextHeight = entry?.contentRect.height ?? footer.getBoundingClientRect().height;
+      if (Math.abs(nextHeight - previousHeight) < 1) return;
+      previousHeight = nextHeight;
+      if (!isNearBottomRef.current) return;
+      requestAnimationFrame(() => scrollToBottom('auto'));
+    });
+
+    observer.observe(footer);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
 
   const parentToolResultMap = useMemo(
     () => (parentStream ? buildToolResultMap(parentStream.events) : new Map()),
@@ -1889,7 +1915,7 @@ export function SessionChatView({
             <div className="sticky bottom-2 flex justify-center pointer-events-none">
               <button
                 type="button"
-                onClick={scrollToBottom}
+                onClick={() => scrollToBottom()}
                 className="pointer-events-auto flex items-center gap-1.5 text-xs text-foreground/70 bg-[oklch(0.12_0_0)] hover:bg-[oklch(0.16_0_0)] border border-white/[0.12] hover:border-white/[0.20] rounded-full px-3 py-1.5 shadow-lg transition-all"
               >
                 <ArrowDown className="size-3" />
@@ -1904,6 +1930,7 @@ export function SessionChatView({
         {/* Stop button + message input — sticky at bottom in page-scroll mode */}
         {!compact && (
           <div
+            ref={footerRef}
             className={
               fullscreen
                 ? 'shrink-0'
@@ -1971,17 +1998,20 @@ export function SessionChatView({
                 </button>
               </div>
             )}
-            {/* Pending queued message pill — shown when user sent a message while agent was active */}
-            {queuedMessage && (
-              <div className="px-3 pt-2">
-                <PendingMessagePill
-                  text={queuedMessage.text}
-                  attachments={queuedMessage.attachments}
-                  isSending={queuedMessage.isSending}
-                  onEdit={handleEditQueued}
-                  onCancel={handleCancelQueued}
-                  onSendNow={handleSendNowFromPill}
-                />
+            {/* Pending queued messages — shown when user sent while the agent was active */}
+            {queuedMessages.length > 0 && (
+              <div className="space-y-2 px-3 pt-2">
+                {queuedMessages.map((queuedMessage) => (
+                  <PendingMessagePill
+                    key={queuedMessage.id}
+                    text={queuedMessage.text}
+                    attachments={queuedMessage.attachments}
+                    isSending={queuedMessage.isSending}
+                    onEdit={() => handleEditQueued(queuedMessage.id)}
+                    onCancel={() => handleCancelQueued(queuedMessage.id)}
+                    onSendNow={() => handleSendNowFromPill(queuedMessage.id)}
+                  />
+                ))}
               </div>
             )}
             <SessionMessageInput

@@ -9,9 +9,10 @@
  * and final emission (log write + PG NOTIFY) the same way as the NDJSON path.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, watch as fsWatch, existsSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
+import type { FSWatcher } from 'node:fs';
 import {
   query,
   type Query,
@@ -130,6 +131,14 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
   lastAssistantUuid?: string;
   /** Working directory for the current session — used to find project-local custom commands. */
   private spawnCwd = process.cwd();
+
+  // -------------------------------------------------------------------------
+  // JSONL dequeue watcher — emits user:message-dequeued when Claude processes
+  // a queued mid-turn message from its internal message queue.
+  // -------------------------------------------------------------------------
+  private jsonlWatcher: FSWatcher | null = null;
+  /** Byte offset into the JSONL file — used to read only newly appended content. */
+  private jsonlReadOffset = 0;
 
   // -------------------------------------------------------------------------
   // AgentAdapter interface
@@ -383,7 +392,13 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
         appendThinkingDelta: (text) => this.activityCallbacks?.appendThinkingDelta(text),
         onMessageStart: (stats) => this.activityCallbacks?.onMessageStart?.(stats),
         onResultStats: (costUsd, turns) => this.activityCallbacks?.onResultStats?.(costUsd, turns),
-        onSessionRef: (ref) => this.sessionRefCallback?.(ref),
+        onSessionRef: (ref) => {
+          this.sessionRefCallback?.(ref);
+          // Start watching the JSONL file for dequeue records.
+          // This lets us emit user:message-dequeued at the exact moment Claude
+          // processes a mid-turn queued message — enabling clean bubble splits.
+          this.startJsonlWatcher(ref, this.spawnCwd);
+        },
         onAssistantUuid: (uuid) => {
           this.lastAssistantUuid = uuid;
         },

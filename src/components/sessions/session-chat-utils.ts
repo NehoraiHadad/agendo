@@ -235,11 +235,17 @@ export function buildDisplayItems(
   let lastAgentResultUuid: string | undefined;
 
   // Track the index of the current turn's assistant/thinking bubble.
-  // Reset on agent:result (turn complete) AND on user:message (mid-turn split).
-  // Mid-turn user messages split the assistant bubble so the user message
-  // appears between the text before and after it — preserving chronological order.
+  // Reset on agent:result (turn complete) and on user:message-dequeued (split signal).
   let currentAssistantIdx: number | null = null;
   let currentThinkingIdx: number | null = null;
+
+  // Mid-delta split state — set when user:message-dequeued fires while a delta is in flight.
+  // When agent:text (complete text) subsequently arrives, we distribute it:
+  //   - text[:preSplitDeltaLen] → replaces the partial delta in preSplitAssistantIdx
+  //   - text[preSplitDeltaLen:] → goes into the current (post-split) bubble
+  // This ensures the pre-dequeue and post-dequeue content appear in separate bubbles.
+  let preSplitAssistantIdx: number | null = null;
+  let preSplitDeltaLen: number | null = null;
 
   for (const ev of events) {
     switch (ev.type) {
@@ -254,6 +260,59 @@ export function buildDisplayItems(
         }
 
         if (!cleanText) break; // pure protocol noise — skip text bubble
+
+        // Mid-delta split recovery: if user:message-dequeued fired while a delta was
+        // in flight, we deferred the split. Now that we have the complete text, distribute:
+        //   text[:preSplitDeltaLen] → replaces delta in the pre-split bubble (pre-dequeue content)
+        //   text[preSplitDeltaLen:] → goes into the current/new bubble (post-dequeue content)
+        if (preSplitDeltaLen != null && preSplitAssistantIdx != null) {
+          const preText = cleanText.slice(0, preSplitDeltaLen);
+          const postText = cleanText.slice(preSplitDeltaLen);
+
+          // Patch the pre-split bubble: replace its partial delta with the pre-dequeue text
+          const preBubble = items[preSplitAssistantIdx];
+          if (preBubble?.kind === 'assistant') {
+            const lastPrePart = preBubble.parts[preBubble.parts.length - 1];
+            if (lastPrePart?.kind === 'text' && lastPrePart.fromDelta) {
+              if (preText) {
+                lastPrePart.text = preText;
+                lastPrePart.fromDelta = false;
+              } else {
+                // No pre-dequeue text — remove the empty delta part
+                preBubble.parts.pop();
+              }
+            }
+          }
+
+          // Handle post-dequeue content in the current bubble
+          if (postText) {
+            const postTarget =
+              currentAssistantIdx != null ? items[currentAssistantIdx] : undefined;
+            if (postTarget?.kind === 'assistant') {
+              const lastPostPart = postTarget.parts[postTarget.parts.length - 1];
+              if (lastPostPart?.kind === 'text' && lastPostPart.fromDelta) {
+                lastPostPart.text = postText;
+                lastPostPart.fromDelta = false;
+              } else if (lastPostPart?.kind === 'text') {
+                lastPostPart.text += postText;
+              } else {
+                postTarget.parts.push({ kind: 'text', text: postText });
+              }
+            } else {
+              currentAssistantIdx = items.length;
+              items.push({
+                kind: 'assistant',
+                id: ev.id,
+                ts: ev.ts,
+                parts: [{ kind: 'text', text: postText }],
+              });
+            }
+          }
+
+          preSplitAssistantIdx = null;
+          preSplitDeltaLen = null;
+          break;
+        }
 
         const target = currentAssistantIdx != null ? items[currentAssistantIdx] : undefined;
         if (target && target.kind === 'assistant') {
@@ -478,9 +537,12 @@ export function buildDisplayItems(
         const { cleanText: cleanUserText } = stripProtocolXml(ev.text ?? '');
         if (!cleanUserText) break; // pure protocol noise — skip
 
-        // Split assistant bubble: reset tracking so text/tools arriving AFTER
-        // this user message go into a new bubble, preserving chronological order.
-        currentAssistantIdx = null;
+        // NOTE: we do NOT split the assistant bubble here. The split is deferred to
+        // user:message-dequeued (emitted when Claude actually consumes the message
+        // from its queue). This avoids word-splits during live streaming and correctly
+        // positions the user bubble at the dequeue boundary, not the enqueue boundary.
+        // For non-Claude adapters (ACP) that don't emit dequeue events, the user
+        // message still appears at its natural position in the event stream.
         currentThinkingIdx = null;
 
         items.push({
@@ -497,6 +559,28 @@ export function buildDisplayItems(
         });
         // Reset: a new user turn starts; next agent:result will set a fresh UUID.
         lastAgentResultUuid = undefined;
+        break;
+      }
+
+      case 'user:message-dequeued': {
+        // This event fires when Claude dequeues a mid-turn message from its queue.
+        // It marks the natural split point: the assistant bubble is divided here so
+        // pre-dequeue content appears above the user message and post-dequeue content
+        // appears below it.
+        if (currentAssistantIdx != null) {
+          const bubble = items[currentAssistantIdx];
+          if (bubble?.kind === 'assistant') {
+            const lastPart = bubble.parts[bubble.parts.length - 1];
+            if (lastPart?.kind === 'text' && lastPart.fromDelta) {
+              // Mid-delta split: remember the split state for agent:text recovery
+              preSplitAssistantIdx = currentAssistantIdx;
+              preSplitDeltaLen = lastPart.text.length;
+            }
+            // Always reset — new content after this goes into a fresh bubble
+            currentAssistantIdx = null;
+          }
+        }
+        currentThinkingIdx = null;
         break;
       }
 

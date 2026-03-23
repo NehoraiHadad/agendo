@@ -547,8 +547,10 @@ describe('buildDisplayItems', () => {
     });
   });
 
-  describe('mid-stream user message splits assistant bubble for chronological order', () => {
-    it('splits agent:text into two bubbles when user:message arrives mid-turn', () => {
+  describe('mid-turn user message handling (history split vs live merge)', () => {
+    it('splits non-delta (history) agent:text bubbles when user:message arrives mid-turn', () => {
+      // After refresh, events come from history as agent:text (no deltas).
+      // Split is safe — agent:text events have natural content boundaries.
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text', text: 'Hello ' },
         { ...base, id: 2, type: 'user:message', text: 'wait' },
@@ -557,7 +559,6 @@ describe('buildDisplayItems', () => {
       const items = buildDisplayItems(events, emptyMap);
       const assistantItems = items.filter((i) => i.kind === 'assistant');
       const userItems = items.filter((i) => i.kind === 'user');
-      // User message splits into two bubbles: before and after
       expect(assistantItems).toHaveLength(2);
       expect(userItems).toHaveLength(1);
       if (assistantItems[0].kind === 'assistant') {
@@ -566,14 +567,15 @@ describe('buildDisplayItems', () => {
       if (assistantItems[1].kind === 'assistant') {
         expect(assistantItems[1].parts[0]).toEqual({ kind: 'text', text: 'world!' });
       }
-      // Chronological order preserved
       const allKinds = items
         .filter((i) => ['assistant', 'user'].includes(i.kind))
         .map((i) => i.kind);
       expect(allKinds).toEqual(['assistant', 'user', 'assistant']);
     });
 
-    it('splits delta bubbles when user:message arrives mid-stream', () => {
+    it('does NOT split delta (live streaming) bubbles — avoids cutting words', () => {
+      // During live streaming, splitting at delta boundaries cuts words/sentences.
+      // Keep the old merge behavior: user message appears after the full response.
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text-delta', text: 'Hel' },
         { ...base, id: 2, type: 'agent:text-delta', text: 'lo ' },
@@ -583,28 +585,19 @@ describe('buildDisplayItems', () => {
       ];
       const items = buildDisplayItems(events, emptyMap);
       const assistantItems = items.filter((i) => i.kind === 'assistant');
-      // Before-split bubble keeps delta text, after-split gets replaced by agent:text
-      expect(assistantItems).toHaveLength(2);
+      // All text stays in one bubble (no split during streaming)
+      expect(assistantItems).toHaveLength(1);
       if (assistantItems[0].kind === 'assistant') {
         const part = assistantItems[0].parts[0];
         expect(part.kind).toBe('text');
         if (part.kind === 'text') {
-          expect(part.text).toBe('Hello ');
-          expect(part.fromDelta).toBe(true);
-        }
-      }
-      if (assistantItems[1].kind === 'assistant') {
-        const part = assistantItems[1].parts[0];
-        expect(part.kind).toBe('text');
-        if (part.kind === 'text') {
-          // agent:text replaces the delta in the post-split bubble
           expect(part.text).toBe('Hello world');
           expect(part.fromDelta).toBe(false);
         }
       }
     });
 
-    it('splits tool into new bubble when user:message arrives between text and tool', () => {
+    it('splits non-delta tool into new bubble when user:message arrives between text and tool', () => {
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text', text: 'Let me check...' },
         { ...base, id: 2, type: 'user:message', text: 'ok' },
@@ -619,7 +612,6 @@ describe('buildDisplayItems', () => {
       ];
       const items = buildDisplayItems(events, emptyMap);
       const assistantItems = items.filter((i) => i.kind === 'assistant');
-      // Text before user message in one bubble, tool after in new bubble
       expect(assistantItems).toHaveLength(2);
       if (assistantItems[0].kind === 'assistant') {
         expect(assistantItems[0].parts).toHaveLength(1);
@@ -631,7 +623,7 @@ describe('buildDisplayItems', () => {
       }
     });
 
-    it('splits thinking bubble when user:message arrives mid-stream', () => {
+    it('does NOT split thinking delta bubbles during live streaming', () => {
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:thinking-delta', text: 'Let me ' },
         { ...base, id: 2, type: 'user:message', text: 'hurry' },
@@ -640,7 +632,8 @@ describe('buildDisplayItems', () => {
       ];
       const items = buildDisplayItems(events, emptyMap);
       const thinkingItems = items.filter((i) => i.kind === 'thinking');
-      // Split: first bubble keeps delta, second gets replaced by complete thinking
+      // Thinking resets on user:message, so post-split deltas go to a new bubble.
+      // But agent:thinking replaces it with the complete text (no split-aware logic).
       expect(thinkingItems).toHaveLength(2);
       if (thinkingItems[0].kind === 'thinking') {
         expect(thinkingItems[0].text).toBe('Let me ');
@@ -668,7 +661,7 @@ describe('buildDisplayItems', () => {
       }
     });
 
-    it('splits on each mid-stream user message creating multiple bubbles', () => {
+    it('does NOT split on mid-stream user messages during live streaming', () => {
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text-delta', text: 'Working' },
         { ...base, id: 2, type: 'user:message', text: 'msg1' },
@@ -680,13 +673,9 @@ describe('buildDisplayItems', () => {
       const items = buildDisplayItems(events, emptyMap);
       const assistantItems = items.filter((i) => i.kind === 'assistant');
       const userItems = items.filter((i) => i.kind === 'user');
-      // 3 assistant bubbles: before msg1, between msg1+msg2, after msg2
-      expect(assistantItems).toHaveLength(3);
+      // 1 bubble (no split during streaming), 2 user messages after it
+      expect(assistantItems).toHaveLength(1);
       expect(userItems).toHaveLength(2);
-      const allKinds = items
-        .filter((i) => ['assistant', 'user'].includes(i.kind))
-        .map((i) => i.kind);
-      expect(allKinds).toEqual(['assistant', 'user', 'assistant', 'user', 'assistant']);
     });
   });
 
