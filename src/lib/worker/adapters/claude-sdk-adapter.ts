@@ -10,7 +10,7 @@
  */
 
 import { readdirSync, readFileSync, watch as fsWatch, existsSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { FSWatcher } from 'node:fs';
 import {
@@ -137,8 +137,11 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
   // a queued mid-turn message from its internal message queue.
   // -------------------------------------------------------------------------
   private jsonlWatcher: FSWatcher | null = null;
+  private jsonlDirWatcher: FSWatcher | null = null;
   /** Byte offset into the JSONL file — used to read only newly appended content. */
   private jsonlReadOffset = 0;
+  /** Partial trailing JSONL line carried across append reads. */
+  private jsonlPartialLine = '';
 
   // -------------------------------------------------------------------------
   // AgentAdapter interface
@@ -416,6 +419,7 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     this.inputQueue = new AsyncQueue<SDKUserMessage>();
     this.lastAssistantUuid = undefined;
     this.sdkCallbacks = null;
+    this.closeJsonlWatcher();
 
     // Build canUseTool callback that delegates to the approval handler
     const canUseTool = this.buildCanUseTool();
@@ -520,7 +524,121 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
     } finally {
       this.alive = false;
       this.inputQueue.end();
+      this.closeJsonlWatcher();
       for (const cb of this.exitCallbacks) cb(exitCode);
+    }
+  }
+
+  private buildJsonlPath(sessionRef: string, cwd: string): string {
+    const encoded = cwd.replace(/\//g, '-');
+    return join(homedir(), '.claude', 'projects', encoded, `${sessionRef}.jsonl`);
+  }
+
+  private closeJsonlWatcher(): void {
+    try {
+      this.jsonlWatcher?.close();
+    } catch (err) {
+      log.debug({ err }, 'Failed to close JSONL watcher');
+    }
+    try {
+      this.jsonlDirWatcher?.close();
+    } catch (err) {
+      log.debug({ err }, 'Failed to close Claude JSONL directory watcher');
+    }
+    this.jsonlWatcher = null;
+    this.jsonlDirWatcher = null;
+    this.jsonlReadOffset = 0;
+    this.jsonlPartialLine = '';
+  }
+
+  private startJsonlWatcher(sessionRef: string, cwd: string): void {
+    this.closeJsonlWatcher();
+
+    const filePath = this.buildJsonlPath(sessionRef, cwd);
+    if (this.startJsonlFileWatcher(filePath)) return;
+
+    const fileDir = dirname(filePath);
+    try {
+      this.jsonlDirWatcher = fsWatch(fileDir, () => {
+        if (!existsSync(filePath)) return;
+
+        try {
+          this.jsonlDirWatcher?.close();
+        } catch (err) {
+          log.debug({ err, fileDir, sessionRef }, 'Failed to close Claude JSONL directory watcher');
+        }
+        this.jsonlDirWatcher = null;
+        this.startJsonlFileWatcher(filePath);
+      });
+    } catch (err) {
+      log.debug({ err, fileDir, filePath, sessionRef }, 'Failed to watch Claude JSONL directory');
+      this.closeJsonlWatcher();
+    }
+  }
+
+  private startJsonlFileWatcher(filePath: string): boolean {
+    if (!existsSync(filePath)) return false;
+
+    try {
+      this.jsonlReadOffset = statSync(filePath).size;
+      this.jsonlWatcher = fsWatch(filePath, () => {
+        this.readJsonlAppends(filePath);
+      });
+      return true;
+    } catch (err) {
+      log.debug({ err, filePath }, 'Failed to start Claude JSONL watcher');
+      this.closeJsonlWatcher();
+      return false;
+    }
+  }
+
+  private readJsonlAppends(filePath: string): void {
+    if (!existsSync(filePath)) {
+      this.closeJsonlWatcher();
+      return;
+    }
+
+    try {
+      const raw = readFileSync(filePath);
+      const nextSize = raw.length;
+
+      if (nextSize < this.jsonlReadOffset) {
+        this.jsonlReadOffset = 0;
+        this.jsonlPartialLine = '';
+      }
+
+      if (nextSize === this.jsonlReadOffset) return;
+
+      const appended = raw.subarray(this.jsonlReadOffset).toString('utf-8');
+      this.jsonlReadOffset = nextSize;
+      this.processJsonlChunk(appended);
+    } catch (err) {
+      log.debug({ err, filePath }, 'Failed to read Claude JSONL append');
+    }
+  }
+
+  private processJsonlChunk(chunk: string): void {
+    const buffered = this.jsonlPartialLine + chunk;
+    const lines = buffered.split('\n');
+    this.jsonlPartialLine = lines.pop() ?? '';
+
+    const payloads: AgendoEventPayload[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        if (parsed.type === 'queue-operation' && parsed.operation === 'dequeue') {
+          payloads.push({ type: 'user:message-dequeued' });
+        }
+      } catch {
+        // Ignore malformed or partial lines; the buffer handles incomplete trailing writes.
+      }
+    }
+
+    if (payloads.length > 0) {
+      for (const cb of this.eventCallbacks) cb(payloads);
     }
   }
 
