@@ -548,13 +548,15 @@ describe('buildDisplayItems', () => {
   });
 
   describe('mid-turn user message handling (history split vs live merge)', () => {
-    it('splits non-delta (history) agent:text bubbles when user:message arrives mid-turn', () => {
+    it('splits non-delta (history) agent:text bubbles when user:message-dequeued arrives mid-turn', () => {
       // After refresh, events come from history as agent:text (no deltas).
-      // Split is safe — agent:text events have natural content boundaries.
+      // The user bubble is still shown at enqueue time, but the split happens
+      // only once Claude actually dequeues the message.
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text', text: 'Hello ' },
         { ...base, id: 2, type: 'user:message', text: 'wait' },
-        { ...base, id: 3, type: 'agent:text', text: 'world!' },
+        { ...base, id: 3, type: 'user:message-dequeued' },
+        { ...base, id: 4, type: 'agent:text', text: 'world!' },
       ];
       const items = buildDisplayItems(events, emptyMap);
       const assistantItems = items.filter((i) => i.kind === 'assistant');
@@ -597,13 +599,14 @@ describe('buildDisplayItems', () => {
       }
     });
 
-    it('splits non-delta tool into new bubble when user:message arrives between text and tool', () => {
+    it('splits non-delta tool into new bubble when user:message-dequeued arrives between text and tool', () => {
       const events: AgendoEvent[] = [
         { ...base, id: 1, type: 'agent:text', text: 'Let me check...' },
         { ...base, id: 2, type: 'user:message', text: 'ok' },
+        { ...base, id: 3, type: 'user:message-dequeued' },
         {
           ...base,
-          id: 3,
+          id: 4,
           type: 'agent:tool-start',
           toolUseId: 'tool-1',
           toolName: 'Bash',

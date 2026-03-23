@@ -377,6 +377,7 @@ function mergeQueueOperations(
   // Build a set of enqueue timestamps that have a matching dequeue within 1 second.
   // These messages became regular user turns and already exist in the chain.
   const dequeuedTimestamps = new Set<string>();
+  const immediateDequeueTimestamps = new Set<string>();
   for (let i = 0; i < queueOps.length; i++) {
     const op = queueOps[i];
     if (op.operation !== 'enqueue') continue;
@@ -388,6 +389,7 @@ function mergeQueueOperations(
       if (nextTime - enqueueTime > 1000) break; // too far away
       if (next.operation === 'dequeue') {
         dequeuedTimestamps.add(op.timestamp);
+        immediateDequeueTimestamps.add(next.timestamp);
         break;
       }
     }
@@ -395,10 +397,14 @@ function mergeQueueOperations(
 
   // Filter to only the queue ops we need to insert:
   //   - enqueue WITHOUT immediate dequeue (mid-turn messages)
+  //   - dequeue WITHOUT immediate preceding enqueue (split marker for mid-turn messages)
   //   - remove (cancelled messages)
   const toInsert = queueOps.filter((op) => {
     if (op.operation === 'enqueue' && op.content) {
       return !dequeuedTimestamps.has(op.timestamp);
+    }
+    if (op.operation === 'dequeue') {
+      return !immediateDequeueTimestamps.has(op.timestamp);
     }
     if (op.operation === 'remove') {
       return true;
@@ -533,6 +539,9 @@ function mapQueueOperationRecord(record: RawQueueOperationRecord): AgendoEventPa
     const cleaned = stripPreamble(record.content);
     if (!cleaned) return [];
     return [{ type: 'user:message', text: cleaned }];
+  }
+  if (record.operation === 'dequeue') {
+    return [{ type: 'user:message-dequeued' }];
   }
   // 'remove' operations could map to user:message-cancelled, but they lack
   // a clientId (required by the event type). Skip for now — the enqueue

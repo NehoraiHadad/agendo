@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mapClaudeSessionMessages } from '../claude-history';
+import { mapClaudeJsonlToEvents, mapClaudeSessionMessages } from '../claude-history';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 // ---------------------------------------------------------------------------
@@ -280,5 +280,30 @@ describe('mapClaudeSessionMessages', () => {
     expect(
       (toolStarts[1] as Extract<AgendoEventPayload, { type: 'agent:tool-start' }>).toolName,
     ).toBe('Grep');
+  });
+});
+
+describe('mapClaudeJsonlToEvents', () => {
+  it('maps non-immediate dequeue queue operations into user:message-dequeued', () => {
+    const events = mapClaudeJsonlToEvents([
+      {
+        type: 'queue-operation',
+        operation: 'enqueue',
+        timestamp: '2026-03-23T19:00:00.000Z',
+        sessionId: 'sess-1',
+        content: 'wait',
+      },
+      {
+        type: 'queue-operation',
+        operation: 'dequeue',
+        timestamp: '2026-03-23T19:00:05.000Z',
+        sessionId: 'sess-1',
+      },
+    ]);
+
+    expect(events).toEqual([
+      { type: 'user:message', text: 'wait' },
+      { type: 'user:message-dequeued' },
+    ]);
   });
 });
