@@ -269,14 +269,21 @@ export function generateTeamLeadPreamble(projectName: string, taskId: string): s
     `## Team Coordination Tips\n` +
     `\n` +
     `- **Prompt quality matters**: Each agent works independently. Include exact file paths, done criteria, and constraints.\n` +
-    `- **Avoid file conflicts**: Assign different files/modules to different agents. Note conflicts in prompts.\n` +
-    `- **Monitor, don't micromanage**: Check status every few minutes, intervene only when blocked or off-track.\n` +
+    `- **Avoid file conflicts**: Assign different files/modules to different agents. Specify file ownership in each prompt.\n` +
+    `- **Monitor actively**: Call \`get_team_status\` periodically to check subtask statuses and read latest progress notes.\n` +
+    `- **Send course corrections early**: If a member is going off-track, use \`send_team_message\` immediately — don't wait.\n` +
     `- **Handle failures**: If a member's session ends unexpectedly, you can spawn a new session on the same subtask.\n` +
+    `- **Encourage communication**: Tell agents in their prompts to message teammates when they finish, get blocked, or change shared interfaces.\n` +
     `\n` +
     `## Worker Messages\n` +
     `\n` +
     `Workers may send you messages to escalate blockers, ask questions, or coordinate handoffs. ` +
     `You will receive them as user messages. Check and respond promptly — a blocked worker wastes time.\n` +
+    `\n` +
+    `## Idle State\n` +
+    `\n` +
+    `Workers go idle after each turn — this is normal. An idle worker is waiting for input. ` +
+    `Sending a message to an idle worker wakes them up. Do not treat idle as an error.\n` +
     `---\n`
   );
 }

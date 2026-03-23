@@ -139,31 +139,80 @@ async function broadcastTeamContext(
 
 /**
  * Build the team context message that gets sent to a worker.
- * Tells the worker about the team lead and their sibling agents.
+ * Comprehensive teamwork instructions inspired by Claude's TeamCreate prompt,
+ * adapted for Agendo MCP-based teams.
  */
 export function buildTeamContextMessage(
   leadSessionId: string,
   members: TeamMemberResult[],
   currentSessionId: string,
 ): string {
+  const currentMember = members.find((m) => m.sessionId === currentSessionId);
   const siblings = members.filter((m) => m.sessionId !== currentSessionId);
 
   let msg =
-    `[Team Context]\n` +
-    `You are part of a team. Use \`send_team_message\` to communicate with your team.\n\n` +
-    `## Team Lead\n` +
-    `- Session: ${leadSessionId}\n` +
-    `- Use \`send_team_message({sessionId: "${leadSessionId}", message: "..."})\` to escalate blockers or ask questions.\n`;
+    `[Team Context — You Are Part of a Team]\n\n` +
+    `You are **${currentMember?.role ?? 'a team member'}** working alongside other AI agents.\n` +
+    `Other agents are working in parallel on related subtasks. Coordination is essential.\n\n`;
+
+  // Team roster
+  msg +=
+    `## Your Team\n\n` +
+    `**Team Lead** (orchestrator):\n` +
+    `- Session: \`${leadSessionId}\`\n` +
+    `- Messages: \`send_team_message({sessionId: "${leadSessionId}", message: "..."})\`\n\n`;
 
   if (siblings.length > 0) {
-    msg += `\n## Teammates\n`;
+    msg += `**Teammates** (working in parallel):\n`;
     for (const sibling of siblings) {
-      msg += `- **${sibling.role}** (${sibling.agent}): session ${sibling.sessionId}\n`;
+      msg += `- **${sibling.role}** (${sibling.agent}) — session \`${sibling.sessionId}\`\n`;
     }
-    msg +=
-      `\nUse \`send_team_message({sessionId, message})\` to coordinate with teammates ` +
-      `(e.g. "I finished the API, you can start integration now").\n`;
+    msg += `\n`;
   }
+
+  // When to communicate
+  msg +=
+    `## When to Communicate\n\n` +
+    `You MUST send a message to your team in these situations:\n\n` +
+    `1. **Blocked**: You need something from another agent's work → message that agent directly\n` +
+    `2. **API/interface change**: You changed a function signature, schema, or API that others depend on → notify affected teammates\n` +
+    `3. **Completion**: You finished your subtask → tell the team lead so they can track progress\n` +
+    `4. **File conflict risk**: You need to modify a file that might be touched by another agent → coordinate first\n` +
+    `5. **Discovery**: You found a bug, missing dependency, or design issue that affects the team → share immediately\n` +
+    `6. **Handoff ready**: Your output is an input to another agent's work → send them the details\n\n`;
+
+  // How to communicate
+  msg +=
+    `## How to Communicate\n\n` +
+    `Use plain text messages (NOT JSON). Be concise and actionable:\n\n` +
+    `\`\`\`\n` +
+    `// Good — actionable, includes file paths\n` +
+    `send_team_message({sessionId: "...", message: "Finished the API routes. New endpoints:\\n` +
+    `- POST /api/teams — creates team\\n- GET /api/teams/:id — fetches team\\n` +
+    `You can now integrate these in the frontend."})\n\n` +
+    `// Bad — vague, no details\n` +
+    `send_team_message({sessionId: "...", message: "Done with my part"})\n` +
+    `\`\`\`\n\n`;
+
+  // Parallel work rules
+  msg +=
+    `## Parallel Work Rules\n\n` +
+    `- **Stay in your lane**: Only modify files within your subtask scope. If you need to change a shared file, message the team first.\n` +
+    `- **Don't duplicate work**: If another agent is responsible for a module, don't rewrite it.\n` +
+    `- **Read before writing shared files**: \`git diff\` or read the file first — another agent may have changed it.\n` +
+    `- **Progress notes are visible to the lead**: Use \`add_progress_note\` to report milestones. The lead sees these via \`get_team_status\`.\n\n`;
+
+  // Available tools
+  msg +=
+    `## Available Team Tools\n\n` +
+    `| Tool | Purpose |\n` +
+    `|------|---------|\n` +
+    `| \`send_team_message({sessionId, message})\` | Send a message to any teammate or the lead |\n` +
+    `| \`get_teammates()\` | Discover your team roster + session IDs |\n` +
+    `| \`add_progress_note({note})\` | Report progress (visible to lead via get_team_status) |\n` +
+    `| \`get_my_task()\` | Read your assigned subtask details |\n` +
+    `| \`update_task({taskId, status})\` | Mark your subtask done when complete |\n` +
+    `---\n`;
 
   return msg;
 }
