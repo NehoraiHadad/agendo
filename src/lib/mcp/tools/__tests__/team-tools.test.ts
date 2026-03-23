@@ -405,9 +405,11 @@ describe('buildTeamContextMessage', () => {
       'sess-1',
     );
 
-    // Should NOT list own session as teammate
-    expect(msg).not.toContain('My Role');
-    expect(msg).toContain('Other');
+    // Should NOT list own session in the Teammates section
+    // (note: "My Role" appears in the intro "You are **My Role**" — that's correct)
+    const teammatesSection = msg.slice(msg.indexOf('Teammates'));
+    expect(teammatesSection).not.toContain('My Role');
+    expect(teammatesSection).toContain('Other');
   });
 
   it('handles single-member team (no siblings)', () => {
