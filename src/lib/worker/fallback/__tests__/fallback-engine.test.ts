@@ -147,7 +147,7 @@ describe('decideFallback', () => {
     });
   });
 
-  it('escalates to agent fallback when model fallback is blocked by a pinned model', async () => {
+  it('returns terminal when model fallback is blocked by a pinned model', async () => {
     const decision = await decideFallback({
       policy: { mode: 'model_then_agent', preservePinnedModel: true },
       error: {
@@ -177,9 +177,10 @@ describe('decideFallback', () => {
     });
 
     expect(decision).toMatchObject({
-      type: 'switch_agent',
-      agent: { agentId: 'agent-claude', agentSlug: 'claude-code-1' },
+      type: 'terminal',
+      reason: 'usage_limit',
     });
+    expect(decision.type === 'terminal' ? decision.message : '').toContain('pinned model');
   });
 
   it('returns terminal when no policy-triggered recovery path remains', async () => {
@@ -209,5 +210,41 @@ describe('decideFallback', () => {
       reason: 'usage_limit',
     });
     expect(decision.type === 'terminal' ? decision.message : '').toContain('pinned model');
+  });
+
+  it('skips model fallback on auth errors and chooses an agent replacement when allowed', async () => {
+    const decision = await decideFallback({
+      policy: { mode: 'model_then_agent', preservePinnedModel: false },
+      error: {
+        category: 'auth_error',
+        summary: 'Authentication failed',
+        rawMessage: 'invalid_api_key',
+      },
+      participant: {
+        agentId: 'agent-codex',
+        agentName: 'Codex',
+        agentSlug: 'codex-cli-1',
+        provider: 'openai',
+        model: 'codex-max',
+        modelPinned: false,
+        supportsModelSwitch: true,
+      },
+      attemptedModels: [],
+      attemptedAgents: [],
+      availableAgents: [
+        {
+          agentId: 'agent-claude',
+          agentName: 'Claude',
+          agentSlug: 'claude-code-1',
+          provider: 'anthropic',
+        },
+      ],
+    });
+
+    expect(decision).toMatchObject({
+      type: 'switch_agent',
+      agent: { agentId: 'agent-claude', agentSlug: 'claude-code-1' },
+      reason: 'auth_error',
+    });
   });
 });

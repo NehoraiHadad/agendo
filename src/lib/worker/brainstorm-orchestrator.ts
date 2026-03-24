@@ -36,6 +36,7 @@ import {
   updateBrainstormStatus,
   updateBrainstormWave,
   updateBrainstormLogPath,
+  updateParticipantAgent,
   updateParticipantModel,
   updateParticipantSession,
   updateParticipantStatus,
@@ -245,6 +246,8 @@ export class BrainstormOrchestrator {
   private synthesisPending = false;
   /** Guards against double-subscription when subscribeToSession() is called twice for the same sessionId. */
   private subscribedSessionIds = new Set<string>();
+  /** Per-session unsubscribe handle so participant replacement can detach stale listeners. */
+  private sessionUnsubscribers = new Map<string, () => void>();
   /**
    * Set to true when startWave() is called; reset to false when waitForWaveComplete() resolves.
    * Prevents checkWaveComplete() from resolving during waitForAllParticipantsReady(),
@@ -503,8 +506,6 @@ export class BrainstormOrchestrator {
   // ============================================================================
 
   private async createParticipantSessions(room: BrainstormWithDetails): Promise<void> {
-    const allNames = room.participants.map((p) => p.agentName);
-
     // Fetch related brainstorm syntheses if relatedRoomIds are configured
     const roomConfig = room.config as BrainstormConfig;
     let relatedSyntheses: Array<{ title: string; synthesis: string; createdAt: Date }> | undefined;
@@ -536,6 +537,7 @@ export class BrainstormOrchestrator {
         autoRoles.forEach((role, i) => {
           if (activeParticipants[i]) {
             autoRolesMap[role] = activeParticipants[i].agentSlug;
+            activeParticipants[i].role = role;
           }
         });
         this.playbook = { ...this.playbook, roles: autoRolesMap };
@@ -551,6 +553,14 @@ export class BrainstormOrchestrator {
             await updateParticipantRole(participant.participantId, role);
           }
         }
+      }
+    } else {
+      for (const participant of this.participants) {
+        if (participant.role) continue;
+        const matchedRole = Object.entries(this.playbook.roles ?? {}).find(
+          ([, slug]) => slug === participant.agentSlug,
+        );
+        participant.role = matchedRole?.[0] ?? null;
       }
     }
 
@@ -590,49 +600,17 @@ export class BrainstormOrchestrator {
           return;
         }
 
-        const otherNames = allNames.filter((n) => n !== participant.agentName);
-        const preamble = this.buildPreamble(
-          room,
-          otherNames,
-          participant.agentSlug,
-          relatedSyntheses,
-          participant.provider,
-        );
-
         log.info(
           { roomId: this.roomId, agentId: participant.agentId, agentName: participant.agentName },
           'Creating participant session',
         );
 
-        const session = await createSession({
-          agentId: participant.agentId,
-          projectId: room.projectId,
-          taskId: room.taskId ?? undefined,
-          initialPrompt: preamble,
-          permissionMode: 'bypassPermissions',
-          kind: 'conversation',
-          // Brainstorm sessions must stay alive while the orchestrator waits for
-          // ALL participants to start. Slow agents (Copilot ACP, Codex app-server)
-          // can take 5-8 minutes to initialize. With the default 10-min idle timeout,
-          // fast agents would idle-timeout before slow ones even start.
-          idleTimeoutSec: 3600, // 1 hour
+        const session = await this.createAndStartParticipantSession(participant, room, {
+          relatedSyntheses,
+          idleTimeoutSec: 3600,
         });
 
-        participant.sessionId = session.id;
-        await updateParticipantSession(participant.participantId, session.id);
-        await updateParticipantStatus(participant.participantId, 'active');
-
-        // Subscribe before enqueuing to avoid missing the first awaiting_input event
-        await this.subscribeToSession(participant);
-
-        // Enqueue the session into pg-boss — the worker will start it
-        await enqueueSession({ sessionId: session.id });
-
         // Emit joined event
-        const role = Object.entries(this.playbook.roles || {}).find(
-          ([, slug]) => slug === participant.agentSlug,
-        )?.[0];
-        participant.role = role ?? null;
         await this.emitParticipantJoined(participant);
 
         log.info(
@@ -644,6 +622,50 @@ export class BrainstormOrchestrator {
 
     // Wait for all participants to reach awaiting_input (session is ready for messages)
     await this.waitForAllParticipantsReady();
+  }
+
+  private async createAndStartParticipantSession(
+    participant: ParticipantState,
+    room: BrainstormWithDetails,
+    options?: {
+      relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>;
+      initialTurnPrompt?: string | null;
+      idleTimeoutSec?: number;
+    },
+  ) {
+    const otherNames = this.participants
+      .filter((p) => !p.hasLeft && p.participantId !== participant.participantId)
+      .map((p) => p.agentName);
+    const preamble = this.buildPreamble(room, otherNames, participant, options?.relatedSyntheses);
+    const initialPrompt = options?.initialTurnPrompt
+      ? `${preamble}
+
+## Current Brainstorm Context
+You are joining an already-running brainstorm because another participant hit an unrecoverable error.
+Adopt the same role and continue the discussion seamlessly from the current wave context below.
+
+${options.initialTurnPrompt}`
+      : preamble;
+
+    const session = await createSession({
+      agentId: participant.agentId,
+      projectId: room.projectId,
+      taskId: room.taskId ?? undefined,
+      initialPrompt,
+      permissionMode: 'bypassPermissions',
+      kind: 'conversation',
+      idleTimeoutSec: options?.idleTimeoutSec ?? 3600,
+      model: participant.model,
+    });
+
+    participant.sessionId = session.id;
+    await updateParticipantSession(participant.participantId, session.id);
+    await updateParticipantStatus(participant.participantId, 'active');
+
+    this.subscribeToSession(participant);
+    await enqueueSession({ sessionId: session.id });
+
+    return session;
   }
 
   /**
@@ -870,39 +892,14 @@ export class BrainstormOrchestrator {
 
     this.participants.push(participant);
 
-    // Build preamble with current participants
-    const otherNames = this.participants
-      .filter((p) => !p.hasLeft && p.agentId !== agentId)
-      .map((p) => p.agentName);
-    const preamble = this.buildPreamble(
-      room,
-      otherNames,
-      agent.slug,
-      undefined,
-      binaryPathToProvider(agent.binaryPath),
-    );
-
     log.info(
       { roomId: this.roomId, agentId, agentName: agent.name, wave: this.currentWave },
       'Hot-adding participant to running brainstorm',
     );
 
-    // Create the session
-    const session = await createSession({
-      agentId,
-      projectId: room.projectId,
-      taskId: room.taskId ?? undefined,
-      initialPrompt: preamble,
-      permissionMode: 'bypassPermissions',
-      kind: 'conversation',
+    await this.createAndStartParticipantSession(participant, room, {
       idleTimeoutSec: 3600,
     });
-
-    participant.sessionId = session.id;
-    await updateParticipantSession(participant.participantId, session.id);
-    await updateParticipantStatus(participant.participantId, 'active');
-    await this.subscribeToSession(participant);
-    await enqueueSession({ sessionId: session.id });
     await this.emitParticipantJoined(participant);
 
     // Wait for the new participant to reach awaiting_input (with timeout)
@@ -963,10 +960,34 @@ export class BrainstormOrchestrator {
     this.subscribedSessionIds.add(sessionId);
 
     const unsub = addSessionEventListener(sessionId, (event: AgendoEvent) => {
+      if (participant.sessionId !== sessionId) {
+        return;
+      }
       this.handleSessionEvent(participant, event);
     });
 
     this.unsubscribers.push(unsub);
+    this.sessionUnsubscribers.set(sessionId, unsub);
+  }
+
+  private unsubscribeSession(sessionId: string | null | undefined): void {
+    if (!sessionId) return;
+
+    const unsub = this.sessionUnsubscribers.get(sessionId);
+    if (unsub) {
+      try {
+        unsub();
+      } catch {
+        // Best effort
+      }
+      this.sessionUnsubscribers.delete(sessionId);
+      const idx = this.unsubscribers.indexOf(unsub);
+      if (idx >= 0) {
+        this.unsubscribers.splice(idx, 1);
+      }
+    }
+
+    this.subscribedSessionIds.delete(sessionId);
   }
 
   // ============================================================================
@@ -1853,9 +1874,19 @@ export class BrainstormOrchestrator {
   private async listFallbackAgentCandidates(
     participant: ParticipantState,
   ): Promise<FallbackAgentCandidate[]> {
+    const reservedAgentIds = new Set(
+      this.participants
+        .filter((entry) => entry.participantId !== participant.participantId && !entry.hasLeft)
+        .map((entry) => entry.agentId),
+    );
     const agents = await listAgents();
     return agents
-      .filter((candidate) => candidate.id !== participant.agentId && candidate.isActive)
+      .filter(
+        (candidate) =>
+          candidate.id !== participant.agentId &&
+          candidate.isActive &&
+          !reservedAgentIds.has(candidate.id),
+      )
       .map((candidate) => ({
         agentId: candidate.id,
         agentName: candidate.name,
@@ -2146,20 +2177,6 @@ export class BrainstormOrchestrator {
     const decision = await this.decideParticipantFallback(participant, error);
     if (!decision || !error || decision.type === 'none') return;
 
-    if (decision.reason === 'auth_error') {
-      await this.finalizeParticipantFallbackFailure(
-        participant,
-        `${decision.summary}. Automatic fallback is unavailable for authentication failures.`,
-        this.buildParticipantRecovery(participant, {
-          state: 'fallback_failed',
-          reason: decision.reason,
-          summary: decision.summary,
-          triggerError: decision.triggerError,
-        }),
-      );
-      return;
-    }
-
     if (decision.type === 'terminal') {
       await this.finalizeParticipantFallbackFailure(
         participant,
@@ -2176,17 +2193,12 @@ export class BrainstormOrchestrator {
     }
 
     if (decision.type === 'switch_agent') {
-      await this.finalizeParticipantFallbackFailure(
+      await this.attemptParticipantAgentFallback(
         participant,
-        `${decision.summary}. Automatic agent fallback selected ${decision.agent.agentName}, but brainstorm participant replacement is not supported yet.`,
-        this.buildParticipantRecovery(participant, {
-          state: 'fallback_failed',
-          reason: decision.reason,
-          summary: decision.summary,
-          triggerError: decision.triggerError,
-          targetAgentId: decision.agent.agentId,
-          targetAgentName: decision.agent.agentName,
-        }),
+        decision.agent,
+        decision.summary,
+        decision.triggerError,
+        decision.reason,
       );
       return;
     }
@@ -2250,6 +2262,142 @@ export class BrainstormOrchestrator {
         participant,
         `Failed to dispatch automatic model fallback to "${model}": ${getErrorMessage(err)}`,
       );
+    }
+  }
+
+  private async attemptParticipantAgentFallback(
+    participant: ParticipantState,
+    agent: FallbackAgentCandidate,
+    summary: string,
+    triggerError: string,
+    reason: BrainstormParticipantRecovery['reason'],
+  ): Promise<void> {
+    if (participant.fallbackInFlight || !this.room) return;
+
+    participant.fallbackInFlight = true;
+    participant.fallbackTriggerError = triggerError;
+    participant.fallbackTargetModel = null;
+    participant.fallbackAttemptedAgents.push(agent.agentId);
+    participant.recovery = this.buildParticipantRecovery(participant, {
+      state: 'attempting_agent_fallback',
+      reason,
+      summary,
+      triggerError,
+      targetAgentId: agent.agentId,
+      targetAgentName: agent.agentName,
+    });
+
+    await this.emitParticipantActivity(
+      participant,
+      `Automatic fallback: switching from ${participant.agentName} to ${agent.agentName} after ${summary.toLowerCase()}.`,
+      participant.recovery,
+    ).catch(() => {});
+
+    const previousSessionId = participant.sessionId;
+    const previousAgentId = participant.agentId;
+    const previousAgentName = participant.agentName;
+    const previousAgentSlug = participant.agentSlug;
+    const previousAgentBinaryPath = participant.agentBinaryPath;
+    const previousProvider = participant.provider;
+    const previousModel = participant.model;
+    const previousModelPinned = participant.modelPinned;
+    const pendingPrompt = participant.pendingPrompt;
+
+    participant.sessionId = null;
+    participant.agentId = agent.agentId;
+    participant.agentName = agent.agentName;
+    participant.agentSlug = agent.agentSlug;
+    participant.provider = agent.provider;
+    participant.model = undefined;
+    participant.modelPinned = false;
+    participant.lastError = null;
+    participant.responseBuffer = [];
+    participant.deltaBuffer.clear();
+
+    try {
+      await updateParticipantAgent(participant.participantId, agent.agentId);
+      await updateParticipantModel(participant.participantId, null);
+      await this.createAndStartParticipantSession(participant, this.room, {
+        relatedSyntheses: this.relatedSyntheses,
+        initialTurnPrompt: this.waveStarted ? pendingPrompt : null,
+        idleTimeoutSec: 3600,
+      });
+
+      participant.fallbackInFlight = false;
+      participant.fallbackTriggerError = null;
+      participant.recovery = this.buildParticipantRecovery(participant, {
+        state: 'agent_fallback_succeeded',
+        reason,
+        summary: `Automatic fallback switched from ${previousAgentName} to ${agent.agentName}`,
+        triggerError,
+        targetAgentId: agent.agentId,
+        targetAgentName: agent.agentName,
+      });
+
+      await this.emitParticipantJoined(participant).catch(() => {});
+      await this.emitParticipantActivity(
+        participant,
+        `Automatic fallback succeeded: ${agent.agentName} replaced ${previousAgentName}.`,
+        participant.recovery,
+      ).catch(() => {});
+
+      if (this.waveStarted) {
+        await this.emitParticipantStatus(participant, 'thinking', {
+          error: null,
+          model: participant.model ?? null,
+          recovery: participant.recovery,
+        }).catch(() => {});
+      }
+    } catch (err) {
+      participant.sessionId = previousSessionId;
+      participant.agentId = previousAgentId;
+      participant.agentName = previousAgentName;
+      participant.agentSlug = previousAgentSlug;
+      participant.agentBinaryPath = previousAgentBinaryPath;
+      participant.provider = previousProvider;
+      participant.model = previousModel;
+      participant.modelPinned = previousModelPinned;
+      participant.fallbackInFlight = false;
+      participant.fallbackTriggerError = null;
+      await updateParticipantAgent(participant.participantId, previousAgentId).catch(() => {});
+      await updateParticipantModel(participant.participantId, previousModel ?? null).catch(
+        () => {},
+      );
+      if (previousSessionId) {
+        await updateParticipantSession(participant.participantId, previousSessionId).catch(
+          () => {},
+        );
+      }
+      await this.finalizeParticipantFallbackFailure(
+        participant,
+        `Automatic agent fallback to ${agent.agentName} failed: ${getErrorMessage(err)}`,
+        this.buildParticipantRecovery(participant, {
+          state: 'fallback_failed',
+          reason,
+          summary,
+          triggerError,
+          targetAgentId: agent.agentId,
+          targetAgentName: agent.agentName,
+        }),
+      );
+      return;
+    }
+
+    this.unsubscribeSession(previousSessionId);
+    if (previousSessionId) {
+      try {
+        const proc = getSessionProc(previousSessionId);
+        if (proc) {
+          await proc.onControl(JSON.stringify({ type: 'cancel' }));
+        } else {
+          await sendSessionControl(previousSessionId, { type: 'cancel' });
+        }
+      } catch (err) {
+        log.warn(
+          { err, roomId: this.roomId, sessionId: previousSessionId },
+          'Failed to cancel replaced participant session after agent fallback',
+        );
+      }
     }
   }
 
@@ -2349,17 +2497,12 @@ export class BrainstormOrchestrator {
     }
 
     if (decision.type === 'switch_agent') {
-      await this.finalizeParticipantFallbackFailure(
+      await this.attemptParticipantAgentFallback(
         participant,
-        `${decision.summary}. Automatic agent fallback selected ${decision.agent.agentName}, but brainstorm participant replacement is not supported yet.`,
-        this.buildParticipantRecovery(participant, {
-          state: 'fallback_failed',
-          reason: decision.reason,
-          summary: decision.summary,
-          triggerError: decision.triggerError,
-          targetAgentId: decision.agent.agentId,
-          targetAgentName: decision.agent.agentName,
-        }),
+        decision.agent,
+        decision.summary,
+        decision.triggerError,
+        decision.reason,
       );
       return;
     }
@@ -2982,9 +3125,10 @@ ${correctionsText}`;
   private buildPreamble(
     room: BrainstormWithDetails,
     otherParticipantNames: string[],
-    currentParticipantSlug: string,
+    currentParticipant?:
+      | Pick<ParticipantState, 'agentSlug' | 'agentName' | 'role' | 'provider'>
+      | string,
     relatedSyntheses?: Array<{ title: string; synthesis: string; createdAt: Date }>,
-    currentParticipantProvider?: Provider | null,
   ): string {
     const waveTimeoutDisplay = Math.round(this.waveTimeoutSec / 60);
     const wave0TimeoutDisplay = Math.round((this.waveTimeoutSec + this.wave0ExtraTimeoutSec) / 60);
@@ -3019,23 +3163,75 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
       );
     }
 
+    const currentParticipantSlug =
+      typeof currentParticipant === 'string'
+        ? currentParticipant
+        : (currentParticipant?.agentSlug ?? room.participants[0]?.agentSlug ?? 'participant');
+    const roomParticipant = room.participants.find((participant) => {
+      return participant.agentSlug === currentParticipantSlug;
+    });
+    const trackedParticipant = this.participants.find((participant) => {
+      return participant.agentSlug === currentParticipantSlug;
+    });
+    const playbookRole =
+      Object.entries(this.playbook.roles ?? {}).find(
+        ([, slug]) => slug === currentParticipantSlug,
+      )?.[0] ?? null;
+    const resolvedCurrentParticipant = {
+      agentSlug: currentParticipantSlug,
+      agentName:
+        typeof currentParticipant === 'string'
+          ? (roomParticipant?.agentName ?? trackedParticipant?.agentName ?? currentParticipantSlug)
+          : (currentParticipant?.agentName ??
+            roomParticipant?.agentName ??
+            trackedParticipant?.agentName ??
+            currentParticipantSlug),
+      role:
+        typeof currentParticipant === 'string'
+          ? (trackedParticipant?.role ?? playbookRole)
+          : (currentParticipant?.role ?? trackedParticipant?.role ?? playbookRole),
+      provider:
+        typeof currentParticipant === 'string'
+          ? (trackedParticipant?.provider ??
+            (roomParticipant && 'agentBinaryPath' in roomParticipant
+              ? binaryPathToProvider(roomParticipant.agentBinaryPath)
+              : null))
+          : (currentParticipant?.provider ??
+            trackedParticipant?.provider ??
+            (roomParticipant && 'agentBinaryPath' in roomParticipant
+              ? binaryPathToProvider(roomParticipant.agentBinaryPath)
+              : null)),
+    };
+
     let myRole: string | null = null;
 
-    // Inject role assignments from playbook
-    if (this.playbook.roles && Object.keys(this.playbook.roles).length > 0) {
-      const roleLines = Object.entries(this.playbook.roles).map(([role, agentSlug]) => {
-        const participant = room.participants.find((p) => p.agentSlug === agentSlug);
-        const name = participant ? participant.agentName : agentSlug;
-        return `- **${role}**: ${name}`;
-      });
+    const assignedParticipants =
+      this.participants.filter((participant) => !participant.hasLeft && participant.role).length > 0
+        ? this.participants
+            .filter((participant) => !participant.hasLeft && participant.role)
+            .map((participant) => ({
+              role: participant.role as string,
+              name:
+                participant.agentSlug === resolvedCurrentParticipant.agentSlug
+                  ? resolvedCurrentParticipant.agentName
+                  : participant.agentName,
+            }))
+        : Object.entries(this.playbook.roles ?? {}).map(([role, agentSlug]) => ({
+            role,
+            name:
+              agentSlug === resolvedCurrentParticipant.agentSlug
+                ? resolvedCurrentParticipant.agentName
+                : (room.participants.find((participant) => participant.agentSlug === agentSlug)
+                    ?.agentName ?? agentSlug),
+          }));
+
+    if (assignedParticipants.length > 0) {
+      const roleLines = assignedParticipants.map(({ role, name }) => `- **${role}**: ${name}`);
       sections.push(`\n## Assigned Roles\n${roleLines.join('\n')}`);
 
       // Inject personalized role instructions for this participant
       const roleInstructions = (room.config as BrainstormConfig)?.roleInstructions;
-      myRole =
-        Object.entries(this.playbook.roles).find(
-          ([, slug]) => slug === currentParticipantSlug,
-        )?.[0] ?? null;
+      myRole = resolvedCurrentParticipant.role ?? null;
 
       if (myRole) {
         const instructions =
@@ -3047,10 +3243,8 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
     }
 
     const resolvedProvider =
-      currentParticipantProvider ??
-      this.participants.find((participant) => participant.agentSlug === currentParticipantSlug)
-        ?.provider ??
-      inferProviderFromAgentSlug(currentParticipantSlug);
+      resolvedCurrentParticipant.provider ??
+      inferProviderFromAgentSlug(resolvedCurrentParticipant.agentSlug);
     const providerLens = buildBrainstormProviderLens(resolvedProvider, myRole);
     if (providerLens) {
       sections.push(`\n## Your Provider Lens\n${providerLens}`);

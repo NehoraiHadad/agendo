@@ -189,6 +189,70 @@ describe('brainstorm-store participant errors', () => {
     expect(participant?.model).toBe('gpt-4o');
     expect(participant?.status).toBe('thinking');
   });
+
+  it('keeps the same participant slot when an automatic agent fallback succeeds', () => {
+    const store = useBrainstormStore.getState();
+
+    store.handleEvent({
+      id: 1,
+      roomId: 'room-1',
+      ts: Date.now(),
+      type: 'participant:joined',
+      participantId: participantId3,
+      agentId: 'agent-codex',
+      agentName: 'Codex',
+      agentSlug: 'codex-cli-1',
+      role: 'implementer',
+    });
+
+    store.handleEvent({
+      id: 2,
+      roomId: 'room-1',
+      ts: Date.now(),
+      type: 'participant:joined',
+      participantId: participantId3,
+      agentId: 'agent-claude',
+      agentName: 'Claude',
+      agentSlug: 'claude-code-1',
+      role: 'implementer',
+      recovery: {
+        state: 'agent_fallback_succeeded',
+        reason: 'usage_limit',
+        summary: 'Automatic fallback switched from Codex to Claude',
+        triggerError: 'Codex turn failed: usageLimitExceeded',
+        targetAgentId: 'agent-claude',
+        targetAgentName: 'Claude',
+      },
+    });
+
+    store.handleEvent({
+      id: 3,
+      roomId: 'room-1',
+      ts: Date.now(),
+      type: 'participant:status',
+      participantId: participantId3,
+      agentId: 'agent-claude',
+      agentName: 'Claude',
+      agentSlug: 'claude-code-1',
+      status: 'thinking',
+      error: null,
+      recovery: {
+        state: 'agent_fallback_succeeded',
+        reason: 'usage_limit',
+        summary: 'Automatic fallback switched from Codex to Claude',
+        triggerError: 'Codex turn failed: usageLimitExceeded',
+        targetAgentId: 'agent-claude',
+        targetAgentName: 'Claude',
+      },
+    });
+
+    const participant = useBrainstormStore.getState().participants.get(participantId3);
+    expect(participant?.agentId).toBe('agent-claude');
+    expect(participant?.agentName).toBe('Claude');
+    expect(participant?.role).toBe('implementer');
+    expect(participant?.status).toBe('thinking');
+    expect(participant?.recovery?.state).toBe('agent_fallback_succeeded');
+  });
 });
 
 // ============================================================================
@@ -472,70 +536,64 @@ describe('handleEventBatch', () => {
   });
 
   it('handles synthesis in batch', () => {
-    useBrainstormStore
-      .getState()
-      .handleEventBatch([
-        {
-          id: 1,
-          roomId: 'r',
-          ts: Date.now(),
-          type: 'room:synthesis',
-          synthesis: '## Summary\nDone',
-        } as BrainstormEvent,
-      ]);
+    useBrainstormStore.getState().handleEventBatch([
+      {
+        id: 1,
+        roomId: 'r',
+        ts: Date.now(),
+        type: 'room:synthesis',
+        synthesis: '## Summary\nDone',
+      } as BrainstormEvent,
+    ]);
     expect(useBrainstormStore.getState().synthesis).toBe('## Summary\nDone');
   });
 
   it('handles message:delta accumulation in batch', () => {
-    useBrainstormStore
-      .getState()
-      .handleEventBatch([
-        makeParticipantJoined('p1', 'agent-1', 'Claude'),
-        {
-          id: 1,
-          roomId: 'r',
-          ts: Date.now(),
-          type: 'message:delta',
-          participantId: 'p1',
-          agentId: 'agent-1',
-          text: 'Hello ',
-        } as BrainstormEvent,
-        {
-          id: 2,
-          roomId: 'r',
-          ts: Date.now(),
-          type: 'message:delta',
-          participantId: 'p1',
-          agentId: 'agent-1',
-          text: 'world',
-        } as BrainstormEvent,
-      ]);
+    useBrainstormStore.getState().handleEventBatch([
+      makeParticipantJoined('p1', 'agent-1', 'Claude'),
+      {
+        id: 1,
+        roomId: 'r',
+        ts: Date.now(),
+        type: 'message:delta',
+        participantId: 'p1',
+        agentId: 'agent-1',
+        text: 'Hello ',
+      } as BrainstormEvent,
+      {
+        id: 2,
+        roomId: 'r',
+        ts: Date.now(),
+        type: 'message:delta',
+        participantId: 'p1',
+        agentId: 'agent-1',
+        text: 'world',
+      } as BrainstormEvent,
+    ]);
     expect(useBrainstormStore.getState().streamingText.get('p1')).toBe('Hello world');
   });
 
   it('clears streaming text when final message arrives in same batch', () => {
-    useBrainstormStore
-      .getState()
-      .handleEventBatch([
-        makeParticipantJoined('p1', 'agent-1', 'Claude'),
-        {
-          id: 1,
-          roomId: 'r',
-          ts: Date.now(),
-          type: 'message:delta',
-          participantId: 'p1',
-          agentId: 'agent-1',
-          text: 'Draft...',
-        } as BrainstormEvent,
-        makeMessage({
-          id: 2,
-          wave: 0,
-          participantId: 'p1',
-          agentId: 'agent-1',
-          agentName: 'Claude',
-          content: 'Final message',
-        }),
-      ]);
+    useBrainstormStore.getState().handleEventBatch([
+      makeParticipantJoined('p1', 'agent-1', 'Claude'),
+      {
+        id: 1,
+        roomId: 'r',
+        ts: Date.now(),
+        type: 'message:delta',
+        participantId: 'p1',
+        agentId: 'agent-1',
+        text: 'Draft...',
+      } as BrainstormEvent,
+      makeMessage({
+        id: 2,
+        wave: 0,
+        participantId: 'p1',
+        agentId: 'agent-1',
+        agentName: 'Claude',
+        content: 'Final message',
+      }),
+    ]);
     const state = useBrainstormStore.getState();
     expect(state.streamingText.has('p1')).toBe(false);
     expect(state.messages).toHaveLength(1);

@@ -368,7 +368,9 @@ export async function handleBrainstormSSE(
         participantId: p.id,
         agentId: p.agentId,
         agentName: p.agentName,
+        agentSlug: p.agentSlug,
         status: eventStatus,
+        model: p.model ?? null,
       };
       sendEvent(res, participantEvent);
     }

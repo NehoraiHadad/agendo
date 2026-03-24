@@ -109,14 +109,22 @@ export async function decideFallback(context: FallbackDecisionContext): Promise<
     return { type: 'none', ...sharedFields };
   }
 
+  const blockedByPinnedModel =
+    policy.preservePinnedModel &&
+    context.participant.modelPinned &&
+    context.participant.model !== null;
+  if (blockedByPinnedModel) {
+    return {
+      type: 'terminal',
+      message: `${context.error.summary}. Automatic fallback is disabled because this participant uses a pinned model.`,
+      ...sharedFields,
+    };
+  }
+
   const modelFallbackAllowed =
     context.participant.supportsModelSwitch &&
     policy.mode !== 'off' &&
-    !(
-      policy.preservePinnedModel &&
-      context.participant.modelPinned &&
-      context.participant.model !== null
-    );
+    context.error.category !== 'auth_error';
 
   if (modelFallbackAllowed) {
     const modelCandidates = await resolveFallbackModelCandidates({
@@ -150,17 +158,9 @@ export async function decideFallback(context: FallbackDecisionContext): Promise<
     }
   }
 
-  const blockedByPinnedModel =
-    policy.preservePinnedModel &&
-    context.participant.modelPinned &&
-    context.participant.model !== null;
-  const message = blockedByPinnedModel
-    ? `${context.error.summary}. Automatic model fallback is disabled because this participant uses a pinned model.`
-    : `${context.error.summary}. No eligible automatic fallback remained.`;
-
   return {
     type: 'terminal',
-    message,
+    message: `${context.error.summary}. No eligible automatic fallback remained.`,
     ...sharedFields,
   };
 }
