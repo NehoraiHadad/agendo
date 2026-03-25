@@ -225,6 +225,39 @@ function isQueueOperationRecord(value: unknown): value is RawQueueOperationRecor
 }
 
 /**
+ * Minimal shape for any JSONL record that participates in the uuid/parentUuid
+ * chain. This includes `progress`, `system`, and other record types that are
+ * NOT part of the conversation but ARE linked via parentUuid. Without these
+ * in the traversal map, chain walks break when a user/assistant record's
+ * parentUuid points to a progress record (the most common case — ~80% of
+ * records in a typical JSONL are progress records).
+ */
+export interface ChainNode {
+  uuid: string;
+  parentUuid: string | null;
+  isSidechain: boolean;
+  timestamp: string;
+  type: string;
+}
+
+/**
+ * Type guard: check if a parsed JSON value has the fields needed for chain
+ * traversal (uuid, parentUuid, isSidechain, timestamp). This matches user,
+ * assistant, AND progress/system/other record types.
+ */
+export function isChainNode(value: unknown): value is ChainNode {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj['uuid'] === 'string' &&
+    (obj['parentUuid'] === null || typeof obj['parentUuid'] === 'string') &&
+    typeof obj['isSidechain'] === 'boolean' &&
+    typeof obj['timestamp'] === 'string' &&
+    typeof obj['type'] === 'string'
+  );
+}
+
+/**
  * Build the main conversation chain from a flat list of parsed JSONL records.
  *
  * Claude's JSONL can contain sidechains (e.g. from interrupted turns, retries,
@@ -233,31 +266,55 @@ function isQueueOperationRecord(value: unknown): value is RawQueueOperationRecor
  *
  * Algorithm (mirrors what Claude SDK does internally):
  *   1. Skip records where isSidechain === true (branched off the main chain).
- *   2. Build a uuid → record lookup map.
+ *   2. Build a uuid → node lookup map from ALL chain-linked records (including
+ *      progress, system, etc.) so the chain walk can traverse through them.
  *   3. Build a set of all uuids referenced as parentUuid (i.e. non-leaf nodes).
- *   4. Among non-sidechain records NOT in that set, find the leaf with the
- *      latest timestamp — this is the end of the main conversation thread.
- *   5. Walk backwards from that leaf through parentUuid links until null.
+ *   4. Among non-sidechain conversation records NOT in that set, find the leaf
+ *      with the latest timestamp — this is the end of the main conversation.
+ *   5. Walk backwards from that leaf through parentUuid links until null,
+ *      collecting only user/assistant records (skipping progress nodes).
  *   6. Reverse the result to get chronological (oldest-first) order.
+ *
+ * @param conversationRecords - user/assistant records only (for leaf detection + output)
+ * @param allChainNodes - ALL uuid-bearing records including progress (for traversal)
  */
-function buildConversationChain(allRecords: RawRecord[]): RawRecord[] {
-  // Step 1: filter out sidechains and build uuid lookup
-  const mainRecords = allRecords.filter((r) => !r.isSidechain);
-  const byUuid = new Map<string, RawRecord>();
-  for (const record of mainRecords) {
-    byUuid.set(record.uuid, record);
+export function buildConversationChain(
+  conversationRecords: RawRecord[],
+  allChainNodes?: ChainNode[],
+): RawRecord[] {
+  const chainNodes = allChainNodes ?? conversationRecords;
+
+  // Step 1: filter out sidechains
+  const mainConversation = conversationRecords.filter((r) => !r.isSidechain);
+  const mainNodes = chainNodes.filter((r) => !r.isSidechain);
+
+  // Build uuid → node lookup from ALL record types (including progress)
+  // so chain walks can traverse through progress records.
+  const byUuid = new Map<string, ChainNode>();
+  for (const node of mainNodes) {
+    byUuid.set(node.uuid, node);
+  }
+
+  // Also build a set of conversation-record uuids for fast lookup during walk
+  const conversationUuids = new Set<string>();
+  const conversationByUuid = new Map<string, RawRecord>();
+  for (const record of mainConversation) {
+    conversationUuids.add(record.uuid);
+    conversationByUuid.set(record.uuid, record);
   }
 
   // Step 2: find all uuids that are referenced as a parentUuid (non-leaf nodes)
+  // Use ALL chain nodes so progress records are correctly marked as non-leaf.
   const referencedAsParent = new Set<string>();
-  for (const record of mainRecords) {
-    if (record.parentUuid !== null) {
-      referencedAsParent.add(record.parentUuid);
+  for (const node of mainNodes) {
+    if (node.parentUuid !== null) {
+      referencedAsParent.add(node.parentUuid);
     }
   }
 
-  // Step 3: find leaves (records NOT referenced as parent by any other record)
-  const leaves = mainRecords.filter((r) => !referencedAsParent.has(r.uuid));
+  // Step 3: find leaves among conversation records only
+  // (records NOT referenced as parent by any other record)
+  const leaves = mainConversation.filter((r) => !referencedAsParent.has(r.uuid));
 
   if (leaves.length === 0) return [];
 
@@ -268,11 +325,16 @@ function buildConversationChain(allRecords: RawRecord[]): RawRecord[] {
     return candidateTs > bestTs ? candidate : best;
   });
 
-  // Step 5: walk backwards from latestLeaf to root, collecting the chain
+  // Step 5: walk backwards from latestLeaf to root via the FULL node map
+  // (traverses through progress records), but only collect user/assistant.
   const chain: RawRecord[] = [];
-  let current: RawRecord | undefined = latestLeaf;
+  let current: ChainNode | undefined = latestLeaf;
   while (current !== undefined) {
-    chain.push(current);
+    // Only collect user/assistant records in the output
+    const conversationRecord = conversationByUuid.get(current.uuid);
+    if (conversationRecord) {
+      chain.push(conversationRecord);
+    }
     const parentUuid: string | null = current.parentUuid;
     current = parentUuid !== null ? byUuid.get(parentUuid) : undefined;
   }
@@ -313,11 +375,16 @@ export function readClaudeJsonl(
     return null;
   }
 
-  // Parse each non-empty line as JSON, collecting conversation records and
-  // queue-operation records separately. Queue operations (enqueue/dequeue/remove)
-  // are not part of the uuid-linked conversation chain — they are merged by
-  // timestamp after the chain is built.
-  const allRecords: RawRecord[] = [];
+  // Parse each non-empty line as JSON, collecting:
+  //   - conversationRecords: user/assistant only (for event mapping + leaf detection)
+  //   - allChainNodes: ALL uuid-bearing records including progress/system (for chain traversal)
+  //   - queueOps: queue-operation records (merged by timestamp after chain is built)
+  //
+  // Progress records (~80% of a typical JSONL) have uuid/parentUuid and link
+  // user/assistant records together. Without them in the traversal map, the
+  // chain walk breaks when a user record's parentUuid points to a progress record.
+  const conversationRecords: RawRecord[] = [];
+  const allChainNodes: ChainNode[] = [];
   const queueOps: RawQueueOperationRecord[] = [];
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
@@ -325,7 +392,10 @@ export function readClaudeJsonl(
     try {
       const parsed: unknown = JSON.parse(trimmed);
       if (isConversationRecord(parsed)) {
-        allRecords.push(parsed);
+        conversationRecords.push(parsed);
+        allChainNodes.push(parsed);
+      } else if (isChainNode(parsed)) {
+        allChainNodes.push(parsed);
       } else if (isQueueOperationRecord(parsed)) {
         queueOps.push(parsed);
       }
@@ -334,9 +404,9 @@ export function readClaudeJsonl(
     }
   }
 
-  if (allRecords.length === 0 && queueOps.length === 0) return null;
+  if (conversationRecords.length === 0 && queueOps.length === 0) return null;
 
-  const chain = buildConversationChain(allRecords);
+  const chain = buildConversationChain(conversationRecords, allChainNodes);
   if (chain.length === 0 && queueOps.length === 0) return null;
 
   // Merge queue operations into the conversation chain at their chronological

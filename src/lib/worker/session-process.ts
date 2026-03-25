@@ -112,6 +112,8 @@ export class SessionProcess {
   /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
    *  transition or on process exit — whichever comes first. */
   private slotReleaseFuture = new Future<void>();
+  /** Ensures slot release side effects run only once per active turn. */
+  private slotReleased = false;
   private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
   /** Maps toolUseId → {toolName, input} for tools currently in-flight, used to build interruption notes. */
@@ -781,6 +783,9 @@ export class SessionProcess {
   private async transitionTo(status: SessionStatus): Promise<void> {
     if (this.status === status) return; // already in this state, skip duplicate transition
     this.status = status;
+    if (status === 'active') {
+      this.slotReleased = false;
+    }
 
     // Flush any remaining text in the data buffer before entering awaiting_input.
     // Gemini's ACP adapter may not emit a trailing newline after the last text chunk,
@@ -810,47 +815,51 @@ export class SessionProcess {
     await this.emitEvent({ type: 'session:state', status });
 
     if (status === 'awaiting_input') {
-      // Drain any team messages that arrived while Claude was active.
-      this.teamManager.drainPendingInjections();
+      if (!this.slotReleased) {
+        this.slotReleased = true;
 
-      // Capture point B: git context at turn end (non-blocking)
-      if (this.spawnCwd) {
-        captureGitContext(this.spawnCwd)
-          .then(async (snap) => {
-            if (snap) {
-              const eventSnap = this.toEventSnapshot(snap);
-              if (this.initialGitHash) {
-                eventSnap.commitsSinceStart = await countCommitsSince(
-                  this.initialGitHash,
-                  this.spawnCwd ?? process.cwd(),
-                );
+        // Drain any team messages that arrived while Claude was active.
+        this.teamManager.drainPendingInjections();
+
+        // Capture point B: git context at turn end (non-blocking)
+        if (this.spawnCwd) {
+          captureGitContext(this.spawnCwd)
+            .then(async (snap) => {
+              if (snap) {
+                const eventSnap = this.toEventSnapshot(snap);
+                if (this.initialGitHash) {
+                  eventSnap.commitsSinceStart = await countCommitsSince(
+                    this.initialGitHash,
+                    this.spawnCwd ?? process.cwd(),
+                  );
+                }
+                this.lastGitSnapshot = eventSnap;
+                this.lastGitSnapshotAt = new Date().toISOString();
+                void this.emitEvent({
+                  type: 'system:git-context',
+                  snapshot: eventSnap,
+                  capturedAt: this.lastGitSnapshotAt,
+                  trigger: 'turn_end',
+                });
               }
-              this.lastGitSnapshot = eventSnap;
-              this.lastGitSnapshotAt = new Date().toISOString();
-              void this.emitEvent({
-                type: 'system:git-context',
-                snapshot: eventSnap,
-                capturedAt: this.lastGitSnapshotAt,
-                trigger: 'turn_end',
-              });
-            }
-          })
-          .catch(() => {}); // non-critical — don't fail the transition
-      }
+            })
+            .catch(() => {}); // non-critical — don't fail the transition
+        }
 
-      const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
-      log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
-      // autoResumeCount already reset to 0 in the DB update above (folded into
-      // the same write for atomicity). No separate resetRecoveryCount call needed.
-      // Resolve the slot future so the pg-boss slot frees while the process
-      // stays alive in-memory awaiting the next user message.
-      this.slotReleaseFuture.resolve();
-      // Notify subscribed browsers that the agent is ready for input
-      void sendPushToAll({
-        title: 'Agent finished',
-        body: 'Your agent is ready for the next message',
-        url: `/sessions/${this.session.id}`,
-      });
+        const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
+        log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
+        // autoResumeCount already reset to 0 in the DB update above (folded into
+        // the same write for atomicity). No separate resetRecoveryCount call needed.
+        // Resolve the slot future so the pg-boss slot frees while the process
+        // stays alive in-memory awaiting the next user message.
+        this.slotReleaseFuture.resolve();
+        // Notify subscribed browsers that the agent is ready for input
+        void sendPushToAll({
+          title: 'Agent finished',
+          body: 'Your agent is ready for the next message',
+          url: `/sessions/${this.session.id}`,
+        });
+      }
     }
   }
 

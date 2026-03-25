@@ -32,6 +32,9 @@ import type {
 
 const log = createLogger('worker-sse');
 
+/** Keepalive interval to prevent SSE connection drops (proxies, browsers, load balancers). */
+const KEEPALIVE_INTERVAL_MS = 15_000;
+
 // ============================================================================
 // Shared in-memory listener registries
 // ============================================================================
@@ -108,6 +111,14 @@ function setSseHeaders(res: http.ServerResponse): void {
   res.flushHeaders();
 }
 
+function sendHeartbeat(res: http.ServerResponse): void {
+  try {
+    res.write(': heartbeat\n\n');
+  } catch {
+    // Client disconnected — ignore
+  }
+}
+
 function sendEvent(res: http.ServerResponse, event: AgendoEvent | BrainstormEvent): void {
   try {
     res.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -151,6 +162,9 @@ export async function handleSessionSSE(
 
   setSseHeaders(res);
 
+  // Keepalive heartbeat to prevent proxy/browser timeout disconnects
+  const heartbeatTimer = setInterval(() => sendHeartbeat(res), KEEPALIVE_INTERVAL_MS);
+
   // 1. Emit current session state immediately
   const stateEvent: AgendoEvent = {
     id: 0,
@@ -189,6 +203,7 @@ export async function handleSessionSSE(
 
   // 4. Clean up on client disconnect
   req.on('close', () => {
+    clearInterval(heartbeatTimer);
     unsub();
     log.debug({ sessionId }, 'SSE client disconnected');
   });
@@ -342,6 +357,9 @@ export async function handleBrainstormSSE(
 
   setSseHeaders(res);
 
+  // Keepalive heartbeat to prevent proxy/browser timeout disconnects
+  const heartbeatTimer = setInterval(() => sendHeartbeat(res), KEEPALIVE_INTERVAL_MS);
+
   // 1. Emit current room state immediately
   const roomStateEvent: BrainstormEvent = {
     id: 0,
@@ -403,6 +421,7 @@ export async function handleBrainstormSSE(
 
   // 3. Clean up on client disconnect
   req.on('close', () => {
+    clearInterval(heartbeatTimer);
     unsub();
     log.debug({ roomId }, 'Brainstorm SSE client disconnected');
   });
