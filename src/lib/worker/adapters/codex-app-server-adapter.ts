@@ -244,8 +244,50 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
   }
 
   async setPermissionMode(mode: string): Promise<boolean> {
+    // Always update the local field so the next startTurn() picks it up.
     this.permissionMode = mode;
-    return true;
+
+    // Propagate to the running app-server so the CURRENT thread uses the new
+    // policy immediately (not just the next turn/start call).
+    if (!this.alive) return true;
+
+    const approvalPolicy = getApprovalPolicy(mode);
+    const sandboxMode = getSandboxMode(mode);
+
+    // Build the sandboxPolicy object that matches the shape used in startTurn().
+    const sandboxPolicy =
+      sandboxMode === 'danger-full-access'
+        ? { type: 'dangerFullAccess' }
+        : sandboxMode === 'read-only'
+          ? { type: 'readOnly' }
+          : {
+              type: 'workspaceWrite',
+              writableRoots: [],
+              readOnlyAccess: { type: 'fullAccess' },
+              network_access: false,
+              exclude_tmpdir_env_var: false,
+              exclude_slash_tmp: false,
+            };
+
+    try {
+      await this.transport.call('config/batchWrite', {
+        edits: [
+          { keyPath: 'approval_policy', value: approvalPolicy, mergeStrategy: 'replace' },
+          { keyPath: 'sandbox_policy', value: sandboxPolicy, mergeStrategy: 'replace' },
+        ],
+      });
+      log.info(
+        { mode, approvalPolicy, sandboxMode },
+        'setPermissionMode propagated via config/batchWrite',
+      );
+      return true;
+    } catch (err) {
+      log.error(
+        { err, mode },
+        'setPermissionMode config/batchWrite failed — local field updated, server not notified',
+      );
+      return false;
+    }
   }
 
   async setModel(model: string): Promise<boolean> {
