@@ -30,8 +30,8 @@ vi.mock('@/lib/realtime/worker-client', () => ({
   sendBrainstormEvent: mockSendBrainstormEvent,
 }));
 
-vi.mock('@/lib/worker/brainstorm-queue', () => ({
-  enqueueBrainstorm: mockEnqueueBrainstorm,
+vi.mock('@/lib/services/brainstorm-dispatch', () => ({
+  dispatchBrainstorm: mockEnqueueBrainstorm,
 }));
 
 vi.mock('@/lib/brainstorm/orchestrator-liveness', () => ({
@@ -86,9 +86,7 @@ describe('POST /api/brainstorms/[id]/steer', () => {
     expect(body.data).toEqual({ sent: true, resumed: true, steerId: expect.any(String) });
     expect(mockWriterOpen).toHaveBeenCalled();
     expect(mockWriterWriteEvent).toHaveBeenCalled();
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({
-      roomId: ROOM_UUID,
-    });
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith(ROOM_UUID);
     expect(mockSendBrainstormControl).not.toHaveBeenCalled();
   });
 

@@ -78,7 +78,7 @@ function resolveSessionLogPath(sessionId: string): string {
 /**
  * SessionProcess manages the full lifecycle of a single long-running agent
  * process tied to a session row. It handles:
- *   - Atomic session claim to prevent pg-boss double-execution
+ *   - Atomic session claim to prevent double-execution
  *   - Spawning or resuming the underlying agent process via an adapter
  *   - Parsing agent output (Claude stream-json NDJSON) into AgendoEvents
  *   - Publishing events to PG NOTIFY for SSE fan-out
@@ -110,11 +110,8 @@ export class SessionProcess {
   /** Handles NDJSON line buffering, parsing, event mapping, suppression, and enrichment. */
   private dataPipeline!: SessionDataPipeline;
   private exitFuture = new Future<number | null>();
-  /** Resolves when the pg-boss slot should be freed: either on first awaiting_input
-   *  transition or on process exit — whichever comes first. */
-  private slotReleaseFuture = new Future<void>();
-  /** Ensures slot release side effects run only once per active turn. */
-  private slotReleased = false;
+  /** Ensures awaiting_input side effects run only once per active turn. */
+  private turnCompleted = false;
   private sessionStartTime = Date.now();
   private activeToolUseIds = new Set<string>();
   /** Maps toolUseId → {toolName, input} for tools currently in-flight, used to build interruption notes. */
@@ -253,7 +250,6 @@ export class SessionProcess {
     } = opts;
     const claimed = await claimSession(this.session.id, this.workerId);
     if (!claimed) {
-      this.slotReleaseFuture.resolve();
       this.exitFuture.resolve(null);
       return;
     }
@@ -785,7 +781,7 @@ export class SessionProcess {
     if (this.status === status) return; // already in this state, skip duplicate transition
     this.status = status;
     if (status === 'active') {
-      this.slotReleased = false;
+      this.turnCompleted = false;
     }
 
     // Flush any remaining text in the data buffer before entering awaiting_input.
@@ -816,8 +812,8 @@ export class SessionProcess {
     await this.emitEvent({ type: 'session:state', status });
 
     if (status === 'awaiting_input') {
-      if (!this.slotReleased) {
-        this.slotReleased = true;
+      if (!this.turnCompleted) {
+        this.turnCompleted = true;
 
         // Drain any team messages that arrived while Claude was active.
         this.teamManager.drainPendingInjections();
@@ -848,12 +844,7 @@ export class SessionProcess {
         }
 
         const elapsedSec = ((Date.now() - this.sessionStartTime) / 1000).toFixed(1);
-        log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — slot released');
-        // autoResumeCount already reset to 0 in the DB update above (folded into
-        // the same write for atomicity). No separate resetRecoveryCount call needed.
-        // Resolve the slot future so the pg-boss slot frees while the process
-        // stays alive in-memory awaiting the next user message.
-        this.slotReleaseFuture.resolve();
+        log.info({ sessionId: this.session.id, elapsedSec }, 'awaiting_input — turn complete');
         // Notify subscribed browsers that the agent is ready for input
         void sendPushToAll({
           title: 'Agent finished',
@@ -880,10 +871,6 @@ export class SessionProcess {
       { sessionId: this.session.id, exitCode, status: this.status, totalSec },
       'Session exited',
     );
-    // Resolve the slot future in case the process exits before ever reaching
-    // awaiting_input (e.g. error, cancellation). Safe to call if already resolved.
-    this.slotReleaseFuture.resolve();
-
     // Capture point C: git context at session exit (non-blocking)
     if (this.spawnCwd) {
       try {
@@ -1080,19 +1067,6 @@ export class SessionProcess {
    */
   waitForExit(): Promise<number | null> {
     return this.exitFuture.promise;
-  }
-
-  /**
-   * Returns a promise that resolves when the pg-boss slot should be freed.
-   * Resolves on the first `awaiting_input` transition (process stays alive in
-   * memory) or on process exit — whichever comes first.
-   *
-   * The session-runner uses this instead of waitForExit() so that the pg-boss
-   * slot is released immediately once the agent is idle, preventing slot drain
-   * from sessions stuck in awaiting_input.
-   */
-  waitForSlotRelease(): Promise<void> {
-    return this.slotReleaseFuture.promise;
   }
 
   /**

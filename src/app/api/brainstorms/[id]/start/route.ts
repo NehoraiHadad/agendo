@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm, extendBrainstorm } from '@/lib/services/brainstorm-service';
-import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
+import { dispatchBrainstorm } from '@/lib/services/brainstorm-dispatch';
 import { ConflictError } from '@/lib/errors';
 
 export const POST = withErrorBoundary(
@@ -27,7 +27,7 @@ export const POST = withErrorBoundary(
     // Do NOT set status here — the orchestrator sets 'active' atomically
     // when it starts processing. Setting it prematurely causes stuck rooms
     // if the enqueue fails.
-    await enqueueBrainstorm({ roomId: id });
+    await dispatchBrainstorm(id);
 
     return NextResponse.json({ data: { started: true } });
   },

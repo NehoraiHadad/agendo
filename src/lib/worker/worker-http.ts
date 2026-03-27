@@ -3,7 +3,8 @@ import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
 import { getSessionProc, getActiveSessionCount, runSession } from '@/lib/worker/session-runner';
 import { handleSessionSSE, handleBrainstormSSE } from '@/lib/worker/worker-sse';
-import type { RunSessionJobData } from '@/lib/worker/queue';
+import { runBrainstorm } from '@/lib/worker/brainstorm-orchestrator';
+import type { RunSessionJobData } from '@/lib/services/session-dispatch';
 
 const log = createLogger('worker-http');
 
@@ -32,7 +33,7 @@ let server: http.Server | null = null;
 /**
  * Optional callback to track in-flight session promises from direct dispatch.
  * Set by worker/index.ts via registerInFlightTracker() so the shutdown handler
- * can wait for directly-dispatched sessions the same way as pg-boss sessions.
+ * can wait for directly-dispatched sessions during shutdown.
  */
 let inFlightTracker: ((promise: Promise<void>) => void) | null = null;
 
@@ -201,6 +202,37 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     });
 
     // Expose to inFlightSessions set (registered via registerInFlightTracker)
+    if (inFlightTracker) inFlightTracker(promise);
+
+    ok(res, { dispatched: true });
+    return;
+  }
+
+  // ─── Direct dispatch: POST /brainstorms/:id/start ─────────────────
+  // Accepts { roomId }, starts the brainstorm orchestrator asynchronously.
+  if (method === 'POST' && resource === 'brainstorms' && action === 'start') {
+    const body = await readBody(req);
+    if (!body) {
+      badRequest(res, 'Missing request body');
+      return;
+    }
+    let data: { roomId?: string };
+    try {
+      data = JSON.parse(body) as { roomId?: string };
+    } catch {
+      badRequest(res, 'Invalid JSON body');
+      return;
+    }
+    if (!data.roomId) {
+      badRequest(res, 'Missing roomId in body');
+      return;
+    }
+
+    // Fire-and-forget: start brainstorm asynchronously, respond 200 immediately.
+    const promise = runBrainstorm(data.roomId).catch((err: unknown) => {
+      log.error({ err, roomId: data.roomId }, 'Direct-dispatched brainstorm failed');
+    });
+
     if (inFlightTracker) inFlightTracker(promise);
 
     ok(res, { dispatched: true });

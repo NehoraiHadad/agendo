@@ -5,7 +5,7 @@
  * centralise registration, lookup, and shutdown in a single class.
  *
  * - `allProcs` (superset): registered immediately when runSession starts.
- * - `liveProcs`: added when the session releases its pg-boss slot (awaiting_input).
+ * - `liveProcs`: added when the session transitions to awaiting_input.
  *
  * The class is a singleton created in worker/index.ts and shared with
  * session-runner.ts and worker-http.ts.

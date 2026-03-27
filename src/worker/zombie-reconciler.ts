@@ -2,9 +2,8 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { db } from '../lib/db/index';
 import { sessions, brainstormRooms } from '../lib/db/schema';
 import { eq, and, or, inArray, lt, gt, sql } from 'drizzle-orm';
-import { SESSION_QUEUE_NAME } from '../lib/worker/queue';
 import { dispatchSession } from '../lib/services/session-dispatch';
-import { enqueueBrainstorm, BRAINSTORM_QUEUE_NAME } from '../lib/worker/brainstorm-queue';
+import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
 import { createLogger } from '@/lib/logger';
 import { sessionEventListeners } from '@/lib/worker/worker-sse';
 import type { SessionStatus } from '@/lib/realtime/event-types';
@@ -147,7 +146,7 @@ function consumeRestartMarker(): string | null {
 /**
  * On cold start: reconcile all orphaned entity types.
  * Sessions are scoped to this worker (via workerId).
- * Brainstorm rooms are global (no workerId) — checked via pg-boss job state.
+ * Brainstorm rooms are global (no workerId) — checked via session state.
  */
 export async function reconcileZombies(workerId: string): Promise<void> {
   try {
@@ -187,9 +186,6 @@ export function resetRecoveryCount(sessionId: string): void {
 // ============================================================================
 
 async function reconcileOrphanedSessions(workerId: string): Promise<void> {
-  // Expire stale active pg-boss session jobs from crashed workers
-  await expireStalePgBossJobs(SESSION_QUEUE_NAME, 30 * 60 * 1000); // 30 min
-
   // Read the restart marker BEFORE processing sessions. If present, it tells
   // us which session triggered the restart (via safe-restart-worker.sh) so we
   // can give it a smarter resumePrompt that prevents restart loops.
@@ -354,8 +350,8 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
 // ============================================================================
 
 /**
- * Rooms in these statuses must have an active pg-boss job.
- * If they don't, the orchestrator died mid-run and needs to be re-enqueued.
+ * Rooms in these statuses should have a running orchestrator.
+ * If they don't, the orchestrator died mid-run and needs to be restarted.
  */
 const BRAINSTORM_IN_FLIGHT_STATUSES = ['active', 'synthesizing'] as const;
 
@@ -366,12 +362,7 @@ const BRAINSTORM_IN_FLIGHT_STATUSES = ['active', 'synthesizing'] as const;
 const STALE_WAITING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 async function reconcileOrphanedBrainstorms(): Promise<void> {
-  // First, expire any stale `active` pg-boss brainstorm jobs from crashed workers.
-  // pg-boss marks jobs 'active' when a worker picks them up, but if the worker
-  // dies mid-run the job stays 'active' forever — blocking the singletonKey.
-  await expireStalePgBossJobs(BRAINSTORM_QUEUE_NAME, 30 * 60 * 1000); // 30 min
-
-  // Rooms that should currently have a running orchestrator job
+  // Rooms that should currently have a running orchestrator
   const inFlightRooms = await db
     .select({ id: brainstormRooms.id, status: brainstormRooms.status })
     .from(brainstormRooms)
@@ -391,13 +382,9 @@ async function reconcileOrphanedBrainstorms(): Promise<void> {
   const candidates = [...inFlightRooms, ...staleWaitingRooms];
   if (candidates.length === 0) return;
 
-  log.info({ count: candidates.length }, 'Checking brainstorm rooms for orphaned jobs');
+  log.info({ count: candidates.length }, 'Checking brainstorm rooms for orphaned orchestrators');
 
   for (const room of candidates) {
-    // Skip rooms that already have a live pg-boss job —
-    // the orchestrator is running fine, nothing to do.
-    if (await hasPgBossJob(BRAINSTORM_QUEUE_NAME, room.id)) continue;
-
     if (brainstormRecoveryCounter.hasReachedLimit(room.id)) {
       log.warn(
         { roomId: room.id, status: room.status, attempts: MAX_AUTO_RECOVERY_ATTEMPTS },
@@ -408,12 +395,13 @@ async function reconcileOrphanedBrainstorms(): Promise<void> {
     }
 
     const attempt = brainstormRecoveryCounter.increment(room.id);
-    // singletonKey in enqueueBrainstorm prevents duplicate jobs if one
-    // somehow appeared between our check and the enqueue call.
-    await enqueueBrainstorm({ roomId: room.id });
+    // Fire-and-forget: runBrainstorm directly (we're already in the worker process).
+    runBrainstorm(room.id).catch((err: unknown) => {
+      log.error({ err, roomId: room.id }, 'Brainstorm recovery failed');
+    });
     log.info(
       { roomId: room.id, status: room.status, attempt, maxAttempts: MAX_AUTO_RECOVERY_ATTEMPTS },
-      'Brainstorm re-enqueued after zombie detection',
+      'Brainstorm dispatched directly after zombie detection',
     );
   }
 }
@@ -421,44 +409,6 @@ async function reconcileOrphanedBrainstorms(): Promise<void> {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/**
- * Returns true if a live pg-boss job exists for the given queue + singletonKey.
- * States 'created', 'retry', and 'active' all mean the job is in flight.
- * 'completed', 'failed', 'cancelled', 'expired' mean it's done.
- */
-async function hasPgBossJob(queueName: string, singletonKey: string): Promise<boolean> {
-  const result = await db.execute(sql`
-    SELECT 1 FROM pgboss.job
-    WHERE name = ${queueName}
-      AND singleton_key = ${singletonKey}
-      AND state IN ('created', 'active', 'retry')
-    LIMIT 1
-  `);
-  return (result.rows?.length ?? 0) > 0;
-}
-
-/**
- * Expire stale `active` pg-boss jobs that have been running longer than
- * the threshold. This happens when the worker crashes mid-job — pg-boss
- * marks the job `active` but nobody is processing it anymore. Without
- * cleanup, the singletonKey blocks new jobs for the same entity.
- */
-async function expireStalePgBossJobs(queueName: string, thresholdMs: number): Promise<void> {
-  const result = await db.execute(sql`
-    UPDATE pgboss.job
-    SET state = 'failed',
-        output = '{"error": "zombie-reconciler: stale active job expired"}'::jsonb
-    WHERE name = ${queueName}
-      AND state = 'active'
-      AND started_on < now() - make_interval(secs => ${Math.floor(thresholdMs / 1000)})
-    RETURNING id, singleton_key
-  `);
-  const count = result.rows?.length ?? 0;
-  if (count > 0) {
-    log.info({ queueName, count, jobs: result.rows }, 'Expired stale active pg-boss jobs');
-  }
-}
 
 function isPidAlive(pid: number): boolean {
   if (pid === 0) return false; // pid=0 is not a real OS process (SDK adapters)

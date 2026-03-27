@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
-import { agents, workerHeartbeats } from '@/lib/db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { agents, sessions, workerHeartbeats } from '@/lib/db/schema';
+import { eq, desc, sql, inArray } from 'drizzle-orm';
 import { statfs } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { config } from '@/lib/config';
@@ -80,13 +80,11 @@ export async function GET(req: Request) {
         .from(workerHeartbeats)
         .orderBy(desc(workerHeartbeats.lastSeenAt))
         .limit(1),
-      db.execute(sql`
-        SELECT state, count(*)::int as count
-        FROM pgboss.job
-        WHERE name IN ('run-session', 'execute-capability')
-          AND state IN ('active', 'created')
-        GROUP BY state
-      `),
+      db
+        .select({ status: sessions.status, count: sql<number>`count(*)::int` })
+        .from(sessions)
+        .where(inArray(sessions.status, ['active', 'awaiting_input']))
+        .groupBy(sessions.status),
     ]);
 
     database = { status: 'ok', latencyMs: Date.now() - dbStart };
@@ -108,13 +106,12 @@ export async function GET(req: Request) {
       worker = { status: 'unknown', lastSeenAt: null, workerId: null };
     }
 
-    const rows = queueRows.rows as Array<{ state: string; count: number }>;
-    const active = rows.find((r) => r.state === 'active');
-    const queued = rows.find((r) => r.state === 'created');
+    const activeRow = queueRows.find((r) => r.status === 'active');
+    const awaitingRow = queueRows.find((r) => r.status === 'awaiting_input');
     queue = {
       status: 'ok',
-      activeJobs: active?.count ?? 0,
-      queuedJobs: queued?.count ?? 0,
+      activeJobs: (activeRow?.count ?? 0) + (awaitingRow?.count ?? 0),
+      queuedJobs: 0,
     };
   } catch {
     database = { status: 'error', latencyMs: Date.now() - dbStart };

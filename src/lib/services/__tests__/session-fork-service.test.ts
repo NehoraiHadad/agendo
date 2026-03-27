@@ -8,7 +8,7 @@ const {
   mockGetSession,
   mockCreateSession,
   mockExtractSessionContext,
-  mockEnqueueSession,
+  mockDispatchSession,
 } = vi.hoisted(() => ({
   mockState: {
     /** db.select() sequence: each call shifts from this queue */
@@ -17,7 +17,7 @@ const {
   mockGetSession: vi.fn(),
   mockCreateSession: vi.fn(),
   mockExtractSessionContext: vi.fn(),
-  mockEnqueueSession: vi.fn(),
+  mockDispatchSession: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ vi.mock('@/lib/services/context-extractor', () => ({
 // Mock @/lib/services/session-dispatch (used by session-service internally)
 // ---------------------------------------------------------------------------
 vi.mock('@/lib/services/session-dispatch', () => ({
-  dispatchSession: mockEnqueueSession,
+  dispatchSession: mockDispatchSession,
 }));
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ describe('forkSessionToAgent', () => {
     mockGetSession.mockResolvedValue(mockParent);
     mockCreateSession.mockResolvedValue(mockNewSession);
     mockExtractSessionContext.mockResolvedValue(mockExtracted);
-    mockEnqueueSession.mockResolvedValue('job-id');
+    mockDispatchSession.mockResolvedValue('job-id');
   });
 
   describe('happy path — hybrid mode', () => {
@@ -207,8 +207,8 @@ describe('forkSessionToAgent', () => {
         }),
       );
 
-      // Verify enqueueSession NOT called
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      // Verify dispatchSession NOT called
+      expect(mockDispatchSession).not.toHaveBeenCalled();
 
       // Verify return shape
       expect(result.session).toBe(mockNewSession);
@@ -308,7 +308,7 @@ describe('forkSessionToAgent', () => {
 
       // Ensure nothing was created or enqueued
       expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      expect(mockDispatchSession).not.toHaveBeenCalled();
     });
   });
 
@@ -325,7 +325,7 @@ describe('forkSessionToAgent', () => {
       ).rejects.toThrow(ConflictError);
 
       expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      expect(mockDispatchSession).not.toHaveBeenCalled();
     });
 
     it('does NOT throw for valid fork state "idle" (Agendo idle-timeout suspends to idle)', async () => {
@@ -383,7 +383,7 @@ describe('forkSessionToAgent', () => {
       ).rejects.toThrow(NotFoundError);
 
       expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      expect(mockDispatchSession).not.toHaveBeenCalled();
     });
   });
 
@@ -410,7 +410,7 @@ describe('forkSessionToAgent', () => {
 
       // Should still succeed but NOT enqueue
       expect(mockCreateSession).toHaveBeenCalled();
-      expect(mockEnqueueSession).not.toHaveBeenCalled();
+      expect(mockDispatchSession).not.toHaveBeenCalled();
       expect(result.contextMeta.totalTurns).toBe(0);
     });
   });

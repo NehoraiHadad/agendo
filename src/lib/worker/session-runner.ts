@@ -263,7 +263,7 @@ export async function runSession(
   }
 
   // Guard: if this session already has a live process on this worker, skip.
-  // This prevents a duplicate pg-boss job (e.g. from a cold-resume fallback
+  // This prevents a duplicate dispatch (e.g. from a cold-resume fallback
   // that fired while the process was still alive) from overwriting the live
   // sessionProc reference in the maps — which would orphan the real process.
   const mgr = getRuntime();
@@ -304,14 +304,9 @@ export async function runSession(
     isResume: !!resumeRef,
   });
 
-  // Wait until the session releases its pg-boss slot (first awaiting_input or
-  // process exit). This frees the slot for the next queued session while the
-  // agent process stays alive in liveSessionProcs for subsequent messages.
-  await sessionProc.waitForSlotRelease();
-
-  // Register the live session so the shutdown handler can terminate it gracefully.
+  // Mark live immediately — sessions are dispatched via HTTP.
   mgr.markLive(sessionId);
-  log.info({ sessionId, liveSessions: mgr.liveCount }, 'slot released for session');
+  log.info({ sessionId, liveSessions: mgr.liveCount }, 'session started');
 
   // Wire exit cleanup: remove from both maps when the process actually exits.
   // Only delete if the entry still points to THIS sessionProc — a later

@@ -35,20 +35,14 @@ vi.mock('../../lib/db/schema', () => ({
   },
 }));
 
-// Mock session queue (still needed for SESSION_QUEUE_NAME import)
-vi.mock('../../lib/worker/queue', () => ({
-  SESSION_QUEUE_NAME: 'run-session',
-}));
-
-// Mock session dispatch (zombie-reconciler now uses dispatchSession)
+// Mock session dispatch (zombie-reconciler uses dispatchSession)
 vi.mock('../../lib/services/session-dispatch', () => ({
   dispatchSession: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock brainstorm queue
-vi.mock('../../lib/worker/brainstorm-queue', () => ({
-  enqueueBrainstorm: vi.fn().mockResolvedValue(null),
-  BRAINSTORM_QUEUE_NAME: 'run-brainstorm',
+// Mock brainstorm orchestrator (zombie-reconciler calls runBrainstorm directly)
+vi.mock('../../lib/worker/brainstorm-orchestrator', () => ({
+  runBrainstorm: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock worker-sse to prevent real in-memory listener calls
@@ -70,11 +64,11 @@ vi.mock('drizzle-orm', () => ({
 import { db } from '../../lib/db/index';
 import { reconcileZombies } from '../zombie-reconciler';
 import { dispatchSession } from '../../lib/services/session-dispatch';
-import { enqueueBrainstorm } from '../../lib/worker/brainstorm-queue';
+import { runBrainstorm } from '../../lib/worker/brainstorm-orchestrator';
 
 const mockDb = vi.mocked(db);
 const mockEnqueue = vi.mocked(dispatchSession);
-const mockEnqueueBrainstorm = vi.mocked(enqueueBrainstorm);
+const mockRunBrainstorm = vi.mocked(runBrainstorm);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -261,7 +255,7 @@ describe('reconcileZombies — sessions', () => {
 
     expect(mockDb.update).not.toHaveBeenCalled();
     expect(mockEnqueue).not.toHaveBeenCalled();
-    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
+    expect(mockRunBrainstorm).not.toHaveBeenCalled();
   });
 });
 
@@ -270,54 +264,37 @@ describe('reconcileZombies — sessions', () => {
 // ---------------------------------------------------------------------------
 
 describe('reconcileZombies — brainstorm rooms', () => {
-  it('skips brainstorm rooms that already have a live pg-boss job', async () => {
-    // sessions: none, inFlight: one active room, staleWaiting: none
-    mockAllSelects([], [{ id: 'room-1', status: 'active' }], []);
-    // hasPgBossJob returns true → job is alive, skip
-    mockDb.execute.mockResolvedValue({ rows: [{ '?column?': 1 }] } as never);
-
-    await reconcileZombies('worker-1');
-
-    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
-  });
-
-  it('re-enqueues active room with no live pg-boss job', async () => {
+  it('dispatches active room directly via runBrainstorm', async () => {
     mockAllSelects([], [{ id: 'room-2', status: 'active' }], []);
-    // hasPgBossJob returns false → orphaned
-    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-2' });
+    expect(mockRunBrainstorm).toHaveBeenCalledWith('room-2');
   });
 
-  it('re-enqueues synthesizing room with no live pg-boss job', async () => {
+  it('dispatches synthesizing room directly via runBrainstorm', async () => {
     mockAllSelects([], [{ id: 'room-3', status: 'synthesizing' }], []);
-    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-3' });
+    expect(mockRunBrainstorm).toHaveBeenCalledWith('room-3');
   });
 
-  it('re-enqueues stale waiting room', async () => {
+  it('dispatches stale waiting room', async () => {
     mockAllSelects([], [], [{ id: 'room-4', status: 'waiting' }]);
-    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-4' });
+    expect(mockRunBrainstorm).toHaveBeenCalledWith('room-4');
   });
 
   it('skips paused rooms entirely', async () => {
     // paused rooms are not queried (status filter excludes them)
     mockAllSelects([], [], []);
-    // expireStalePgBossJobs calls db.execute even when no rooms found
-    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
-    expect(mockEnqueueBrainstorm).not.toHaveBeenCalled();
+    expect(mockRunBrainstorm).not.toHaveBeenCalled();
   });
 
   it('handles multiple orphaned brainstorm rooms', async () => {
@@ -329,12 +306,11 @@ describe('reconcileZombies — brainstorm rooms', () => {
       ],
       [],
     );
-    mockDb.execute.mockResolvedValue({ rows: [] } as never);
 
     await reconcileZombies('worker-1');
 
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledTimes(2);
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-a' });
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({ roomId: 'room-b' });
+    expect(mockRunBrainstorm).toHaveBeenCalledTimes(2);
+    expect(mockRunBrainstorm).toHaveBeenCalledWith('room-a');
+    expect(mockRunBrainstorm).toHaveBeenCalledWith('room-b');
   });
 });

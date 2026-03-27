@@ -432,7 +432,7 @@ export async function createGitHubIssueForTask(
 
 /**
  * Run a full bidirectional sync for all connected projects.
- * Called by the pg-boss scheduled job in the worker.
+ * Called by the worker's setInterval sync loop.
  */
 export async function runGitHubSync(): Promise<SyncResult[]> {
   const octokit = await getOctokit();

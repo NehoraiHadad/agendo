@@ -1,38 +1,45 @@
-import { config } from '@/lib/config';
-import { enqueueSession, type RunSessionJobData } from '@/lib/worker/queue';
 import { sendSessionStart } from '@/lib/realtime/worker-client';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('session-dispatch');
 
+/** Job data shape for dispatching a session to the worker. */
+export interface RunSessionJobData {
+  sessionId: string;
+  resumeRef?: string;
+  /** Claude JSONL UUID to pass as --resume-session-at (conversation branching). */
+  resumeSessionAt?: string;
+  /**
+   * The message to send on cold resume. Passed via job data instead of
+   * overwriting session.initialPrompt so the original first prompt is preserved
+   * for the InitialPromptBanner in the UI.
+   */
+  resumePrompt?: string;
+  /**
+   * Client-generated UUID nonce for the resume message.
+   * Passed through to the user:message SSE event so the frontend
+   * dedup effect can clear the optimistic message / pill on cold-resume.
+   */
+  resumeClientId?: string;
+  /**
+   * When true, skip prepending the generateResumeContext block (task title +
+   * progress notes). Used for mid-turn auto-resumes (worker/infra restart) where
+   * the agent already has its full conversation history via resumeRef and only
+   * needs a short "continue" nudge — not a redundant context dump.
+   */
+  skipResumeContext?: boolean;
+}
+
 /**
- * Dispatch a session to the worker — either via pg-boss (legacy) or direct HTTP (new).
- * Controlled by the DIRECT_DISPATCH feature flag.
+ * Dispatch a session to the worker via HTTP.
  *
- * When DIRECT_DISPATCH=true:
- *   POST worker:4102/sessions/:id/start → worker calls runSession() directly.
- *   Falls back to pg-boss if the HTTP call fails (worker unreachable).
- *
- * When DIRECT_DISPATCH=false (default):
- *   enqueueSession() → pg-boss DB → worker polls → handleSessionJob().
+ * POST worker:4102/sessions/:id/start → worker calls runSession() directly.
+ * Throws if the HTTP call fails (worker unreachable).
  */
 export async function dispatchSession(data: RunSessionJobData): Promise<void> {
-  if (config.DIRECT_DISPATCH) {
-    log.info({ sessionId: data.sessionId }, 'Direct dispatch to worker');
-    try {
-      const result = await sendSessionStart(data.sessionId, data);
-      if (!result.ok) {
-        log.warn({ sessionId: data.sessionId }, 'Direct dispatch failed, falling back to pg-boss');
-        await enqueueSession(data);
-      }
-    } catch (err) {
-      log.warn(
-        { err, sessionId: data.sessionId },
-        'Direct dispatch error, falling back to pg-boss',
-      );
-      await enqueueSession(data);
-    }
-  } else {
-    await enqueueSession(data);
+  log.info({ sessionId: data.sessionId }, 'Dispatching session to worker via HTTP');
+  const result = await sendSessionStart(data.sessionId, data);
+  if (!result.ok) {
+    throw new Error(`Failed to dispatch session ${data.sessionId} to worker`);
   }
 }

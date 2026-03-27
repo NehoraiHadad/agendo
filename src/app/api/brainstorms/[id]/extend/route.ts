@@ -9,7 +9,7 @@ import {
   updateBrainstormStatus,
 } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
-import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
+import { dispatchBrainstorm } from '@/lib/services/brainstorm-dispatch';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 import { ConflictError } from '@/lib/errors';
 
@@ -39,7 +39,7 @@ export const POST = withErrorBoundary(
       // No live orchestrator — bump wave budget, reset status, and re-enqueue.
       await addWaveBudget(id, body.additionalWaves);
       const updated = await updateBrainstormStatus(id, 'waiting');
-      await enqueueBrainstorm({ roomId: id });
+      await dispatchBrainstorm(id);
       return NextResponse.json({ data: updated });
     }
 
@@ -47,7 +47,7 @@ export const POST = withErrorBoundary(
       // No orchestrator running — use the full extend flow that sets
       // status='waiting' and re-enqueues a new orchestrator job.
       const updated = await extendBrainstorm(id, body.additionalWaves);
-      await enqueueBrainstorm({ roomId: id });
+      await dispatchBrainstorm(id);
       return NextResponse.json({ data: updated });
     }
 

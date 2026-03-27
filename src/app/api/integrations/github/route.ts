@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getGitHubToken, detectGitHubRepo } from '@/lib/services/github-service';
-import { createGitHubIssueForTask } from '@/lib/services/github-sync-service';
-import { enqueueGitHubSync } from '@/lib/worker/github-sync-queue';
+import { createGitHubIssueForTask, runGitHubSync } from '@/lib/services/github-sync-service';
 
 /**
  * GET /api/integrations/github
@@ -36,12 +35,23 @@ const syncSchema = z.object({
  */
 export const POST = withErrorBoundary(async (req: NextRequest) => {
   const body = await req.json();
-  const { action, projectId, rootPath, taskId } = syncSchema.parse(body);
+  const parsed = syncSchema.parse(body);
+  const { action, rootPath, taskId } = parsed;
 
   switch (action) {
     case 'sync': {
-      const jobId = await enqueueGitHubSync(projectId ? { projectId } : {});
-      return NextResponse.json({ data: { jobId, message: 'GitHub sync enqueued' } });
+      // Run sync directly — it's idempotent and safe to call from any process
+      const results = await runGitHubSync();
+      const totalCreated = results.reduce((sum, r) => sum + r.tasksCreated, 0);
+      const totalUpdated = results.reduce((sum, r) => sum + r.tasksUpdated, 0);
+      return NextResponse.json({
+        data: {
+          projects: results.length,
+          tasksCreated: totalCreated,
+          tasksUpdated: totalUpdated,
+          message: 'GitHub sync completed',
+        },
+      });
     }
 
     case 'detect-repo': {

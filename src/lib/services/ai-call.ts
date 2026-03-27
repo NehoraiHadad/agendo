@@ -5,7 +5,7 @@
  * (e.g. ~/.claude/.credentials.json, ~/.codex/auth.json, ~/.gemini/oauth_creds.json),
  * then from env var API keys as fallback.
  *
- * No pg-boss, no CLI subprocess, no session overhead.
+ * No CLI subprocess, no session overhead.
  * Priority order: Anthropic -> OpenAI -> Gemini (with fallback on failure).
  */
 

@@ -55,6 +55,11 @@ export async function sendSessionEvent(
   return postToWorker(`/sessions/${sessionId}/events`, payload);
 }
 
+/** Dispatch a brainstorm start to the worker via HTTP. */
+export async function sendBrainstormStart(roomId: string): Promise<WorkerResponse> {
+  return postToWorker(`/brainstorms/${roomId}/start`, { roomId });
+}
+
 /** Send a control message to a brainstorm room running in the worker. */
 export async function sendBrainstormControl(
   roomId: string,

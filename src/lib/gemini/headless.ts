@@ -3,7 +3,7 @@
  *
  * Purpose: utility/fire-and-forget calls (translate, summarize, generate) that
  * should stay on the CLI billing tier (OAuth/subscription) rather than using the
- * direct Gemini API (pay-per-token). No sessions, no pg-boss, no worker.
+ * direct Gemini API (pay-per-token). No sessions, no worker.
  *
  * Usage:
  *   // One-shot — returns full text

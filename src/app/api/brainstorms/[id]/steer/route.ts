@@ -5,7 +5,7 @@ import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getBrainstorm, extendBrainstorm, addWaveBudget } from '@/lib/services/brainstorm-service';
 import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-liveness';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
-import { enqueueBrainstorm } from '@/lib/worker/brainstorm-queue';
+import { dispatchBrainstorm } from '@/lib/services/brainstorm-dispatch';
 import { FileLogWriter } from '@/lib/worker/log-writer';
 
 const steerSchema = z.object({
@@ -78,7 +78,7 @@ export const POST = withErrorBoundary(
         // Paused at max waves — just bump the budget (no status change needed).
         await addWaveBudget(id, 5);
       }
-      await enqueueBrainstorm({ roomId: id });
+      await dispatchBrainstorm(id);
       return NextResponse.json({ data: { sent: true, resumed: true, steerId } });
     }
 

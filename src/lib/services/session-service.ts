@@ -246,7 +246,7 @@ export async function forkSession(
  * the child starts with a blank slate (no --resume) so Claude has no memory
  * of the plan mode conversation. Used by the "Restart fresh" ExitPlanMode action.
  *
- * The caller is responsible for calling enqueueSession() when the time is right
+ * The caller is responsible for calling dispatchSession() when the time is right
  * (immediately for idle parents; from the worker's onExit for active parents).
  */
 export async function restartFreshFromSession(

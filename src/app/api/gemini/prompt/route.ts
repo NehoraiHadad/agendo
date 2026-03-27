@@ -2,7 +2,7 @@
  * POST /api/gemini/prompt
  *
  * Lightweight Gemini utility endpoint. Uses `gemini -p "..." -o stream-json` (CLI/OAuth
- * billing tier) for simple one-shot prompts — no sessions, no pg-boss, no worker.
+ * billing tier) for simple one-shot prompts — no sessions, no worker.
  *
  * One-shot (JSON):
  *   POST /api/gemini/prompt

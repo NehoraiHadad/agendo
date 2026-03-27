@@ -1,10 +1,10 @@
 import { createSession, type CreateSessionInput } from './session-service';
-import { type RunSessionJobData } from '../worker/queue';
+import { type RunSessionJobData } from './session-dispatch';
 import { dispatchSession } from './session-dispatch';
 import type { Session } from '../types';
 
 interface CreateAndEnqueueSessionOpts extends CreateSessionInput {
-  /** Called after createSession but before enqueueSession. Use to link session to other entities. */
+  /** Called after createSession but before dispatchSession. Use to link session to other entities. */
   beforeEnqueue?: (session: Session) => Promise<void>;
   /** Extra enqueue options beyond sessionId. */
   enqueueOpts?: Omit<RunSessionJobData, 'sessionId'>;

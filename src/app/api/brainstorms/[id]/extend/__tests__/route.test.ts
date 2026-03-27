@@ -29,8 +29,8 @@ vi.mock('@/lib/services/brainstorm-service', () => ({
   updateBrainstormStatus: mockUpdateBrainstormStatus,
 }));
 
-vi.mock('@/lib/worker/brainstorm-queue', () => ({
-  enqueueBrainstorm: mockEnqueueBrainstorm,
+vi.mock('@/lib/services/brainstorm-dispatch', () => ({
+  dispatchBrainstorm: mockEnqueueBrainstorm,
 }));
 
 vi.mock('@/lib/realtime/worker-client', () => ({
@@ -103,9 +103,7 @@ describe('POST /api/brainstorms/[id]/extend', () => {
       '11111111-1111-4111-8111-111111111111',
       'waiting',
     );
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({
-      roomId: '11111111-1111-4111-8111-111111111111',
-    });
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
     expect(mockExtendBrainstorm).not.toHaveBeenCalled();
     expect(mockSendBrainstormControl).not.toHaveBeenCalled();
     expect(mockUpdateBrainstormMaxWaves).not.toHaveBeenCalled();
@@ -129,9 +127,7 @@ describe('POST /api/brainstorms/[id]/extend', () => {
     expect(res.status).toBe(200);
     expect(body.data.status).toBe('waiting');
     expect(mockExtendBrainstorm).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', 5);
-    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith({
-      roomId: '11111111-1111-4111-8111-111111111111',
-    });
+    expect(mockEnqueueBrainstorm).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
     expect(mockAddWaveBudget).not.toHaveBeenCalled();
     expect(mockSendBrainstormControl).not.toHaveBeenCalled();
   });
