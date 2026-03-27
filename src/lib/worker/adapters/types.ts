@@ -31,7 +31,12 @@ export interface AcpMcpServer {
   env: Array<{ name: string; value: string }>;
 }
 
-export interface SpawnOpts {
+// ---------------------------------------------------------------------------
+// SpawnOpts — tiered by provider, unified via backward-compatible alias
+// ---------------------------------------------------------------------------
+
+/** Spawn options shared by every adapter. */
+export interface CoreSpawnOpts {
   cwd: string;
   env: Record<string, string>;
   executionId: string;
@@ -42,30 +47,17 @@ export interface SpawnOpts {
   permissionMode?: PermissionMode;
   /** Tool name patterns already approved for this session (from session.allowedTools). */
   allowedTools?: string[];
-  /** MCP servers to inject via ACP session/new (Gemini only). */
-  mcpServers?: AcpMcpServer[];
-  /** TOML policy files to inject via --policy (Gemini only). */
-  policyFiles?: string[];
   /** Initial attachments to attach to the first user message on spawn/resume. */
   initialAttachments?: AttachmentRef[];
-  /** Max budget in USD for this session. Claude will stop when exceeded. */
-  maxBudgetUsd?: number;
-  /** Effort level for this session: controls depth of thinking and resource usage. */
-  effort?: 'low' | 'medium' | 'high';
-  /** When true, Claude won't write a session JSONL file to ~/.claude/projects/.
-   *  Useful for one-shot execution sessions that will never be resumed. */
-  noSessionPersistence?: boolean;
-  /** Fallback model when primary model is overloaded. */
-  fallbackModel?: string;
   /** Override the default AI model (forwarded as --model / -m to the CLI). */
   model?: string;
-  /** When true, only use MCP servers from the provided config (ignore global). */
-  strictMcpConfig?: boolean;
   /** Force a specific session UUID (syncs with agendo's session ID). */
   sessionId?: string;
-  /** Text to append to Claude's system prompt (e.g., MCP context preamble). */
-  appendSystemPrompt?: string;
-  /** SDK-format MCP server configs for Claude SDK adapter (replaces mcpConfigPath/--mcp-config). */
+}
+
+/** Claude SDK-specific spawn options. */
+export interface ClaudeSpawnOpts extends CoreSpawnOpts {
+  /** SDK-format MCP server configs (replaces mcpConfigPath/--mcp-config). */
   sdkMcpServers?: Record<
     string,
     {
@@ -75,23 +67,35 @@ export interface SpawnOpts {
       env?: Record<string, string>;
     }
   >;
-  /** When true, enable file checkpointing so files can be rewound to previous states (Claude SDK only). */
+  /** When true, enable file checkpointing so files can be rewound to previous states. */
   enableFileCheckpointing?: boolean;
-  /** Structured output format — agent returns JSON validated against the given schema (Claude SDK only). */
+  /** Structured output format — agent returns JSON validated against the given schema. */
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown>; name?: string };
-  /** When true, pass --worktree to create an isolated git worktree (Claude only). */
+  /** When true, pass --worktree to create an isolated git worktree. */
   useWorktree?: boolean;
   /** When true, adds --fork-session to --resume so Claude creates a new session ID
-   *  initialized from the resumed session's conversation history (Claude only). */
+   *  initialized from the resumed session's conversation history. */
   forkSession?: boolean;
   /** Claude JSONL UUID to pass as --resume-session-at. Truncates conversation
    *  history at that assistant message when combined with --fork-session. */
   resumeSessionAt?: string;
-  /** System-level instructions injected before the user's initial message.
-   *  For Codex app-server: passed as `developerInstructions` in thread/start. */
+  /** Text to append to Claude's system prompt (e.g., MCP context preamble). */
+  appendSystemPrompt?: string;
+  /** Max budget in USD for this session. Claude will stop when exceeded. */
+  maxBudgetUsd?: number;
+  /** Effort level: controls depth of thinking and resource usage. */
+  effort?: 'low' | 'medium' | 'high';
+  /** When true, Claude won't write a session JSONL file to ~/.claude/projects/.
+   *  Useful for one-shot execution sessions that will never be resumed. */
+  noSessionPersistence?: boolean;
+  /** Fallback model when primary model is overloaded. */
+  fallbackModel?: string;
+  /** When true, only use MCP servers from the provided config (ignore global). */
+  strictMcpConfig?: boolean;
+  /** System-level instructions injected before the user's initial message. */
   developerInstructions?: string;
   /** SDK hook callbacks keyed by HookEvent name (e.g. PreToolUse, PostToolUse).
-   *  Each value is an array of HookCallbackMatcher objects. Claude SDK only. */
+   *  Each value is an array of HookCallbackMatcher objects. */
   sdkHooks?: Partial<
     Record<
       string,
@@ -108,8 +112,7 @@ export interface SpawnOpts {
       }>
     >
   >;
-  /** Programmatically defined subagents keyed by agent name.
-   *  Each value is an AgentDefinition. Claude SDK only. */
+  /** Programmatically defined subagents keyed by agent name. */
   sdkAgents?: Record<
     string,
     {
@@ -122,10 +125,39 @@ export interface SpawnOpts {
       maxTurns?: number;
     }
   >;
-  /** When set, uses the named agent definition (from sdkAgents or settings) as
-   *  the main thread agent. Claude SDK only. */
+  /** When set, uses the named agent definition (from sdkAgents or settings) as the main thread agent. */
   sdkAgent?: string;
 }
+
+/** ACP adapter spawn options — used by Gemini, Copilot, and OpenCode adapters. */
+export interface AcpSpawnOpts extends CoreSpawnOpts {
+  /** MCP servers to inject via ACP session/new. */
+  mcpServers?: AcpMcpServer[];
+  /** TOML policy files to inject via --policy (Gemini only). */
+  policyFiles?: string[];
+}
+
+/** Codex app-server spawn options. */
+export interface CodexSpawnOpts extends CoreSpawnOpts {
+  /** MCP servers to inject via thread/start mcpServers config. */
+  mcpServers?: AcpMcpServer[];
+  /** System-level instructions passed as `developerInstructions` in thread/start. */
+  developerInstructions?: string;
+}
+
+/**
+ * Full spawn options — backward-compatible intersection of all provider types.
+ *
+ * Use this type in:
+ * - `spawn-opts-builder.ts` (constructs opts for any provider)
+ * - `session-process.ts` (passes opts to whichever adapter is active)
+ *
+ * Individual adapters may narrow their internal logic to their own sub-type
+ * (ClaudeSpawnOpts / AcpSpawnOpts / CodexSpawnOpts) for clarity, but their
+ * public `spawn()` and `resume()` signatures should remain `SpawnOpts` so
+ * the caller never has to cast.
+ */
+export type SpawnOpts = ClaudeSpawnOpts & AcpSpawnOpts & CodexSpawnOpts;
 
 export interface ManagedProcess {
   /** Real OS PID, or null for in-process adapters (e.g. ClaudeSdkAdapter) that have no child process. */
