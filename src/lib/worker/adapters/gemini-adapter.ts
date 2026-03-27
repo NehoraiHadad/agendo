@@ -135,7 +135,14 @@ export class GeminiAdapter extends AbstractAcpAdapter<GeminiEvent> {
 
   protected createClientHandler(): GeminiClientHandler {
     return new GeminiClientHandler(
-      (event) => this.emitNdjson(event),
+      {
+        agentPrefix: 'gemini',
+        supportsTerminal: true,
+        supportsCommands: true,
+        supportsSessionInfo: true,
+        supportsUsageCost: true,
+      },
+      (event) => this.emitNdjson(event as GeminiEvent),
       () => this.approvalHandler,
       this.activeToolCalls,
     );

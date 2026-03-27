@@ -9,22 +9,9 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { AcpMcpServer } from '@/lib/worker/adapters/types';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { extractMessage } from '@/lib/utils/error-utils';
 
 const log = createLogger('acp-transport');
-
-/**
- * Extract a string message from any thrown value.
- * The SDK rejects with the raw JSON-RPC error object { code, message } (not an Error
- * instance) when the agent sends an error response. Without this helper, String(err)
- * produces "[object Object]".
- */
-function extractMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'object' && err !== null && 'message' in err) {
-    return String((err as Record<string, unknown>).message);
-  }
-  return String(err);
-}
 
 /** Timeout for session/prompt ACP requests (10 minutes). */
 const PROMPT_TIMEOUT_MS = 10 * 60 * 1_000;

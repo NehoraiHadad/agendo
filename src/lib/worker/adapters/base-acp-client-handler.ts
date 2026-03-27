@@ -22,6 +22,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { ToolApprovalFn } from '@/lib/worker/adapters/types';
 import { AcpTerminalHandler } from '@/lib/worker/adapters/acp-terminal-handler';
+import { extractMessage } from '@/lib/utils/error-utils';
 
 // ---------------------------------------------------------------------------
 // Shared ACP client handler factory
@@ -32,19 +33,7 @@ import { AcpTerminalHandler } from '@/lib/worker/adapters/acp-terminal-handler';
 // slash commands, session-info, usage cost).
 // ---------------------------------------------------------------------------
 
-/**
- * Extract a string message from any thrown value.
- * The SDK rejects with the raw JSON-RPC error object { code, message } (not an
- * Error instance) when the agent sends an error response. Without this helper,
- * String(err) produces "[object Object]".
- */
-export function extractMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'object' && err !== null && 'message' in err) {
-    return String((err as Record<string, unknown>).message);
-  }
-  return String(err);
-}
+export { extractMessage };
 
 /** Auto-incrementing ID for synthetic tool-use events (permission-mode flow). */
 let toolUseCounter = 0;
@@ -352,4 +341,83 @@ export function createAcpClientHandler<TEvent extends AcpEvent>(
   };
 
   return handler;
+}
+
+// ---------------------------------------------------------------------------
+// Concrete AcpClientHandler class
+// ---------------------------------------------------------------------------
+// Replaces the three identical per-agent wrapper classes (GeminiClientHandler,
+// CopilotClientHandler, OpenCodeClientHandler). Each adapter passes its
+// AcpClientHandlerConfig and the three shared runtime dependencies; this class
+// delegates every Client method to the internal handler instance produced by
+// createAcpClientHandler().
+// ---------------------------------------------------------------------------
+
+/**
+ * Concrete ACP `Client` implementation that wraps `createAcpClientHandler`.
+ *
+ * All three ACP agent adapters (Gemini, Copilot, OpenCode) use this class
+ * directly instead of maintaining separate thin delegating wrappers.
+ * The `emitNdjson` parameter is typed as the base `AcpEvent` shape; adapters
+ * cast their strongly-typed emit functions at the call site.
+ */
+export class AcpClientHandler implements Client {
+  private readonly handler: AcpClientHandlerInstance;
+
+  constructor(
+    config: AcpClientHandlerConfig,
+    emitNdjson: EmitFn<AcpEvent>,
+    getApprovalHandler: () => ToolApprovalFn | null,
+    activeToolCalls: Set<string>,
+  ) {
+    this.handler = createAcpClientHandler(config, emitNdjson, getApprovalHandler, activeToolCalls);
+  }
+
+  releaseAllTerminals(): void {
+    this.handler.releaseAllTerminals();
+  }
+
+  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    return this.handler.requestPermission(params);
+  }
+
+  async sessionUpdate(params: SessionNotification): Promise<void> {
+    return this.handler.sessionUpdate(params);
+  }
+
+  async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+    return this.handler.readTextFile(params);
+  }
+
+  async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+    return this.handler.writeTextFile(params);
+  }
+
+  async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
+    return (this.handler.createTerminal ?? (() => Promise.reject(new Error('no terminal'))))(
+      params,
+    );
+  }
+
+  async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
+    return (this.handler.terminalOutput ?? (() => Promise.reject(new Error('no terminal'))))(
+      params,
+    );
+  }
+
+  async waitForTerminalExit(
+    params: WaitForTerminalExitRequest,
+  ): Promise<WaitForTerminalExitResponse> {
+    return (this.handler.waitForTerminalExit ?? (() => Promise.reject(new Error('no terminal'))))(
+      params,
+    );
+  }
+
+  async killTerminal(params: KillTerminalCommandRequest): Promise<KillTerminalCommandResponse> {
+    return (await this.handler.killTerminal?.(params)) ?? {};
+  }
+
+  async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
+    return (await this.handler.releaseTerminal?.(params)) ?? {};
+  }
 }

@@ -125,7 +125,14 @@ export class OpenCodeAdapter extends AbstractAcpAdapter<OpenCodeEvent> {
 
   protected createClientHandler(): OpenCodeClientHandler {
     return new OpenCodeClientHandler(
-      (event) => this.emitNdjson(event),
+      {
+        agentPrefix: 'opencode',
+        supportsTerminal: false,
+        supportsCommands: false,
+        supportsSessionInfo: false,
+        supportsUsageCost: false,
+      },
+      (event) => this.emitNdjson(event as OpenCodeEvent),
       () => this.approvalHandler,
       this.activeToolCalls,
     );
@@ -133,15 +140,6 @@ export class OpenCodeAdapter extends AbstractAcpAdapter<OpenCodeEvent> {
 
   mapJsonToEvents(parsed: Record<string, unknown>): AgendoEventPayload[] {
     return mapOpenCodeJsonToEvents(parsed as OpenCodeEvent);
-  }
-
-  // OpenCode doesn't accumulate history — no-op override
-  protected accumulateHistory(_event: OpenCodeEvent): void {
-    return;
-  }
-
-  async getHistory(_sessionRef: string): Promise<AgendoEventPayload[] | null> {
-    return null;
   }
 
   async setModel(model: string): Promise<boolean> {

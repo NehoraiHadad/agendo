@@ -308,6 +308,7 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     cp.on('exit', (code) => {
       if (!exitFired && !this.suppressExit()) {
         exitFired = true;
+        this.clientHandler?.releaseAllTerminals();
         for (const cb of exitCallbacks) cb(code);
       }
     });

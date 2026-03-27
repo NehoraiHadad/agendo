@@ -60,7 +60,14 @@ export class CopilotAdapter extends AbstractAcpAdapter<CopilotEvent> {
 
   protected createClientHandler(): CopilotClientHandler {
     return new CopilotClientHandler(
-      (event) => this.emitNdjson(event),
+      {
+        agentPrefix: 'copilot',
+        supportsTerminal: true,
+        supportsCommands: true,
+        supportsSessionInfo: true,
+        supportsUsageCost: true,
+      },
+      (event: { type: string; [key: string]: unknown }) => this.emitNdjson(event as CopilotEvent),
       () => this.approvalHandler,
       this.activeToolCalls,
     );
