@@ -16,6 +16,10 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
     NEXT_PUBLIC_GIT_SHA: gitSha,
+    // Expose the worker HTTP port so the browser can connect directly to SSE
+    // streams. The Next.js proxy (route handler) has an internal timeout that
+    // kills long-lived SSE streams after ~70s. Direct connection has no timeout.
+    NEXT_PUBLIC_WORKER_HTTP_PORT: process.env.WORKER_HTTP_PORT ?? '4102',
   },
   serverExternalPackages: ['pg'],
   typescript: {

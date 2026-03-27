@@ -27,6 +27,8 @@ interface WorkspacePanelProps {
  * by SessionChatView (UseSessionStreamReturn). The two types are structurally
  * similar; this thin wrapper bridges the small interface difference.
  */
+const noopLoadOlder = async () => false;
+
 function usePanelStreamAdapter(stream: PanelStreamState) {
   return useMemo(
     () => ({
@@ -38,6 +40,9 @@ function usePanelStreamAdapter(stream: PanelStreamState) {
       reset: () => {
         // no-op — the multi-session hook handles reconnects internally
       },
+      loadOlderHistory: noopLoadOlder,
+      hasOlderHistory: false,
+      isLoadingOlderHistory: false,
     }),
     [stream.events, stream.sessionStatus, stream.isConnected, stream.error],
   );

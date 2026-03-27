@@ -6,6 +6,12 @@ import { createSSEProxyHandler } from '@/lib/api/create-sse-proxy';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
 
 /**
+ * SSE streams are long-lived — disable the default route handler timeout.
+ * Without this, Next.js terminates the response after ~60-90s in dev mode.
+ */
+export const maxDuration = 0;
+
+/**
  * GET /api/sessions/:id/events
  *
  * Streaming proxy to Worker SSE. The Worker serves SSE on port 4102;
@@ -28,8 +34,11 @@ export const POST = withErrorBoundary(
     const { id } = await params;
     assertUUID(id, 'Session');
 
-    // Verify session exists (throws NotFoundError if not)
-    await getSession(id);
+    // Verify session exists and is not ended — reject stale POSTs early
+    const session = await getSession(id);
+    if (session.status === 'ended') {
+      return new NextResponse(null, { status: 410 });
+    }
 
     const body = (await req.json()) as Record<string, unknown>;
 

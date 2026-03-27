@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useRef, useState } from 'react';
 import type { AgendoEvent, SessionStatus } from '@/lib/realtime/events';
 import { appendWithWindow } from '@/lib/utils/event-window';
 import { createScopedDedup } from '@/lib/utils/scoped-dedup';
@@ -20,9 +20,10 @@ interface SessionStreamState {
 type CustomAction =
   | { type: 'APPEND_EVENT'; event: AgendoEvent }
   | { type: 'APPEND_BATCH'; events: AgendoEvent[] }
+  | { type: 'PREPEND_HISTORY'; events: AgendoEvent[] }
   | { type: 'SET_STATUS'; status: SessionStatus };
 
-const MAX_EVENTS = 2000;
+const MAX_EVENTS = 10000;
 
 const initialState: SessionStreamState = {
   events: [],
@@ -71,6 +72,13 @@ const reducer = createStreamReducer<SessionStreamState, CustomAction>(
         }
         return { ...state, events, permissionMode };
       }
+      case 'PREPEND_HISTORY': {
+        if (action.events.length === 0) return state;
+        // Prepend older events from REST history API before existing events.
+        // No windowing needed — older events are loaded on-demand by user scroll.
+        const events = [...action.events, ...state.events];
+        return { ...state, events };
+      }
       case 'SET_STATUS':
         return { ...state, sessionStatus: action.status };
       default:
@@ -81,14 +89,25 @@ const reducer = createStreamReducer<SessionStreamState, CustomAction>(
 
 export interface UseSessionStreamReturn extends SessionStreamState {
   reset: () => void;
+  /** Load older events from the REST history API. Returns true if there are more events to load. */
+  loadOlderHistory: () => Promise<boolean>;
+  /** Whether there are older events available to load via loadOlderHistory(). */
+  hasOlderHistory: boolean;
+  /** Whether older history is currently being fetched. */
+  isLoadingOlderHistory: boolean;
 }
 
 /** Polling interval for status reconciliation fallback (30s). */
 const STATUS_POLL_INTERVAL_MS = 30_000;
 
+/** Number of events to fetch per "load more" page. */
+const HISTORY_PAGE_SIZE = 300;
+
 export function useSessionStream(sessionId: string | null): UseSessionStreamReturn {
   const [state, dispatch] = useReducer(reducer, initialState);
   const isDoneRef = useRef(false);
+  const [hasOlderHistory, setHasOlderHistory] = useState(false);
+  const [isLoadingOlderHistory, setIsLoadingOlderHistory] = useState(false);
 
   // Dedup-aware push: checks O(1) dedup before queueing for dispatch.
   // Returns false if the event was a duplicate.
@@ -128,11 +147,15 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
     }
     dispatch({ type: 'RESET' });
     isDoneRef.current = false;
+    setHasOlderHistory(false);
   }, [sessionId]);
 
+  // SSE via the Next.js proxy route. The proxy uses node:http (no body
+  // timeout) so the stream stays alive indefinitely with the worker's 15s
+  // heartbeat. This works over any protocol (HTTP/HTTPS/Tailscale).
   const url = sessionId ? `/api/sessions/${sessionId}/events` : null;
 
-  const { isConnected, error, markDone, resetLastEventId, setLastEventId } = useEventSource({
+  const { isConnected, error, markDone, setLastEventId } = useEventSource({
     url,
     onOpen: () => {
       dispatch({ type: 'SET_CONNECTED', connected: true });
@@ -160,23 +183,78 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
           markDone();
         }
       } else {
+        // Detect server-side truncation marker to enable "load more" button.
+        // The server sends this when it limits catchup events to MAX_CATCHUP_EVENTS.
+        if (
+          parsed.type === 'system:info' &&
+          'message' in parsed &&
+          typeof parsed.message === 'string' &&
+          parsed.message.includes('scroll up to load more')
+        ) {
+          setHasOlderHistory(true);
+        }
+
         // O(1) dedup + RAF-batched append
         dedupPushRef.current(parsed);
       }
     },
     onReconnect: () => {
-      // Flush any pending events before reset to avoid stale dispatches after RESET
+      // Flush any pending batched events to ensure state is consistent.
       batcherRef.current?.flush();
-      // Reset event state on reconnect to prevent duplicates from stale events.
-      // Also reset lastEventIdRef so the server knows to send full history again
-      // (server skips CLI-native history replay when lastEventId > 0).
-      if (sessionId) {
-        eventDedup.clear(sessionId);
-      }
-      dispatch({ type: 'RESET' });
-      resetLastEventId();
+      // Incremental reconnect: keep existing events, lastEventId, and dedup.
+      //
+      // Previous behavior: RESET + resetLastEventId forced a full replay of
+      // ALL events on every reconnect. With MAX_EVENTS cap, this caused
+      // truncation — old messages lost when total events exceeded the window.
+      //
+      // New behavior: server sends only events AFTER our lastEventId. Since
+      // those event IDs are > what we've seen, dedup correctly accepts them
+      // without clearing. The session:state event (id=0) bypasses dedup
+      // entirely, so it's always received on reconnect.
+      //
+      // Session restarts (event ID resets) are rare and handled by the
+      // session:state event — if status changes unexpectedly, the UI can
+      // trigger a full refresh via the reset() function.
     },
   });
+
+  // Load older events via the REST history API (scroll-back pagination)
+  const loadOlderHistory = useCallback(async (): Promise<boolean> => {
+    if (!sessionId || isLoadingOlderHistory) return false;
+
+    setIsLoadingOlderHistory(true);
+    try {
+      // Find the oldest event ID in our current buffer
+      const oldestId = state.events.length > 0 ? state.events[0].id : undefined;
+      const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
+      if (oldestId != null) {
+        params.set('beforeSeq', String(oldestId));
+      }
+
+      const res = await fetch(`/api/sessions/${sessionId}/history?${params.toString()}`);
+      if (!res.ok) return false;
+
+      const data = (await res.json()) as {
+        events: AgendoEvent[];
+        hasMore: boolean;
+      };
+
+      if (data.events.length > 0) {
+        // Register all prepended events in the dedup index
+        for (const ev of data.events) {
+          eventDedup.add(sessionId, ev.id);
+        }
+        dispatch({ type: 'PREPEND_HISTORY', events: data.events });
+      }
+
+      setHasOlderHistory(data.hasMore);
+      return data.hasMore;
+    } catch {
+      return false;
+    } finally {
+      setIsLoadingOlderHistory(false);
+    }
+  }, [sessionId, isLoadingOlderHistory, state.events]);
 
   // Sync connection state from useEventSource into the reducer-driven state
   useEffect(() => {
@@ -199,6 +277,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   useEffect(() => {
     dispatch({ type: 'RESET' });
     isDoneRef.current = false;
+    setHasOlderHistory(false);
   }, [sessionId]);
 
   // Polling fallback: periodically fetch the real session status from the API
@@ -228,5 +307,11 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
     return () => clearInterval(pollTimer);
   }, [sessionId, markDone]);
 
-  return { ...state, reset };
+  return {
+    ...state,
+    reset,
+    loadOlderHistory,
+    hasOlderHistory,
+    isLoadingOlderHistory,
+  };
 }

@@ -525,6 +525,13 @@ export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
       this.alive = false;
       this.inputQueue.end();
       this.closeJsonlWatcher();
+      // Close the query instance to release SDK-internal process.on('exit') listeners
+      try {
+        this.queryInstance?.close();
+      } catch {
+        /* ignore */
+      }
+      this.queryInstance = null;
       for (const cb of this.exitCallbacks) cb(exitCode);
     }
   }

@@ -35,6 +35,13 @@ const log = createLogger('worker-sse');
 /** Keepalive interval to prevent SSE connection drops (proxies, browsers, load balancers). */
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
+/**
+ * Maximum events to send during SSE catchup (initial connect or log file replay).
+ * Very long sessions may have 10k+ events; sending them all delays first paint
+ * and overwhelms the client. Older events are available via the REST history API.
+ */
+const MAX_CATCHUP_EVENTS = 5000;
+
 // ============================================================================
 // Shared in-memory listener registries
 // ============================================================================
@@ -201,12 +208,18 @@ export async function handleSessionSSE(
     }
   });
 
-  // 4. Clean up on client disconnect
-  req.on('close', () => {
+  // 4. Clean up on client disconnect (listen on multiple events for reliability through proxies)
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     clearInterval(heartbeatTimer);
     unsub();
     log.debug({ sessionId }, 'SSE client disconnected');
-  });
+  };
+  req.on('close', cleanup);
+  res.on('error', cleanup);
+  res.on('finish', cleanup);
 
   // 2a. Try CLI-native history first (requires a live SessionProcess)
   // Skip on reconnect (lastEventId > 0) — client already has conversation history.
@@ -220,7 +233,7 @@ export async function handleSessionSSE(
         // Skip the first user:message from CLI history when session.initialPrompt
         // is set — the UI already shows it via InitialPromptBanner.
         let skippedFirst = false;
-        const filtered = session.initialPrompt
+        let filtered = session.initialPrompt
           ? historyEvents.filter((ev) => {
               if (!skippedFirst && ev.type === 'user:message') {
                 skippedFirst = true;
@@ -230,30 +243,56 @@ export async function handleSessionSSE(
             })
           : historyEvents;
 
+        // Limit catchup size for very long sessions. Older events are
+        // available via the REST history API (/api/sessions/:id/history).
+        const historyTruncated = filtered.length > MAX_CATCHUP_EVENTS;
+        if (historyTruncated) {
+          filtered = filtered.slice(filtered.length - MAX_CATCHUP_EVENTS);
+        }
+
         log.info(
-          { sessionId, eventCount: filtered.length, skippedInitialPrompt: skippedFirst },
+          {
+            sessionId,
+            eventCount: filtered.length,
+            skippedInitialPrompt: skippedFirst,
+            truncated: historyTruncated,
+            totalEvents: historyEvents.length,
+          },
           'CLI-native history reconstruction used for catchup',
         );
         let seq = lastEventId + 1;
         // Emit a system:info marker so the UI knows the source
+        const sourceMsg = historyTruncated
+          ? `History loaded from CLI native storage (showing last ${filtered.length} of ${historyEvents.length} events — scroll up to load more)`
+          : `History loaded from CLI native storage (${filtered.length} events)`;
         const sourceEvent: AgendoEvent = {
           id: seq++,
           sessionId: session.id,
           ts: Date.now(),
           type: 'system:info',
-          message: `History loaded from CLI native storage (${filtered.length} events)`,
+          message: sourceMsg,
         };
-        sendEvent(res, sourceEvent);
-        for (const payload of filtered) {
-          const event: AgendoEvent = {
-            id: seq++,
-            sessionId: session.id,
-            ts: Date.now(),
-            ...payload,
-          } as AgendoEvent;
-          sendEvent(res, event);
+        // Only send history marker + events if we actually have content.
+        // After filtering (e.g. skipping initialPrompt), we might end up
+        // with 0 events. In that case, fall through to the log file fallback.
+        if (filtered.length > 0) {
+          sendEvent(res, sourceEvent);
+          for (const payload of filtered) {
+            const event: AgendoEvent = {
+              id: seq++,
+              sessionId: session.id,
+              ts: Date.now(),
+              ...payload,
+            } as AgendoEvent;
+            sendEvent(res, event);
+          }
+          catchupSent = true;
+        } else {
+          log.info(
+            { sessionId },
+            'CLI-native history was empty after filtering, falling back to log',
+          );
         }
-        catchupSent = true;
       }
     } catch (err) {
       log.debug(
@@ -287,9 +326,11 @@ export async function handleSessionSSE(
     }
   }
 
-  // 2c. Log file fallback — only when no live process is available (ended
-  // sessions, agents without getHistory() support, worker just restarted).
-  if (!catchupSent && !proc && session.logFilePath && existsSync(session.logFilePath)) {
+  // 2c. Log file fallback — used when CLI-native history didn't provide content.
+  // This covers: ended sessions, agents without getHistory() support, worker
+  // just restarted (session resumed but CLI history is minimal/empty),
+  // or getHistory() returned only the initial prompt which was skipped.
+  if (!catchupSent && session.logFilePath && existsSync(session.logFilePath)) {
     try {
       const logContent = readFileSync(session.logFilePath, 'utf-8');
       const allLogEvents = readEventsFromLog(logContent, lastEventId);
@@ -301,15 +342,23 @@ export async function handleSessionSSE(
         (e) => e.type !== 'agent:text-delta' && e.type !== 'agent:thinking-delta',
       );
       if (logEvents.length > 0) {
+        // Limit catchup for very long sessions — older events available via REST API
+        const logTruncated = logEvents.length > MAX_CATCHUP_EVENTS;
+        const limitedLogEvents = logTruncated
+          ? logEvents.slice(logEvents.length - MAX_CATCHUP_EVENTS)
+          : logEvents;
+        const fallbackMsg = logTruncated
+          ? `History loaded from log file (showing last ${limitedLogEvents.length} of ${logEvents.length} events — scroll up to load more)`
+          : `History loaded from log file (${logEvents.length} events)`;
         const fallbackEvent: AgendoEvent = {
           id: 0,
           sessionId: session.id,
           ts: Date.now(),
           type: 'system:info',
-          message: `History loaded from log file (${logEvents.length} events)`,
+          message: fallbackMsg,
         };
         sendEvent(res, fallbackEvent);
-        for (const ev of logEvents) {
+        for (const ev of limitedLogEvents) {
           sendEvent(res, ev);
         }
         catchupSent = true;

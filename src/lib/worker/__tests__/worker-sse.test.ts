@@ -123,6 +123,10 @@ function makeMockRes(): {
     flushHeaders() {
       // no-op in test
     },
+    on() {
+      // no-op — test does not exercise disconnect
+      return this;
+    },
   } as unknown as http.ServerResponse;
 
   return { res, writtenHeaders, writtenData, ended };

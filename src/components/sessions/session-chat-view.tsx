@@ -1890,6 +1890,30 @@ export function SessionChatView({
             effectiveInitialPrompt && <InitialPromptBanner prompt={effectiveInitialPrompt} />
           )}
 
+          {/* "Load older messages" button — shown when server truncated catchup */}
+          {stream.hasOlderHistory && (
+            <div className="flex justify-center py-2">
+              <button
+                type="button"
+                onClick={() => stream.loadOlderHistory()}
+                disabled={stream.isLoadingOlderHistory}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground/70 hover:text-foreground/80 bg-[oklch(0.10_0_0)] hover:bg-[oklch(0.14_0_0)] border border-white/[0.08] hover:border-white/[0.15] rounded-full px-3 py-1.5 transition-all disabled:opacity-50"
+              >
+                {stream.isLoadingOlderHistory ? (
+                  <>
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>Loading…</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="size-3 rotate-180" />
+                    <span>Load older messages</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {augmentedDisplayItems.map((item, i) =>
             renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
           )}

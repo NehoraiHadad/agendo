@@ -87,6 +87,110 @@ export function readEventsFromLog(logContent: string, afterSeq: number): AgendoE
   return readEventsFromLogGeneric(logContent, afterSeq, deserializeEvent);
 }
 
+// ============================================================================
+// Paginated event reading (for REST history endpoint)
+// ============================================================================
+
+/** Ephemeral event types excluded from history replay (streaming fragments). */
+const EPHEMERAL_EVENT_TYPES = new Set(['agent:text-delta', 'agent:thinking-delta']);
+
+export interface PaginatedEventsResult {
+  /** Events in chronological order (oldest first). */
+  events: AgendoEvent[];
+  /** True if there are older events before the first returned event. */
+  hasMore: boolean;
+  /** Total number of displayable events in the log (excluding ephemeral). */
+  totalCount: number;
+  /** Sequence ID of the oldest returned event, or null if empty. */
+  oldestSeq: number | null;
+  /** Sequence ID of the newest returned event, or null if empty. */
+  newestSeq: number | null;
+}
+
+export interface PaginatedEventsOptions {
+  /** Return events with id < beforeSeq (for scrolling back). */
+  beforeSeq?: number;
+  /** Return events with id > afterSeq (for scrolling forward). */
+  afterSeq?: number;
+  /** Maximum number of events to return. If omitted, returns all. */
+  limit?: number;
+}
+
+/**
+ * Read events from a session log file with cursor-based pagination.
+ *
+ * Unlike `readEventsFromLog()` (designed for SSE reconnect catchup), this
+ * function supports bidirectional cursors and limits — designed for REST
+ * API endpoints that need paginated history for scroll-back.
+ *
+ * Ephemeral events (text-delta, thinking-delta) are always excluded.
+ */
+export function readPaginatedEventsFromLog(
+  logContent: string,
+  options: PaginatedEventsOptions,
+): PaginatedEventsResult {
+  const { beforeSeq, afterSeq, limit } = options;
+
+  // Parse all displayable events from the log
+  const allEvents: AgendoEvent[] = [];
+  for (const rawLine of logContent.split('\n')) {
+    if (!rawLine.trim()) continue;
+    const line = rawLine.replace(/^\[(stdout|stderr|system|user)\] /, '');
+    const event = deserializeEvent(line);
+    if (!event) continue;
+    if (EPHEMERAL_EVENT_TYPES.has(event.type)) continue;
+    allEvents.push(event);
+  }
+
+  const totalCount = allEvents.length;
+
+  if (totalCount === 0) {
+    return { events: [], hasMore: false, totalCount: 0, oldestSeq: null, newestSeq: null };
+  }
+
+  // Apply cursor filters
+  let filtered = allEvents;
+  if (beforeSeq != null) {
+    filtered = filtered.filter((e) => e.id < beforeSeq);
+  }
+  if (afterSeq != null) {
+    filtered = filtered.filter((e) => e.id > afterSeq);
+  }
+
+  // Apply limit (take from the END for beforeSeq/no-cursor, from the START for afterSeq)
+  let hasMore = false;
+  if (limit != null && filtered.length > limit) {
+    hasMore = true;
+    if (afterSeq != null) {
+      // Forward pagination: take first `limit` events
+      filtered = filtered.slice(0, limit);
+    } else {
+      // Backward pagination or default: take last `limit` events
+      filtered = filtered.slice(filtered.length - limit);
+    }
+  } else if (
+    beforeSeq != null &&
+    filtered.length < allEvents.length - (allEvents.length - filtered.length)
+  ) {
+    // Check if there are events before our filtered set (without limit truncation)
+    // This is needed when limit wasn't exceeded but beforeSeq excluded some events
+  }
+
+  // Determine hasMore: are there events older than the oldest returned event?
+  if (!hasMore && filtered.length > 0) {
+    const oldestReturned = filtered[0].id;
+    hasMore = allEvents.some((e) => e.id < oldestReturned);
+  }
+
+  return {
+    events: filtered,
+    hasMore,
+    totalCount,
+    oldestSeq: filtered.length > 0 ? filtered[0].id : null,
+    newestSeq: filtered.length > 0 ? filtered[filtered.length - 1].id : null,
+  };
+}
+
 /**
  * Read BrainstormEvents from a brainstorm log file with seq > afterSeq.
  * Uses the same log format as session events: [system] [{id}|{type}] {json}

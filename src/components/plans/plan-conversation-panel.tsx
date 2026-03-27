@@ -101,6 +101,9 @@ interface AgentsApiResponse {
 // Status dot
 // ---------------------------------------------------------------------------
 
+/** Stable no-op for history loading (plan panels don't support scroll-back). */
+const noopLoadOlder = async () => false;
+
 function StatusDot({ status }: { status: SessionStatus | null }) {
   if (!status) return null;
 
@@ -238,6 +241,9 @@ export function PlanConversationPanel({
       isConnected: stream.isConnected,
       error: stream.error,
       reset: stream.reset,
+      loadOlderHistory: noopLoadOlder,
+      hasOlderHistory: false,
+      isLoadingOlderHistory: false,
     }),
     [
       stream.events,

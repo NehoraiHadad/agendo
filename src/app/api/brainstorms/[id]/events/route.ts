@@ -1,5 +1,8 @@
 import { createSSEProxyHandler } from '@/lib/api/create-sse-proxy';
 
+/** SSE streams are long-lived — disable the default route handler timeout. */
+export const maxDuration = 0;
+
 /**
  * GET /api/brainstorms/:id/events
  *
