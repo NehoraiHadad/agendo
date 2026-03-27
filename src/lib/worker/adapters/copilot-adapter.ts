@@ -67,7 +67,7 @@ export class CopilotAdapter extends AbstractAcpAdapter<CopilotEvent> {
         supportsSessionInfo: true,
         supportsUsageCost: true,
       },
-      (event: { type: string; [key: string]: unknown }) => this.emitNdjson(event as CopilotEvent),
+      (event) => this.emitNdjson(event as CopilotEvent),
       () => this.approvalHandler,
       this.activeToolCalls,
     );
