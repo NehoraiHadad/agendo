@@ -208,6 +208,27 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     return this.childProcess?.stdin?.writable ?? false;
   }
 
+  /**
+   * Best-effort MCP status for ACP adapters.
+   *
+   * ACP does not expose a native MCP-status query endpoint, so we synthesise a
+   * response from the information we have at hand:
+   *
+   * - Server names come from `opts.mcpServers` captured at launch time.
+   * - Status is "connected" while the child process is alive and "disconnected"
+   *   once it has exited. This lets `ActivityTracker.startMcpHealthCheck()` emit
+   *   a `system:mcp-status` warning event when the agent process dies unexpectedly.
+   *
+   * Returns `null` when no MCP servers were configured (signals the health-check
+   * timer that there is nothing to monitor).
+   */
+  async getMcpStatus(): Promise<Record<string, unknown> | null> {
+    if (!this.storedOpts?.mcpServers?.length) return null;
+    const status = this.isAlive() ? 'connected' : 'disconnected';
+    const servers = this.storedOpts.mcpServers.map((s) => ({ name: s.name, status }));
+    return { servers };
+  }
+
   async setPermissionMode(mode: string): Promise<boolean> {
     const conn = this.transport.getConnection();
     if (!this.sessionId || !conn) return false;
