@@ -160,6 +160,10 @@ export interface ActivityCallbacks {
   onResultStats?(costUsd: number | null, turns: number | null): void;
 }
 
+// ---------------------------------------------------------------------------
+// Core AgentAdapter — required methods every adapter must implement
+// ---------------------------------------------------------------------------
+
 export interface AgentAdapter {
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess;
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
@@ -170,64 +174,192 @@ export interface AgentAdapter {
     priority?: import('@/lib/realtime/events').MessagePriority,
     clientId?: string,
   ): Promise<void>;
-  /** Remove a queued message before the SDK consumes it. Returns true if removed, false if too late.
-   *  Only supported by Claude SDK adapter (in-memory AsyncQueue). */
-  cancelQueuedMessage?(clientId: string): boolean;
-  /** Send a tool_result NDJSON message for a pending tool_use (e.g. AskUserQuestion). Optional — only Claude supports this. */
-  sendToolResult?(toolUseId: string, content: string): Promise<void>;
   interrupt(): Promise<void>;
   isAlive(): boolean;
   onThinkingChange(cb: (thinking: boolean) => void): void;
   setApprovalHandler(handler: ToolApprovalFn): void;
-  onSessionRef?(cb: (ref: string) => void): void;
-  /** Change the permission mode in-place via control_request (no process restart). */
-  setPermissionMode?(mode: string): Promise<boolean>;
-  /** Switch the AI model in-place via control_request. */
-  setModel?(model: string): Promise<boolean>;
-  /** Query MCP server connection status via control_request. */
-  getMcpStatus?(): Promise<Record<string, unknown> | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Capability interfaces — optional features declared by concrete adapters
+// ---------------------------------------------------------------------------
+
+/** Adapter can notify callers when the CLI-native session reference is available. */
+export interface SupportsSessionRef {
+  onSessionRef(cb: (ref: string) => void): void;
+}
+
+/** Adapter supports in-place model switching (no process restart). */
+export interface SupportsModelSwitch {
+  setModel(model: string): Promise<boolean>;
+}
+
+/** Adapter supports in-place permission mode switching (no process restart). */
+export interface SupportsPermissionModeSwitch {
+  setPermissionMode(mode: string): Promise<boolean>;
+}
+
+/** Adapter supports querying and managing MCP server connections. */
+export interface SupportsMcpManagement {
+  getMcpStatus(): Promise<Record<string, unknown> | null>;
   /** Replace all MCP servers on a live session (Claude SDK only). */
   setMcpServers?(servers: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   /** Reconnect a specific MCP server by name (Claude SDK only). */
   reconnectMcpServer?(serverName: string): Promise<void>;
   /** Enable/disable a specific MCP server by name (Claude SDK only). */
   toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
-  /** Rewind files to the state at a given user message (requires enableFileCheckpointing, Claude SDK only). */
-  rewindFiles?(userMessageId: string, dryRun?: boolean): Promise<Record<string, unknown> | null>;
-  /** Inject a steering message into the current running turn (Codex only). */
-  steer?(message: string): Promise<void>;
-  /** Rollback the last N turns in the thread (Codex only). */
-  rollback?(numTurns?: number): Promise<void>;
-  /** Inject activity callbacks for SDK adapters that handle stream_event delta buffering
-   *  internally. Called by SessionProcess before start(). */
-  setActivityCallbacks?(callbacks: ActivityCallbacks): void;
-  /** Map a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
-   *  Used by SessionDataPipeline for adapter-specific event parsing. */
-  mapJsonToEvents?(
-    parsed: Record<string, unknown>,
-  ): import('@/lib/realtime/events').AgendoEventPayload[];
-  /** The last captured assistant message UUID, used for conversation branching (Claude only). */
-  lastAssistantUuid?: string;
-  /**
-   * Retrieve conversation history from the CLI's native storage and map it
-   * to AgendoEventPayload[]. Used as a fallback when the Agendo log file is
-   * missing or empty (e.g. log file deleted, imported session).
-   *
-   * - Claude: calls getSessionMessages() from the SDK (reads JSONL on disk — works offline)
-   * - Codex: calls thread/read via JSON-RPC (requires a running app-server process)
-   * - Gemini/Copilot/OpenCode: in-memory only; falls back to Agendo log file when
-   *   in-memory history is empty (e.g. after a worker restart)
-   *
-   * @param sessionRef - CLI-native session/thread ID (Claude UUID or Codex threadId)
-   * @param cwd - Working directory hint (helps Claude find the right project JSONL)
-   * @param logFilePath - Path to the Agendo session log file (used as fallback by ACP adapters)
-   * @returns AgendoEventPayload[] or null if history is unavailable
-   */
-  getHistory?(
+}
+
+/**
+ * Adapter can retrieve conversation history from the CLI's native storage.
+ *
+ * - Claude: reads JSONL on disk (works offline), falls back to SDK getSessionMessages()
+ * - Codex: calls thread/read via JSON-RPC (requires a running app-server process)
+ * - ACP (Gemini/Copilot/OpenCode): in-memory; falls back to Agendo log file after restart
+ *
+ * @param sessionRef - CLI-native session/thread ID (Claude UUID or Codex threadId)
+ * @param cwd - Working directory hint (helps Claude find the right project JSONL)
+ * @param logFilePath - Path to the Agendo session log file (used as fallback by ACP adapters)
+ */
+export interface SupportsHistory {
+  getHistory(
     sessionRef: string,
     cwd?: string,
     logFilePath?: string,
   ): Promise<import('@/lib/realtime/events').AgendoEventPayload[] | null>;
+}
+
+/**
+ * Adapter maps a parsed JSON line from the agent's STDIO output to AgendoEventPayloads.
+ * Used by SessionDataPipeline for adapter-specific NDJSON event parsing.
+ */
+export interface SupportsEventMapping {
+  mapJsonToEvents(
+    parsed: Record<string, unknown>,
+  ): import('@/lib/realtime/events').AgendoEventPayload[];
+  /** The last captured assistant message UUID, used for conversation branching (Claude only). */
+  lastAssistantUuid?: string;
+}
+
+/**
+ * Adapter accepts activity callbacks for SDK adapters that handle stream_event
+ * delta buffering internally (instead of the NDJSON pipeline).
+ * Called by SessionProcess before start().
+ */
+export interface SupportsActivityCallbacks {
+  setActivityCallbacks(callbacks: ActivityCallbacks): void;
+}
+
+/** Adapter supports sending tool_result NDJSON messages for pending tool_use calls (e.g. AskUserQuestion). */
+export interface SupportsToolResult {
+  sendToolResult(toolUseId: string, content: string): Promise<void>;
+}
+
+/** Adapter supports removing a queued message before the SDK consumes it. */
+export interface SupportsCancelQueuedMessage {
+  /** Returns true if the message was removed, false if it was already consumed. */
+  cancelQueuedMessage(clientId: string): boolean;
+}
+
+/** Adapter supports injecting a steering message into the current running turn (Codex only). */
+export interface SupportsSteer {
+  steer(message: string): Promise<void>;
+}
+
+/** Adapter supports rolling back the last N turns in the agent thread (Codex only). */
+export interface SupportsRollback {
+  rollback(numTurns?: number): Promise<void>;
+}
+
+/**
+ * Adapter supports rewinding files to a previous state at a given user message.
+ * Requires enableFileCheckpointing in SpawnOpts (Claude SDK only).
+ */
+export interface SupportsFileCheckpointing {
+  rewindFiles(userMessageId: string, dryRun?: boolean): Promise<Record<string, unknown> | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Type guard functions — compile-time safe capability checks
+// ---------------------------------------------------------------------------
+
+/** Type guard: adapter can notify callers when a CLI session reference is available. */
+export function supportsSessionRef(a: AgentAdapter): a is AgentAdapter & SupportsSessionRef {
+  return 'onSessionRef' in a && typeof (a as SupportsSessionRef).onSessionRef === 'function';
+}
+
+/** Type guard: adapter supports in-place model switching. */
+export function supportsModelSwitch(a: AgentAdapter): a is AgentAdapter & SupportsModelSwitch {
+  return 'setModel' in a && typeof (a as SupportsModelSwitch).setModel === 'function';
+}
+
+/** Type guard: adapter supports in-place permission mode switching. */
+export function supportsPermissionModeSwitch(
+  a: AgentAdapter,
+): a is AgentAdapter & SupportsPermissionModeSwitch {
+  return (
+    'setPermissionMode' in a &&
+    typeof (a as SupportsPermissionModeSwitch).setPermissionMode === 'function'
+  );
+}
+
+/** Type guard: adapter supports querying and managing MCP server connections. */
+export function supportsMcpManagement(a: AgentAdapter): a is AgentAdapter & SupportsMcpManagement {
+  return 'getMcpStatus' in a && typeof (a as SupportsMcpManagement).getMcpStatus === 'function';
+}
+
+/** Type guard: adapter can retrieve conversation history from CLI-native storage. */
+export function supportsHistory(a: AgentAdapter): a is AgentAdapter & SupportsHistory {
+  return 'getHistory' in a && typeof (a as SupportsHistory).getHistory === 'function';
+}
+
+/** Type guard: adapter maps NDJSON output to AgendoEventPayloads. */
+export function supportsEventMapping(a: AgentAdapter): a is AgentAdapter & SupportsEventMapping {
+  return (
+    'mapJsonToEvents' in a && typeof (a as SupportsEventMapping).mapJsonToEvents === 'function'
+  );
+}
+
+/** Type guard: adapter accepts activity callbacks for SDK-internal delta buffering. */
+export function supportsActivityCallbacks(
+  a: AgentAdapter,
+): a is AgentAdapter & SupportsActivityCallbacks {
+  return (
+    'setActivityCallbacks' in a &&
+    typeof (a as SupportsActivityCallbacks).setActivityCallbacks === 'function'
+  );
+}
+
+/** Type guard: adapter supports sending tool_result messages. */
+export function supportsToolResult(a: AgentAdapter): a is AgentAdapter & SupportsToolResult {
+  return 'sendToolResult' in a && typeof (a as SupportsToolResult).sendToolResult === 'function';
+}
+
+/** Type guard: adapter supports removing a queued message before the SDK consumes it. */
+export function supportsCancelQueuedMessage(
+  a: AgentAdapter,
+): a is AgentAdapter & SupportsCancelQueuedMessage {
+  return (
+    'cancelQueuedMessage' in a &&
+    typeof (a as SupportsCancelQueuedMessage).cancelQueuedMessage === 'function'
+  );
+}
+
+/** Type guard: adapter supports injecting steering messages into a running turn. */
+export function supportsSteer(a: AgentAdapter): a is AgentAdapter & SupportsSteer {
+  return 'steer' in a && typeof (a as SupportsSteer).steer === 'function';
+}
+
+/** Type guard: adapter supports rolling back turns in the agent thread. */
+export function supportsRollback(a: AgentAdapter): a is AgentAdapter & SupportsRollback {
+  return 'rollback' in a && typeof (a as SupportsRollback).rollback === 'function';
+}
+
+/** Type guard: adapter supports rewinding files to a previous state. */
+export function supportsFileCheckpointing(
+  a: AgentAdapter,
+): a is AgentAdapter & SupportsFileCheckpointing {
+  return 'rewindFiles' in a && typeof (a as SupportsFileCheckpointing).rewindFiles === 'function';
 }
 
 /** Options struct for SessionProcess.start(), replacing 10 positional parameters. */

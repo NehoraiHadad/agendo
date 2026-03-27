@@ -6,7 +6,7 @@ import {
 } from '@/lib/worker/adapters/opencode-event-mapper';
 import { OpenCodeClientHandler } from '@/lib/worker/adapters/opencode-client-handler';
 import { AbstractAcpAdapter } from '@/lib/worker/adapters/base-acp-adapter';
-import type { SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts, SupportsModelSwitch } from '@/lib/worker/adapters/types';
 
 const log = createLogger('opencode-adapter');
 
@@ -67,7 +67,10 @@ function buildOpenCodeConfig(opts: SpawnOpts): Record<string, string> {
   return { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
 }
 
-export class OpenCodeAdapter extends AbstractAcpAdapter<OpenCodeEvent> {
+export class OpenCodeAdapter
+  extends AbstractAcpAdapter<OpenCodeEvent>
+  implements SupportsModelSwitch
+{
   protected get binaryName(): string {
     return 'opencode';
   }

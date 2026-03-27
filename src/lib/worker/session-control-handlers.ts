@@ -20,6 +20,13 @@ import type {
 } from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
 import type { AgentAdapter, ManagedProcess, PermissionDecision } from '@/lib/worker/adapters/types';
+import {
+  supportsPermissionModeSwitch,
+  supportsModelSwitch,
+  supportsCancelQueuedMessage,
+  supportsSteer,
+  supportsRollback,
+} from '@/lib/worker/adapters/types';
 import type { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
@@ -139,7 +146,7 @@ export async function handleSetPermissionMode(
   const label = MODE_LABELS[mode] ?? mode;
 
   // Try in-place mode change via control_request (no process restart).
-  if (ctx.adapter.setPermissionMode) {
+  if (supportsPermissionModeSwitch(ctx.adapter)) {
     try {
       const success = await ctx.adapter.setPermissionMode(mode);
       if (success) {
@@ -174,7 +181,7 @@ export async function handleSetPermissionMode(
 
 /** Handle a set-model control: switch the running session's model. */
 export async function handleSetModel(model: string, ctx: SessionControlCtx): Promise<void> {
-  if (!ctx.adapter.setModel) {
+  if (!supportsModelSwitch(ctx.adapter)) {
     await ctx.emitEvent({
       type: 'system:error',
       message: 'Model switching is not supported by this agent.',
@@ -325,7 +332,9 @@ export async function handleCancelQueued(
   control: Extract<AgendoControl, { type: 'cancel-queued' }>,
   ctx: SessionControlCtx,
 ): Promise<void> {
-  const removed = ctx.adapter.cancelQueuedMessage?.(control.clientId) ?? false;
+  const removed = supportsCancelQueuedMessage(ctx.adapter)
+    ? ctx.adapter.cancelQueuedMessage(control.clientId)
+    : false;
   if (removed) {
     await ctx.emitEvent({ type: 'user:message-cancelled', clientId: control.clientId });
   }
@@ -366,7 +375,9 @@ export async function handleSteer(
   control: Extract<AgendoControl, { type: 'steer' }>,
   ctx: SessionControlCtx,
 ): Promise<void> {
-  await ctx.adapter.steer?.(control.message);
+  if (supportsSteer(ctx.adapter)) {
+    await ctx.adapter.steer(control.message);
+  }
 }
 
 /**
@@ -376,7 +387,9 @@ export async function handleRollback(
   control: Extract<AgendoControl, { type: 'rollback' }>,
   ctx: SessionControlCtx,
 ): Promise<void> {
-  await ctx.adapter.rollback?.(control.numTurns ?? 1);
+  if (supportsRollback(ctx.adapter)) {
+    await ctx.adapter.rollback(control.numTurns ?? 1);
+  }
 }
 
 // ---------------------------------------------------------------------------

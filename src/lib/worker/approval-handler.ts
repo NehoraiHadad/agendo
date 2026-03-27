@@ -6,9 +6,11 @@ import { createLogger } from '@/lib/logger';
 const log = createLogger('approval-handler');
 import type {
   AgentAdapter,
+  SupportsToolResult,
   ApprovalRequest,
   PermissionDecision,
 } from '@/lib/worker/adapters/types';
+import { supportsToolResult } from '@/lib/worker/adapters/types';
 import type { AgendoEvent, AgendoEventPayload, SessionStatus } from '@/lib/realtime/events';
 import type { Session } from '@/lib/types';
 import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
@@ -51,7 +53,7 @@ export class ApprovalHandler {
   private suppressedToolUseIds = new Set<string>();
   constructor(
     private readonly session: Session,
-    private readonly adapter: Pick<AgentAdapter, 'sendMessage' | 'sendToolResult'>,
+    private readonly adapter: Pick<AgentAdapter, 'sendMessage'> & Partial<SupportsToolResult>,
     private readonly emitEvent: (payload: AgendoEventPayload) => Promise<AgendoEvent>,
     private readonly transitionTo: (status: SessionStatus) => Promise<void>,
     private readonly resetIdleTimer: () => void,
@@ -207,11 +209,11 @@ export class ApprovalHandler {
    * Only valid when the session is active or awaiting_input.
    */
   async pushToolResult(toolUseId: string, content: string): Promise<void> {
-    if (!this.adapter.sendToolResult) {
+    if (!supportsToolResult(this.adapter as AgentAdapter)) {
       log.warn('adapter does not support sendToolResult');
       return;
     }
-    await this.adapter.sendToolResult(toolUseId, content);
+    await (this.adapter as AgentAdapter & SupportsToolResult).sendToolResult(toolUseId, content);
     await this.transitionTo('active');
     this.resetIdleTimer();
   }

@@ -2,6 +2,7 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import type { AttachmentRef } from '@/lib/attachments';
 import type {
   AgentAdapter,
+  SupportsSessionRef,
   ToolApprovalFn,
   ManagedProcess,
   SpawnOpts,
@@ -15,7 +16,7 @@ import type {
  * Adapter-specific protocol logic (ACP, NDJSON control_request, etc.)
  * stays in the concrete subclasses.
  */
-export abstract class BaseAgentAdapter implements AgentAdapter {
+export abstract class BaseAgentAdapter implements AgentAdapter, SupportsSessionRef {
   // -------------------------------------------------------------------------
   // Shared callback fields (identical in all 3 adapters)
   // -------------------------------------------------------------------------

@@ -12,6 +12,8 @@ import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { AgendoEvent, AgendoEventPayload } from '@/lib/realtime/events';
+import type { AgentAdapter, SupportsEventMapping } from '@/lib/worker/adapters/types';
+import { supportsEventMapping } from '@/lib/worker/adapters/types';
 import { ApprovalHandler } from '@/lib/worker/approval-handler';
 import { readContextWindowForModel } from '@/lib/worker/context-window-cache';
 
@@ -24,10 +26,8 @@ const log = createLogger('session-data-pipeline');
 export interface DataPipelineDeps {
   sessionId: string;
   logWriter: { write(chunk: string, stream: 'stdout' | 'stderr' | 'system' | 'user'): void };
-  adapter: {
-    mapJsonToEvents?(parsed: Record<string, unknown>): AgendoEventPayload[];
-    lastAssistantUuid?: string;
-  };
+  /** The adapter — checked at runtime via supportsEventMapping() for NDJSON parsing. */
+  adapter: AgentAdapter;
   approvalHandler: {
     isSuppressedToolEnd(toolUseId: string, activeToolUseIds: Set<string>): boolean;
     suppressToolStart(toolUseId: string): void;
@@ -137,16 +137,17 @@ export class SessionDataPipeline {
       }
 
       try {
-        if (!this.deps.adapter.mapJsonToEvents) {
+        if (!supportsEventMapping(this.deps.adapter)) {
           log.warn(
             { sessionId: this.deps.sessionId, line: trimmed.slice(0, 200) },
             'Adapter has no mapJsonToEvents — skipping NDJSON line',
           );
           continue;
         }
+        const mappingAdapter: AgentAdapter & SupportsEventMapping = this.deps.adapter;
         let partials: AgendoEventPayload[];
         try {
-          partials = this.deps.adapter.mapJsonToEvents(parsed);
+          partials = mappingAdapter.mapJsonToEvents(parsed);
         } catch (mapErr) {
           log.warn(
             { err: mapErr, sessionId: this.deps.sessionId, line: trimmed.slice(0, 200) },
@@ -261,7 +262,7 @@ export class SessionDataPipeline {
         const enrichedPartial = enrichResultPayload(
           partial,
           this._lastPerCallContextStats,
-          this.deps.adapter.lastAssistantUuid,
+          supportsEventMapping(this.deps.adapter) ? this.deps.adapter.lastAssistantUuid : undefined,
         );
         const event = await this.deps.emitEvent(enrichedPartial);
         await this.deps.onEmittedEvent(event);

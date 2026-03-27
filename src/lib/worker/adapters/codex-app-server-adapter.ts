@@ -7,6 +7,12 @@ import * as tmux from '@/lib/worker/tmux-manager';
 import { createLogger } from '@/lib/logger';
 import type {
   AgentAdapter,
+  SupportsModelSwitch,
+  SupportsPermissionModeSwitch,
+  SupportsHistory,
+  SupportsEventMapping,
+  SupportsSteer,
+  SupportsRollback,
   AcpMcpServer,
   ManagedProcess,
   SpawnOpts,
@@ -100,7 +106,17 @@ const CODEX_STALE_CONTEXT_WINDOW = 258_400;
  *   Server sends: { jsonrpc:"2.0", id: N, method: "item/commandExecution/requestApproval", params: {...} }
  *   Client replies: { jsonrpc:"2.0", id: N, result: { decision: "accept"|"decline"|... } }
  */
-export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdapter {
+export class CodexAppServerAdapter
+  extends BaseAgentAdapter
+  implements
+    AgentAdapter,
+    SupportsModelSwitch,
+    SupportsPermissionModeSwitch,
+    SupportsHistory,
+    SupportsEventMapping,
+    SupportsSteer,
+    SupportsRollback
+{
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   private rl: readline.Interface | null = null;
   private tmuxSessionName = '';

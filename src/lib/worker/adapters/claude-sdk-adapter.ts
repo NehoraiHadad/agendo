@@ -23,6 +23,14 @@ import type { MessageParam, ContentBlockParam } from '@anthropic-ai/sdk/resource
 import type { AttachmentRef } from '@/lib/attachments';
 import type {
   AgentAdapter,
+  SupportsModelSwitch,
+  SupportsPermissionModeSwitch,
+  SupportsMcpManagement,
+  SupportsHistory,
+  SupportsActivityCallbacks,
+  SupportsToolResult,
+  SupportsCancelQueuedMessage,
+  SupportsFileCheckpointing,
   ManagedProcess,
   SpawnOpts,
   PermissionDecision,
@@ -118,7 +126,19 @@ class AsyncQueue<T> {
 // ClaudeSdkAdapter
 // ---------------------------------------------------------------------------
 
-export class ClaudeSdkAdapter extends BaseAgentAdapter implements AgentAdapter {
+export class ClaudeSdkAdapter
+  extends BaseAgentAdapter
+  implements
+    AgentAdapter,
+    SupportsModelSwitch,
+    SupportsPermissionModeSwitch,
+    SupportsMcpManagement,
+    SupportsHistory,
+    SupportsActivityCallbacks,
+    SupportsToolResult,
+    SupportsCancelQueuedMessage,
+    SupportsFileCheckpointing
+{
   private queryInstance: Query | null = null;
   private inputQueue = new AsyncQueue<SDKUserMessage>();
   private alive = false;

@@ -7,7 +7,7 @@ import { mapGeminiJsonToEvents, type GeminiEvent } from '@/lib/worker/adapters/g
 import { extractMessage, GeminiClientHandler } from '@/lib/worker/adapters/gemini-client-handler';
 import { AbstractAcpAdapter } from '@/lib/worker/adapters/base-acp-adapter';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
-import type { SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts, SupportsModelSwitch } from '@/lib/worker/adapters/types';
 
 /** Slash command entry returned from TOML scanning. */
 interface SlashCommand {
@@ -83,7 +83,7 @@ function loadGeminiCustomCommands(cwd: string): SlashCommand[] {
   return Array.from(commandsMap.values());
 }
 
-export class GeminiAdapter extends AbstractAcpAdapter<GeminiEvent> {
+export class GeminiAdapter extends AbstractAcpAdapter<GeminiEvent> implements SupportsModelSwitch {
   /** When true, suppresses exit callbacks during model-switch process restart. */
   private modelSwitching = false;
   /** Cached custom TOML commands for ACP-command merging. */

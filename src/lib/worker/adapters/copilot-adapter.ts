@@ -5,9 +5,12 @@ import {
 } from '@/lib/worker/adapters/copilot-event-mapper';
 import { CopilotClientHandler } from '@/lib/worker/adapters/copilot-client-handler';
 import { AbstractAcpAdapter } from '@/lib/worker/adapters/base-acp-adapter';
-import type { SpawnOpts } from '@/lib/worker/adapters/types';
+import type { SpawnOpts, SupportsModelSwitch } from '@/lib/worker/adapters/types';
 
-export class CopilotAdapter extends AbstractAcpAdapter<CopilotEvent> {
+export class CopilotAdapter
+  extends AbstractAcpAdapter<CopilotEvent>
+  implements SupportsModelSwitch
+{
   protected get binaryName(): string {
     return 'copilot';
   }

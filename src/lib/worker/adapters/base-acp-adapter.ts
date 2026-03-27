@@ -6,7 +6,15 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { extractMessage, AcpTransport } from '@/lib/worker/adapters/gemini-acp-transport';
 import { readEventsFromLog } from '@/lib/realtime/event-utils';
 import type { Client } from '@agentclientprotocol/sdk';
-import type { AgentAdapter, ManagedProcess, SpawnOpts } from '@/lib/worker/adapters/types';
+import type {
+  AgentAdapter,
+  SupportsPermissionModeSwitch,
+  SupportsMcpManagement,
+  SupportsHistory,
+  SupportsEventMapping,
+  ManagedProcess,
+  SpawnOpts,
+} from '@/lib/worker/adapters/types';
 import { BaseAgentAdapter } from '@/lib/worker/adapters/base-adapter';
 import {
   buildMessageWithAttachments,
@@ -32,7 +40,12 @@ const log = createLogger('acp-adapter');
  */
 export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
   extends BaseAgentAdapter
-  implements AgentAdapter
+  implements
+    AgentAdapter,
+    SupportsPermissionModeSwitch,
+    SupportsMcpManagement,
+    SupportsHistory,
+    SupportsEventMapping
 {
   protected childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   protected transport = new AcpTransport();

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SessionControlCtx } from '@/lib/worker/session-control-handlers';
 import type { AgendoControl } from '@/lib/realtime/events';
+import type { SupportsSteer, SupportsRollback } from '@/lib/worker/adapters/types';
 import { ExitContext } from '@/lib/worker/session-exit-logic';
 
 /** Build a minimal mock SessionControlCtx with sensible defaults. */
@@ -115,7 +116,9 @@ describe('handleSteer', () => {
     >;
     const ctx = makeCtx();
     await handleSteer(control, ctx);
-    expect(ctx.adapter.steer).toHaveBeenCalledWith('Focus on tests');
+    expect(
+      (ctx.adapter as SessionControlCtx['adapter'] & SupportsSteer).steer,
+    ).toHaveBeenCalledWith('Focus on tests');
   });
 
   it('handles adapter without steer gracefully', async () => {
@@ -141,7 +144,9 @@ describe('handleRollback', () => {
     >;
     const ctx = makeCtx();
     await handleRollback(control, ctx);
-    expect(ctx.adapter.rollback).toHaveBeenCalledWith(3);
+    expect(
+      (ctx.adapter as SessionControlCtx['adapter'] & SupportsRollback).rollback,
+    ).toHaveBeenCalledWith(3);
   });
 
   it('defaults numTurns to 1', async () => {
@@ -149,7 +154,9 @@ describe('handleRollback', () => {
     const control = { type: 'rollback' } as Extract<AgendoControl, { type: 'rollback' }>;
     const ctx = makeCtx();
     await handleRollback(control, ctx);
-    expect(ctx.adapter.rollback).toHaveBeenCalledWith(1);
+    expect(
+      (ctx.adapter as SessionControlCtx['adapter'] & SupportsRollback).rollback,
+    ).toHaveBeenCalledWith(1);
   });
 
   it('handles adapter without rollback gracefully', async () => {

@@ -47,6 +47,13 @@ import type {
   ManagedProcess,
   SessionStartOptions,
 } from '@/lib/worker/adapters/types';
+import {
+  supportsSessionRef,
+  supportsActivityCallbacks,
+  supportsMcpManagement,
+  supportsHistory,
+  supportsFileCheckpointing,
+} from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
 // resetRecoveryCount is now folded into transitionTo's DB update (autoResumeCount: 0)
@@ -184,7 +191,9 @@ export class SessionProcess {
       () => {
         void this.onExit(-1);
       },
-      this.adapter.getMcpStatus?.bind(this.adapter),
+      supportsMcpManagement(this.adapter)
+        ? this.adapter.getMcpStatus.bind(this.adapter)
+        : undefined,
       // publishTextDelta: emit agent:text-delta to in-memory SSE listeners (no log write, no DB)
       async (text) => {
         const event: AgendoEvent = {
@@ -341,52 +350,56 @@ export class SessionProcess {
     // Wire activity callbacks for SDK adapters that handle stream_event delta buffering
     // internally (e.g. ClaudeSdkAdapter). The adapter uses these to flush text/thinking
     // deltas and persist cost stats — bypassing the NDJSON pipeline's callback path.
-    this.adapter.setActivityCallbacks?.({
-      clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
-      appendDelta: (text) => this.activityTracker.appendDelta(text),
-      appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
-      onMessageStart: (stats) => {
-        // Store per-call stats so enrichResultPayload attaches them to agent:result.
-        // Without this, the UI falls back to aggregated modelUsage which inflates
-        // the context bar for multi-tool-call turns.
-        this.dataPipeline.setPerCallContextStats(stats);
+    if (supportsActivityCallbacks(this.adapter)) {
+      this.adapter.setActivityCallbacks({
+        clearDeltaBuffers: () => this.activityTracker.clearDeltaBuffers(),
+        appendDelta: (text) => this.activityTracker.appendDelta(text),
+        appendThinkingDelta: (text) => this.activityTracker.appendThinkingDelta(text),
+        onMessageStart: (stats) => {
+          // Store per-call stats so enrichResultPayload attaches them to agent:result.
+          // Without this, the UI falls back to aggregated modelUsage which inflates
+          // the context bar for multi-tool-call turns.
+          this.dataPipeline.setPerCallContextStats(stats);
 
-        // Emit real-time context bar update when a new API call starts.
-        if (this.dataPipeline.lastContextWindow) {
-          const used =
-            stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
-          void this.emitEvent({
-            type: 'agent:usage',
-            used,
-            size: this.dataPipeline.lastContextWindow,
-          });
-        }
-      },
-      onResultStats: (costUsd, turns) => {
-        void db
-          .update(sessions)
-          .set({
-            ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
-            ...(turns !== null && { totalTurns: turns }),
-          })
-          .where(eq(sessions.id, this.session.id))
-          .catch((err: unknown) => {
-            log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
-          });
-      },
-    });
+          // Emit real-time context bar update when a new API call starts.
+          if (this.dataPipeline.lastContextWindow) {
+            const used =
+              stats.inputTokens + stats.cacheReadInputTokens + stats.cacheCreationInputTokens;
+            void this.emitEvent({
+              type: 'agent:usage',
+              used,
+              size: this.dataPipeline.lastContextWindow,
+            });
+          }
+        },
+        onResultStats: (costUsd, turns) => {
+          void db
+            .update(sessions)
+            .set({
+              ...(costUsd !== null && { totalCostUsd: String(costUsd) }),
+              ...(turns !== null && { totalTurns: turns }),
+            })
+            .where(eq(sessions.id, this.session.id))
+            .catch((err: unknown) => {
+              log.error({ err, sessionId: this.session.id }, 'cost stats update failed');
+            });
+        },
+      });
+    }
 
     // Wire sessionRef callback so Codex/Gemini can persist their ref to DB
     // (Claude handles this via the session:init NDJSON event)
-    this.adapter.onSessionRef?.((ref) => {
-      this.sessionRef = ref;
-      db.update(sessions)
-        .set({ sessionRef: ref })
-        .where(eq(sessions.id, this.session.id))
-        .catch((err: unknown) => {
-          log.error({ err, sessionId: this.session.id }, 'Failed to persist sessionRef');
-        });
-    });
+    if (supportsSessionRef(this.adapter)) {
+      this.adapter.onSessionRef((ref) => {
+        this.sessionRef = ref;
+        db.update(sessions)
+          .set({ sessionRef: ref })
+          .where(eq(sessions.id, this.session.id))
+          .catch((err: unknown) => {
+            log.error({ err, sessionId: this.session.id }, 'Failed to persist sessionRef');
+          });
+      });
+    }
 
     // Wire thinking callback for agent:activity events
     this.adapter.onThinkingChange((thinking) => {
@@ -589,7 +602,7 @@ export class SessionProcess {
     } else if (control.type === 'cancel-queued') {
       await handleCancelQueued(control, ctrl);
     } else if (control.type === 'mcp-set-servers') {
-      if (ctrl.adapter.setMcpServers) {
+      if (supportsMcpManagement(ctrl.adapter) && ctrl.adapter.setMcpServers) {
         const result = await ctrl.adapter.setMcpServers(control.servers);
         await ctrl.emitEvent({
           type: 'system:info',
@@ -597,7 +610,7 @@ export class SessionProcess {
         });
       }
     } else if (control.type === 'mcp-reconnect') {
-      if (ctrl.adapter.reconnectMcpServer) {
+      if (supportsMcpManagement(ctrl.adapter) && ctrl.adapter.reconnectMcpServer) {
         await ctrl.adapter.reconnectMcpServer(control.serverName);
         await ctrl.emitEvent({
           type: 'system:info',
@@ -605,7 +618,7 @@ export class SessionProcess {
         });
       }
     } else if (control.type === 'mcp-toggle') {
-      if (ctrl.adapter.toggleMcpServer) {
+      if (supportsMcpManagement(ctrl.adapter) && ctrl.adapter.toggleMcpServer) {
         await ctrl.adapter.toggleMcpServer(control.serverName, control.enabled);
         await ctrl.emitEvent({
           type: 'system:info',
@@ -613,7 +626,7 @@ export class SessionProcess {
         });
       }
     } else if (control.type === 'rewind-files') {
-      if (ctrl.adapter.rewindFiles) {
+      if (supportsFileCheckpointing(ctrl.adapter)) {
         const result = await ctrl.adapter.rewindFiles(control.userMessageId, control.dryRun);
         await ctrl.emitEvent({
           type: 'system:info',
@@ -636,7 +649,7 @@ export class SessionProcess {
    * history retrieval (e.g. Gemini/Copilot) or the call fails.
    */
   async getHistory(): Promise<AgendoEventPayload[] | null> {
-    if (!this.adapter.getHistory) return null;
+    if (!supportsHistory(this.adapter)) return null;
     return this.adapter.getHistory(
       this.sessionRef ?? this.session.sessionRef ?? '',
       this.spawnCwd ?? undefined,
