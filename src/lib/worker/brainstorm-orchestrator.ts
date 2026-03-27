@@ -30,7 +30,7 @@ import { liveBrainstormHandlers, liveBrainstormFeedbackHandlers } from '@/lib/wo
 import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { getSessionProc } from '@/lib/worker/session-runner';
 import { createSession, getSessionStatus } from '@/lib/services/session-service';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import {
   getBrainstorm,
   updateBrainstormStatus,
@@ -65,6 +65,7 @@ import {
 } from '@/lib/worker/brainstorm-personas';
 import type { Provider } from '@/lib/services/model-service';
 import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
+import { logAudit } from '@/lib/services/audit-service';
 import { classifySessionError } from '@/lib/worker/fallback/error-classifier';
 import {
   decideFallback,
@@ -591,7 +592,7 @@ export class BrainstormOrchestrator {
             // Session is idle / ended — re-enqueue it.
             // session-runner uses session.sessionRef from DB to --resume the conversation.
             // singletonKey prevents duplicate jobs if somehow already queued.
-            await enqueueSession({ sessionId });
+            await dispatchSession({ sessionId });
             log.info(
               { roomId: this.roomId, sessionId, sessionStatus },
               'Re-enqueued participant session for room extension',
@@ -663,7 +664,7 @@ ${options.initialTurnPrompt}`
     await updateParticipantStatus(participant.participantId, 'active');
 
     this.subscribeToSession(participant);
-    await enqueueSession({ sessionId: session.id });
+    await dispatchSession({ sessionId: session.id });
 
     return session;
   }
@@ -1778,7 +1779,7 @@ ${options.initialTurnPrompt}`
               },
               'Participant session went idle/ended — auto-resuming',
             );
-            void enqueueSession({ sessionId: participant.sessionId }).catch((err: unknown) => {
+            void dispatchSession({ sessionId: participant.sessionId }).catch((err: unknown) => {
               log.error(
                 { err, roomId: this.roomId, sessionId: participant.sessionId },
                 'Failed to re-enqueue idle participant session',
@@ -2756,7 +2757,7 @@ ${STRUCTURED_SYNTHESIS_PROMPT_SUFFIX}`;
       // Subscribe BEFORE enqueue to avoid race where session completes before
       // the subscription is established (same pattern as participant sessions).
       const synthesisTextPromise = this.collectSingleTurnResponse(synthSession.id);
-      await enqueueSession({ sessionId: synthSession.id });
+      await dispatchSession({ sessionId: synthSession.id });
 
       // Wait for synthesis session to complete and collect the draft response
       const draftSynthesis = await synthesisTextPromise;
@@ -3006,7 +3007,7 @@ ${correctionsText}`;
    * Delivery priority:
    * 1. Direct `pushMessage()` on the live SessionProcess (same worker, no PG NOTIFY
    *    round-trip, guaranteed delivery even if the LISTEN connection is dead).
-   * 2. Cold-resume via enqueueSession() if the session is idle/ended.
+   * 2. Cold-resume via dispatchSession() if the session is idle/ended.
    * 3. PG NOTIFY fallback for sessions running in a different worker (future
    *    multi-worker deployments) or for sessions not yet registered in allSessionProcs.
    */
@@ -3029,7 +3030,7 @@ ${correctionsText}`;
         { roomId: this.roomId, sessionId, status: info.status },
         'Participant session is idle — cold-resuming with wave message',
       );
-      await enqueueSession({ sessionId, resumePrompt: text });
+      await dispatchSession({ sessionId, resumePrompt: text });
       return;
     }
 
@@ -3410,6 +3411,17 @@ export async function runBrainstorm(roomId: string): Promise<void> {
   const room = await getBrainstorm(roomId);
   const roomConfig = (room.config ?? {}) as BrainstormConfig;
 
+  // Fire-and-forget audit
+  void logAudit('system', 'brainstorm.start', 'brainstorm', roomId, {
+    title: room.title,
+    maxWaves: room.maxWaves,
+  });
+
   const orchestrator = new BrainstormOrchestrator(room.id, room.maxWaves, undefined, roomConfig);
   await orchestrator.run();
+
+  // Fire-and-forget audit
+  void logAudit('system', 'brainstorm.end', 'brainstorm', roomId, {
+    title: room.title,
+  });
 }

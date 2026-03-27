@@ -56,8 +56,8 @@ vi.mock('@/lib/services/session-service', () => ({
   getSessionStatus: vi.fn(),
 }));
 
-vi.mock('@/lib/worker/queue', () => ({
-  enqueueSession: vi.fn().mockResolvedValue(undefined),
+vi.mock('@/lib/services/session-dispatch', () => ({
+  dispatchSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/worker/session-runner', () => ({
@@ -176,7 +176,11 @@ describe('buildPreamble with playbook', () => {
   });
 
   it('omits language section when language is not set', () => {
-    const orch = new BrainstormOrchestrator('room-nolang', 10, 120) as unknown as OrchestratorInternal;
+    const orch = new BrainstormOrchestrator(
+      'room-nolang',
+      10,
+      120,
+    ) as unknown as OrchestratorInternal;
 
     const preamble = orch.buildPreamble(
       {
@@ -193,7 +197,11 @@ describe('buildPreamble with playbook', () => {
   });
 
   it('omits role section when roles are not set', () => {
-    const orch = new BrainstormOrchestrator('room-noroles', 10, 120) as unknown as OrchestratorInternal;
+    const orch = new BrainstormOrchestrator(
+      'room-noroles',
+      10,
+      120,
+    ) as unknown as OrchestratorInternal;
 
     const preamble = orch.buildPreamble(
       {

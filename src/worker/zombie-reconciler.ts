@@ -2,7 +2,8 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { db } from '../lib/db/index';
 import { sessions, brainstormRooms } from '../lib/db/schema';
 import { eq, and, or, inArray, lt, gt, sql } from 'drizzle-orm';
-import { enqueueSession, SESSION_QUEUE_NAME } from '../lib/worker/queue';
+import { SESSION_QUEUE_NAME } from '../lib/worker/queue';
+import { dispatchSession } from '../lib/services/session-dispatch';
 import { enqueueBrainstorm, BRAINSTORM_QUEUE_NAME } from '../lib/worker/brainstorm-queue';
 import { createLogger } from '@/lib/logger';
 import { sessionEventListeners } from '@/lib/worker/worker-sse';
@@ -329,7 +330,7 @@ async function reconcileOrphanedSessions(workerId: string): Promise<void> {
           'Do NOT attempt to restart the worker again. Continue your work from where you left off.'
         : 'The worker restarted. Please continue where you left off.';
 
-      await enqueueSession({
+      await dispatchSession({
         sessionId: session.id,
         resumeRef: session.sessionRef,
         resumePrompt,

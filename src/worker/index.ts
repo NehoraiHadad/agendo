@@ -15,16 +15,25 @@ import {
 import { checkDiskSpace } from './disk-check';
 import { reconcileZombies } from './zombie-reconciler';
 import { installSkills } from '../lib/worker/skills/install-skills';
-import { runSession, liveSessionProcs, allSessionProcs } from '../lib/worker/session-runner';
+import { runSession, initRuntime } from '../lib/worker/session-runner';
+import { RuntimeManager } from '../lib/worker/runtime-manager';
 import { runBrainstorm } from '../lib/worker/brainstorm-orchestrator';
 import { runGitHubSync } from '../lib/services/github-sync-service';
-import { startWorkerHttp, stopWorkerHttp } from '../lib/worker/worker-http';
+import {
+  startWorkerHttp,
+  stopWorkerHttp,
+  registerInFlightTracker,
+} from '../lib/worker/worker-http';
 import { StaleReaper } from '../lib/worker/stale-reaper';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('worker');
 
 const WORKER_ID = config.WORKER_ID;
+
+/** Singleton RuntimeManager — owns all in-memory session process maps. */
+export const runtimeManager = new RuntimeManager(WORKER_ID);
+initRuntime(runtimeManager);
 
 /** Track in-flight session promises so graceful shutdown can wait for them. */
 const inFlightJobs = new Set<Promise<void>>();
@@ -48,7 +57,7 @@ async function handleSessionJob(job: Job<RunSessionJobData>): Promise<void> {
         skipResumeContext,
         resumeClientId,
       );
-      log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot freed for session');
+      log.info({ sessionId, liveSessions: runtimeManager.liveCount }, 'slot freed for session');
     } catch (err) {
       log.error({ err, sessionId }, 'Session failed');
       throw err;
@@ -119,7 +128,18 @@ async function main(): Promise<void> {
   // Start Worker HTTP server for direct control/event dispatch (replaces pg_notify control channel)
   startWorkerHttp();
 
-  // Register session job handler
+  // Register in-flight session tracker so direct-dispatched sessions are
+  // included in the graceful shutdown wait alongside pg-boss sessions.
+  registerInFlightTracker((promise) => {
+    inFlightJobs.add(promise);
+    void promise.finally(() => inFlightJobs.delete(promise));
+  });
+
+  if (config.DIRECT_DISPATCH) {
+    log.info('Direct dispatch mode ENABLED — sessions dispatched via HTTP, pg-boss as fallback');
+  }
+
+  // Register session job handler (always — drains legacy jobs even when DIRECT_DISPATCH=true)
   await registerSessionWorker(handleSessionJob);
   log.info('Listening for session jobs');
 
@@ -168,9 +188,7 @@ async function main(): Promise<void> {
     // group — Claude exits at the same time as us. We must set terminateKilled
     // before the I/O event loop tick that fires onExit, otherwise onExit sees
     // terminateKilled=false and emits "Session ended unexpectedly".
-    for (const proc of allSessionProcs.values()) {
-      proc.markTerminating();
-    }
+    runtimeManager.markAllTerminating();
     // Stop pg-boss from delivering new jobs (short timeout since we manage our own wait below)
     await stopBoss();
     // Wait for in-flight brainstorm orchestrations to reach a safe stopping point
@@ -190,17 +208,7 @@ async function main(): Promise<void> {
       ]);
     }
     // Terminate live sessions (awaiting_input sessions whose process is still running)
-    if (liveSessionProcs.size > 0) {
-      log.info({ count: liveSessionProcs.size }, 'Terminating live sessions');
-      const exitPromises = [...liveSessionProcs.values()].map((proc) => {
-        proc.terminate();
-        return proc.waitForExit();
-      });
-      await Promise.race([
-        Promise.allSettled(exitPromises),
-        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
-      ]);
-    }
+    await runtimeManager.shutdown(SHUTDOWN_GRACE_MS);
     await stopWorkerHttp();
     await pool.end();
     process.exit(0);

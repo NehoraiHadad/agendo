@@ -24,7 +24,7 @@ import type { ApprovalHandler } from '@/lib/worker/approval-handler';
 import type { ActivityTracker } from '@/lib/worker/activity-tracker';
 import { SIGKILL_DELAY_MS } from '@/lib/worker/constants';
 import { savePlanFromSession } from '@/lib/worker/session-plan-utils';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import type { ExitContext } from '@/lib/worker/session-exit-logic';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -442,7 +442,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
             );
             return;
           }
-          await enqueueSession({
+          await dispatchSession({
             sessionId: ctx.sessionId,
             resumePrompt: ctx.initialPrompt ?? '',
           });
@@ -472,7 +472,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // The session status is now 'idle', so the next session-runner job can claim it.
   // No counter check — this is a deliberate user-initiated action, not crash recovery.
   if (ctx.exitContext.modeChangeRestart && ctx.sessionRef) {
-    enqueueSession({ sessionId: ctx.sessionId, resumeRef: ctx.sessionRef }).catch(
+    dispatchSession({ sessionId: ctx.sessionId, resumeRef: ctx.sessionRef }).catch(
       (err: unknown) => {
         log.error(
           { err, sessionId: ctx.sessionId },
@@ -487,7 +487,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
   // No counter check — this is a deliberate user-initiated action, not crash recovery.
   if (ctx.exitContext.clearContextRestart) {
     const targetSessionId = ctx.exitContext.clearContextRestartNewSessionId ?? ctx.sessionId;
-    enqueueSession({ sessionId: targetSessionId }).catch((err: unknown) => {
+    dispatchSession({ sessionId: targetSessionId }).catch((err: unknown) => {
       log.error(
         { err, sessionId: targetSessionId },
         'Failed to enqueue new session after clear-context restart',
@@ -524,7 +524,7 @@ export function handleReEnqueue(ctx: ReEnqueueContext, wasInterruptedMidTurn: bo
         }
         const resumePrompt =
           'The session was interrupted by an infrastructure restart (e.g. the agendo server restarted). Please continue where you left off.';
-        await enqueueSession({
+        await dispatchSession({
           sessionId: ctx.sessionId,
           resumeRef,
           resumePrompt,

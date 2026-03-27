@@ -67,10 +67,10 @@ vi.mock('@/lib/services/context-extractor', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock @/lib/worker/queue
+// Mock @/lib/services/session-dispatch (used by session-service internally)
 // ---------------------------------------------------------------------------
-vi.mock('@/lib/worker/queue', () => ({
-  enqueueSession: mockEnqueueSession,
+vi.mock('@/lib/services/session-dispatch', () => ({
+  dispatchSession: mockEnqueueSession,
 }));
 
 // ---------------------------------------------------------------------------

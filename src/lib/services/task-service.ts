@@ -6,6 +6,7 @@ import { getById } from '@/lib/services/db-helpers';
 import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { syncTaskStatusToGitHub } from '@/lib/services/github-sync-service';
+import { logTaskAudit } from '@/lib/services/audit-service';
 import type { Task, TaskStatus } from '@/lib/types';
 
 // --- Types ---
@@ -215,6 +216,9 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     await touchTask(input.parentTaskId);
   }
 
+  // Fire-and-forget audit
+  void logTaskAudit('task.create', task.id, { title: task.title, status: task.status });
+
   return task;
 }
 
@@ -259,6 +263,13 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
     await touchTask(input.parentTaskId);
   }
 
+  // Fire-and-forget audit
+  if (input.status && input.status !== existing.status) {
+    void logTaskAudit('task.status_change', id, { from: existing.status, to: input.status });
+  } else {
+    void logTaskAudit('task.update', id, { fields: Object.keys(input) });
+  }
+
   return updated;
 }
 
@@ -270,6 +281,8 @@ export async function deleteTask(id: string): Promise<void> {
   } else {
     await db.delete(tasks).where(eq(tasks.id, id));
   }
+  // Fire-and-forget audit
+  void logTaskAudit('task.delete', id, { title: task.title });
 }
 
 export async function getTaskById(id: string): Promise<Task> {

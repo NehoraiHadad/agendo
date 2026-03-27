@@ -34,6 +34,11 @@ async function postToWorker(path: string, payload: unknown): Promise<WorkerRespo
   }
 }
 
+/** Dispatch a new session start to the worker via HTTP. */
+export async function sendSessionStart(sessionId: string, data: unknown): Promise<WorkerResponse> {
+  return postToWorker(`/sessions/${sessionId}/start`, data);
+}
+
 /** Send a control message to a session running in the worker. */
 export async function sendSessionControl(
   sessionId: string,

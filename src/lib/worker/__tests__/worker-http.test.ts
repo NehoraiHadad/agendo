@@ -18,20 +18,19 @@ vi.mock('@/lib/logger', () => ({
   }),
 }));
 
-// Use a factory that creates the Map inside the mock — avoids hoisting issues
+// Mock session-runner's getSessionProc and getActiveSessionCount
+const mockSessionProcs = new Map<string, { onControl: ReturnType<typeof vi.fn> }>();
+
 vi.mock('@/lib/worker/session-runner', () => ({
-  allSessionProcs: new Map<string, { onControl: ReturnType<typeof vi.fn> }>(),
+  getSessionProc: (id: string) => mockSessionProcs.get(id),
+  getActiveSessionCount: () => mockSessionProcs.size,
 }));
 
 import * as http from 'node:http';
 import { startWorkerHttp, stopWorkerHttp, liveBrainstormHandlers } from '../worker-http';
-import { allSessionProcs } from '@/lib/worker/session-runner';
 
-// Typed for convenience (cast through unknown to avoid type-overlap check)
-const sessionProcs = allSessionProcs as unknown as Map<
-  string,
-  { onControl: ReturnType<typeof vi.fn> }
->;
+// Alias for test readability
+const sessionProcs = mockSessionProcs;
 
 // Helper to make a request to the test server
 async function request(

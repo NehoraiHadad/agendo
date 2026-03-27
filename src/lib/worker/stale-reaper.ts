@@ -4,6 +4,7 @@ import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
 import { sessionEventListeners } from '@/lib/worker/worker-sse';
+import { logSessionAudit } from '@/lib/services/audit-service';
 import type { SessionStatus } from '@/lib/realtime/event-types';
 
 const log = createLogger('stale-reaper');
@@ -115,6 +116,8 @@ export class StaleReaper {
           }
           // Notify in-memory SSE listeners so connected browser tabs see the status change.
           notifySessionStatus(row.id, 'idle');
+          // Fire-and-forget audit
+          void logSessionAudit('session.recovery', row.id, { pid: row.pid });
         }
       }
 

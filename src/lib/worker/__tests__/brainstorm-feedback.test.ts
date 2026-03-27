@@ -84,13 +84,13 @@ vi.mock('@/lib/services/session-service', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock: queue
+// Mock: session-dispatch (replaces direct enqueueSession usage)
 // ---------------------------------------------------------------------------
 
 const mockEnqueueSession = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('@/lib/worker/queue', () => ({
-  enqueueSession: mockEnqueueSession,
+vi.mock('@/lib/services/session-dispatch', () => ({
+  dispatchSession: mockEnqueueSession,
 }));
 
 // ---------------------------------------------------------------------------

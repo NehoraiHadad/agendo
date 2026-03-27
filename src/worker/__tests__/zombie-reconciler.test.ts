@@ -35,10 +35,14 @@ vi.mock('../../lib/db/schema', () => ({
   },
 }));
 
-// Mock session queue
+// Mock session queue (still needed for SESSION_QUEUE_NAME import)
 vi.mock('../../lib/worker/queue', () => ({
-  enqueueSession: vi.fn().mockResolvedValue(null),
   SESSION_QUEUE_NAME: 'run-session',
+}));
+
+// Mock session dispatch (zombie-reconciler now uses dispatchSession)
+vi.mock('../../lib/services/session-dispatch', () => ({
+  dispatchSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock brainstorm queue
@@ -65,11 +69,11 @@ vi.mock('drizzle-orm', () => ({
 
 import { db } from '../../lib/db/index';
 import { reconcileZombies } from '../zombie-reconciler';
-import { enqueueSession } from '../../lib/worker/queue';
+import { dispatchSession } from '../../lib/services/session-dispatch';
 import { enqueueBrainstorm } from '../../lib/worker/brainstorm-queue';
 
 const mockDb = vi.mocked(db);
-const mockEnqueue = vi.mocked(enqueueSession);
+const mockEnqueue = vi.mocked(dispatchSession);
 const mockEnqueueBrainstorm = vi.mocked(enqueueBrainstorm);
 
 beforeEach(() => {

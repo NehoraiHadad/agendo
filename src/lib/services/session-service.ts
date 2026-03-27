@@ -7,7 +7,7 @@ import { getById } from '@/lib/services/db-helpers';
 import { ConflictError } from '@/lib/errors';
 import { safeUnlinkMany } from '@/lib/utils/fs-utils';
 import { sendSessionControl, sendSessionEvent } from '@/lib/realtime/worker-client';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import type { Session } from '@/lib/types';
 import type { AgendoControl } from '@/lib/realtime/events';
 
@@ -229,7 +229,7 @@ export async function forkSession(
   // provided. This starts the fork right away without waiting for the user to
   // send the first message manually.
   if (parent.sessionRef && initialPrompt) {
-    await enqueueSession({
+    await dispatchSession({
       sessionId: fork.id,
       resumeSessionAt: resumeAt,
       resumePrompt: initialPrompt,

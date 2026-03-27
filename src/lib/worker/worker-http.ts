@@ -1,8 +1,9 @@
 import * as http from 'node:http';
 import { config } from '@/lib/config';
 import { createLogger } from '@/lib/logger';
-import { allSessionProcs } from '@/lib/worker/session-runner';
+import { getSessionProc, getActiveSessionCount, runSession } from '@/lib/worker/session-runner';
 import { handleSessionSSE, handleBrainstormSSE } from '@/lib/worker/worker-sse';
+import type { RunSessionJobData } from '@/lib/worker/queue';
 
 const log = createLogger('worker-http');
 
@@ -27,6 +28,18 @@ export const liveBrainstormFeedbackHandlers = new Map<
 >();
 
 let server: http.Server | null = null;
+
+/**
+ * Optional callback to track in-flight session promises from direct dispatch.
+ * Set by worker/index.ts via registerInFlightTracker() so the shutdown handler
+ * can wait for directly-dispatched sessions the same way as pg-boss sessions.
+ */
+let inFlightTracker: ((promise: Promise<void>) => void) | null = null;
+
+/** Register a callback that receives every fire-and-forget session promise. */
+export function registerInFlightTracker(tracker: (promise: Promise<void>) => void): void {
+  inFlightTracker = tracker;
+}
 
 /**
  * Factory that creates a POST dispatcher for a handler map.
@@ -113,7 +126,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   // GET /health — no auth required
   if (method === 'GET' && pathname === '/health') {
-    ok(res, { status: 'ok', sessions: allSessionProcs.size });
+    ok(res, { status: 'ok', sessions: getActiveSessionCount() });
     return;
   }
 
@@ -153,10 +166,51 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   const { resource, id, action } = parsed;
 
+  // ─── Direct dispatch: POST /sessions/:id/start ───────────────────────
+  // Accepts RunSessionJobData, starts the session asynchronously (fire-and-forget).
+  if (method === 'POST' && resource === 'sessions' && action === 'start') {
+    const body = await readBody(req);
+    if (!body) {
+      badRequest(res, 'Missing request body');
+      return;
+    }
+    let data: RunSessionJobData;
+    try {
+      data = JSON.parse(body) as RunSessionJobData;
+    } catch {
+      badRequest(res, 'Invalid JSON body');
+      return;
+    }
+    if (!data.sessionId) {
+      badRequest(res, 'Missing sessionId in body');
+      return;
+    }
+
+    // Fire-and-forget: start session asynchronously, respond 200 immediately.
+    // Track the promise so graceful shutdown can wait for it.
+    const promise = runSession(
+      data.sessionId,
+      config.WORKER_ID,
+      data.resumeRef,
+      data.resumeSessionAt,
+      data.resumePrompt,
+      data.skipResumeContext,
+      data.resumeClientId,
+    ).catch((err: unknown) => {
+      log.error({ err, sessionId: data.sessionId }, 'Direct-dispatched session failed');
+    });
+
+    // Expose to inFlightSessions set (registered via registerInFlightTracker)
+    if (inFlightTracker) inFlightTracker(promise);
+
+    ok(res, { dispatched: true });
+    return;
+  }
+
   // Session control & event injection both route through onControl
   const sessionControlMap = {
     get(sid: string) {
-      const proc = allSessionProcs.get(sid);
+      const proc = getSessionProc(sid);
       return proc ? (payload: string) => proc.onControl(payload) : undefined;
     },
   };

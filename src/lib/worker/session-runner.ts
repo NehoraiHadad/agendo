@@ -8,6 +8,7 @@ import { getSession } from '@/lib/services/session-service';
 import { validateBinary } from '@/lib/worker/safety';
 import { SessionProcess } from '@/lib/worker/session-process';
 import { selectAdapter } from '@/lib/worker/adapters/adapter-factory';
+import type { RuntimeManager } from '@/lib/worker/runtime-manager';
 import { getBinaryName } from '@/lib/worker/agent-utils';
 import {
   generateSdkSessionMcpServers,
@@ -27,23 +28,24 @@ import {
 } from '@/lib/worker/session-preambles';
 import type { AcpMcpServer, SpawnOpts } from '@/lib/worker/adapters/types';
 import { binaryNameToProvider } from '@/lib/worker/fallback/provider-utils';
+import { logSessionAudit } from '@/lib/services/audit-service';
 
 /**
- * Live session processes that have released their pg-boss slot (reached
- * awaiting_input) but whose underlying agent process is still running.
- * Keyed by sessionId. Used by shutdown to gracefully terminate them.
+ * Singleton RuntimeManager instance — set by initRuntime() from worker/index.ts.
+ * All session process registration/lookup goes through this.
  */
-export const liveSessionProcs = new Map<string, SessionProcess>();
+let runtime: RuntimeManager | null = null;
 
-/**
- * ALL active session processes, registered immediately when runSession starts
- * (before the first awaiting_input). This superset of liveSessionProcs lets
- * the shutdown handler call markTerminating() synchronously on every proc —
- * critical for SIGINT/SIGTERM sent to the whole process group, where Claude
- * exits concurrently with our shutdown handler and we must set terminateKilled
- * before the onExit I/O callback fires.
- */
-export const allSessionProcs = new Map<string, SessionProcess>();
+/** Called once from worker/index.ts to inject the shared RuntimeManager. */
+export function initRuntime(mgr: RuntimeManager): void {
+  runtime = mgr;
+}
+
+/** Get the RuntimeManager (throws if not initialised — programming error). */
+function getRuntime(): RuntimeManager {
+  if (!runtime) throw new Error('RuntimeManager not initialised — call initRuntime() first');
+  return runtime;
+}
 
 /**
  * Look up a live SessionProcess by sessionId.
@@ -52,12 +54,17 @@ export const allSessionProcs = new Map<string, SessionProcess>();
  * process for the given session, or undefined if the session is not running
  * in this worker (e.g. different worker, or the process has already exited).
  *
- * Checks allSessionProcs (covers both pre-slot-release active sessions and
+ * Checks allProcs (covers both pre-slot-release active sessions and
  * post-slot-release awaiting-input sessions) so callers can deliver messages
  * at any point in the session lifecycle without going through PG NOTIFY.
  */
 export function getSessionProc(sessionId: string): SessionProcess | undefined {
-  return allSessionProcs.get(sessionId);
+  return getRuntime().getProcess(sessionId);
+}
+
+/** Get the count of all active session processes on this worker. */
+export function getActiveSessionCount(): number {
+  return getRuntime().activeCount;
 }
 
 export async function runSession(
@@ -259,8 +266,8 @@ export async function runSession(
   // This prevents a duplicate pg-boss job (e.g. from a cold-resume fallback
   // that fired while the process was still alive) from overwriting the live
   // sessionProc reference in the maps — which would orphan the real process.
-  const existingProc = allSessionProcs.get(sessionId);
-  if (existingProc) {
+  const mgr = getRuntime();
+  if (mgr.has(sessionId)) {
     log.info(
       { sessionId },
       'Session already has live process on this worker, skipping duplicate job',
@@ -273,7 +280,7 @@ export async function runSession(
 
   // Register immediately so the shutdown handler can markTerminating() even
   // before the first awaiting_input (i.e. while still in active state).
-  allSessionProcs.set(sessionId, sessionProc);
+  mgr.register(sessionId, sessionProc);
 
   await sessionProc.start({
     prompt,
@@ -289,25 +296,28 @@ export async function runSession(
     developerInstructions: codexDeveloperInstructions,
   });
 
+  // Fire-and-forget audit
+  void logSessionAudit('session.start', sessionId, {
+    agentId: session.agentId,
+    model: session.model,
+    kind: session.kind,
+    isResume: !!resumeRef,
+  });
+
   // Wait until the session releases its pg-boss slot (first awaiting_input or
   // process exit). This frees the slot for the next queued session while the
   // agent process stays alive in liveSessionProcs for subsequent messages.
   await sessionProc.waitForSlotRelease();
 
   // Register the live session so the shutdown handler can terminate it gracefully.
-  liveSessionProcs.set(sessionId, sessionProc);
-  log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'slot released for session');
+  mgr.markLive(sessionId);
+  log.info({ sessionId, liveSessions: mgr.liveCount }, 'slot released for session');
 
   // Wire exit cleanup: remove from both maps when the process actually exits.
   // Only delete if the entry still points to THIS sessionProc — a later
   // runSession call may have legitimately replaced us (e.g. after cold resume).
   void sessionProc.waitForExit().then(() => {
-    if (allSessionProcs.get(sessionId) === sessionProc) {
-      allSessionProcs.delete(sessionId);
-    }
-    if (liveSessionProcs.get(sessionId) === sessionProc) {
-      liveSessionProcs.delete(sessionId);
-    }
-    log.info({ sessionId, liveSessions: liveSessionProcs.size }, 'session removed from live map');
+    mgr.remove(sessionId, sessionProc);
+    log.info({ sessionId, liveSessions: mgr.liveCount }, 'session removed from live map');
   });
 }

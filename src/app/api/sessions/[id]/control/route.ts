@@ -7,7 +7,7 @@ import { getSession, restartFreshFromSession } from '@/lib/services/session-serv
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import type { AgendoControl } from '@/lib/realtime/events';
 
 /**
@@ -72,7 +72,7 @@ export const POST = withErrorBoundary(
 
       if (session.status === 'idle' || session.status === 'ended') {
         // No active worker — enqueue the new session directly.
-        await enqueueSession({ sessionId: newSession.id });
+        await dispatchSession({ sessionId: newSession.id });
       } else {
         // Active session: relay to worker with the new session ID so it can
         // enqueue it from onExit after the process terminates cleanly.
@@ -121,7 +121,7 @@ export const POST = withErrorBoundary(
             .set({ permissionMode: newMode, initialPrompt })
             .where(eq(sessions.id, id));
 
-          await enqueueSession({
+          await dispatchSession({
             sessionId: id,
             resumeRef: session.sessionRef ?? undefined,
             resumePrompt: initialPrompt,

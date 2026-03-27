@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { withErrorBoundary, assertUUID } from '@/lib/api-handler';
 import { getProject } from '@/lib/services/project-service';
 import { createSession } from '@/lib/services/session-service';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 
 const quickLaunchSchema = z.object({
   agentId: z.string().uuid(),
@@ -35,7 +35,7 @@ export const POST = withErrorBoundary(
     });
 
     if (body.initialPrompt) {
-      await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
+      await dispatchSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
     }
 
     return NextResponse.json({ data: { sessionId: session.id } }, { status: 201 });

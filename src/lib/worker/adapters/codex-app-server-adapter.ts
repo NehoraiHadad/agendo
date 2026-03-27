@@ -273,7 +273,14 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
 
   async getHistory(sessionRef: string, _cwd?: string): Promise<AgendoEventPayload[] | null> {
     const threadId = sessionRef || this.threadId;
-    if (!threadId || !this.alive) return null;
+    if (!threadId) return null;
+
+    // File fallback: when the app-server process is dead, read the JSONL directly
+    if (!this.alive) {
+      const { readCodexSessionFile } = await import('./codex-history-file');
+      const events = readCodexSessionFile(threadId);
+      return events.length > 0 ? events : null;
+    }
 
     try {
       const result = (await this.transport.call(
@@ -287,7 +294,10 @@ export class CodexAppServerAdapter extends BaseAgentAdapter implements AgentAdap
       return mapCodexThreadToEvents(result.thread);
     } catch (err) {
       log.debug({ err, threadId }, 'getHistory (thread/read) failed');
-      return null;
+      // Fall back to file reader if RPC fails
+      const { readCodexSessionFile } = await import('./codex-history-file');
+      const events = readCodexSessionFile(threadId);
+      return events.length > 0 ? events : null;
     }
   }
 

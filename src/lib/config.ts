@@ -35,6 +35,9 @@ const envSchema = z.object({
     .string()
     .transform((v) => v.toLowerCase() !== 'false' && v !== '0')
     .default('true'),
+  // Direct dispatch: bypass pg-boss for session dispatch, use HTTP to worker instead.
+  // Feature flag — set to false (default) to keep legacy pg-boss behaviour.
+  DIRECT_DISPATCH: z.coerce.boolean().default(false),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -1,5 +1,6 @@
 import { createSession, type CreateSessionInput } from './session-service';
-import { enqueueSession, type RunSessionJobData } from '../worker/queue';
+import { type RunSessionJobData } from '../worker/queue';
+import { dispatchSession } from './session-dispatch';
 import type { Session } from '../types';
 
 interface CreateAndEnqueueSessionOpts extends CreateSessionInput {
@@ -15,6 +16,6 @@ export async function createAndEnqueueSession(opts: CreateAndEnqueueSessionOpts)
   if (beforeEnqueue) {
     await beforeEnqueue(session);
   }
-  await enqueueSession({ sessionId: session.id, ...enqueueOpts });
+  await dispatchSession({ sessionId: session.id, ...enqueueOpts });
   return session;
 }

@@ -697,6 +697,30 @@ export interface BrainstormConfig {
 // --- Project MCP Servers ----------------------------------------------------
 // Per-project MCP server enablement and env overrides.
 
+// --- Audit Log ---------------------------------------------------------------
+// Fire-and-forget audit trail for key system actions.
+
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    actor: varchar('actor', { length: 255 }),
+    action: varchar('action', { length: 255 }).notNull(),
+    resourceType: varchar('resource_type', { length: 100 }).notNull(),
+    resourceId: uuid('resource_id'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_audit_log_actor').on(table.actor),
+    index('idx_audit_log_resource_type').on(table.resourceType),
+    index('idx_audit_log_created_at').on(table.createdAt),
+  ],
+);
+
+// --- Project MCP Servers ----------------------------------------------------
+// Per-project MCP server enablement and env overrides.
+
 export const projectMcpServers = pgTable(
   'project_mcp_servers',
   {

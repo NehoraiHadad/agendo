@@ -29,6 +29,13 @@
       "when": 1774195028320,
       "tag": "0003_add-github-integration",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774599095797,
+      "tag": "0004_add-audit-log",
+      "breakpoints": true
     }
   ]
 }

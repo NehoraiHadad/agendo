@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { persistContextWindow } from '@/lib/worker/context-window-cache';
 import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
+import { logSessionAudit } from '@/lib/services/audit-service';
 
 const log = createLogger('session-process');
 import { sessions } from '@/lib/db/schema';
@@ -955,6 +956,15 @@ export class SessionProcess {
       },
       wasInterruptedMidTurn,
     );
+
+    // Fire-and-forget audit for session exit
+    const auditAction = wasInterruptedMidTurn ? 'session.crash' : 'session.end';
+    void logSessionAudit(auditAction, this.session.id, {
+      exitCode,
+      reason: this.exitCtx.reason,
+      durationSec: ((Date.now() - this.sessionStartTime) / 1000).toFixed(1),
+      agentId: this.session.agentId,
+    });
 
     // Cancel debounced flush timer and do a final immediate flush so the DB
     // has the correct eventSeq before the session is considered done.

@@ -6,7 +6,7 @@ import {
   deleteSessions,
   type SessionKind,
 } from '@/lib/services/session-service';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import { z } from 'zod';
 
 const createSessionSchema = z.object({
@@ -67,7 +67,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
   });
 
   if (body.initialPrompt) {
-    await enqueueSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
+    await dispatchSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
   }
 
   return NextResponse.json({ data: { id: session.id } }, { status: 201 });

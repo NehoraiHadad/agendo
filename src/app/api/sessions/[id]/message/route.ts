@@ -6,7 +6,7 @@ import {
   writePendingResumeAttachments,
 } from '@/lib/services/session-attachment-service';
 import { sendSessionControl } from '@/lib/realtime/worker-client';
-import { enqueueSession } from '@/lib/worker/queue';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import { BadRequestError } from '@/lib/errors';
 import type { AgendoControl } from '@/lib/realtime/events';
 
@@ -119,7 +119,7 @@ export const POST = withErrorBoundary(
     // job data (not writing to session.initialPrompt so the original prompt is preserved).
     if (session.status === 'idle' || session.status === 'ended') {
       if (attachments.length > 0) writePendingResumeAttachments(id, attachments);
-      await enqueueSession({
+      await dispatchSession({
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
         resumePrompt: message,
@@ -143,7 +143,7 @@ export const POST = withErrorBoundary(
     // fall back to cold resume so the message isn't silently lost.
     if (!result.dispatched) {
       if (attachments.length > 0) writePendingResumeAttachments(id, attachments);
-      await enqueueSession({
+      await dispatchSession({
         sessionId: id,
         resumeRef: session.sessionRef ?? undefined,
         resumePrompt: message,
