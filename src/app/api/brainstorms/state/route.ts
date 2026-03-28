@@ -39,7 +39,7 @@ export const GET = withErrorBoundary(async (req: NextRequest) => {
   return NextResponse.json({
     data: {
       roomId: room.id,
-      currentWave: room.currentWave,
+      currentWave: room.currentWave + 1,
       maxWaves: room.maxWaves,
       status: room.status,
       participants,
