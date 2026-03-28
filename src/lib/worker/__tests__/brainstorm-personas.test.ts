@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBrainstormProviderLens,
   getBrainstormProviderPersona,
+  getProviderTint,
   inferProviderFromAgentSlug,
 } from '@/lib/worker/brainstorm-personas';
 
@@ -19,8 +20,28 @@ describe('brainstorm-personas', () => {
     });
   });
 
-  describe('getBrainstormProviderPersona', () => {
-    it('returns a persona for each supported provider', () => {
+  describe('getProviderTint', () => {
+    it('returns a tint for each supported provider', () => {
+      expect(getProviderTint('anthropic')?.label).toBe('Claude');
+      expect(getProviderTint('openai')?.label).toBe('Codex');
+      expect(getProviderTint('google')?.label).toBe('Gemini');
+      expect(getProviderTint('github')?.label).toBe('Copilot');
+    });
+
+    it('includes a tint sentence for each provider', () => {
+      const tint = getProviderTint('anthropic');
+      expect(tint?.tint).toContain('deep reasoning');
+      expect(tint?.tint).toContain('architectural consistency');
+    });
+
+    it('returns null when provider is missing', () => {
+      expect(getProviderTint(null)).toBeNull();
+      expect(getProviderTint(undefined)).toBeNull();
+    });
+  });
+
+  describe('getBrainstormProviderPersona (deprecated compat)', () => {
+    it('returns a tint for each supported provider', () => {
       expect(getBrainstormProviderPersona('anthropic')?.label).toBe('Claude');
       expect(getBrainstormProviderPersona('openai')?.label).toBe('Codex');
       expect(getBrainstormProviderPersona('google')?.label).toBe('Gemini');
@@ -32,20 +53,18 @@ describe('brainstorm-personas', () => {
     });
   });
 
-  describe('buildBrainstormProviderLens', () => {
-    it('builds a provider lens with phase guidance', () => {
+  describe('buildBrainstormProviderLens (deprecated compat)', () => {
+    it('builds a provider lens with label and tint', () => {
       const lens = buildBrainstormProviderLens('anthropic');
       expect(lens).toContain('Claude');
+      expect(lens).toContain('deep reasoning');
       expect(lens).toContain('architectural consistency');
-      expect(lens).toContain('In early exploration');
-      expect(lens).toContain('In convergence');
     });
 
-    it('appends role-specific guidance when a known role is provided', () => {
+    it('returns a lens regardless of role (role behavior now in skill files)', () => {
       const lens = buildBrainstormProviderLens('openai', 'pragmatist');
       expect(lens).toContain('Codex');
-      expect(lens).toContain('As Codex in the pragmatist seat');
-      expect(lens).toContain('files, modules, interfaces');
+      expect(lens).toContain('implementation realism');
     });
 
     it('returns null for unknown providers', () => {

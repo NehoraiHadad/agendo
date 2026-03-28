@@ -23,7 +23,16 @@ export interface ParticipantState {
   sessionId: string | null;
   model: string | null;
   role: string | null;
-  status: 'pending' | 'active' | 'passed' | 'left' | 'thinking' | 'done' | 'timeout' | 'evicted';
+  status:
+    | 'pending'
+    | 'active'
+    | 'passed'
+    | 'left'
+    | 'thinking'
+    | 'done'
+    | 'timeout'
+    | 'evicted'
+    | 'blocked';
   /** Human-readable description of current activity, e.g. "Reading orchestrator.ts" */
   activity: string | null;
   /** Last surfaced session error for this participant, if any. */
@@ -64,6 +73,9 @@ interface BrainstormState {
   synthesis: string | null;
   project: { id: string; name: string } | null;
   task: { id: string; title: string } | null;
+
+  /** Participant ID of the designated leader, or null */
+  leaderParticipantId: string | null;
 
   /** participantId → participant state */
   participants: Map<string, ParticipantState>;
@@ -115,6 +127,7 @@ const initialState: Omit<
   synthesis: null,
   project: null,
   task: null,
+  leaderParticipantId: null,
   participants: new Map(),
   messages: [],
   streamingText: new Map(),
@@ -460,6 +473,7 @@ export const useBrainstormStore = create<BrainstormState>((set, get) => ({
       synthesis: room.synthesis ?? null,
       project: room.project,
       task: room.task,
+      leaderParticipantId: room.leaderParticipantId ?? null,
       participants,
       messages: [],
       streamingText: new Map(),

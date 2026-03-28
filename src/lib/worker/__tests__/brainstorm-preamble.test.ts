@@ -306,7 +306,8 @@ describe('buildPreamble — role instructions', () => {
     const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
     expect(preamble).toContain('Your Role');
-    expect(preamble).toContain('CRITIC');
+    // Claude/Codex get skill references (not inline content)
+    expect(preamble).toContain('brainstorm-role-critic');
   });
 
   it('injects pragmatist role instructions for the agent assigned the pragmatist role', () => {
@@ -321,7 +322,8 @@ describe('buildPreamble — role instructions', () => {
     const preamble = buildPreamble(room, ['Claude'], 'gemini-cli-1');
 
     expect(preamble).toContain('Your Role');
-    expect(preamble).toContain('PRAGMATIST');
+    // Gemini gets inlined skill content (not skill reference)
+    expect(preamble).toContain('Pragmatist');
   });
 
   it('does not inject role instructions for an agent with no assigned role', () => {
@@ -389,7 +391,8 @@ describe('buildPreamble — role instructions', () => {
     const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
     expect(preamble).toContain('Your Role');
-    expect(preamble).toContain('OPTIMIST');
+    // Claude gets skill reference for optimist role
+    expect(preamble).toContain('brainstorm-role-optimist');
   });
 
   it('falls back to generic role label when role is unknown and no custom instructions', () => {
@@ -461,10 +464,12 @@ describe('buildPreamble — provider personas', () => {
     const preamble = buildPreamble(room, ['Claude'], 'codex-cli-1');
 
     expect(preamble).toContain('Your Role');
-    expect(preamble).toContain('PRAGMATIST');
+    // Codex gets skill reference
+    expect(preamble).toContain('brainstorm-role-pragmatist');
     expect(preamble).toContain('Your Provider Lens');
     expect(preamble).toContain('Codex');
-    expect(preamble).toContain('As Codex in the pragmatist seat');
+    // Provider lens is now simplified tints (no role-specific lens)
+    expect(preamble).toContain('implementation realism');
   });
 
   it('infers the Gemini provider lens from the participant slug', () => {
@@ -507,7 +512,8 @@ describe('buildPreamble — provider personas', () => {
 
     expect(preamble).toContain('Your Provider Lens');
     expect(preamble).toContain('Gemini');
-    expect(preamble).toContain('As Gemini in the optimist seat');
+    // Provider lens is now simplified tints (no role-specific lens)
+    expect(preamble).toContain('breadth');
   });
 });
 
@@ -526,7 +532,8 @@ describe('buildPreamble — auto-assignment', () => {
     const buildPreamble = getPreambleBuilder(orchestrator);
     const preamble = buildPreamble(room, ['Gemini'], 'claude-code-1');
 
-    expect(preamble).toContain('CRITIC');
+    // Claude gets skill reference for critic role
+    expect(preamble).toContain('brainstorm-role-critic');
   });
 
   it('assigns pragmatist role to second participant when 2 agents have no explicit roles', () => {
@@ -543,7 +550,8 @@ describe('buildPreamble — auto-assignment', () => {
     const buildPreamble = getPreambleBuilder(orchestrator);
     const preamble = buildPreamble(room, ['Claude'], 'gemini-cli-1');
 
-    expect(preamble).toContain('PRAGMATIST');
+    // Gemini gets inlined skill content for pragmatist role
+    expect(preamble).toContain('Pragmatist');
   });
 
   it('assigns 3 roles for 3 participants (critic, optimist, pragmatist)', () => {
@@ -602,13 +610,16 @@ describe('buildPreamble — auto-assignment', () => {
       ['Gemini', 'Codex'],
       'claude-code-1',
     );
-    expect(claudePreamble).toContain('CRITIC');
+    // Claude gets skill reference
+    expect(claudePreamble).toContain('brainstorm-role-critic');
 
     const geminiPreamble = buildPreamble(threeParticipantRoom, ['Claude', 'Codex'], 'gemini-cli-1');
-    expect(geminiPreamble).toContain('OPTIMIST');
+    // Gemini gets inlined skill content
+    expect(geminiPreamble).toContain('Optimist');
 
     const codexPreamble = buildPreamble(threeParticipantRoom, ['Claude', 'Gemini'], 'codex-cli-1');
-    expect(codexPreamble).toContain('PRAGMATIST');
+    // Codex gets skill reference
+    expect(codexPreamble).toContain('brainstorm-role-pragmatist');
   });
 
   it('assigns 4 roles for 4 participants including architect', () => {

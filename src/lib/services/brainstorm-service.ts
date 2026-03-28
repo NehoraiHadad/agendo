@@ -6,6 +6,8 @@ import { brainstormRooms, brainstormParticipants, agents, projects, tasks } from
 import { requireFound } from '@/lib/api-handler';
 import { getById } from '@/lib/services/db-helpers';
 import { ConflictError, ValidationError } from '@/lib/errors';
+import { selectLeader } from '@/lib/brainstorm/leader';
+import { inferProviderFromAgentSlug } from '@/lib/worker/brainstorm-personas';
 
 /**
  * Room statuses that allow participant mutations (add/remove).
@@ -82,13 +84,38 @@ export async function createBrainstorm(input: CreateBrainstormInput): Promise<Br
       .returning();
 
     if (input.participants.length > 0) {
-      await tx.insert(brainstormParticipants).values(
-        input.participants.map((p) => ({
-          roomId: room.id,
-          agentId: p.agentId,
-          model: p.model ?? null,
-        })),
-      );
+      const insertedParticipants = await tx
+        .insert(brainstormParticipants)
+        .values(
+          input.participants.map((p) => ({
+            roomId: room.id,
+            agentId: p.agentId,
+            model: p.model ?? null,
+          })),
+        )
+        .returning({ id: brainstormParticipants.id, agentId: brainstormParticipants.agentId });
+
+      // Resolve agent slugs for leader selection
+      const agentRows = await tx
+        .select({ id: agents.id, slug: agents.slug })
+        .from(agents)
+        .where(sql`${agents.id} IN ${insertedParticipants.map((p) => p.agentId)}`);
+      const agentSlugMap = new Map(agentRows.map((a) => [a.id, a.slug]));
+
+      const candidates = insertedParticipants.map((p) => ({
+        id: p.id,
+        agentSlug: agentSlugMap.get(p.agentId) ?? '',
+        provider: inferProviderFromAgentSlug(agentSlugMap.get(p.agentId)),
+      }));
+
+      const leaderId = selectLeader(candidates);
+      if (leaderId) {
+        await tx
+          .update(brainstormRooms)
+          .set({ leaderParticipantId: leaderId })
+          .where(eq(brainstormRooms.id, room.id));
+        room.leaderParticipantId = leaderId;
+      }
     }
 
     return room;
@@ -410,6 +437,34 @@ export async function updateParticipantStatus(
 /**
  * Update the role of a participant.
  */
+/**
+ * Find a brainstorm participant by their session ID.
+ * Returns the participant row with roomId, or null if not found.
+ */
+export async function getParticipantBySessionId(sessionId: string): Promise<{
+  id: string;
+  roomId: string;
+  agentId: string;
+  role: string | null;
+  agentName: string;
+  agentSlug: string;
+} | null> {
+  const [row] = await db
+    .select({
+      id: brainstormParticipants.id,
+      roomId: brainstormParticipants.roomId,
+      agentId: brainstormParticipants.agentId,
+      role: brainstormParticipants.role,
+      agentName: agents.name,
+      agentSlug: agents.slug,
+    })
+    .from(brainstormParticipants)
+    .innerJoin(agents, eq(brainstormParticipants.agentId, agents.id))
+    .where(eq(brainstormParticipants.sessionId, sessionId))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function updateParticipantRole(participantId: string, role: string): Promise<void> {
   await db
     .update(brainstormParticipants)

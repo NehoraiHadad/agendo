@@ -36,6 +36,13 @@
       "when": 1774599095797,
       "tag": "0004_add-audit-log",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774717935113,
+      "tag": "0005_add-leader-participant-id",
+      "breakpoints": true
     }
   ]
 }

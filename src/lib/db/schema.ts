@@ -591,6 +591,7 @@ export const brainstormRooms = pgTable(
     synthesis: text('synthesis'),
     outcome: jsonb('outcome').$type<BrainstormOutcome>(),
     logFilePath: text('log_file_path'),
+    leaderParticipantId: uuid('leader_participant_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

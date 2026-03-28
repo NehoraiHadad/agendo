@@ -12,6 +12,7 @@ import {
   Waves,
   RefreshCw,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -51,6 +52,8 @@ function StatusIndicator({ status }: StatusIndicatorProps) {
       return <Check className="size-3 text-zinc-600 shrink-0" aria-label="Passed" />;
     case 'timeout':
       return <Clock className="size-3 text-amber-400 shrink-0" aria-label="Timed out" />;
+    case 'blocked':
+      return <AlertTriangle className="size-3 text-orange-400 shrink-0" aria-label="Blocked" />;
     case 'left':
       return <X className="size-3 text-red-400 shrink-0" aria-label="Left" />;
     case 'active':
@@ -75,6 +78,7 @@ function StatusLabel({ status }: { status: ParticipantState['status'] }) {
     timeout: { text: 'timeout', className: 'text-amber-400' },
     left: { text: 'left', className: 'text-red-400' },
     evicted: { text: 'evicted', className: 'text-red-500' },
+    blocked: { text: 'blocked', className: 'text-orange-400' },
     active: { text: 'active', className: 'text-blue-400' },
     pending: { text: 'pending', className: 'text-muted-foreground/35' },
   };
@@ -121,6 +125,7 @@ function AddParticipantRow({
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState('');
+  const [selectedRole, setSelectedRole] = useState('auto');
   const [isAdding, setIsAdding] = useState(false);
 
   const handleOpen = useCallback(async () => {
@@ -150,7 +155,10 @@ function AddParticipantRow({
       const res = await fetch(`/api/brainstorms/${roomId}/participants`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ agentId: selectedId }),
+        body: JSON.stringify({
+          agentId: selectedId,
+          ...(selectedRole !== 'auto' ? { role: selectedRole } : {}),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -164,7 +172,7 @@ function AddParticipantRow({
     } finally {
       setIsAdding(false);
     }
-  }, [selectedId, isAdding, roomId]);
+  }, [selectedId, selectedRole, isAdding, roomId]);
 
   if (!isOpen) {
     return (
@@ -188,49 +196,64 @@ function AddParticipantRow({
   }
 
   return (
-    <div className="flex gap-1.5">
-      <Select value={selectedId} onValueChange={setSelectedId}>
-        <SelectTrigger className="flex-1 h-8 text-xs border-white/[0.08] bg-white/[0.02]">
-          <SelectValue placeholder="Select agent..." />
+    <div className="space-y-1.5">
+      <div className="flex gap-1.5">
+        <Select value={selectedId} onValueChange={setSelectedId}>
+          <SelectTrigger className="flex-1 h-8 text-xs border-white/[0.08] bg-white/[0.02]">
+            <SelectValue placeholder="Select agent..." />
+          </SelectTrigger>
+          <SelectContent>
+            {agents.length === 0 ? (
+              <SelectItem value="__none" disabled>
+                No agents available
+              </SelectItem>
+            ) : (
+              agents.map((a) => {
+                const count = instanceCounts.get(a.id) ?? 0;
+                return (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                    {count > 0 && (
+                      <span className="text-muted-foreground/40 ms-1">(+{count + 1})</span>
+                    )}
+                  </SelectItem>
+                );
+              })
+            )}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          onClick={() => void handleAdd()}
+          disabled={!selectedId || isAdding}
+          className="h-8 px-2.5 shrink-0"
+          aria-label="Confirm add participant"
+        >
+          {isAdding ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setIsOpen(false)}
+          className="h-8 px-2 shrink-0 text-muted-foreground/50"
+          aria-label="Cancel"
+        >
+          <X className="size-3" />
+        </Button>
+      </div>
+      <Select value={selectedRole} onValueChange={setSelectedRole}>
+        <SelectTrigger className="h-7 text-[10px] border-white/[0.06] bg-white/[0.01]">
+          <SelectValue placeholder="Role..." />
         </SelectTrigger>
         <SelectContent>
-          {agents.length === 0 ? (
-            <SelectItem value="__none" disabled>
-              No agents available
-            </SelectItem>
-          ) : (
-            agents.map((a) => {
-              const count = instanceCounts.get(a.id) ?? 0;
-              return (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                  {count > 0 && (
-                    <span className="text-muted-foreground/40 ms-1">(+{count + 1})</span>
-                  )}
-                </SelectItem>
-              );
-            })
-          )}
+          <SelectItem value="auto">Auto-assign role</SelectItem>
+          <SelectItem value="critic">Critic</SelectItem>
+          <SelectItem value="optimist">Optimist</SelectItem>
+          <SelectItem value="pragmatist">Pragmatist</SelectItem>
+          <SelectItem value="architect">Architect</SelectItem>
+          <SelectItem value="wildcard">Wildcard</SelectItem>
         </SelectContent>
       </Select>
-      <Button
-        size="sm"
-        onClick={() => void handleAdd()}
-        disabled={!selectedId || isAdding}
-        className="h-8 px-2.5 shrink-0"
-        aria-label="Confirm add participant"
-      >
-        {isAdding ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => setIsOpen(false)}
-        className="h-8 px-2 shrink-0 text-muted-foreground/50"
-        aria-label="Cancel"
-      >
-        <X className="size-3" />
-      </Button>
     </div>
   );
 }
@@ -239,7 +262,15 @@ function AddParticipantRow({
 // Participant row
 // ============================================================================
 
-function ParticipantRow({ participant, index }: { participant: ParticipantState; index: number }) {
+function ParticipantRow({
+  participant,
+  index,
+  isLeader = false,
+}: {
+  participant: ParticipantState;
+  index: number;
+  isLeader?: boolean;
+}) {
   const recoveryLabel =
     participant.recovery?.state === 'attempting_model_fallback'
       ? `Switching model to ${participant.recovery.targetModel ?? 'fallback model'}`
@@ -269,6 +300,14 @@ function ParticipantRow({ participant, index }: { participant: ParticipantState;
               className="text-[9px] h-[14px] px-1 py-0 font-medium capitalize bg-white/[0.02] border-white/[0.08]"
             >
               {participant.role}
+            </Badge>
+          )}
+          {isLeader && (
+            <Badge
+              variant="outline"
+              className="text-[9px] h-[14px] px-1 py-0 font-medium bg-amber-500/10 border-amber-500/30 text-amber-400"
+            >
+              leader
             </Badge>
           )}
         </div>
@@ -318,6 +357,7 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
   const currentWave = useBrainstormStore((s) => s.currentWave);
   const maxWaves = useBrainstormStore((s) => s.maxWaves);
   const participants = useBrainstormStore((s) => s.participants);
+  const leaderParticipantId = useBrainstormStore((s) => s.leaderParticipantId);
 
   const router = useRouter();
 
@@ -524,7 +564,12 @@ export function ParticipantSidebar({ roomId }: ParticipantSidebarProps) {
           ) : (
             <div className="space-y-0.5">
               {participantList.map((p, idx) => (
-                <ParticipantRow key={p.participantId} participant={p} index={idx} />
+                <ParticipantRow
+                  key={p.participantId}
+                  participant={p}
+                  index={idx}
+                  isLeader={p.participantId === leaderParticipantId}
+                />
               ))}
             </div>
           )}

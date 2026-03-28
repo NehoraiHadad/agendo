@@ -68,27 +68,55 @@ const SKILL_META: Record<
   },
   'brainstorm-persona-claude': {
     dirName: 'brainstorm-persona-claude',
-    description: `Provider-aware brainstorm persona for Claude participants.
-  Use when a brainstorm agent should emphasize architectural reasoning, deep critique,
-  and coherent convergence.`,
+    description: `[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Claude participants.`,
   },
   'brainstorm-persona-codex': {
     dirName: 'brainstorm-persona-codex',
-    description: `Provider-aware brainstorm persona for Codex participants.
-  Use when a brainstorm agent should emphasize implementation realism, testing gaps,
-  integration hazards, and focused execution.`,
+    description: `[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Codex participants.`,
   },
   'brainstorm-persona-gemini': {
     dirName: 'brainstorm-persona-gemini',
-    description: `Provider-aware brainstorm persona for Gemini participants.
-  Use when a brainstorm agent should widen the option space, introduce alternatives,
-  and add ecosystem context.`,
+    description: `[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Gemini participants.`,
   },
   'brainstorm-persona-copilot': {
     dirName: 'brainstorm-persona-copilot',
-    description: `Provider-aware brainstorm persona for Copilot participants.
-  Use when a brainstorm agent should emphasize workflow hygiene, guardrails,
-  concise execution support, and reviewability.`,
+    description: `[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Copilot participants.`,
+  },
+  'brainstorm-protocol': {
+    dirName: 'brainstorm-protocol',
+    description: `Core brainstorm protocol skill. Always loaded for brainstorm participants.
+  Explains wave mechanics, turn structure, MCP signaling (brainstorm_signal/brainstorm_get_state),
+  leader concept, and quality expectations. Activate for any multi-agent brainstorm session.`,
+  },
+  'brainstorm-role-critic': {
+    dirName: 'brainstorm-role-critic',
+    description: `Brainstorm role persona for the Critic. Loaded when a brainstorm participant
+  is assigned the critic role. Defines stance, phase behavior, and success criteria
+  for finding weaknesses and challenging assumptions.`,
+  },
+  'brainstorm-role-optimist': {
+    dirName: 'brainstorm-role-optimist',
+    description: `Brainstorm role persona for the Optimist. Loaded when a brainstorm participant
+  is assigned the optimist role. Defines stance, phase behavior, and success criteria
+  for finding potential and championing high-value approaches.`,
+  },
+  'brainstorm-role-pragmatist': {
+    dirName: 'brainstorm-role-pragmatist',
+    description: `Brainstorm role persona for the Pragmatist. Loaded when a brainstorm participant
+  is assigned the pragmatist role. Defines stance, phase behavior, and success criteria
+  for grounding discussion in implementation reality.`,
+  },
+  'brainstorm-role-architect': {
+    dirName: 'brainstorm-role-architect',
+    description: `Brainstorm role persona for the Architect. Loaded when a brainstorm participant
+  is assigned the architect role. Defines stance, phase behavior, and success criteria
+  for system-level thinking, interfaces, and boundaries.`,
+  },
+  'brainstorm-role-wildcard': {
+    dirName: 'brainstorm-role-wildcard',
+    description: `Brainstorm role persona for the Wildcard. Loaded when a brainstorm participant
+  is assigned the wildcard role. Defines stance, phase behavior, and success criteria
+  for unconventional perspectives and challenging groupthink.`,
   },
 };
 

@@ -5,9 +5,12 @@ import { isBrainstormOrchestratorLive } from '@/lib/brainstorm/orchestrator-live
 import { addParticipant, removeParticipant } from '@/lib/services/brainstorm-service';
 import { sendBrainstormControl } from '@/lib/realtime/worker-client';
 
+const VALID_ROLES = ['critic', 'optimist', 'pragmatist', 'architect', 'wildcard'] as const;
+
 const addParticipantSchema = z.object({
   agentId: z.string().uuid(),
   model: z.string().optional(),
+  role: z.enum(VALID_ROLES).optional(),
 });
 
 const removeParticipantSchema = z.object({
@@ -24,12 +27,19 @@ export const POST = withErrorBoundary(
     // Service validates room status, agent existence, and locks the room row
     const participant = await addParticipant(id, body.agentId, body.model);
 
+    // Update role if provided
+    if (body.role) {
+      const { updateParticipantRole } = await import('@/lib/services/brainstorm-service');
+      await updateParticipantRole(participant.id, body.role);
+    }
+
     // Notify the orchestrator so it can hot-add the participant's session
     if (await isBrainstormOrchestratorLive(id)) {
       await sendBrainstormControl(id, {
         type: 'add-participant',
         agentId: body.agentId,
         participantId: participant.id,
+        text: body.role ?? undefined,
       });
     }
 

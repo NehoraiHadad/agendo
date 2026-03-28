@@ -63,6 +63,12 @@ import {
   buildBrainstormProviderLens,
   inferProviderFromAgentSlug,
 } from '@/lib/worker/brainstorm-personas';
+import {
+  selectLeader,
+  buildLeaderPreambleSection,
+  buildNonLeaderPreambleSection,
+} from '@/lib/brainstorm/leader';
+import { getSkillContent } from '@/lib/worker/skills/skill-registry';
 import type { Provider } from '@/lib/services/model-service';
 import { binaryPathToProvider } from '@/lib/worker/fallback/provider-utils';
 import { logAudit } from '@/lib/services/audit-service';
@@ -74,6 +80,14 @@ import {
 } from '@/lib/worker/fallback/fallback-engine';
 
 const log = createLogger('brainstorm-orchestrator');
+
+/**
+ * Whether a provider supports native skill loading from ~/.agents/skills/.
+ * Claude and Codex load skills natively; Gemini and Copilot need inline injection.
+ */
+function supportsNativeSkills(provider: Provider | null): boolean {
+  return provider === 'anthropic' || provider === 'openai';
+}
 
 /** How long to accumulate text-delta events before flushing to the frontend (ms). */
 const DELTA_FLUSH_INTERVAL_MS = 150;
@@ -170,13 +184,19 @@ function isModelSwitchFailureMessage(message: string): boolean {
 }
 
 interface BrainstormControlMessage {
-  type: 'steer' | 'end' | 'remove-participant' | 'add-participant' | 'extend' | 'ping';
+  type: 'steer' | 'end' | 'remove-participant' | 'add-participant' | 'extend' | 'ping' | 'signal';
   text?: string;
   steerId?: string;
   synthesize?: boolean;
   agentId?: string;
   participantId?: string;
   additionalWaves?: number;
+  /** For 'signal' type: the session ID of the participant sending the signal */
+  participantSessionId?: string;
+  /** For 'signal' type: the signal being sent (done/pass/block) */
+  signal?: 'done' | 'pass' | 'block';
+  /** For 'signal' type: reason for pass/block */
+  reason?: string;
 }
 
 // ============================================================================
@@ -235,6 +255,8 @@ export class BrainstormOrchestrator {
   synthesisMode: 'single' | 'validated' = 'single';
   /** Resolved playbook — holds optional fields like language, roles, synthesisAgentId */
   private playbook!: ReturnType<typeof resolvePlaybook>;
+  /** Participant ID of the designated leader, or null if no leader */
+  private leaderParticipantId: string | null = null;
   /** Steer messages received mid-wave, applied at the start of the next wave. */
   private pendingSteer: Array<{ text: string; steerId?: string }> = [];
   /** Tracks processed steer IDs for idempotency (prevents duplicate emission on crash-retry). */
@@ -427,6 +449,18 @@ export class BrainstormOrchestrator {
       // Initialize DeltaBuffers after participants are created (needs `this` for emitEvent)
       for (const p of this.participants) {
         p.deltaBuffer = this.createParticipantDeltaBuffer(p);
+      }
+
+      // Resolve leader: use DB value if set, otherwise auto-select by provider priority
+      this.leaderParticipantId = room.leaderParticipantId ?? null;
+      if (!this.leaderParticipantId && this.participants.length > 0) {
+        this.leaderParticipantId = selectLeader(
+          this.participants.map((p) => ({
+            id: p.participantId,
+            agentSlug: p.agentSlug,
+            provider: p.provider,
+          })),
+        );
       }
 
       // Mark room as active
@@ -826,6 +860,36 @@ ${options.initialTurnPrompt}`
   // ============================================================================
 
   /**
+   * Auto-assign the first unfilled role from the standard role list.
+   * Returns null if all roles are already assigned.
+   */
+  private autoAssignRole(): string | null {
+    const allRoles = ['critic', 'optimist', 'pragmatist', 'architect', 'wildcard'];
+    const assignedRoles = new Set(
+      this.participants.filter((p) => !p.hasLeft && p.role).map((p) => p.role),
+    );
+    return allRoles.find((r) => !assignedRoles.has(r)) ?? null;
+  }
+
+  /**
+   * Build a brief catch-up context for a participant joining mid-brainstorm.
+   * Summarizes key points from accumulated wave content.
+   */
+  private buildCatchUpContext(): string | null {
+    if (this.currentWave === 0) return null;
+
+    const lines: string[] = [
+      `## Catch-Up Context`,
+      `You are joining this brainstorm in wave ${this.currentWave}. The discussion has been ongoing.`,
+      '',
+      'As a late joiner, your outside perspective is valuable. Do not feel bound by',
+      'consensus already reached — challenge it if warranted.',
+    ];
+
+    return lines.join('\n');
+  }
+
+  /**
    * Add a new participant to a running brainstorm. Creates their session,
    * waits for it to reach awaiting_input, and integrates them into future waves.
    * The DB row is already created by the API route before this is called.
@@ -834,6 +898,7 @@ ${options.initialTurnPrompt}`
     agentId: string,
     model?: string,
     participantId?: string,
+    requestedRole?: string,
   ): Promise<void> {
     // Check if this exact participant slot is already tracked
     if (participantId) {
@@ -870,7 +935,7 @@ ${options.initialTurnPrompt}`
       model: model ?? dbParticipant.model ?? undefined,
       modelPinned:
         (model ?? dbParticipant.model) !== null && (model ?? dbParticipant.model) !== undefined,
-      role: null,
+      role: requestedRole ?? dbParticipant.role ?? this.autoAssignRole(),
       waveStatus: 'pending',
       responseBuffer: [],
       hasPassed: false,
@@ -893,13 +958,25 @@ ${options.initialTurnPrompt}`
 
     this.participants.push(participant);
 
+    // Persist the auto-assigned role to DB if it was set by auto-assignment
+    if (participant.role && !dbParticipant.role) {
+      void updateParticipantRole(participant.participantId, participant.role).catch(() => {});
+    }
+
     log.info(
-      { roomId: this.roomId, agentId, agentName: agent.name, wave: this.currentWave },
+      {
+        roomId: this.roomId,
+        agentId,
+        agentName: agent.name,
+        role: participant.role,
+        wave: this.currentWave,
+      },
       'Hot-adding participant to running brainstorm',
     );
 
     await this.createAndStartParticipantSession(participant, room, {
       idleTimeoutSec: 3600,
+      initialTurnPrompt: this.buildCatchUpContext(),
     });
     await this.emitParticipantJoined(participant);
 
@@ -1946,7 +2023,7 @@ ${options.initialTurnPrompt}`
 
   private async emitParticipantStatus(
     participant: ParticipantState,
-    status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted',
+    status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted' | 'blocked',
     options?: {
       error?: string | null;
       model?: string | null;
@@ -2650,17 +2727,119 @@ ${options.initialTurnPrompt}`
         if (!msg.agentId) return;
         // Hot-add: spin up the new participant in the background.
         // The orchestrator will integrate them into the next wave.
-        void this.hotAddParticipant(msg.agentId, msg.text, msg.participantId).catch((err) => {
-          log.error(
-            { roomId: this.roomId, agentId: msg.agentId, participantId: msg.participantId, err },
-            'Failed to hot-add participant',
-          );
-        });
+        // msg.text carries the requested role (if any) from the API route.
+        void this.hotAddParticipant(msg.agentId, undefined, msg.participantId, msg.text).catch(
+          (err) => {
+            log.error(
+              { roomId: this.roomId, agentId: msg.agentId, participantId: msg.participantId, err },
+              'Failed to hot-add participant',
+            );
+          },
+        );
+        break;
+      }
+
+      case 'signal': {
+        if (!msg.participantSessionId || !msg.signal) return;
+        this.handleBrainstormSignal(msg.participantSessionId, msg.signal, msg.reason);
         break;
       }
 
       case 'ping':
         break;
+    }
+  }
+
+  /**
+   * Handle a structured MCP brainstorm signal from a participant.
+   *
+   * - done: No-op (already handled by awaiting_input detection)
+   * - pass: Sets the participant's wave status to 'passed' immediately, emits events,
+   *   and checks if the wave is complete. Takes priority over [PASS] text detection.
+   * - block: Emits a 'blocked' participant status event with the reason highlighted.
+   *   Discussion continues (no pause) — the block is a flagged objection.
+   */
+  private handleBrainstormSignal(
+    participantSessionId: string,
+    signal: 'done' | 'pass' | 'block',
+    reason?: string,
+  ): void {
+    const participant = this.participants.find((p) => p.sessionId === participantSessionId);
+    if (!participant) {
+      log.warn(
+        { roomId: this.roomId, participantSessionId, signal },
+        'Signal received for unknown participant session',
+      );
+      return;
+    }
+
+    log.info(
+      {
+        roomId: this.roomId,
+        agentName: participant.agentName,
+        signal,
+        reason,
+        wave: this.currentWave,
+      },
+      'MCP brainstorm signal received',
+    );
+
+    switch (signal) {
+      case 'done':
+        // No-op — the done signal is implicit from the awaiting_input detection.
+        // We log it but don't change state (onParticipantTurnComplete handles this).
+        break;
+
+      case 'pass': {
+        // Enforce minWavesBeforePass
+        if (this.currentWave < this.minWavesBeforePass) {
+          log.info(
+            {
+              roomId: this.roomId,
+              wave: this.currentWave,
+              minWavesBeforePass: this.minWavesBeforePass,
+              agentName: participant.agentName,
+            },
+            'Ignoring early MCP PASS signal — wave < minWavesBeforePass',
+          );
+          return;
+        }
+
+        // Mark as MCP-signaled pass so onParticipantTurnComplete knows to skip text-based detection
+        participant.waveStatus = 'passed';
+        participant.hasPassed = true;
+        participant.waveResponseCount++;
+
+        void (async () => {
+          await this.emitEvent({
+            type: 'message',
+            wave: this.currentWave,
+            senderType: 'agent',
+            participantId: participant.participantId,
+            agentId: participant.agentId,
+            agentName: participant.agentName,
+            content: `[PASS] ${reason ?? ''}`.trim(),
+            isPass: true,
+          });
+          await this.emitParticipantStatus(participant, 'passed', {
+            error: null,
+            model: participant.model ?? null,
+          });
+          this.checkWaveComplete();
+        })();
+        break;
+      }
+
+      case 'block': {
+        // Block is a flagged objection — emit status with reason but don't pause the wave
+        void (async () => {
+          await this.emitParticipantStatus(participant, 'blocked', {
+            error: reason ?? 'Critical objection raised',
+            model: participant.model ?? null,
+          });
+        })();
+        break;
+      }
     }
   }
 
@@ -3226,6 +3405,11 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
                     ?.agentName ?? agentSlug),
           }));
 
+    // Resolve provider early — needed for skill loading decisions
+    const resolvedProvider =
+      resolvedCurrentParticipant.provider ??
+      inferProviderFromAgentSlug(resolvedCurrentParticipant.agentSlug);
+
     if (assignedParticipants.length > 0) {
       const roleLines = assignedParticipants.map(({ role, name }) => `- **${role}**: ${name}`);
       sections.push(`\n## Assigned Roles\n${roleLines.join('\n')}`);
@@ -3235,20 +3419,56 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
       myRole = resolvedCurrentParticipant.role ?? null;
 
       if (myRole) {
-        const instructions =
-          roleInstructions?.[myRole] ??
-          DEFAULT_ROLE_INSTRUCTIONS[myRole] ??
-          `Your assigned role is: ${myRole}`;
-        sections.push(`\n## Your Role\n${instructions}`);
+        const nativeSkills = supportsNativeSkills(resolvedProvider);
+
+        if (nativeSkills) {
+          // Claude/Codex: reference the loaded skill files
+          const customInstructions = roleInstructions?.[myRole];
+          if (customInstructions) {
+            sections.push(`\n## Your Role\n${customInstructions}`);
+          } else {
+            sections.push(
+              `\n## Your Role\nYour role is **${myRole}**. Refer to your loaded \`brainstorm-role-${myRole}\` skill for detailed behavioral guidelines.`,
+            );
+          }
+        } else {
+          // Gemini/Copilot: inline the full skill content since they don't load skills natively
+          const skillContent = getSkillContent(`brainstorm-role-${myRole}`);
+          if (skillContent) {
+            sections.push(`\n## Your Role\n${skillContent}`);
+          } else {
+            const instructions =
+              roleInstructions?.[myRole] ??
+              DEFAULT_ROLE_INSTRUCTIONS[myRole] ??
+              `Your assigned role is: ${myRole}`;
+            sections.push(`\n## Your Role\n${instructions}`);
+          }
+        }
       }
     }
 
-    const resolvedProvider =
-      resolvedCurrentParticipant.provider ??
-      inferProviderFromAgentSlug(resolvedCurrentParticipant.agentSlug);
     const providerLens = buildBrainstormProviderLens(resolvedProvider, myRole);
     if (providerLens) {
       sections.push(`\n## Your Provider Lens\n${providerLens}`);
+    }
+
+    // Leader designation section
+    if (this.leaderParticipantId) {
+      const currentParticipantId = this.participants.find(
+        (p) => p.agentSlug === resolvedCurrentParticipant.agentSlug,
+      )?.participantId;
+      const isLeader = currentParticipantId === this.leaderParticipantId;
+
+      if (isLeader) {
+        sections.push(buildLeaderPreambleSection());
+      } else {
+        const leaderParticipant = this.participants.find(
+          (p) => p.participantId === this.leaderParticipantId,
+        );
+        if (leaderParticipant) {
+          sections.push(buildNonLeaderPreambleSection(leaderParticipant.agentName));
+        }
+      }
     }
 
     // Inject setup context if configured
@@ -3290,22 +3510,39 @@ ${otherParticipantNames.map((name) => `- ${name}`).join('\n')}
       );
     }
 
-    sections.push(`
-## Discussion Rules
-1. **Think critically.** Disagree when you disagree. Build on good ideas. Challenge weak ones.
-   The value is in genuine diverse perspectives and constructive disagreement.
-2. **Do NOT be agreeable for the sake of politeness.** "I agree with everything" is not helpful.
-   If you agree, explain WHY and add a new angle, nuance, or concrete detail.
-3. **Be specific.** Reference file paths, function names, line numbers when discussing code.
-   "Consider simplifying" is useless — "Reuse the existing \`formatWaveBroadcast\` at
-   orchestrator.ts:1255 instead of building a new formatter" is valuable.
-4. **[PASS]:** If you genuinely agree with everything said AND have nothing new to add —
-   no disagreement, no new angle, no important nuance — respond with exactly: [PASS]
-   Do not PASS just to be polite. Only PASS when you truly have nothing to contribute.
-5. **Keep responses focused.** 2-4 paragraphs max unless the topic demands more depth.
-6. **Do NOT write code** unless specifically asked. Focus on ideas and reasoning.
+    // Protocol: reference skill for Claude/Codex, inline for Gemini/Copilot
+    const nativeSkills = supportsNativeSkills(
+      resolvedCurrentParticipant.provider ??
+        inferProviderFromAgentSlug(resolvedCurrentParticipant.agentSlug),
+    );
+
+    if (nativeSkills) {
+      sections.push(`
+## Discussion Protocol
+The \`brainstorm-protocol\` skill is loaded with full details on wave mechanics, MCP signaling, and quality expectations.
+
+Key points:
+- Use \`brainstorm_signal({ signal: 'pass', reason: '...' })\` instead of text-based [PASS]
+- Use \`brainstorm_signal({ signal: 'block', reason: '...' })\` for critical objections
+- Use \`brainstorm_get_state()\` to check current wave and participant status
+- Fallback: start your response with [PASS] if MCP tools are unavailable
+- Do NOT write code unless specifically asked. Focus on ideas and reasoning.
+- Keep responses focused: 2-4 paragraphs max unless the topic demands more depth.
 
 You will receive the discussion topic in your first wave message. Wait for it before responding.`);
+    } else {
+      // Inline protocol for agents that don't load skills natively
+      const protocolContent = getSkillContent('brainstorm-protocol');
+      if (protocolContent) {
+        sections.push(`\n${protocolContent}`);
+      }
+      sections.push(`
+## Additional Rules
+1. **Do NOT write code** unless specifically asked. Focus on ideas and reasoning.
+2. **Keep responses focused.** 2-4 paragraphs max unless the topic demands more depth.
+
+You will receive the discussion topic in your first wave message. Wait for it before responding.`);
+    }
 
     return sections.join('\n');
   }

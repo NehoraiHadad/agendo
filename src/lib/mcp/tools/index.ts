@@ -14,6 +14,7 @@ import { registerSnapshotTools } from './snapshot-tools.js';
 import { registerPlanTools } from './plan-tools.js';
 import { registerArtifactTools } from './artifact-tools.js';
 import { registerTeamTools } from './team-tools.js';
+import { registerBrainstormTools } from './brainstorm-tools.js';
 
 export function registerAll(server: McpServer): void {
   registerTaskTools(server);
@@ -25,6 +26,7 @@ export function registerAll(server: McpServer): void {
   registerPlanTools(server);
   registerArtifactTools(server);
   registerTeamTools(server);
+  registerBrainstormTools(server);
 }
 
 // Re-export handlers for testing
@@ -51,3 +53,4 @@ export {
   handleGetTeammates,
   buildTeamContextMessage,
 } from './team-tools.js';
+export { handleBrainstormSignal, handleBrainstormGetState } from './brainstorm-tools.js';

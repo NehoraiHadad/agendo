@@ -1,0 +1,1 @@
+ALTER TABLE "brainstorm_rooms" ADD COLUMN "leader_participant_id" uuid;

@@ -82,4 +82,12 @@ export async function sendBrainstormEvent(
   return postToWorker(`/brainstorms/${roomId}/events`, payload);
 }
 
+/** Send a brainstorm signal (done/pass/block) to the worker orchestrator. */
+export async function sendBrainstormSignal(
+  roomId: string,
+  payload: { participantSessionId: string; signal: string; reason?: string },
+): Promise<WorkerResponse> {
+  return sendBrainstormControl(roomId, { type: 'signal', ...payload });
+}
+
 export type { WorkerResponse };

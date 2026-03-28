@@ -360,7 +360,7 @@ export type BrainstormEvent =
       agentId: string;
       agentName: string;
       agentSlug?: string;
-      status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted';
+      status: 'thinking' | 'done' | 'passed' | 'timeout' | 'evicted' | 'blocked';
       error?: string | null;
       model?: string | null;
       recovery?: BrainstormParticipantRecovery | null;

@@ -38,26 +38,62 @@ const SKILL_DEFS = [
   {
     name: 'brainstorm-persona-claude',
     description:
-      'Provider-aware brainstorm persona for Claude participants: architecture, critique, and convergence strengths',
+      '[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Claude participants',
     filename: 'brainstorm-persona-claude.md',
   },
   {
     name: 'brainstorm-persona-codex',
     description:
-      'Provider-aware brainstorm persona for Codex participants: implementation realism, testing, and focused execution',
+      '[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Codex participants',
     filename: 'brainstorm-persona-codex.md',
   },
   {
     name: 'brainstorm-persona-gemini',
     description:
-      'Provider-aware brainstorm persona for Gemini participants: alternatives, ecosystem context, and broad exploration',
+      '[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Gemini participants',
     filename: 'brainstorm-persona-gemini.md',
   },
   {
     name: 'brainstorm-persona-copilot',
     description:
-      'Provider-aware brainstorm persona for Copilot participants: workflow hygiene, guardrails, and concise execution support',
+      '[DEPRECATED — use brainstorm-role-* skills instead] Provider-aware brainstorm persona for Copilot participants',
     filename: 'brainstorm-persona-copilot.md',
+  },
+  {
+    name: 'brainstorm-protocol',
+    description:
+      'Core brainstorm protocol: wave mechanics, turn structure, MCP signaling, leader concept, quality expectations',
+    filename: 'brainstorm-protocol.md',
+  },
+  {
+    name: 'brainstorm-role-critic',
+    description:
+      'Brainstorm role persona for the Critic: find weaknesses, challenge assumptions, protect against bad decisions',
+    filename: 'brainstorm-role-critic.md',
+  },
+  {
+    name: 'brainstorm-role-optimist',
+    description:
+      'Brainstorm role persona for the Optimist: find potential, identify opportunities, champion high-value approaches',
+    filename: 'brainstorm-role-optimist.md',
+  },
+  {
+    name: 'brainstorm-role-pragmatist',
+    description:
+      'Brainstorm role persona for the Pragmatist: implementation feasibility, effort estimation, simplest robust solution',
+    filename: 'brainstorm-role-pragmatist.md',
+  },
+  {
+    name: 'brainstorm-role-architect',
+    description:
+      'Brainstorm role persona for the Architect: system-level implications, interfaces, boundaries, maintainability',
+    filename: 'brainstorm-role-architect.md',
+  },
+  {
+    name: 'brainstorm-role-wildcard',
+    description:
+      'Brainstorm role persona for the Wildcard: unconventional perspectives, cross-domain analogies, challenge groupthink',
+    filename: 'brainstorm-role-wildcard.md',
   },
 ] as const;
 
