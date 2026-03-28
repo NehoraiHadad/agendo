@@ -1460,8 +1460,35 @@ ${options.initialTurnPrompt}`
           'All participants timed out — room stalled',
         );
         this.outcomeEndState = 'stalled';
+        if (this.stopped) break;
+        await updateBrainstormStatus(this.roomId, 'paused');
         await this.emitEvent({ type: 'room:stalled', wave });
-        break;
+        await this.emitEvent({ type: 'room:state', status: 'paused' });
+        this.paused = true;
+
+        // Wait for a steer or end control message (same pattern as convergence/max-waves)
+        const control = await this.waitForControl();
+        if (this.stopped) break;
+
+        if (control.type === 'steer' && control.text) {
+          if (control.steerId) this.processedSteerIds.add(control.steerId);
+          await this.resetPassedParticipants();
+          await this.emitEvent({
+            type: 'message',
+            wave: wave + 1,
+            senderType: 'user',
+            content: control.text,
+            isPass: false,
+          });
+          await updateBrainstormStatus(this.roomId, 'active');
+          await this.emitEvent({ type: 'room:state', status: 'active' });
+          this.paused = false;
+          waveContent = this.formatUserSteer(control.text, responses);
+          wave++;
+          continue;
+        }
+
+        break; // 'end' or stopped
       }
 
       // Soft convergence hint: if all non-PASS, non-timeout responses are agreement-only,
