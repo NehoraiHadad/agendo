@@ -21,6 +21,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Agent, McpServer } from '@/lib/types';
+import { DelegationPolicySelect } from '@/components/sessions/delegation-policy-select';
+import type { DelegationPolicy } from '@/lib/utils/session-controls';
 
 interface QuickLaunchDialogProps {
   projectId: string;
@@ -50,6 +52,7 @@ export function QuickLaunchDialog({
   const [selectedMcpIds, setSelectedMcpIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
+  const [delegationPolicy, setDelegationPolicy] = useState<DelegationPolicy>('suggest');
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:quick-launch:${projectId}`);
 
@@ -69,6 +72,7 @@ export function QuickLaunchDialog({
           kind: defaultKind,
           mcpServerIds: selectedMcpIds.size > 0 ? [...selectedMcpIds] : undefined,
           useWorktree: useWorktree || undefined,
+          delegationPolicy,
         }),
       },
     );
@@ -201,6 +205,13 @@ export function QuickLaunchDialog({
               </button>
             </div>
           </div>
+
+          {/* Team delegation policy */}
+          <DelegationPolicySelect
+            value={delegationPolicy}
+            onValueChange={setDelegationPolicy}
+            variant="compact"
+          />
 
           {/* MCP server picker */}
           {mcpServers.length > 0 && (

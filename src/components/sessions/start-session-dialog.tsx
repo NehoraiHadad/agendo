@@ -35,6 +35,8 @@ import type { Agent, McpServer, Task } from '@/lib/types';
 import { deriveProvider } from '@/lib/utils/session-controls';
 
 import type { ModelOption } from '@/lib/services/model-service';
+import { DelegationPolicySelect } from '@/components/sessions/delegation-policy-select';
+import type { DelegationPolicy } from '@/lib/utils/session-controls';
 
 interface StartSessionDialogProps {
   taskId: string;
@@ -62,6 +64,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
   const [useWorktree, setUseWorktree] = useState(false);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
+  const [delegationPolicy, setDelegationPolicy] = useState<DelegationPolicy>('suggest');
 
   const { saveDraft, getDraft, clearDraft } = useDraft(`draft:session-new:${taskId}`);
 
@@ -85,6 +88,7 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           parsedBudget != null && !isNaN(parsedBudget) && parsedBudget > 0
             ? parsedBudget
             : undefined,
+        delegationPolicy,
       }),
     });
     clearDraft();
@@ -296,6 +300,13 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
                   </p>
                 )}
               </div>
+            )}
+
+            {activeAgentId && (
+              <DelegationPolicySelect
+                value={delegationPolicy}
+                onValueChange={setDelegationPolicy}
+              />
             )}
 
             {mcpServers.length > 0 && (

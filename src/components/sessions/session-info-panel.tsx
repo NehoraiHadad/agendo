@@ -12,7 +12,7 @@ import {
   ctxBarColor,
   ctxTrackColor,
 } from '@/lib/utils/context-stats';
-import { permissionModeLabel } from '@/lib/utils/session-controls';
+import { permissionModeLabel, delegationPolicyLabel } from '@/lib/utils/session-controls';
 import { useGitContext } from '@/hooks/use-git-context';
 import { GitContextSection } from '@/components/sessions/git-context-section';
 
@@ -198,6 +198,14 @@ export function SessionInfoPanel({
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {permissionModeLabel(stream.permissionMode ?? session.permissionMode)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+              Team Delegation
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {delegationPolicyLabel(session.delegationPolicy)}
             </p>
           </div>
           {session.totalCostUsd !== null && session.totalCostUsd !== undefined && (

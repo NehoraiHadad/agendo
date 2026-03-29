@@ -118,3 +118,35 @@ export function permissionModeLabel(mode: string): string {
       return mode;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Delegation policy
+// ---------------------------------------------------------------------------
+
+export type DelegationPolicy = 'forbid' | 'suggest' | 'allow' | 'auto';
+
+export interface DelegationPolicyOption {
+  value: DelegationPolicy;
+  label: string;
+  description: string;
+}
+
+/**
+ * Options shown in the delegation policy dropdown.
+ * 'allow' is omitted — it's identical to 'suggest' and would confuse users.
+ */
+export const DELEGATION_POLICY_OPTIONS: DelegationPolicyOption[] = [
+  { value: 'suggest', label: 'Suggest', description: 'Agent sees team tools as an option' },
+  { value: 'forbid', label: 'Forbid', description: 'No team tool hints' },
+  { value: 'auto', label: 'Auto', description: 'Full team-lead mode' },
+];
+
+/**
+ * Returns a human-readable label for a delegation policy value.
+ */
+export function delegationPolicyLabel(policy: string): string {
+  const opt = DELEGATION_POLICY_OPTIONS.find((o) => o.value === policy);
+  if (opt) return opt.label;
+  if (policy === 'allow') return 'Suggest'; // alias
+  return policy;
+}

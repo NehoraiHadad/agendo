@@ -12,6 +12,7 @@ const quickLaunchSchema = z.object({
   kind: z.enum(['conversation', 'execution']).optional().default('conversation'),
   mcpServerIds: z.array(z.string().uuid()).optional(),
   useWorktree: z.boolean().optional(),
+  delegationPolicy: z.enum(['forbid', 'suggest', 'allow', 'auto']).optional(),
 });
 
 export const POST = withErrorBoundary(
@@ -32,6 +33,7 @@ export const POST = withErrorBoundary(
       permissionMode: 'bypassPermissions',
       mcpServerIds: body.mcpServerIds,
       useWorktree: body.useWorktree,
+      delegationPolicy: body.delegationPolicy,
     });
 
     if (body.initialPrompt) {
