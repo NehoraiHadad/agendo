@@ -164,6 +164,37 @@ Use `save_plan` to persist implementation plans as structured markdown.
 
 ---
 
+## Team Delegation
+
+When your task has **2+ independent workstreams** (e.g., backend API + frontend UI, or multiple unrelated modules), consider using `create_team` to spawn parallel agents instead of doing everything sequentially.
+
+### When to Use Teams
+
+- Task naturally splits into independent pieces touching different files/modules
+- Multiple agents can work in parallel without file conflicts
+- The speedup from parallelism outweighs the coordination overhead
+
+### When NOT to Use Teams
+
+- Task is small or sequential (each step depends on the previous)
+- Multiple agents would need to edit the same files
+- You're unsure how to split the work — just do it yourself
+
+### Team Workflow
+
+1. **Create the team**: `create_team` batch-creates subtasks and spawns agent sessions
+   - Write self-contained prompts — agents only see their subtask description and your prompt
+   - Include exact file paths, done criteria, and constraints in each member's prompt
+2. **Monitor progress**: `get_team_status` shows subtask statuses and latest progress notes
+3. **Coordinate**: `send_team_message` sends course corrections or context to team members
+4. **Discover teammates**: `get_teammates` returns the team roster (for team members to message each other)
+
+### Cost Awareness
+
+Each team member consumes a **separate session** with its own token costs. A 3-member team costs roughly 3x a single session. Only delegate when the parallelism benefit justifies the cost.
+
+---
+
 ## Common Mistakes
 
 > Full list: `references/common-mistakes.md`

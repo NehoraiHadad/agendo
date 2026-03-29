@@ -44,6 +44,15 @@ Complete parameter reference for all `mcp__agendo__*` tools.
 | `start_agent_session` | Spawn another agent on a task (fire-and-forget) | `taskId`, `agent` (slug), `initialPrompt?`, `permissionMode?`, `model?` |
 | `assign_task`         | Reassign a task to another agent                | `taskId`, `assignee` (slug)                                             |
 
+## Team Delegation
+
+| Tool                | Purpose                                                      | Key Params                                                           |
+| ------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `create_team`       | Batch-create subtasks + spawn agent sessions for each member | `teamName`, `members[]` ({agentSlug, role?, task?}), `parentTaskId?` |
+| `get_team_status`   | Status of all team members under a parent task               | `taskId` (parent)                                                    |
+| `send_team_message` | Send a message to a team member's session                    | `sessionId`, `message`                                               |
+| `get_teammates`     | Discover your team roster + session IDs                      | _(no params — uses your session's parent task)_                      |
+
 ## Plans & Artifacts
 
 | Tool              | Purpose                                       | Key Params                                                                    |

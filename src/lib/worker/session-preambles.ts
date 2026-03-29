@@ -12,6 +12,11 @@ export function generateExecutionPreamble(projectName: string, taskId: string): 
     `  - A clear title: "Add MCP tool: <tool_name>"\n` +
     `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
     `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
+    `\n` +
+    `## Team Delegation\n` +
+    `For tasks with 2+ independent workstreams, consider using \`create_team\` to spawn parallel agents.\n` +
+    `Each team member gets its own subtask and session — monitor with \`get_team_status\`, coordinate with \`send_team_message\`.\n` +
+    `Note: each member consumes a separate session with its own token costs.\n` +
     `---\n`
   );
 }
@@ -27,6 +32,8 @@ export function generatePlanningPreamble(projectName: string): string {
     `- list_tasks / get_task — inspect existing tasks and their status\n` +
     `- list_projects — list all projects (needed to resolve projectId for create_task)\n` +
     `- start_agent_session — spawn an agent on a task when ready to execute\n` +
+    `- create_team — batch-create subtasks and spawn parallel agents (for 2+ independent workstreams)\n` +
+    `- get_team_status / send_team_message / get_teammates — monitor and coordinate teams\n` +
     `---\n`
   );
 }
