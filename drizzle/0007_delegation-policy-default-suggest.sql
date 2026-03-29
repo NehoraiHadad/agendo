@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ALTER COLUMN "delegation_policy" SET DEFAULT 'suggest';

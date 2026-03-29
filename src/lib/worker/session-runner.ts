@@ -172,7 +172,7 @@ export async function runSession(
     }
   } else if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
-    const delegationPolicy = session.delegationPolicy ?? 'forbid';
+    const delegationPolicy = session.delegationPolicy ?? 'suggest';
     const isTeamLead = delegationPolicy === 'auto' || session.teamRole === 'lead';
     const preamble = session.taskId
       ? isTeamLead

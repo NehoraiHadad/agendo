@@ -63,7 +63,7 @@ describe('generateExecutionPreamble', () => {
     expect(preamble).not.toContain('create_team');
   });
 
-  it('excludes team delegation section by default (no delegationPolicy)', () => {
+  it('excludes team delegation section when no delegationPolicy is passed', () => {
     const preamble = generateExecutionPreamble('proj', 'task-1');
     expect(preamble).not.toContain('Team Delegation');
   });

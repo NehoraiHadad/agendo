@@ -391,9 +391,9 @@ export const sessions = pgTable(
     // Optional list of MCP server IDs to use for this session (overrides project defaults).
     mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
     // Delegation policy controlling team tool visibility in preambles.
-    // 'forbid' = suppress team tool mentions (default), 'suggest' = lightweight hints,
+    // 'suggest' = lightweight team hints (default), 'forbid' = suppress team tool mentions,
     // 'allow' = same as suggest, 'auto' = full team-lead preamble.
-    delegationPolicy: delegationPolicyEnum('delegation_policy').notNull().default('forbid'),
+    delegationPolicy: delegationPolicyEnum('delegation_policy').notNull().default('suggest'),
     // Team role for this session. 'lead' = orchestrator, 'member' = team worker, null = not in a team.
     teamRole: teamRoleEnum('team_role'),
     // When true, pass --worktree to CLIs that support native git worktree isolation (Claude only).
