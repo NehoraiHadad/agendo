@@ -172,12 +172,13 @@ export async function runSession(
     }
   } else if (hasMcp && !resumeRef && prompt) {
     const projectName = project?.name ?? 'unknown';
-    const isTeamLead = prompt.includes('[team-lead]');
+    const delegationPolicy = session.delegationPolicy ?? 'forbid';
+    const isTeamLead = delegationPolicy === 'auto' || session.teamRole === 'lead';
     const preamble = session.taskId
       ? isTeamLead
         ? generateTeamLeadPreamble(projectName, session.taskId)
-        : generateExecutionPreamble(projectName, session.taskId)
-      : generatePlanningPreamble(projectName);
+        : generateExecutionPreamble(projectName, session.taskId, delegationPolicy)
+      : generatePlanningPreamble(projectName, delegationPolicy);
     if (binaryName === 'codex') {
       codexDeveloperInstructions = preamble;
     } else {

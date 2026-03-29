@@ -23,6 +23,8 @@ const createSessionSchema = z.object({
   mcpServerIds: z.array(z.string().uuid()).optional(),
   useWorktree: z.boolean().optional(),
   maxBudgetUsd: z.number().positive().optional(),
+  delegationPolicy: z.enum(['forbid', 'suggest', 'allow', 'auto']).optional(),
+  teamRole: z.enum(['lead', 'member']).optional(),
 });
 
 export const GET = withErrorBoundary(async (req: NextRequest) => {
@@ -64,6 +66,8 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     mcpServerIds: body.mcpServerIds,
     useWorktree: body.useWorktree,
     maxBudgetUsd: body.maxBudgetUsd,
+    delegationPolicy: body.delegationPolicy,
+    teamRole: body.teamRole,
   });
 
   if (body.initialPrompt) {

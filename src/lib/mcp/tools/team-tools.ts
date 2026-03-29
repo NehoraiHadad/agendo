@@ -86,6 +86,8 @@ export async function handleCreateTeam(args: {
       agentId,
       initialPrompt: member.prompt,
       permissionMode: member.permissionMode ?? 'bypassPermissions',
+      teamRole: 'member',
+      delegationPolicy: 'forbid',
     };
     if (member.model) sessionBody.model = member.model;
     if (leadSessionId) sessionBody.parentSessionId = leadSessionId;

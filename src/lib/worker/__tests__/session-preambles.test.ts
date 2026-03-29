@@ -45,6 +45,28 @@ describe('generateExecutionPreamble', () => {
     expect(preamble).toContain('task_id=abc-123');
     expect(preamble).toContain('project=my-project');
   });
+
+  it('includes team delegation section when delegationPolicy is suggest', () => {
+    const preamble = generateExecutionPreamble('proj', 'task-1', 'suggest');
+    expect(preamble).toContain('Team Delegation');
+    expect(preamble).toContain('create_team');
+  });
+
+  it('includes team delegation section when delegationPolicy is allow', () => {
+    const preamble = generateExecutionPreamble('proj', 'task-1', 'allow');
+    expect(preamble).toContain('Team Delegation');
+  });
+
+  it('excludes team delegation section when delegationPolicy is forbid', () => {
+    const preamble = generateExecutionPreamble('proj', 'task-1', 'forbid');
+    expect(preamble).not.toContain('Team Delegation');
+    expect(preamble).not.toContain('create_team');
+  });
+
+  it('excludes team delegation section by default (no delegationPolicy)', () => {
+    const preamble = generateExecutionPreamble('proj', 'task-1');
+    expect(preamble).not.toContain('Team Delegation');
+  });
 });
 
 describe('generatePlanningPreamble', () => {
@@ -52,6 +74,23 @@ describe('generatePlanningPreamble', () => {
     const preamble = generatePlanningPreamble('my-project');
     expect(preamble).toContain('mode=planning');
     expect(preamble).toContain('project=my-project');
+  });
+
+  it('includes team tools when delegationPolicy is suggest', () => {
+    const preamble = generatePlanningPreamble('proj', 'suggest');
+    expect(preamble).toContain('create_team');
+    expect(preamble).toContain('get_team_status');
+  });
+
+  it('excludes team tools when delegationPolicy is forbid', () => {
+    const preamble = generatePlanningPreamble('proj', 'forbid');
+    expect(preamble).not.toContain('create_team');
+    expect(preamble).not.toContain('get_team_status');
+  });
+
+  it('excludes team tools by default (no delegationPolicy)', () => {
+    const preamble = generatePlanningPreamble('proj');
+    expect(preamble).not.toContain('create_team');
   });
 });
 

@@ -171,6 +171,8 @@ export function TeamCanvasToolbar() {
           agentId,
           initialPrompt: member.prompt,
           permissionMode: member.permissionMode,
+          teamRole: 'member',
+          delegationPolicy: 'forbid',
         };
         if (member.model) sessionBody.model = member.model;
 

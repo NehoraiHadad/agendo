@@ -1,41 +1,70 @@
 import type { TaskEvent } from '@/lib/types';
 
+/** Delegation policy controlling team tool visibility in preambles. */
+export type DelegationPolicy = 'forbid' | 'suggest' | 'allow' | 'auto';
+
+/** Team role for a session within a team. */
+export type TeamRole = 'lead' | 'member' | null;
+
 /**
  * Generates the MCP context preamble for task-based sessions.
  * The agent is working on a specific task and should use MCP tools for progress.
  */
-export function generateExecutionPreamble(projectName: string, taskId: string): string {
-  return (
+export function generateExecutionPreamble(
+  projectName: string,
+  taskId: string,
+  delegationPolicy?: DelegationPolicy,
+): string {
+  const includeTeamHints =
+    delegationPolicy === 'suggest' || delegationPolicy === 'allow' || delegationPolicy === 'auto';
+
+  let preamble =
     `[Agendo Context: task_id=${taskId}, project=${projectName}]\n` +
     `Agendo MCP tools are available. Start by calling get_my_task to see your full task details, current status, subtasks, and prior progress notes. Report all progress with add_progress_note.\n` +
     `If you encounter something you cannot do because an MCP tool is missing, create a new task using create_task with:\n` +
     `  - A clear title: "Add MCP tool: <tool_name>"\n` +
     `  - Description: what the tool should do, what inputs it needs, what it should return, and why you need it\n` +
-    `  - This ensures missing capabilities get built so future agents can do the job fully\n` +
-    `\n` +
-    `## Team Delegation\n` +
-    `For tasks with 2+ independent workstreams, consider using \`create_team\` to spawn parallel agents.\n` +
-    `Each team member gets its own subtask and session — monitor with \`get_team_status\`, coordinate with \`send_team_message\`.\n` +
-    `Note: each member consumes a separate session with its own token costs.\n` +
-    `---\n`
-  );
+    `  - This ensures missing capabilities get built so future agents can do the job fully\n`;
+
+  if (includeTeamHints) {
+    preamble +=
+      `\n` +
+      `## Team Delegation\n` +
+      `For tasks with 2+ independent workstreams, consider using \`create_team\` to spawn parallel agents.\n` +
+      `Each team member gets its own subtask and session — monitor with \`get_team_status\`, coordinate with \`send_team_message\`.\n` +
+      `Note: each member consumes a separate session with its own token costs.\n`;
+  }
+
+  preamble += `---\n`;
+  return preamble;
 }
 
 /**
  * Generates the MCP context preamble for planning/conversation sessions (no assigned task).
  */
-export function generatePlanningPreamble(projectName: string): string {
-  return (
+export function generatePlanningPreamble(
+  projectName: string,
+  delegationPolicy?: DelegationPolicy,
+): string {
+  const includeTeamTools =
+    delegationPolicy === 'suggest' || delegationPolicy === 'allow' || delegationPolicy === 'auto';
+
+  let preamble =
     `[Agendo Context: project=${projectName}, mode=planning]\n` +
     `Agendo MCP tools are available. You are in a planning conversation.\n` +
     `- create_task / create_subtask — turn plan steps into actionable tasks\n` +
     `- list_tasks / get_task — inspect existing tasks and their status\n` +
     `- list_projects — list all projects (needed to resolve projectId for create_task)\n` +
-    `- start_agent_session — spawn an agent on a task when ready to execute\n` +
-    `- create_team — batch-create subtasks and spawn parallel agents (for 2+ independent workstreams)\n` +
-    `- get_team_status / send_team_message / get_teammates — monitor and coordinate teams\n` +
-    `---\n`
-  );
+    `- start_agent_session — spawn an agent on a task when ready to execute\n`;
+
+  if (includeTeamTools) {
+    preamble +=
+      `- create_team — batch-create subtasks and spawn parallel agents (for 2+ independent workstreams)\n` +
+      `- get_team_status / send_team_message / get_teammates — monitor and coordinate teams\n`;
+  }
+
+  preamble += `---\n`;
+  return preamble;
 }
 
 /**

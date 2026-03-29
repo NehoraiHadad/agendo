@@ -93,6 +93,15 @@ export const capabilitySourceEnum = pgEnum('capability_source', [
 // Template = fire-and-forget CLI command; Prompt = interactive AI session.
 export const interactionModeEnum = pgEnum('interaction_mode', ['template', 'prompt']);
 
+export const delegationPolicyEnum = pgEnum('delegation_policy', [
+  'forbid',
+  'suggest',
+  'allow',
+  'auto',
+]);
+
+export const teamRoleEnum = pgEnum('team_role', ['lead', 'member']);
+
 // Provider compatibility status for a capability.
 export const supportStatusEnum = pgEnum('support_status', [
   'verified', // Tested and confirmed working
@@ -381,6 +390,12 @@ export const sessions = pgTable(
     forkPointUuid: text('fork_point_uuid'),
     // Optional list of MCP server IDs to use for this session (overrides project defaults).
     mcpServerIds: jsonb('mcp_server_ids').$type<string[]>(),
+    // Delegation policy controlling team tool visibility in preambles.
+    // 'forbid' = suppress team tool mentions (default), 'suggest' = lightweight hints,
+    // 'allow' = same as suggest, 'auto' = full team-lead preamble.
+    delegationPolicy: delegationPolicyEnum('delegation_policy').notNull().default('forbid'),
+    // Team role for this session. 'lead' = orchestrator, 'member' = team worker, null = not in a team.
+    teamRole: teamRoleEnum('team_role'),
     // When true, pass --worktree to CLIs that support native git worktree isolation (Claude only).
     useWorktree: boolean('use_worktree').notNull().default(false),
     // Maximum API spend in USD for this session (Claude SDK only). Agent stops when exceeded.

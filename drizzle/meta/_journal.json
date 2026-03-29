@@ -43,6 +43,13 @@
       "when": 1774717935113,
       "tag": "0005_add-leader-participant-id",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774762769076,
+      "tag": "0006_add-delegation-policy",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,10 @@ export interface CreateSessionInput {
   useWorktree?: boolean;
   /** Maximum API spend in USD for this session (Claude SDK only). Agent stops when exceeded. */
   maxBudgetUsd?: number;
+  /** Controls team tool visibility in preambles. Default: 'forbid'. */
+  delegationPolicy?: 'forbid' | 'suggest' | 'allow' | 'auto';
+  /** Team role for this session. 'lead' = orchestrator, 'member' = team worker. */
+  teamRole?: 'lead' | 'member';
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -62,6 +66,8 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       ...(input.mcpServerIds ? { mcpServerIds: input.mcpServerIds } : {}),
       ...(input.useWorktree != null ? { useWorktree: input.useWorktree } : {}),
       ...(input.maxBudgetUsd != null ? { maxBudgetUsd: String(input.maxBudgetUsd) } : {}),
+      ...(input.delegationPolicy ? { delegationPolicy: input.delegationPolicy } : {}),
+      ...(input.teamRole ? { teamRole: input.teamRole } : {}),
     })
     .returning();
   return session;
