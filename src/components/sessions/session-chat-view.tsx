@@ -1254,7 +1254,13 @@ export function SessionChatView({
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<
-    { id: string; text: string; attachments?: QueuedAttachmentPayload[]; clientId?: string }[]
+    {
+      id: string;
+      text: string;
+      ts: number;
+      attachments?: QueuedAttachmentPayload[];
+      clientId?: string;
+    }[]
   >([]);
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [isInterrupting, setIsInterrupting] = useState(false);
@@ -1356,7 +1362,7 @@ export function SessionChatView({
 
       setOptimisticMessages((prev) => [
         ...prev,
-        { id: String(++msgIdRef.current), text, attachments, clientId },
+        { id: String(++msgIdRef.current), text, ts: Date.now(), attachments, clientId },
       ]);
     },
     [effectiveInitialPrompt, currentStatus],
@@ -1402,17 +1408,21 @@ export function SessionChatView({
   );
 
   // Send a message immediately with priority:'now' to interrupt an active agent.
+  // Call handleSent BEFORE the await so the optimistic-message baseline is captured
+  // before the SSE `user:message` event can arrive and update the count (same pattern
+  // as submitText in session-message-input.tsx).
   const handleSendNow = useCallback(
     async (text: string, attachments?: QueuedAttachmentPayload[]) => {
       const clientId = generateId();
+      handleSent(text, attachments, clientId);
       try {
         await apiFetch(`/api/sessions/${sessionId}/message`, {
           method: 'POST',
           body: buildMessageFormData(text, attachments, { priority: 'now', clientId }),
         });
-        handleSent(text, attachments, clientId);
       } catch {
-        // Silently ignore — the agent is still running and will continue
+        // Remove optimistic message on POST failure
+        setOptimisticMessages((prev) => prev.filter((m) => m.clientId !== clientId));
       }
     },
     [sessionId, handleSent],
@@ -1724,6 +1734,46 @@ export function SessionChatView({
     });
   })();
 
+  // Merge optimistic user messages into the display item list at the correct
+  // chronological position (by timestamp) instead of appending them at the end.
+  // This prevents the bug where agent responses stream in *after* the optimistic
+  // bubble, pushing the user's message below newer assistant content.
+  const mergedDisplayItems = useMemo(() => {
+    if (optimisticMessages.length === 0) return augmentedDisplayItems;
+
+    // Convert optimistic messages to DisplayItem user bubbles with timestamps
+    const optEntries = optimisticMessages.map((msg) => ({
+      ts: msg.ts,
+      item: {
+        kind: 'user' as const,
+        id: -Number(msg.id), // negative to avoid collision with real display item ids
+        ts: msg.ts,
+        text: msg.text,
+        attachments: msg.attachments?.map((attachment, index) => ({
+          ...attachment,
+          id: `opt-${msg.id}-${index}`,
+        })),
+      } satisfies DisplayItem,
+    }));
+
+    // Find the insertion point: place optimistic items after the last display item
+    // whose timestamp is <= the optimistic message's timestamp. If no display items
+    // have timestamps (shouldn't happen), fall back to appending at the end.
+    const result: DisplayItem[] = [...augmentedDisplayItems];
+    for (const { ts, item } of optEntries) {
+      let insertIdx = result.length; // default: append
+      for (let i = result.length - 1; i >= 0; i--) {
+        const itemTs = 'ts' in result[i] ? (result[i] as { ts?: number }).ts : undefined;
+        if (itemTs !== undefined && itemTs <= ts) {
+          insertIdx = i + 1;
+          break;
+        }
+      }
+      result.splice(insertIdx, 0, item);
+    }
+    return result;
+  }, [augmentedDisplayItems, optimisticMessages]);
+
   function renderDisplayItem(
     item: DisplayItem,
     _idx: number,
@@ -1914,21 +1964,9 @@ export function SessionChatView({
             </div>
           )}
 
-          {augmentedDisplayItems.map((item, i) =>
-            renderDisplayItem(item, i, augmentedDisplayItems[i - 1]),
+          {mergedDisplayItems.map((item, i) =>
+            renderDisplayItem(item, i, mergedDisplayItems[i - 1]),
           )}
-
-          {/* Optimistic user messages shown while real event is in-flight */}
-          {optimisticMessages.map((msg) => (
-            <UserBubble
-              key={`opt-${msg.id}`}
-              text={msg.text}
-              attachments={msg.attachments?.map((attachment, index) => ({
-                ...attachment,
-                id: `opt-${msg.id}-${index}`,
-              }))}
-            />
-          ))}
 
           {showTyping && <TypingIndicator />}
 
