@@ -130,7 +130,7 @@ export function TeamCanvasToolbar() {
         const config = agentConfigs[node.id];
         if (!config) throw new Error(`Missing config for node ${node.id}`);
         return {
-          agent: config.agentSlug,
+          agentId: config.agentId,
           role: config.subtaskTitle || `${config.agentSlug} task`,
           prompt: config.initialPrompt || `Complete the task: ${config.subtaskTitle}`,
           permissionMode: config.permissionMode,
@@ -138,53 +138,21 @@ export function TeamCanvasToolbar() {
         };
       });
 
-      // 3. Create team via MCP-style API (direct API calls)
-      for (const member of members) {
-        // Create subtask
-        const subtaskBody: Record<string, unknown> = {
-          title: member.role,
+      // 3. Create team via shared team-creation API
+      const teamRes = await fetch('/api/teams/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'ui_led',
+          teamName: teamName || 'Agent Team',
+          members,
+          projectId,
           parentTaskId: parentTask.id,
-          status: 'todo',
-        };
-        if (projectId) subtaskBody.projectId = projectId;
-
-        const subtaskRes = await fetch('/api/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(subtaskBody),
-        });
-        if (!subtaskRes.ok) throw new Error(`Failed to create subtask: ${member.role}`);
-        const subtask = (await subtaskRes.json()) as { id: string };
-
-        // Find agent ID from slug
-        const agentNode = agentNodes.find((n) => {
-          const cfg = agentConfigs[n.id];
-          return cfg && cfg.agentSlug === member.agent;
-        });
-        const agentId = agentNode ? agentConfigs[agentNode.id]?.agentId : undefined;
-
-        if (!agentId) throw new Error(`Cannot resolve agent ID for ${member.agent}`);
-
-        // Spawn session
-        const sessionBody: Record<string, unknown> = {
-          taskId: subtask.id,
-          agentId,
-          initialPrompt: member.prompt,
-          permissionMode: member.permissionMode,
-          teamRole: 'member',
-          delegationPolicy: 'forbid',
-        };
-        if (member.model) sessionBody.model = member.model;
-
-        const sessionRes = await fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sessionBody),
-        });
-        if (!sessionRes.ok) {
-          const errBody = await sessionRes.text();
-          throw new Error(`Failed to spawn session for ${member.role}: ${errBody}`);
-        }
+        }),
+      });
+      if (!teamRes.ok) {
+        const errBody = await teamRes.text();
+        throw new Error(`Failed to create team: ${errBody}`);
       }
 
       // 4. Navigate to monitor mode

@@ -60,83 +60,45 @@ export async function handleCreateTeam(args: {
     throw new Error('At least one team member is required');
   }
 
-  const results: TeamMemberResult[] = [];
   const projectId = process.env.AGENDO_PROJECT_ID;
-
-  for (const member of args.members) {
-    const agentId = await resolveAgentSlug(member.agent);
-
-    // 1. Create subtask under parent task
-    const subtaskBody: Record<string, unknown> = {
-      title: member.role,
-      parentTaskId: args.taskId,
-      assigneeAgentId: agentId,
-    };
-    if (projectId) subtaskBody.projectId = projectId;
-
-    const subtask = (await apiCall('/api/tasks', {
-      method: 'POST',
-      body: subtaskBody,
-    })) as { id: string };
-
-    // 2. Spawn agent session on the subtask
-    const leadSessionId = process.env.AGENDO_SESSION_ID;
-    const sessionBody: Record<string, unknown> = {
-      taskId: subtask.id,
-      agentId,
-      initialPrompt: member.prompt,
-      permissionMode: member.permissionMode ?? 'bypassPermissions',
-      teamRole: 'member',
-      delegationPolicy: 'forbid',
-    };
-    if (member.model) sessionBody.model = member.model;
-    if (leadSessionId) sessionBody.parentSessionId = leadSessionId;
-
-    const session = (await apiCall('/api/sessions', {
-      method: 'POST',
-      body: sessionBody,
-    })) as { id: string };
-
-    results.push({
-      agent: member.agent,
-      role: member.role,
-      subtaskId: subtask.id,
-      sessionId: session.id,
-    });
-  }
-
-  // 3. Broadcast team context to each worker so they know their teammates
   const leadSessionId = process.env.AGENDO_SESSION_ID;
-  if (leadSessionId) {
-    await broadcastTeamContext(leadSessionId, results);
-  }
 
-  return { teamId: args.taskId, members: results };
-}
+  // Resolve agent slugs to IDs
+  const resolvedMembers = await Promise.all(
+    args.members.map(async (member) => ({
+      agentId: await resolveAgentSlug(member.agent),
+      role: member.role,
+      prompt: member.prompt,
+      permissionMode: member.permissionMode,
+      model: member.model,
+    })),
+  );
 
-/**
- * Send a team context message to each worker session so they know:
- * - The team lead's sessionId (for escalations)
- * - Their sibling sessions (for peer coordination)
- * - That send_team_message is available
- *
- * Fire-and-forget: errors are silently ignored to avoid blocking team creation.
- */
-async function broadcastTeamContext(
-  leadSessionId: string,
-  members: TeamMemberResult[],
-): Promise<void> {
-  const sends = members.map((member) => {
-    const message = buildTeamContextMessage(leadSessionId, members, member.sessionId);
-    return apiCall(`/api/sessions/${member.sessionId}/message`, {
-      method: 'POST',
-      body: { message },
-    }).catch(() => {
-      // Silently ignore — worker may not be ready yet
-    });
-  });
+  // Delegate to shared team-creation service via API route
+  const result = (await apiCall('/api/teams/create', {
+    method: 'POST',
+    body: {
+      mode: leadSessionId ? 'agent_led' : 'ui_led',
+      leadSessionId: leadSessionId ?? undefined,
+      teamName: `Team for task ${args.taskId}`,
+      members: resolvedMembers,
+      projectId: projectId ?? '',
+      parentTaskId: args.taskId,
+    },
+  })) as {
+    parentTaskId: string;
+    members: Array<{ agentId: string; role: string; subtaskId: string; sessionId: string }>;
+  };
 
-  await Promise.all(sends);
+  // Map back to TeamMemberResult format (with agent slug names)
+  const memberResults: TeamMemberResult[] = result.members.map((m, i) => ({
+    agent: args.members[i].agent,
+    role: m.role,
+    subtaskId: m.subtaskId,
+    sessionId: m.sessionId,
+  }));
+
+  return { teamId: args.taskId, members: memberResults };
 }
 
 /**

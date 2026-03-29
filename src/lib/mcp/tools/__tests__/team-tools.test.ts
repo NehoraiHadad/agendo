@@ -53,7 +53,7 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe('handleCreateTeam', () => {
-  it('creates subtasks and sessions for each member', async () => {
+  it('calls the team creation API with resolved agent IDs', async () => {
     const parentTaskId = 'parent-task-uuid';
 
     // Mock agent slug resolution
@@ -61,12 +61,24 @@ describe('handleCreateTeam', () => {
       .mockResolvedValueOnce('claude-agent-uuid')
       .mockResolvedValueOnce('codex-agent-uuid');
 
-    // Mock subtask creation (2 members)
-    mockApiCall
-      .mockResolvedValueOnce({ id: 'subtask-1-uuid', title: 'Backend work' }) // create subtask 1
-      .mockResolvedValueOnce({ id: 'session-1-uuid' }) // create session 1
-      .mockResolvedValueOnce({ id: 'subtask-2-uuid', title: 'Frontend work' }) // create subtask 2
-      .mockResolvedValueOnce({ id: 'session-2-uuid' }); // create session 2
+    // Mock the /api/teams/create response
+    mockApiCall.mockResolvedValueOnce({
+      parentTaskId,
+      members: [
+        {
+          agentId: 'claude-agent-uuid',
+          role: 'Backend work',
+          subtaskId: 'subtask-1-uuid',
+          sessionId: 'session-1-uuid',
+        },
+        {
+          agentId: 'codex-agent-uuid',
+          role: 'Frontend work',
+          subtaskId: 'subtask-2-uuid',
+          sessionId: 'session-2-uuid',
+        },
+      ],
+    });
 
     const result = await handleCreateTeam({
       taskId: parentTaskId,
@@ -76,45 +88,24 @@ describe('handleCreateTeam', () => {
       ],
     });
 
-    // Verify subtask creation calls
-    expect(mockApiCall).toHaveBeenCalledWith('/api/tasks', {
+    // Verify single API call to /api/teams/create
+    expect(mockApiCall).toHaveBeenCalledTimes(1);
+    expect(mockApiCall).toHaveBeenCalledWith('/api/teams/create', {
       method: 'POST',
       body: expect.objectContaining({
-        title: 'Backend work',
+        mode: 'ui_led', // no AGENDO_SESSION_ID set
         parentTaskId,
-        assigneeAgentId: 'claude-agent-uuid',
-      }),
-    });
-    expect(mockApiCall).toHaveBeenCalledWith('/api/tasks', {
-      method: 'POST',
-      body: expect.objectContaining({
-        title: 'Frontend work',
-        parentTaskId,
-        assigneeAgentId: 'codex-agent-uuid',
+        members: expect.arrayContaining([
+          expect.objectContaining({
+            agentId: 'claude-agent-uuid',
+            role: 'Backend work',
+            prompt: 'Implement API endpoints',
+          }),
+        ]),
       }),
     });
 
-    // Verify session creation calls
-    expect(mockApiCall).toHaveBeenCalledWith('/api/sessions', {
-      method: 'POST',
-      body: expect.objectContaining({
-        taskId: 'subtask-1-uuid',
-        agentId: 'claude-agent-uuid',
-        initialPrompt: 'Implement API endpoints',
-        permissionMode: 'bypassPermissions',
-      }),
-    });
-    expect(mockApiCall).toHaveBeenCalledWith('/api/sessions', {
-      method: 'POST',
-      body: expect.objectContaining({
-        taskId: 'subtask-2-uuid',
-        agentId: 'codex-agent-uuid',
-        initialPrompt: 'Build React components',
-        permissionMode: 'bypassPermissions',
-      }),
-    });
-
-    // Verify output
+    // Verify output maps agent slugs back
     expect(result).toEqual({
       teamId: parentTaskId,
       members: [
@@ -136,9 +127,10 @@ describe('handleCreateTeam', () => {
 
   it('passes custom permissionMode and model', async () => {
     mockResolveAgentSlug.mockResolvedValueOnce('agent-uuid');
-    mockApiCall
-      .mockResolvedValueOnce({ id: 'subtask-uuid' })
-      .mockResolvedValueOnce({ id: 'session-uuid' });
+    mockApiCall.mockResolvedValueOnce({
+      parentTaskId: 'parent-uuid',
+      members: [{ agentId: 'agent-uuid', role: 'Review', subtaskId: 'st-1', sessionId: 'ss-1' }],
+    });
 
     await handleCreateTeam({
       taskId: 'parent-uuid',
@@ -153,11 +145,15 @@ describe('handleCreateTeam', () => {
       ],
     });
 
-    expect(mockApiCall).toHaveBeenCalledWith('/api/sessions', {
+    expect(mockApiCall).toHaveBeenCalledWith('/api/teams/create', {
       method: 'POST',
       body: expect.objectContaining({
-        permissionMode: 'acceptEdits',
-        model: 'gemini-2.5-pro',
+        members: [
+          expect.objectContaining({
+            permissionMode: 'acceptEdits',
+            model: 'gemini-2.5-pro',
+          }),
+        ],
       }),
     });
   });
@@ -307,68 +303,55 @@ describe('handleGetTeamStatus', () => {
 // create_team — team context broadcast
 // ---------------------------------------------------------------------------
 
-describe('handleCreateTeam — team context broadcast', () => {
-  beforeEach(() => {
+describe('handleCreateTeam — delegation mode', () => {
+  it('uses agent_led mode when AGENDO_SESSION_ID is set', async () => {
     process.env.AGENDO_SESSION_ID = 'lead-session-uuid';
-  });
-
-  it('sends team context message to each worker after creation', async () => {
-    mockResolveAgentSlug
-      .mockResolvedValueOnce('claude-agent-uuid')
-      .mockResolvedValueOnce('codex-agent-uuid');
-
-    mockApiCall
-      .mockResolvedValueOnce({ id: 'subtask-1' }) // create subtask 1
-      .mockResolvedValueOnce({ id: 'session-1' }) // create session 1
-      .mockResolvedValueOnce({ id: 'subtask-2' }) // create subtask 2
-      .mockResolvedValueOnce({ id: 'session-2' }) // create session 2
-      .mockResolvedValueOnce({ delivered: true }) // team context to session-1
-      .mockResolvedValueOnce({ delivered: true }); // team context to session-2
-
-    await handleCreateTeam({
-      taskId: 'parent-uuid',
-      members: [
-        { agent: 'claude-code-1', role: 'Backend', prompt: 'Do backend' },
-        { agent: 'codex-cli-1', role: 'Frontend', prompt: 'Do frontend' },
-      ],
-    });
-
-    // Should have sent team context messages (calls 5 and 6)
-    const messageCalls = mockApiCall.mock.calls.filter(
-      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('/message'),
-    );
-    expect(messageCalls).toHaveLength(2);
-
-    // Each message should contain teammate info
-    const msg1Body = messageCalls[0][1].body.message as string;
-    expect(msg1Body).toContain('Team Lead');
-    expect(msg1Body).toContain('lead-session-uuid');
-    expect(msg1Body).toContain('send_team_message');
-    // Worker 1 should see worker 2 as teammate
-    expect(msg1Body).toContain('Frontend');
-    expect(msg1Body).toContain('session-2');
-
-    const msg2Body = messageCalls[1][1].body.message as string;
-    // Worker 2 should see worker 1 as teammate
-    expect(msg2Body).toContain('Backend');
-    expect(msg2Body).toContain('session-1');
-  });
-
-  it('skips team context broadcast when AGENDO_SESSION_ID is not set', async () => {
-    delete process.env.AGENDO_SESSION_ID;
+    process.env.AGENDO_PROJECT_ID = 'project-uuid';
 
     mockResolveAgentSlug.mockResolvedValueOnce('agent-uuid');
-    mockApiCall
-      .mockResolvedValueOnce({ id: 'subtask-1' })
-      .mockResolvedValueOnce({ id: 'session-1' });
+    mockApiCall.mockResolvedValueOnce({
+      parentTaskId: 'parent-uuid',
+      members: [{ agentId: 'agent-uuid', role: 'Work', subtaskId: 'st-1', sessionId: 'ss-1' }],
+    });
 
     await handleCreateTeam({
       taskId: 'parent-uuid',
       members: [{ agent: 'claude-code-1', role: 'Work', prompt: 'Do it' }],
     });
 
-    // Only 2 calls: create subtask + create session (no team context message)
-    expect(mockApiCall).toHaveBeenCalledTimes(2);
+    expect(mockApiCall).toHaveBeenCalledWith('/api/teams/create', {
+      method: 'POST',
+      body: expect.objectContaining({
+        mode: 'agent_led',
+        leadSessionId: 'lead-session-uuid',
+      }),
+    });
+  });
+
+  it('uses ui_led mode when AGENDO_SESSION_ID is not set', async () => {
+    delete process.env.AGENDO_SESSION_ID;
+    process.env.AGENDO_PROJECT_ID = 'project-uuid';
+
+    mockResolveAgentSlug.mockResolvedValueOnce('agent-uuid');
+    mockApiCall.mockResolvedValueOnce({
+      parentTaskId: 'parent-uuid',
+      members: [{ agentId: 'agent-uuid', role: 'Work', subtaskId: 'st-1', sessionId: 'ss-1' }],
+    });
+
+    await handleCreateTeam({
+      taskId: 'parent-uuid',
+      members: [{ agent: 'claude-code-1', role: 'Work', prompt: 'Do it' }],
+    });
+
+    expect(mockApiCall).toHaveBeenCalledWith('/api/teams/create', {
+      method: 'POST',
+      body: expect.objectContaining({
+        mode: 'ui_led',
+      }),
+    });
+
+    // Single API call — broadcast handled server-side
+    expect(mockApiCall).toHaveBeenCalledTimes(1);
   });
 });
 
