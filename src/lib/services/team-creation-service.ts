@@ -9,6 +9,7 @@ import { createTask } from '@/lib/services/task-service';
 import { createSession } from '@/lib/services/session-service';
 import { dispatchSession } from '@/lib/services/session-dispatch';
 import { sendTeamMessage } from '@/lib/services/team-message-service';
+import { trackTeamCreation } from '@/lib/services/team-telemetry';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('team-creation-service');
@@ -101,6 +102,15 @@ export async function createTeam(request: TeamCreationRequest): Promise<TeamCrea
   if (request.mode === 'agent_led' && request.leadSessionId) {
     await broadcastTeamContext(request.leadSessionId, results);
   }
+
+  // Track telemetry
+  trackTeamCreation({
+    source: request.mode === 'agent_led' ? 'mcp' : 'ui',
+    mode: request.mode,
+    parentTaskId: request.parentTaskId,
+    memberCount: results.length,
+    hasLeadSession: !!request.leadSessionId,
+  });
 
   log.info(
     {

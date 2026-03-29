@@ -8,11 +8,19 @@
 import { getSession } from '@/lib/services/session-service';
 import { sendSessionControl } from '@/lib/realtime/worker-client';
 import { dispatchSession } from '@/lib/services/session-dispatch';
+import { trackTeamMessage } from '@/lib/services/team-telemetry';
 import type { AgendoControl } from '@/lib/realtime/events';
+
+export interface TeamMessageMeta {
+  parentTaskId?: string;
+  senderSessionId?: string;
+  direction?: 'lead_to_member' | 'member_to_lead' | 'member_to_member';
+}
 
 export async function sendTeamMessage(
   sessionId: string,
   message: string,
+  meta?: TeamMessageMeta,
 ): Promise<{ delivered?: boolean; resuming?: boolean }> {
   const session = await getSession(sessionId);
 
@@ -40,6 +48,16 @@ export async function sendTeamMessage(
       skipResumeContext: true,
     });
     return { resuming: true };
+  }
+
+  // Track telemetry if metadata provided
+  if (meta?.parentTaskId && meta.senderSessionId && meta.direction) {
+    trackTeamMessage({
+      parentTaskId: meta.parentTaskId,
+      senderSessionId: meta.senderSessionId,
+      recipientSessionId: sessionId,
+      direction: meta.direction,
+    });
   }
 
   return { delivered: true };
