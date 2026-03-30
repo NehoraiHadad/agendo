@@ -391,8 +391,9 @@ export class SessionTeamManager {
   }
 
   /**
-   * For Agendo MCP create_team: emit agendo:team-created (NOT team:config).
-   * This is a separate UI path — Canvas (/teams/[taskId]) vs Claude-native team panel.
+   * For Agendo MCP create_team: emit both agendo:team-created (for Canvas link)
+   * AND team:config (for the Team panel). Previously only agendo:team-created was
+   * emitted, which left the Team panel showing "no team active".
    */
   private emitMcpTeamConfig(event: AgendoEventPayload): void {
     if (event.type !== 'agent:tool-end') return;
@@ -411,15 +412,33 @@ export class SessionTeamManager {
 
     if (!parsed.members || parsed.members.length === 0 || !parsed.teamId) return;
 
+    // 1. Emit agendo:team-created — drives the Canvas button in session header
     void this.cb.emitEvent({
       type: 'agendo:team-created',
       taskId: parsed.teamId,
       members: parsed.members,
     });
 
+    // 2. Emit team:config — drives the Team panel (badge, diagram, messages)
+    const teamName = `Team for task ${parsed.teamId.slice(0, 8)}`;
+    const now = Date.now();
+    void this.cb.emitEvent({
+      type: 'team:config',
+      teamName,
+      members: parsed.members.map((m, i) => ({
+        name: m.role,
+        agentId: m.sessionId,
+        agentType: m.agent,
+        model: '',
+        joinedAt: now + i, // slight offset to preserve ordering
+        tmuxPaneId: '', // MCP teams don't use tmux
+        backendType: 'agendo-mcp',
+      })),
+    });
+
     log.info(
       { taskId: parsed.teamId, memberCount: parsed.members.length, sessionId: this.cb.sessionId },
-      'Agendo team created (MCP)',
+      'Agendo team created (MCP) — emitted team:config + agendo:team-created',
     );
     this.cb.recordActivity();
   }
