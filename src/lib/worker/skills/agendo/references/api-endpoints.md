@@ -1,6 +1,56 @@
-# Inter-Agent Communication API
+# Agendo HTTP API
 
-HTTP endpoints for sending messages to running agent sessions, monitoring their output, and checking status. Use these after spawning agents with `start_agent_session`.
+HTTP endpoints for inter-agent communication, file serving, and session management.
+
+## File Server
+
+Serves files from the local filesystem with correct MIME types. Use this to reference local files (images, HTML, JSON, etc.) in `render_artifact` HTML — avoids base64 encoding and keeps artifacts lightweight.
+
+### Serve a File
+
+```
+GET /api/dev/files?path=/home/ubuntu/projects/my-app/output/image.webp
+```
+
+Returns the file with correct `Content-Type` header (e.g. `image/webp`, `application/json`, `text/html`).
+
+### Allowed Roots
+
+Only files under these directories are served (path traversal is blocked):
+
+- `/home/ubuntu/projects`
+- `/tmp`
+
+### Supported MIME Types
+
+Images (`.webp`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.avif`, `.bmp`), documents (`.json`, `.pdf`, `.html`, `.css`, `.md`, `.txt`, `.csv`, `.xml`, `.yaml`), code (`.js`, `.ts`, `.tsx`, `.jsx`, `.py`, `.sh`, `.go`, `.java`, `.rs`, `.rb`), media (`.mp4`, `.webm`, `.mp3`, `.wav`), fonts (`.woff`, `.woff2`, `.ttf`, `.otf`), archives (`.zip`, `.gz`, `.tar`).
+
+### Error Responses
+
+| Status | Condition                 |
+| ------ | ------------------------- |
+| 400    | Missing `?path=`          |
+| 403    | Path not in allowed roots |
+| 404    | File not found            |
+| 500    | Internal error            |
+
+### Using in `render_artifact`
+
+Reference local files via relative URL paths in artifact HTML — the artifact renders inside the Agendo UI, so the paths resolve against the Agendo origin:
+
+```html
+<!-- In render_artifact content -->
+<img src="/api/dev/files?path=/home/ubuntu/projects/my-app/output/chart.png" />
+<a href="/api/dev/files?path=/tmp/report.pdf">Download Report</a>
+```
+
+This is the **recommended approach** for showing images, charts, or generated output in artifacts. Do NOT base64-encode images into artifact HTML — use the file server instead.
+
+---
+
+## Inter-Agent Communication
+
+Endpoints for sending messages to running agent sessions, monitoring their output, and checking status. Use these after spawning agents with `start_agent_session`.
 
 ## Send a Message to a Running Session
 

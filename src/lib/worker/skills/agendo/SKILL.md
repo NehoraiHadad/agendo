@@ -65,6 +65,16 @@ Mark ALL subtasks done BEFORE marking the parent done.
 | `save_plan`           | Save/update an implementation plan (markdown)      |
 | `render_artifact`     | Render interactive visual inline in chat           |
 
+### File Server (for artifacts)
+
+Agendo includes a built-in file server at `/api/dev/files?path=...` that serves local files with correct MIME types. **Use this in `render_artifact` HTML to reference images and files** instead of base64-encoding them:
+
+```html
+<img src="/api/dev/files?path=/home/ubuntu/projects/my-app/output/image.webp" />
+```
+
+Allowed roots: `/home/ubuntu/projects`, `/tmp`. Full reference: `references/api-endpoints.md`.
+
 ---
 
 ## Task Creation Best Practices
