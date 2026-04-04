@@ -3,6 +3,9 @@ import { createLogger } from './logger';
 
 const log = createLogger('config');
 
+/** Treat empty strings as undefined (common when copying .env.example) */
+const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
+
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   WORKER_ID: z.string().default('worker-1'),
@@ -17,17 +20,17 @@ const envSchema = z.object({
   TERMINAL_WS_PORT: z.coerce.number().default(4101),
   WORKER_HTTP_PORT: z.coerce.number().default(4102),
   JWT_SECRET: z.string().min(16),
-  MCP_SERVER_PATH: z.string().optional(),
-  TERMINAL_JWT_SECRET: z.string().min(16).optional(),
+  MCP_SERVER_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
+  TERMINAL_JWT_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   // Web Push (VAPID) — optional, push notifications disabled if not set
-  VAPID_PUBLIC_KEY: z.string().optional(),
-  VAPID_PRIVATE_KEY: z.string().optional(),
-  VAPID_SUBJECT: z.string().optional(),
+  VAPID_PUBLIC_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  VAPID_PRIVATE_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  VAPID_SUBJECT: z.preprocess(emptyToUndefined, z.string().optional()),
   // Summarization provider for agent switching context transfer (all use CLI/OAuth)
   SUMMARIZATION_PROVIDER: z.enum(['gemini', 'claude', 'codex', 'auto']).default('auto'),
   // Override model for summarization (e.g. "gemini-2.5-flash", "haiku", "o4-mini")
   // If not set, uses fast defaults: gemini→Flash, claude→Haiku, codex→o4-mini
-  SUMMARIZATION_MODEL: z.string().optional(),
+  SUMMARIZATION_MODEL: z.preprocess(emptyToUndefined, z.string().optional()),
   // Whether to write events to the session log file (audit trail).
   // Default: true (transitional period — CLI-native history is now primary for SSE catchup).
   // Set to false once CLI-native history reconstruction is fully trusted.

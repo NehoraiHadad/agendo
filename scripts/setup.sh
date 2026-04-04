@@ -125,6 +125,21 @@ if [[ ! -f .env.local ]]; then
     sed -i "s|\\\$HOME|$HOME|g" .env.local
   fi
 
+  # Remove commented-out optional vars from .env.local to avoid confusion
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' '/^# TERMINAL_JWT_SECRET=/d' .env.local
+    sed -i '' '/^# NEXT_PUBLIC_VAPID_PUBLIC_KEY=/d' .env.local
+    sed -i '' '/^# VAPID_PUBLIC_KEY=/d' .env.local
+    sed -i '' '/^# VAPID_PRIVATE_KEY=/d' .env.local
+    sed -i '' '/^# VAPID_SUBJECT=/d' .env.local
+  else
+    sed -i '/^# TERMINAL_JWT_SECRET=/d' .env.local
+    sed -i '/^# NEXT_PUBLIC_VAPID_PUBLIC_KEY=/d' .env.local
+    sed -i '/^# VAPID_PUBLIC_KEY=/d' .env.local
+    sed -i '/^# VAPID_PRIVATE_KEY=/d' .env.local
+    sed -i '/^# VAPID_SUBJECT=/d' .env.local
+  fi
+
   info "Generated JWT_SECRET automatically."
 else
   info ".env.local already exists, keeping it."
