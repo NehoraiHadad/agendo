@@ -112,36 +112,28 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   // Dedup-aware push: checks O(1) dedup before queueing for dispatch.
   // Returns false if the event was a duplicate.
   const dedupPushRef = useRef<(event: AgendoEvent) => boolean>(() => false);
-  const batcherRef = useRef<RAFBatcher<AgendoEvent> | null>(null);
-
-  // Initialize batcher once via useEffect to satisfy ref-during-render rules
-  useEffect(() => {
-    batcherRef.current = createRAFBatcher<AgendoEvent>((batch) => {
+  const batcherRef = useRef<RAFBatcher<AgendoEvent>>(
+    createRAFBatcher<AgendoEvent>((batch) => {
       if (batch.length === 1) {
         dispatch({ type: 'APPEND_EVENT', event: batch[0] });
       } else {
         dispatch({ type: 'APPEND_BATCH', events: batch });
       }
-    });
-
-    return () => {
-      // Flush remaining events synchronously on cleanup
-      batcherRef.current?.flush();
-      batcherRef.current = null;
-    };
-  }, []);
+    }),
+  );
 
   // Keep dedupPush in sync with current sessionId
   useEffect(() => {
     dedupPushRef.current = (event: AgendoEvent): boolean => {
       if (!sessionId) return false;
       if (!eventDedup.add(sessionId, event.id)) return false;
-      batcherRef.current?.push(event);
+      batcherRef.current.push(event);
       return true;
     };
   }, [sessionId]);
 
   const reset = useCallback(() => {
+    batcherRef.current.cancel();
     if (sessionId) {
       eventDedup.clear(sessionId);
     }
@@ -200,7 +192,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
     },
     onReconnect: () => {
       // Flush any pending batched events to ensure state is consistent.
-      batcherRef.current?.flush();
+      batcherRef.current.flush();
       // Incremental reconnect: keep existing events, lastEventId, and dedup.
       //
       // Previous behavior: RESET + resetLastEventId forced a full replay of
@@ -275,10 +267,19 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   }, [sessionId]);
 
   useEffect(() => {
+    // Drop queued events from the previous session before resetting state.
+    batcherRef.current.cancel();
     dispatch({ type: 'RESET' });
     isDoneRef.current = false;
     setHasOlderHistory(false);
   }, [sessionId]);
+
+  useEffect(() => {
+    const batcher = batcherRef.current;
+    return () => {
+      batcher.cancel();
+    };
+  }, []);
 
   // Polling fallback: periodically fetch the real session status from the API
   // in case an SSE event was missed (e.g. stale-reaper, zombie-reconciler,
