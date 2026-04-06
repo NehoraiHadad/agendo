@@ -154,7 +154,16 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
       }
     }
 
-    set({ tasksById, columns, cursors });
+    // Pre-collapse all parent tasks that have children visible in any column.
+    // This makes "collapsed by default" the initial state — users can expand manually.
+    const collapsedParents = new Set<string>();
+    for (const task of Object.values(tasksById)) {
+      if (task.parentTaskId && tasksById[task.parentTaskId]) {
+        collapsedParents.add(task.parentTaskId);
+      }
+    }
+
+    set({ tasksById, columns, cursors, collapsedParents });
   },
 
   appendToColumn: (status, tasks, nextCursor) => {
@@ -167,10 +176,19 @@ export const useTaskBoardStore = create<TaskBoardStore>((set, get) => ({
         newColumn.push(task.id);
       }
 
+      // Auto-collapse any newly visible parents introduced by pagination.
+      const newCollapsed = new Set(state.collapsedParents);
+      for (const task of tasks) {
+        if (task.parentTaskId && newTasksById[task.parentTaskId]) {
+          newCollapsed.add(task.parentTaskId);
+        }
+      }
+
       return {
         tasksById: newTasksById,
         columns: { ...state.columns, [status]: newColumn },
         cursors: { ...state.cursors, [status]: nextCursor },
+        collapsedParents: newCollapsed,
       };
     });
   },

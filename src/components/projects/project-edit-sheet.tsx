@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useDraft } from '@/hooks/use-draft';
 import { useFormSubmit } from '@/hooks/use-form-submit';
-import { Folder, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
+import { AlertTriangle, Folder, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -59,6 +59,8 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteMode, setDeleteMode] = useState<'archive' | 'purge'>('archive');
   const [deleteTasks, setDeleteTasks] = useState(false);
+  const [deleteDirectory, setDeleteDirectory] = useState(false);
+  const [confirmDirName, setConfirmDirName] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [suggestions, setSuggestions] = useState<DiscoveredProject[]>([]);
@@ -117,6 +119,8 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
     setConfirmDelete(false);
     setDeleteMode('archive');
     setDeleteTasks(false);
+    setDeleteDirectory(false);
+    setConfirmDirName('');
   }
 
   async function handleUpdate(e: React.FormEvent) {
@@ -136,9 +140,11 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
 
     try {
       if (deleteMode === 'purge') {
-        const url = deleteTasks
-          ? `/api/projects/${project.id}/purge?withTasks=true`
-          : `/api/projects/${project.id}/purge`;
+        const params = new URLSearchParams();
+        if (deleteTasks) params.set('withTasks', 'true');
+        if (deleteDirectory) params.set('withDirectory', 'true');
+        const qs = params.toString();
+        const url = `/api/projects/${project.id}/purge${qs ? `?${qs}` : ''}`;
         await apiFetch(url, { method: 'DELETE' });
       } else {
         await apiFetch(`/api/projects/${project.id}`, { method: 'DELETE' });
@@ -354,16 +360,59 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                   </div>
                 </RadioGroup>
                 {deleteMode === 'purge' && (
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="delete-tasks-sheet"
-                      checked={deleteTasks}
-                      onCheckedChange={(checked) => setDeleteTasks(checked === true)}
-                      disabled={isDeleting}
-                    />
-                    <Label htmlFor="delete-tasks-sheet" className="text-xs cursor-pointer">
-                      Also delete all linked tasks
-                    </Label>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="delete-tasks-sheet"
+                        checked={deleteTasks}
+                        onCheckedChange={(checked) => setDeleteTasks(checked === true)}
+                        disabled={isDeleting}
+                      />
+                      <Label htmlFor="delete-tasks-sheet" className="text-xs cursor-pointer">
+                        Also delete all linked tasks
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="delete-dir-sheet"
+                        checked={deleteDirectory}
+                        onCheckedChange={(checked) => {
+                          setDeleteDirectory(checked === true);
+                          if (!checked) setConfirmDirName('');
+                        }}
+                        disabled={isDeleting}
+                      />
+                      <Label htmlFor="delete-dir-sheet" className="text-xs cursor-pointer">
+                        Also delete directory from disk
+                      </Label>
+                    </div>
+                    {deleteDirectory && (
+                      <div className="rounded border border-destructive/40 bg-destructive/10 p-2 space-y-2">
+                        <div className="flex items-start gap-1.5 text-xs text-destructive">
+                          <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+                          <span>
+                            This will permanently delete{' '}
+                            <code className="font-mono font-semibold break-all">
+                              {project.rootPath}
+                            </code>{' '}
+                            from disk. This cannot be undone.
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="confirm-dir-name" className="text-xs">
+                            Type <span className="font-semibold">{project.name}</span> to confirm:
+                          </Label>
+                          <Input
+                            id="confirm-dir-name"
+                            value={confirmDirName}
+                            onChange={(e) => setConfirmDirName(e.target.value)}
+                            placeholder={project.name}
+                            className="h-7 text-xs"
+                            disabled={isDeleting}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="flex gap-2 pt-1">
@@ -377,6 +426,8 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                       setConfirmDelete(false);
                       setDeleteMode('archive');
                       setDeleteTasks(false);
+                      setDeleteDirectory(false);
+                      setConfirmDirName('');
                     }}
                   >
                     Cancel
@@ -386,7 +437,7 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                     variant="destructive"
                     size="sm"
                     className="flex-1"
-                    disabled={isDeleting}
+                    disabled={isDeleting || (deleteDirectory && confirmDirName !== project.name)}
                     onClick={handleDelete}
                   >
                     {isDeleting && <Loader2 className="size-4 mr-1.5 animate-spin" />}

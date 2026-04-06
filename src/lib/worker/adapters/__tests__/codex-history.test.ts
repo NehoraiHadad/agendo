@@ -49,7 +49,10 @@ type MockThreadItem =
       server: string;
       tool: string;
       arguments: Record<string, unknown>;
-      result: { output?: string | null } | null;
+      result: {
+        content?: Array<{ type: string; text?: string }> | null;
+        output?: string | null;
+      } | null;
       error: { message: string } | null;
       status: string;
     }
@@ -322,5 +325,37 @@ describe('mapCodexThreadToEvents', () => {
     expect(types).toContain('agent:result');
     // Two turns = two results
     expect(events.filter((e) => e.type === 'agent:result')).toHaveLength(2);
+  });
+
+  it('extracts MCP tool result from standard content blocks (not legacy output)', () => {
+    const artifactJson = JSON.stringify({
+      id: 'abc-123',
+      title: 'Test Artifact',
+      type: 'html',
+    });
+    const thread = makeThread([
+      makeTurn([
+        {
+          type: 'mcpToolCall',
+          id: 'mcp-1',
+          server: 'agendo',
+          tool: 'render_artifact',
+          arguments: { title: 'Test', content: '<html></html>' },
+          result: {
+            content: [{ type: 'text', text: artifactJson }],
+          },
+          error: null,
+          status: 'completed',
+        },
+      ]),
+    ]);
+    const events = mapCodexThreadToEvents(thread);
+
+    const toolEnd = events.find(
+      (e) => e.type === 'agent:tool-end' && (e as { toolUseId: string }).toolUseId === 'mcp-1',
+    ) as (AgendoEventPayload & { content: unknown }) | undefined;
+    expect(toolEnd).toBeDefined();
+    // Content should be the MCP content block array, not an empty string
+    expect(toolEnd!.content).toEqual([{ type: 'text', text: artifactJson }]);
   });
 });

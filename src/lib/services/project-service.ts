@@ -1,5 +1,5 @@
 import { eq, and, or, ilike } from 'drizzle-orm';
-import { access, mkdir } from 'node:fs/promises';
+import { access, mkdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
@@ -174,7 +174,20 @@ export async function restoreProject(id: string): Promise<Project> {
 
 export interface PurgeProjectOptions {
   withTasks?: boolean;
+  withDirectory?: boolean;
 }
+
+/** Paths that must never be deleted, even if they match ALLOWED_WORKING_DIRS */
+const PROTECTED_PATHS = new Set([
+  '/',
+  '/home',
+  '/tmp',
+  '/var',
+  '/etc',
+  '/usr',
+  '/root',
+  process.env.HOME ?? '/home/ubuntu',
+]);
 
 /**
  * Returns the built-in "Agendo System" project (rootPath = cwd).
@@ -199,13 +212,49 @@ export async function getOrCreateSystemProject(): Promise<Project> {
 
 export async function purgeProject(id: string, options: PurgeProjectOptions = {}): Promise<void> {
   const [existing] = await db
-    .select({ id: projects.id })
+    .select({ id: projects.id, rootPath: projects.rootPath })
     .from(projects)
     .where(eq(projects.id, id))
     .limit(1);
   requireFound(existing, 'Project', id);
+
+  // Resolve the directory path before deleting from DB (need rootPath)
+  let dirToDelete: string | null = null;
+  if (options.withDirectory && existing.rootPath) {
+    const normalized = resolve(existing.rootPath);
+
+    // Safety: must be under an allowed working dir
+    const isAllowed = allowedWorkingDirs.some(
+      (allowed) => normalized.startsWith(allowed + '/') && normalized !== allowed,
+    );
+    if (!isAllowed) {
+      throw new ValidationError(
+        `Cannot delete directory outside allowed paths: ${allowedWorkingDirs.join(', ')}`,
+      );
+    }
+
+    // Safety: must not be a protected system path
+    if (PROTECTED_PATHS.has(normalized)) {
+      throw new ValidationError(`Cannot delete protected path: ${normalized}`);
+    }
+
+    // Safety: must be at least 3 levels deep (e.g. /home/user/project)
+    const depth = normalized.split('/').filter(Boolean).length;
+    if (depth < 3) {
+      throw new ValidationError(`Path too shallow to delete safely: ${normalized}`);
+    }
+
+    dirToDelete = normalized;
+  }
+
+  // Delete from DB first
   if (options.withTasks) {
     await db.delete(tasks).where(eq(tasks.projectId, id));
   }
   await db.delete(projects).where(eq(projects.id, id));
+
+  // Delete directory from disk after DB cleanup
+  if (dirToDelete) {
+    await rm(dirToDelete, { recursive: true, force: true });
+  }
 }

@@ -18,6 +18,7 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
 import { buildToolStartEvent, buildToolEndEvent } from '@/lib/realtime/event-builders';
 import {
   normalizeThreadItem,
+  extractMcpContent,
   type AppServerAgentMessageItem,
   type AppServerReasoningItem,
   type AppServerCommandExecutionItem,
@@ -141,7 +142,7 @@ function mapThreadItemToEvents(item: ReturnType<typeof normalizeThreadItem>): Ag
           arguments: mcp.arguments,
         }),
       );
-      const content = mcp.result?.output ?? mcp.error?.message ?? '';
+      const content = extractMcpContent(mcp.result) ?? mcp.error?.message ?? '';
       events.push(buildToolEndEvent(mcp.id, content));
       return events;
     }

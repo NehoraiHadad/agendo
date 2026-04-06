@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   mapAppServerEventToPayloads,
   isAppServerSyntheticEvent,
+  normalizeThreadItem,
   type AppServerSyntheticEvent,
+  type AppServerMcpToolCallItem,
 } from '../codex-app-server-event-mapper';
 
 describe('mapAppServerEventToPayloads', () => {
@@ -139,6 +141,181 @@ describe('mapAppServerEventToPayloads', () => {
           content: 'streaming stdout\n',
         },
       ]);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // as:item.completed mcpToolCall — MCP result content extraction
+  // -----------------------------------------------------------------------
+  describe('as:item.completed mcpToolCall → agent:tool-end', () => {
+    it('extracts content from standard MCP content blocks (render_artifact)', () => {
+      const artifactJson = JSON.stringify({
+        id: '7ea4a741-4c9a-452d-a60e-68f86482895d',
+        title: 'Pipeline Size Check',
+        type: 'html',
+      });
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_abc123',
+          server: 'agendo',
+          tool: 'render_artifact',
+          arguments: { title: 'Test', content: '<html></html>' },
+          result: {
+            content: [{ type: 'text', text: artifactJson }],
+            structuredContent: null,
+          },
+          error: null,
+          status: 'completed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: 'agent:tool-end',
+        toolUseId: 'call_abc123',
+      });
+      // Content should be the MCP content block array — extractToolContent() in
+      // the frontend will then extract the text from it.
+      const toolEnd = result[0] as { content: unknown };
+      expect(toolEnd.content).toEqual([{ type: 'text', text: artifactJson }]);
+    });
+
+    it('extracts content from multiple text blocks', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_multi',
+          server: 'agendo',
+          tool: 'list_tasks',
+          arguments: {},
+          result: {
+            content: [
+              { type: 'text', text: 'Task 1' },
+              { type: 'text', text: 'Task 2' },
+            ],
+          },
+          error: null,
+          status: 'completed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      const toolEnd = result[0] as { content: unknown };
+      expect(toolEnd.content).toEqual([
+        { type: 'text', text: 'Task 1' },
+        { type: 'text', text: 'Task 2' },
+      ]);
+    });
+
+    it('falls back to legacy output field', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_legacy',
+          server: 'agendo',
+          tool: 'get_task',
+          arguments: {},
+          result: { output: 'legacy result text' },
+          error: null,
+          status: 'completed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      const toolEnd = result[0] as { content: unknown };
+      expect(toolEnd.content).toBe('legacy result text');
+    });
+
+    it('falls back to error message when result is null', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_err',
+          server: 'agendo',
+          tool: 'render_artifact',
+          arguments: {},
+          result: null,
+          error: { message: 'Tool execution failed' },
+          status: 'failed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      const toolEnd = result[0] as { content: unknown };
+      expect(toolEnd.content).toBe('Tool execution failed');
+    });
+
+    it('returns empty string when both result and error are null', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_empty',
+          server: 'agendo',
+          tool: 'update_task',
+          arguments: {},
+          result: null,
+          error: null,
+          status: 'completed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      const toolEnd = result[0] as { content: unknown };
+      expect(toolEnd.content).toBe('');
+    });
+
+    it('handles result with empty content array', () => {
+      const event: AppServerSyntheticEvent = {
+        type: 'as:item.completed',
+        item: {
+          type: 'mcpToolCall',
+          id: 'call_empty_content',
+          server: 'agendo',
+          tool: 'update_task',
+          arguments: {},
+          result: { content: [] },
+          error: null,
+          status: 'completed',
+        } as AppServerMcpToolCallItem,
+      };
+      const result = mapAppServerEventToPayloads(event);
+      expect(result).toHaveLength(1);
+      const toolEnd = result[0] as { content: unknown };
+      // Empty content array falls through to empty string
+      expect(toolEnd.content).toBe('');
+    });
+  });
+});
+
+// -----------------------------------------------------------------------
+// normalizeThreadItem — mcpToolCall result shape
+// -----------------------------------------------------------------------
+describe('normalizeThreadItem mcpToolCall', () => {
+  it('preserves MCP content block result shape', () => {
+    const raw = {
+      type: 'mcpToolCall',
+      id: 'call_norm1',
+      server: 'agendo',
+      tool: 'render_artifact',
+      arguments: { title: 'Test' },
+      result: {
+        content: [{ type: 'text', text: '{"id":"abc"}' }],
+        structuredContent: null,
+      },
+      error: null,
+      status: 'completed',
+    };
+    const normalized = normalizeThreadItem(raw) as AppServerMcpToolCallItem;
+    expect(normalized).not.toBeNull();
+    expect(normalized.result).toEqual({
+      content: [{ type: 'text', text: '{"id":"abc"}' }],
+      structuredContent: null,
     });
   });
 });

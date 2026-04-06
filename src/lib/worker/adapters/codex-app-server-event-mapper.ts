@@ -74,13 +74,32 @@ export interface AppServerFileChangeItem {
   status: string;
 }
 
+/** Content block inside an MCP tool result (standard MCP format). */
+export interface McpContentBlock {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * MCP tool result as returned by Codex app-server.
+ * Codex wraps MCP results in the standard `{ content: ContentBlock[] }` shape,
+ * NOT a flat `{ output: string }`.
+ */
+export interface AppServerMcpResult {
+  content?: McpContentBlock[] | null;
+  structuredContent?: unknown;
+  /** Legacy / fallback — some older Codex builds may use a flat `output` field. */
+  output?: string | null;
+}
+
 export interface AppServerMcpToolCallItem {
   type: 'mcpToolCall';
   id: string;
   server: string;
   tool: string;
   arguments: Record<string, unknown>;
-  result: { output?: string | null } | null;
+  result: AppServerMcpResult | null;
   error: { message: string } | null;
   status: string;
 }
@@ -127,6 +146,39 @@ function toolInputForItem(item: AppServerItem): Record<string, unknown> {
     default:
       return {};
   }
+}
+
+// ---------------------------------------------------------------------------
+// MCP result content extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract displayable content from a Codex MCP tool result.
+ *
+ * Codex app-server returns MCP results in the standard MCP format:
+ *   { content: [{type:'text', text:'...'}, ...], structuredContent?: ... }
+ *
+ * We return the content array as-is so that the frontend's `extractToolContent()`
+ * (in session-chat-utils.ts) can handle it the same way it handles Claude's
+ * tool_result content blocks.
+ *
+ * Falls back to `result.output` for any legacy/future Codex builds that use
+ * a flat string field.
+ */
+export function extractMcpContent(result: AppServerMcpResult | null): unknown {
+  if (!result) return null;
+
+  // Standard MCP content blocks — pass through as array for extractToolContent()
+  if (Array.isArray(result.content) && result.content.length > 0) {
+    return result.content;
+  }
+
+  // Legacy flat output field
+  if (typeof result.output === 'string') {
+    return result.output;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +252,11 @@ export function mapAppServerEventToPayloads(event: AppServerSyntheticEvent): Age
 
       if (item.type === 'mcpToolCall') {
         const mcp = item as AppServerMcpToolCallItem;
-        const content = mcp.result?.output ?? mcp.error?.message ?? '';
+        // Codex app-server returns MCP results using the standard MCP content block
+        // format: { content: [{type:'text', text:'...'}] }. Extract text blocks and
+        // pass them through as the content array so extractToolContent() in the
+        // frontend handles them identically to Claude's tool_result blocks.
+        const content = extractMcpContent(mcp.result) ?? mcp.error?.message ?? '';
         return [buildToolEndEvent(mcp.id, content)];
       }
 
@@ -401,7 +457,7 @@ export function normalizeThreadItem(
         server: (item.server as string) ?? '',
         tool: (item.tool as string) ?? '',
         arguments: (item.arguments as Record<string, unknown>) ?? {},
-        result: (item.result as { output?: string | null } | null) ?? null,
+        result: (item.result as AppServerMcpResult | null) ?? null,
         error: (item.error as { message: string } | null) ?? null,
         status: (item.status as string) ?? '',
       } as AppServerMcpToolCallItem;
