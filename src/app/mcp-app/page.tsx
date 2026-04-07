@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef, Suspense, useMemo } from 'react';
+import { useState, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { App } from '@modelcontextprotocol/ext-apps';
-import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
 import DOMPurify from 'isomorphic-dompurify';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 
@@ -14,6 +13,10 @@ interface ArtifactData {
   content: string;
 }
 
+// ---------------------------------------------------------------------------
+// ArtifactViewer — the inner component that uses the useApp hook
+// ---------------------------------------------------------------------------
+
 function ArtifactViewer() {
   const searchParams = useSearchParams();
   const artifactId = searchParams.get('artifactId');
@@ -21,7 +24,6 @@ function ArtifactViewer() {
 
   const [artifact, setArtifact] = useState<ArtifactData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const appRef = useRef<App | null>(null);
 
   // Sanitize SVG content — strips script elements and event handlers while preserving shapes.
   const sanitizedSvg = useMemo(() => {
@@ -42,41 +44,61 @@ function ArtifactViewer() {
     }
   }
 
-  useEffect(() => {
-    // Fast path: when artifactId is in the URL, fetch immediately without
-    // waiting for the MCP App bridge handshake (which can be slow/fail).
-    if (artifactId) {
-      void fetchArtifact(artifactId);
-    }
-
-    // Also set up the MCP App bridge for external hosts (Claude.ai, Cursor)
-    // that provide artifact data via PostMessage instead of URL params.
-    const app = new App({ name: 'AgendoArtifactViewer', version: '1.0.0' });
-    appRef.current = app;
-
-    app.ontoolresult = (result) => {
-      const text = result.content?.find(
-        (c): c is { type: 'text'; text: string } => c.type === 'text',
-      )?.text;
-      if (!text) return;
-      try {
-        const data = JSON.parse(text) as { id: string; title: string; type: 'html' | 'svg' };
-        void fetchArtifact(data.id);
-      } catch {
-        setError('Failed to parse artifact data');
+  // ---------------------------------------------------------------------------
+  // MCP App bridge — useApp replaces manual App + PostMessageTransport setup.
+  // onAppCreated is called before the connect() handshake, so handlers are
+  // guaranteed to be in place before the first message from the host arrives.
+  // ---------------------------------------------------------------------------
+  const { app } = useApp({
+    appInfo: { name: 'AgendoArtifactViewer', version: '1.0.0' },
+    capabilities: {},
+    onAppCreated: (instance) => {
+      // Fast path: if artifactId is in the URL, fetch it immediately without
+      // waiting for the bridge (works for external hosts and standalone mode).
+      if (artifactId) {
+        void fetchArtifact(artifactId);
       }
-    };
 
-    const transport = new PostMessageTransport(window.parent, window.parent);
-    app.connect(transport).catch((err: Error) => {
-      console.warn('MCP App connect failed (standalone mode):', err.message);
-      // artifactId already handled above — no duplicate fetch needed
-    });
+      // tool-input: host sends this notification before tool-result, allowing
+      // us to show artifact-specific loading state (title, type) early.
+      instance.ontoolinput = (input) => {
+        const args = input.arguments as { title?: string; type?: string } | undefined;
+        // Future: use args to show "rendering <title>…" skeleton
+        void args;
+      };
 
-    return () => {
-      app.close().catch(() => {});
-    };
-  }, [artifactId]);
+      // tool-result: host sends the completed artifact metadata (id, title, type).
+      instance.ontoolresult = (result) => {
+        const text = result.content?.find(
+          (c): c is { type: 'text'; text: string } => c.type === 'text',
+        )?.text;
+        if (!text) return;
+        try {
+          const data = JSON.parse(text) as { id: string; title: string; type: 'html' | 'svg' };
+          // Only fetch if we haven't already loaded via URL fast path
+          if (!artifact) void fetchArtifact(data.id);
+        } catch {
+          setError('Failed to parse artifact data');
+        }
+      };
+
+      instance.onerror = (err: Error) => {
+        // Connect failure is expected in standalone mode (no host)
+        if (!artifactId) {
+          // No URL params either — genuine error
+          console.warn('MCP App error (no artifactId fallback):', err.message);
+        }
+      };
+    },
+  });
+
+  // Apply host theme (CSS variables + color-scheme) so the artifact viewer
+  // matches the host's dark/light mode automatically.
+  useHostStyles(app, app?.getHostContext());
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   if (error) {
     return (
@@ -90,7 +112,9 @@ function ArtifactViewer() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 bg-[oklch(0.075_0_0)]">
         <div className="h-5 w-5 rounded-full border-2 border-white/10 border-t-white/40 animate-spin" />
-        <span className="text-[11px] text-white/25 font-mono tracking-wider">loading…</span>
+        <span className="text-[11px] text-white/25 font-mono tracking-wider">
+          {title !== 'Artifact' ? `loading ${title}…` : 'loading…'}
+        </span>
       </div>
     );
   }
@@ -106,11 +130,16 @@ function ArtifactViewer() {
     );
   }
 
-  // HTML artifact: render in inner sandboxed iframe (no allow-same-origin).
+  // HTML artifact: render in inner sandboxed iframe.
+  // allow-same-origin is required by the MCP Apps spec (2026-01-26) and enables
+  // external font loading (Google Fonts, @import), CSS animations, and other
+  // sub-resource requests that browsers may restrict from null-origin frames.
+  // The iframe content is already isolated by the outer ArtifactCard iframe which
+  // prevents direct DOM/cookie access to the main agendo origin.
   return (
     <iframe
       srcDoc={artifact.content}
-      sandbox="allow-scripts allow-forms"
+      sandbox="allow-scripts allow-same-origin allow-forms"
       className="w-full h-full border-0"
       title={artifact.title ?? title}
     />
