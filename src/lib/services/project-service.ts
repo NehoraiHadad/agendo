@@ -1,5 +1,5 @@
 import { eq, and, or, ilike } from 'drizzle-orm';
-import { access, mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { buildFilters } from '@/lib/db/filter-builder';
 import { db } from '@/lib/db';
@@ -8,6 +8,7 @@ import { projects, tasks } from '@/lib/db/schema';
 import { NotFoundError, ValidationError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import { detectGitHubRepo } from '@/lib/services/github-service';
+import { getProjectPathStatus, validateProjectPath } from '@/lib/services/project-path-service';
 import type { Project } from '@/lib/types';
 
 // --- Types ---
@@ -73,25 +74,14 @@ export async function searchProjects(q: string, limit = 5): Promise<SearchProjec
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
-  const normalized = resolve(input.rootPath);
+  const pathStatus = await getProjectPathStatus(input.rootPath);
+  const normalized = await validateProjectPath(input.rootPath);
 
-  try {
-    await access(normalized);
-  } catch {
-    if (input.createDir) {
-      // Verify path is under an allowed directory before creating
-      const isAllowed = allowedWorkingDirs.some(
-        (allowed) => normalized === allowed || normalized.startsWith(allowed + '/'),
-      );
-      if (!isAllowed) {
-        throw new ValidationError(
-          `Cannot create directory outside allowed paths: ${allowedWorkingDirs.join(', ')}`,
-        );
-      }
-      await mkdir(normalized, { recursive: true });
-    } else {
+  if (pathStatus.status === 'creatable') {
+    if (!input.createDir) {
       throw new Error(`rootPath does not exist on disk: ${normalized}`);
     }
+    await mkdir(normalized, { recursive: true });
   }
 
   // Auto-detect GitHub repo from git remotes
@@ -118,13 +108,14 @@ export async function updateProject(id: string, input: UpdateProjectInput): Prom
 
   // If rootPath is changing, validate the new path exists and re-detect GitHub repo.
   let githubRepo: string | null | undefined;
+  let rootPath: string | undefined;
   if (input.rootPath) {
-    try {
-      await access(input.rootPath);
-    } catch {
-      throw new Error(`rootPath does not exist on disk: ${input.rootPath}`);
+    const status = await getProjectPathStatus(input.rootPath);
+    if (status.status !== 'exists') {
+      throw new Error(`rootPath does not exist on disk: ${status.normalizedPath}`);
     }
-    const repoInfo = await detectGitHubRepo(input.rootPath);
+    rootPath = await validateProjectPath(input.rootPath);
+    const repoInfo = await detectGitHubRepo(rootPath);
     githubRepo = repoInfo?.fullName ?? null;
   }
 
@@ -132,6 +123,7 @@ export async function updateProject(id: string, input: UpdateProjectInput): Prom
     .update(projects)
     .set({
       ...input,
+      ...(rootPath ? { rootPath } : {}),
       ...(githubRepo !== undefined ? { githubRepo } : {}),
       updatedAt: new Date(),
     })

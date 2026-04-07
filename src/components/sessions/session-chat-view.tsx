@@ -58,6 +58,13 @@ import type { SessionStatus } from '@/lib/realtime/events';
 // Keep in sync with the TOOL_RENDERERS registry in interactive-tools.tsx.
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
 
+// render_artifact tools always render standalone — never grouped into ToolGroup.
+// This ensures the artifact preview is always visible inline in the chat without
+// the user needing to expand a collapsed tool panel.
+function isArtifactTool(toolName: string): boolean {
+  return toolName === 'render_artifact' || toolName.endsWith('__render_artifact');
+}
+
 // Context that propagates agentSlug to ToolCard without prop drilling through
 // renderAssistantParts → ToolGroup → ToolCard.
 const AgentSlugContext = createContext<string | undefined>(undefined);
@@ -279,8 +286,7 @@ const ToolCard = memo(function ToolCard({
 
   // render_artifact: when the tool has a successful result, render ArtifactCard.
   // Match both bare name (from MCP server) and namespaced name (from Claude Code: mcp__agendo__render_artifact).
-  const isRenderArtifact =
-    tool.toolName === 'render_artifact' || tool.toolName.endsWith('__render_artifact');
+  const isRenderArtifact = isArtifactTool(tool.toolName);
 
   // Still executing — show loading skeleton immediately so the user knows it's happening.
   if (isRenderArtifact && !tool.result) {
@@ -744,17 +750,19 @@ function renderAssistantParts(parts: AssistantPart[], sessionId: string): React.
       }
       i++;
     } else {
-      // Collect consecutive regular tool parts (break at AskUserQuestion)
+      // Collect consecutive regular tool parts.
+      // Break at AskUserQuestion and render_artifact — both always render standalone.
       const toolGroup: ToolState[] = [];
       while (i < parts.length && parts[i].kind === 'tool') {
         const tp = parts[i] as { kind: 'tool'; tool: ToolState };
         if (tp.tool.toolName === 'AskUserQuestion') break;
+        if (isArtifactTool(tp.tool.toolName)) break;
         toolGroup.push(tp.tool);
         i++;
       }
 
       if (toolGroup.length === 0) {
-        // AskUserQuestion — always standalone
+        // AskUserQuestion or render_artifact — always standalone
         const tp = parts[i] as { kind: 'tool'; tool: ToolState };
         result.push(<ToolCard key={tp.tool.toolUseId} tool={tp.tool} sessionId={sessionId} />);
         i++;
