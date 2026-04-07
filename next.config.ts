@@ -34,20 +34,27 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
   },
   async headers() {
-    // CSP for /mcp-app — this page is sandboxed inside an iframe and renders
-    // agent-generated artifacts. Restrictive policy per MCP Apps spec 2026-01-26:
-    // hosts must enforce CSP when the MCP server does not declare ui.csp.
-    // - script-src / style-src: 'unsafe-inline' required for Next.js inline bundles
-    // - connect-src 'self': only our own API (/api/artifacts/:id)
-    // - frame-src 'self' blob: data:: inner srcdoc iframe (artifact HTML content)
-    // - img-src: data: / blob: for inline images in artifacts
-    // - report-uri: logs violations for security auditing
+    // CSP for /mcp-app — this page sandboxes agent-generated artifact HTML.
+    // IMPORTANT: the inner artifact <iframe srcDoc> uses allow-same-origin, so it
+    // INHERITS this CSP. Whitelisted CDNs must cover both the outer React page and
+    // the artifact HTML content (Chart.js, D3, Anime.js, Three.js, Google Fonts).
+    //
+    // Security boundaries:
+    // - connect-src 'self': artifacts CANNOT fetch external APIs (data exfiltration risk)
+    // - script-src: only trusted CDN hosts — no arbitrary script injection
+    // - style-src: Google Fonts allowed for artifact aesthetics
     const mcpAppCsp = [
       "default-src 'none'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self' data:",
+      // Trusted CDNs used by artifacts per the agendo-artifact-design skill:
+      // Chart.js, D3, Anime.js, Three.js via jsdelivr/cdnjs/unpkg
+      "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com unpkg.com",
+      // Google Fonts @import is the standard for artifact typography
+      "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
+      // Images from any source are safe (cannot exfiltrate structured data)
+      'img-src *',
+      // Google Fonts font files + self-hosted fonts
+      "font-src 'self' data: fonts.gstatic.com",
+      // Artifacts may only connect back to Agendo's own API (/api/artifacts/:id)
       "connect-src 'self'",
       "frame-src 'self' blob: data:",
       'worker-src blob:',
