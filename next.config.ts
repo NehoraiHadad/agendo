@@ -34,6 +34,26 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
   },
   async headers() {
+    // CSP for /mcp-app — this page is sandboxed inside an iframe and renders
+    // agent-generated artifacts. Restrictive policy per MCP Apps spec 2026-01-26:
+    // hosts must enforce CSP when the MCP server does not declare ui.csp.
+    // - script-src / style-src: 'unsafe-inline' required for Next.js inline bundles
+    // - connect-src 'self': only our own API (/api/artifacts/:id)
+    // - frame-src 'self' blob: data:: inner srcdoc iframe (artifact HTML content)
+    // - img-src: data: / blob: for inline images in artifacts
+    // - report-uri: logs violations for security auditing
+    const mcpAppCsp = [
+      "default-src 'none'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-src 'self' blob: data:",
+      'worker-src blob:',
+      'report-uri /api/csp-report',
+    ].join('; ');
+
     return [
       {
         source: '/sw.js',
@@ -42,6 +62,10 @@ const nextConfig: NextConfig = {
           { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
           { key: 'Content-Security-Policy', value: "default-src 'self'; script-src 'self'" },
         ],
+      },
+      {
+        source: '/mcp-app',
+        headers: [{ key: 'Content-Security-Policy', value: mcpAppCsp }],
       },
     ];
   },
