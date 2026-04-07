@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+import {
+  AppBridge,
+  PostMessageTransport,
+  type McpUiHostContext,
+  type McpUiDisplayMode,
+  type McpUiStyles,
+} from '@modelcontextprotocol/ext-apps/app-bridge';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ExternalLink, Maximize2, Minimize2, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -109,6 +115,52 @@ function ArtifactTypeIcon({ type, className }: { type?: 'html' | 'svg'; classNam
 }
 
 // ---------------------------------------------------------------------------
+// Host context helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the initial McpUiHostContext for a new bridge connection.
+ * Sends agendo's dark theme CSS variables, display mode, and container
+ * dimensions to the artifact app so it can adapt its styling.
+ */
+function buildHostContext(opts: {
+  displayMode: McpUiDisplayMode;
+  containerWidth: number;
+  containerHeight: number;
+}): McpUiHostContext {
+  return {
+    theme: 'dark',
+    platform: 'web',
+    displayMode: opts.displayMode,
+    availableDisplayModes: ['inline', 'fullscreen'],
+    containerDimensions: { width: opts.containerWidth, height: opts.containerHeight },
+    // Agendo dark theme CSS variables — allow artifacts to match the host UI.
+    // Cast as McpUiStyles: the type requires all keys but treats absent ones as
+    // undefined, which is valid at runtime per the Record<Key, string|undefined> spec.
+    styles: {
+      variables: {
+        '--color-background-primary': 'oklch(0.075 0 0)',
+        '--color-background-secondary': 'oklch(0.11 0 0)',
+        '--color-background-tertiary': 'oklch(0.14 0 0)',
+        '--color-text-primary': 'oklch(0.93 0 0)',
+        '--color-text-secondary': 'oklch(0.65 0 0)',
+        '--color-text-tertiary': 'oklch(0.45 0 0)',
+        '--color-border-primary': 'oklch(0.93 0 0 / 0.08)',
+        '--color-border-secondary': 'oklch(0.93 0 0 / 0.05)',
+        '--font-sans':
+          'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        '--font-mono': 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
+        '--border-radius-sm': '4px',
+        '--border-radius-md': '8px',
+        '--border-radius-lg': '12px',
+        // McpUiStyles requires all keys but treats absent ones as undefined —
+        // cast via unknown to provide only the subset we define.
+      } as unknown as McpUiStyles,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -118,6 +170,12 @@ export interface ArtifactCardProps {
   artifactType?: 'html' | 'svg';
   /** Raw tool result content from agent:tool-end (JSON string of artifact object) */
   toolResultText?: string;
+  /**
+   * Tool call arguments passed to render_artifact (title, type, etc.).
+   * When provided, sent to the artifact app as tool-input before the result,
+   * allowing it to show a skeleton with artifact-specific context.
+   */
+  toolInput?: Record<string, unknown>;
   /** Agent slug (e.g. 'claude-code-1') — drives the accent color theme */
   agentSlug?: string;
   /** True while the tool is still executing — shows an animated skeleton */
@@ -133,6 +191,7 @@ export function ArtifactCard({
   title,
   artifactType = 'html',
   toolResultText,
+  toolInput,
   agentSlug,
   isLoading = false,
 }: ArtifactCardProps) {
@@ -140,15 +199,50 @@ export function ArtifactCard({
   const [shimmerFade0, shimmerFade50] = SHIMMER_COLORS[resolveVariant(agentSlug)];
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<AppBridge | null>(null);
+
+  // Bridge lifecycle state
   const [iframeReady, setIframeReady] = useState(false);
+  const [bridgeReady, setBridgeReady] = useState(false);
+
+  // Display mode state — starts as 'inline', can be requested to 'fullscreen'
+  const [displayMode, setDisplayMode] = useState<McpUiDisplayMode>('inline');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Track native fullscreen state
+  // Container dimensions tracked by ResizeObserver
+  const [containerSize, setContainerSize] = useState({ width: 640, height: 420 });
+
+  // Track native fullscreen state and sync with displayMode
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onChange = () => {
+      const inFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(inFullscreen);
+      const newMode: McpUiDisplayMode = inFullscreen ? 'fullscreen' : 'inline';
+      setDisplayMode(newMode);
+      // Notify the artifact app of the display mode change (setHostContext returns void)
+      bridgeRef.current?.setHostContext({ displayMode: newMode });
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // ResizeObserver — tracks container dimensions and forwards them to the app
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      const rounded = { width: Math.round(width), height: Math.round(height) };
+      setContainerSize(rounded);
+      // Push updated dimensions to the running bridge (setHostContext returns void)
+      bridgeRef.current?.setHostContext({
+        containerDimensions: { width: rounded.width, height: rounded.height },
+      });
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   const toggleFullscreen = useCallback(async () => {
@@ -165,18 +259,40 @@ export function ArtifactCard({
     backgroundSize: '200% 100%',
   };
 
-  const setupBridge = useCallback(() => {
-    if (!iframeRef.current?.contentWindow || !toolResultText) return;
-    setIframeReady(true);
+  // ---------------------------------------------------------------------------
+  // Bridge setup — called once when the iframe finishes loading
+  // ---------------------------------------------------------------------------
 
-    const bridge = new AppBridge(null, { name: 'Agendo', version: '1.0.0' }, {});
+  const setupBridge = useCallback(() => {
+    setIframeReady(true);
+    if (!iframeRef.current?.contentWindow) return;
+
+    const hostContext = buildHostContext({
+      displayMode,
+      containerWidth: containerSize.width,
+      containerHeight: containerSize.height,
+    });
+
+    // AppBridge(client, hostInfo, capabilities, options)
+    // hostContext is passed in the 4th HostOptions parameter (not capabilities).
+    const bridge = new AppBridge(null, { name: 'Agendo', version: '1.0.0' }, {}, { hostContext });
 
     bridge.oninitialized = () => {
-      bridge
-        .sendToolResult({
-          content: [{ type: 'text', text: toolResultText }],
-        })
-        .catch(console.error);
+      setBridgeReady(true);
+    };
+
+    // Handle display mode requests from the artifact app
+    bridge.onrequestdisplaymode = async ({ mode }) => {
+      if (mode === 'fullscreen' && iframeRef.current) {
+        try {
+          await iframeRef.current.requestFullscreen();
+          return { mode: 'fullscreen' };
+        } catch {
+          // Fullscreen request may be denied (e.g. not triggered by user gesture)
+        }
+      }
+      // Unsupported mode or failed request — return current mode
+      return { mode: displayMode };
     };
 
     bridge.oncalltool = async (params) => {
@@ -194,7 +310,32 @@ export function ArtifactCard({
     );
     bridge.connect(transport).catch(console.error);
     bridgeRef.current = bridge;
-  }, [toolResultText]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on iframe load — dependencies intentionally excluded
+
+  // ---------------------------------------------------------------------------
+  // Send tool-input notification after bridge is ready
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!bridgeReady || !toolInput || !bridgeRef.current) return;
+    void bridgeRef.current.sendToolInput({ arguments: toolInput }).catch(console.error);
+  }, [bridgeReady, toolInput]);
+
+  // ---------------------------------------------------------------------------
+  // Send tool-result notification when execution completes
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!bridgeReady || !toolResultText || !bridgeRef.current) return;
+    void bridgeRef.current
+      .sendToolResult({ content: [{ type: 'text', text: toolResultText }] })
+      .catch(console.error);
+  }, [bridgeReady, toolResultText]);
+
+  // ---------------------------------------------------------------------------
+  // Teardown bridge on unmount
+  // ---------------------------------------------------------------------------
 
   useEffect(() => {
     return () => {
@@ -202,11 +343,19 @@ export function ArtifactCard({
     };
   }, []);
 
+  // Preload URL: always load the /mcp-app page as soon as we have a title.
+  // Including artifactId in the URL enables the fast-path fetch in /mcp-app
+  // (no bridge wait needed). Without artifactId the app shows a loading
+  // spinner and waits for the bridge to send tool-result.
+  const baseUrl = `/mcp-app?title=${encodeURIComponent(title)}&type=${artifactType}`;
   const viewerUrl = artifactId
-    ? `/mcp-app?artifactId=${encodeURIComponent(artifactId)}&title=${encodeURIComponent(title)}&type=${artifactType}`
-    : null;
+    ? `${baseUrl}&artifactId=${encodeURIComponent(artifactId)}`
+    : baseUrl;
 
-  // Shared header JSX (inlined to avoid react-hooks/static-components violation)
+  // ---------------------------------------------------------------------------
+  // Shared header
+  // ---------------------------------------------------------------------------
+
   const headerJsx = (shimmerTitle: boolean) => (
     <div
       className={cn('flex items-center gap-2 px-3 py-2 border-b border-white/[0.06]', v.headerBg)}
@@ -249,49 +398,23 @@ export function ArtifactCard({
               <Maximize2 className="h-3.5 w-3.5" />
             )}
           </button>
-          {viewerUrl && (
-            <a
-              href={viewerUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1 rounded hover:bg-white/[0.07] text-white/25 hover:text-white/55 transition-colors"
-              title="Open in new tab"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
+          <a
+            href={viewerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-1 rounded hover:bg-white/[0.07] text-white/25 hover:text-white/55 transition-colors"
+            title="Open in new tab"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
         </div>
       )}
     </div>
   );
 
   // ---------------------------------------------------------------------------
-  // Loading skeleton
-  // ---------------------------------------------------------------------------
-
-  if (isLoading) {
-    return (
-      <div
-        className={cn(
-          'my-3 rounded-lg border border-white/[0.07] overflow-hidden border-l-2',
-          v.borderL,
-        )}
-      >
-        {headerJsx(true)}
-        <div className="relative overflow-hidden" style={{ height: 180 }}>
-          <div className="absolute inset-0 bg-[oklch(0.075_0_0)]" />
-          <div className="absolute inset-0 animate-shimmer" style={shimmerStyle} />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5">
-            <Loader2 className={cn('h-5 w-5 animate-spin opacity-30', v.accentText)} />
-            <span className="text-[11px] text-white/20 font-mono tracking-wider">generating…</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Loaded artifact
+  // Render — the iframe is always rendered (for bridge continuity and preloading).
+  // An overlay is shown during the loading / not-yet-ready phases.
   // ---------------------------------------------------------------------------
 
   return (
@@ -301,31 +424,50 @@ export function ArtifactCard({
         v.borderL,
       )}
     >
-      {headerJsx(false)}
+      {headerJsx(isLoading)}
 
-      <div className="relative" style={{ height: 420 }}>
-        {/* Spinner overlay until iframe signals ready */}
-        {!iframeReady && (
+      {/* Container — responsive min-height, grows with content up to 600px */}
+      <div
+        ref={containerRef}
+        className="relative"
+        style={{ minHeight: 180, height: isLoading ? 180 : 420 }}
+      >
+        {/* Skeleton overlay: tool is still executing */}
+        {isLoading && (
+          <div className="absolute inset-0 z-10 pointer-events-none">
+            <div className="absolute inset-0 bg-[oklch(0.075_0_0)]" />
+            <div className="absolute inset-0 animate-shimmer" style={shimmerStyle} />
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5">
+              <Loader2 className={cn('h-5 w-5 animate-spin opacity-30', v.accentText)} />
+              <span className="text-[11px] text-white/20 font-mono tracking-wider">
+                generating…
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* iframe spinner overlay: iframe loaded but bridge not yet ready */}
+        {!isLoading && !iframeReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-[oklch(0.075_0_0)] z-10">
             <Loader2 className={cn('h-5 w-5 animate-spin opacity-25', v.accentText)} />
           </div>
         )}
 
-        {viewerUrl && (
-          <iframe
-            ref={iframeRef}
-            src={viewerUrl}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-fullscreen"
-            allow="fullscreen"
-            allowFullScreen
-            className={cn(
-              'w-full h-full border-0 transition-opacity duration-300',
-              iframeReady ? 'opacity-100' : 'opacity-0',
-            )}
-            title={title}
-            onLoad={setupBridge}
-          />
-        )}
+        {/* The iframe is always rendered so the bridge can preload during skeleton phase */}
+        <iframe
+          ref={iframeRef}
+          src={viewerUrl}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-fullscreen"
+          allow="fullscreen"
+          allowFullScreen
+          className={cn(
+            'w-full h-full border-0 transition-opacity duration-300',
+            // Hide iframe visually during loading overlay (still preloads in background)
+            isLoading || !iframeReady ? 'opacity-0' : 'opacity-100',
+          )}
+          title={title}
+          onLoad={setupBridge}
+        />
       </div>
     </div>
   );
