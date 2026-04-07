@@ -155,7 +155,14 @@ export function registerArtifactTools(server: McpServer): void {
           .default('html')
           .describe('Content type: "html" for full HTML documents, "svg" for SVG markup'),
       },
-      _meta: { ui: { resourceUri: VIEWER_URI } },
+      // visibility: ["model"] means only the AI agent sees this tool.
+      // The artifact app (iframe) doesn't need to call render_artifact on itself.
+      _meta: {
+        ui: {
+          resourceUri: VIEWER_URI,
+          visibility: ['model'],
+        },
+      },
     },
     (args: { title: string; content: string; type?: 'html' | 'svg' }) =>
       wrapToolCall(() => handleRenderArtifact(args)),
@@ -165,7 +172,21 @@ export function registerArtifactTools(server: McpServer): void {
     server,
     'Agendo Artifact Viewer',
     VIEWER_URI,
-    { description: 'Interactive artifact viewer for Agendo. Renders HTML/SVG artifacts inline.' },
+    {
+      description: 'Interactive artifact viewer for Agendo. Renders HTML/SVG artifacts inline.',
+      _meta: {
+        ui: {
+          // Tell external hosts (Claude.ai, Cursor) to show a border — our artifact card
+          // already applies agent-themed styling around the iframe.
+          prefersBorder: true,
+          // CSP: the viewer fetches artifact content from the Agendo server only.
+          // connectDomains is intentionally omitted here; the Agendo host enforces
+          // the CSP via next.config.ts headers. External hosts should restrict
+          // connect-src to the configured agendoBase URL.
+          csp: {},
+        },
+      },
+    },
     async () => ({
       contents: [{ uri: VIEWER_URI, mimeType: RESOURCE_MIME_TYPE, text: VIEWER_HTML }],
     }),
