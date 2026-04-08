@@ -53,6 +53,7 @@ import {
   supportsMcpManagement,
   supportsHistory,
   supportsFileCheckpointing,
+  supportsFork,
 } from '@/lib/worker/adapters/types';
 import type { Session } from '@/lib/types';
 import { Future } from '@/lib/utils/future';
@@ -243,7 +244,6 @@ export class SessionProcess {
    */
   async start(opts: SessionStartOptions): Promise<void> {
     const {
-      prompt,
       resumeRef,
       spawnCwd: spawnCwdOpt,
       envOverrides,
@@ -257,6 +257,8 @@ export class SessionProcess {
       developerInstructions,
       appendSystemPrompt,
     } = opts;
+    // Declared as `let` so the fork-fallback path can prepend extracted context.
+    let prompt = opts.prompt;
     const claimed = await claimSession(this.session.id, this.workerId);
     if (!claimed) {
       this.exitFuture.resolve(null);
@@ -426,15 +428,38 @@ export class SessionProcess {
 
     if (isForkStart) {
       // First start of a forked session: resume parent's conversation in a new session.
-      // Claude creates a fresh session ID, initialized from the parent's history.
       // No user:message event is emitted here — the InitialPromptBanner in the UI already
       // displays session.initialPrompt (the clean edited message). Emitting it would create
       // a duplicate bubble that also includes the MCP context preamble.
-      this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
-        ...spawnOpts,
-        forkSession: true,
-        resumeSessionAt,
-      });
+      try {
+        if (supportsFork(this.adapter)) {
+          // Codex / ACP adapters: use native thread/fork or unstable_forkSession
+          this.managedProcess = this.adapter.fork(forkSourceRef, prompt, spawnOpts);
+        } else {
+          // Claude SDK adapter: fork via --resume --fork-session (existing path)
+          this.managedProcess = this.adapter.resume(forkSourceRef, prompt, {
+            ...spawnOpts,
+            forkSession: true,
+            resumeSessionAt,
+          });
+        }
+      } catch (forkErr) {
+        // Native fork failed — fall back to context extraction so the agent at least
+        // starts with a text summary of the parent conversation instead of a blank slate.
+        log.warn(
+          { err: forkErr, sessionId: this.session.id },
+          'Native fork failed, falling back to context extraction',
+        );
+        const parentId = this.session.parentSessionId;
+        if (parentId) {
+          const { extractSessionContext } = await import('@/lib/services/context-extractor');
+          const extracted = await extractSessionContext(parentId, { mode: 'hybrid' });
+          if (extracted.prompt) {
+            prompt = extracted.prompt + '\n\n---\n\n' + prompt;
+          }
+        }
+        this.managedProcess = this.adapter.spawn(prompt, spawnOpts);
+      }
     } else if (resumeRef) {
       // Emit the user's prompt as a user:message event so it appears in the
       // session log and is replayed after a page refresh (cold-resume path).
