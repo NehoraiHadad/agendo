@@ -12,6 +12,7 @@ import type {
   SupportsMcpManagement,
   SupportsHistory,
   SupportsEventMapping,
+  SupportsFork,
   ManagedProcess,
   SpawnOpts,
 } from '@/lib/worker/adapters/types';
@@ -45,7 +46,8 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     SupportsPermissionModeSwitch,
     SupportsMcpManagement,
     SupportsHistory,
-    SupportsEventMapping
+    SupportsEventMapping,
+    SupportsFork
 {
   protected childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   protected transport = new AcpTransport();
@@ -157,6 +159,18 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
     this.sessionId = sessionRef;
     return this.launch(prompt, this.prepareOpts(opts), sessionRef);
+  }
+
+  /**
+   * Fork an existing ACP session. Uses `transport.forkSession()` which calls the
+   * `unstable_forkSession` ACP method to create a new session branching from
+   * `sourceRef`'s conversation history.
+   *
+   * If `forkSession` fails (unstable API), falls back to resuming the source session
+   * with the same sessionId so the agent at least has the parent's history context.
+   */
+  fork(sourceRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
+    return this.launch(prompt, this.prepareOpts(opts), null, sourceRef);
   }
 
   extractSessionId(_output: string): string | null {
@@ -316,6 +330,7 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     prompt: string,
     opts: SpawnOpts,
     resumeSessionId: string | null,
+    forkSessionId?: string,
   ): ManagedProcess {
     this.storedOpts = opts;
     const dataCallbacks: Array<(chunk: string) => void> = [];
@@ -348,35 +363,37 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     });
 
     // Async init chain — catch rejections to prevent unhandled promise crashes.
-    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId).catch((err: Error) => {
-      log.error({ err }, 'init failed');
-      if (!exitFired) {
-        exitFired = true;
-        for (const cb of exitCallbacks) cb(0);
-      }
-      // Kill the entire process group
-      if (cp.pid) {
-        try {
-          process.kill(-cp.pid, 'SIGTERM');
-        } catch {
-          try {
-            cp.kill('SIGTERM');
-          } catch {
-            /* already dead */
-          }
+    this.currentTurn = this.initAndRun(prompt, opts, resumeSessionId, forkSessionId).catch(
+      (err: Error) => {
+        log.error({ err }, 'init failed');
+        if (!exitFired) {
+          exitFired = true;
+          for (const cb of exitCallbacks) cb(0);
         }
-        const pid = cp.pid;
-        setTimeout(() => {
+        // Kill the entire process group
+        if (cp.pid) {
           try {
-            process.kill(-pid, 'SIGKILL');
+            process.kill(-cp.pid, 'SIGTERM');
           } catch {
-            /* already dead */
+            try {
+              cp.kill('SIGTERM');
+            } catch {
+              /* already dead */
+            }
           }
-        }, 2000);
-      } else {
-        cp.kill('SIGKILL');
-      }
-    });
+          const pid = cp.pid;
+          setTimeout(() => {
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              /* already dead */
+            }
+          }, 2000);
+        } else {
+          cp.kill('SIGKILL');
+        }
+      },
+    );
 
     return {
       pid: cp.pid ?? null,
@@ -392,16 +409,41 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
     prompt: string,
     opts: SpawnOpts,
     resumeSessionId: string | null,
+    forkSessionId?: string,
   ): Promise<void> {
     try {
       const initResult = await this.transport.initialize();
-      this.sessionId = await this.transport.loadOrCreateSession(
-        initResult.agentCapabilities,
-        { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
-        resumeSessionId,
-      );
-      if (!resumeSessionId && this.sessionId) {
-        this.sessionRefCallback?.(this.sessionId);
+
+      if (forkSessionId) {
+        // Fork path: try native ACP fork first; fall back to resume on failure.
+        // `unstable_forkSession` is marked unstable in the ACP spec so we degrade
+        // gracefully rather than crashing the session.
+        try {
+          this.sessionId = await this.transport.forkSession(forkSessionId);
+          if (this.sessionId) {
+            this.sessionRefCallback?.(this.sessionId);
+          }
+        } catch (forkErr) {
+          log.warn(
+            { err: forkErr, forkSessionId },
+            'ACP forkSession failed — falling back to resume',
+          );
+          this.sessionId = await this.transport.loadOrCreateSession(
+            initResult.agentCapabilities,
+            { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
+            forkSessionId,
+          );
+          // sessionRefCallback already set by resume path when resumeSessionId was non-null
+        }
+      } else {
+        this.sessionId = await this.transport.loadOrCreateSession(
+          initResult.agentCapabilities,
+          { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
+          resumeSessionId,
+        );
+        if (!resumeSessionId && this.sessionId) {
+          this.sessionRefCallback?.(this.sessionId);
+        }
       }
     } catch (err) {
       const message = extractMessage(err);
