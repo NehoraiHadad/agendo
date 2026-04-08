@@ -13,6 +13,7 @@ import type {
   SupportsEventMapping,
   SupportsSteer,
   SupportsRollback,
+  SupportsFork,
   AcpMcpServer,
   ManagedProcess,
   SpawnOpts,
@@ -115,7 +116,8 @@ export class CodexAppServerAdapter
     SupportsHistory,
     SupportsEventMapping,
     SupportsSteer,
-    SupportsRollback
+    SupportsRollback,
+    SupportsFork
 {
   private childProcess: ReturnType<typeof BaseAgentAdapter.spawnDetached> | null = null;
   private rl: readline.Interface | null = null;
@@ -220,6 +222,30 @@ export class CodexAppServerAdapter
 
     this.launchServer(opts);
     this.initAndStartThread(prompt, opts, sessionRef);
+
+    return this.buildVirtualProcess();
+  }
+
+  /**
+   * Fork an existing Codex thread. Creates a new thread branching from the source
+   * thread's history via the `thread/fork` JSON-RPC method. The fork gets its own
+   * thread ID (reported via sessionRefCallback) so the two sessions diverge independently.
+   *
+   * The prompt is sent as the first turn after the fork completes.
+   */
+  fork(sourceRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
+    this.permissionMode = opts.permissionMode;
+    this.model = opts.model;
+    this.mcpServers = opts.mcpServers;
+    this.developerInstructions = opts.developerInstructions;
+    this.sessionCwd = opts.cwd ?? '';
+    this.dataCallbacks = [];
+    this.exitCallbacks = [];
+    this.tmuxSessionName = `codex-as-${opts.executionId}`;
+    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
+
+    this.launchServer(opts);
+    this.initAndForkThread(prompt, opts, sourceRef);
 
     return this.buildVirtualProcess();
   }
@@ -481,6 +507,16 @@ export class CodexAppServerAdapter
     });
   }
 
+  private initAndForkThread(initialPrompt: string, opts: SpawnOpts, forkThreadId: string): void {
+    this.runForkChain(initialPrompt, opts, forkThreadId).catch((err: unknown) => {
+      const message = getErrorMessage(err);
+      log.error({ err, forkThreadId }, 'fork chain failed');
+      this.emitSynthetic({ type: 'as:error', message });
+      this.alive = false;
+      for (const cb of this.exitCallbacks) cb(1);
+    });
+  }
+
   private async runInitChain(
     initialPrompt: string,
     opts: SpawnOpts,
@@ -573,6 +609,78 @@ export class CodexAppServerAdapter
     });
 
     // 4. Start first turn with initial prompt
+    await this.startTurn(initialPrompt, opts.initialAttachments);
+  }
+
+  /**
+   * Fork init chain: initialize → MCP config → thread/fork → first turn.
+   *
+   * `thread/fork` creates a new Codex thread that branches from `forkThreadId`'s
+   * conversation history. The fork gets its own thread ID (reported via
+   * sessionRefCallback). After the fork the initial prompt is sent as the first
+   * turn, which becomes the divergence point between parent and fork.
+   */
+  private async runForkChain(
+    initialPrompt: string,
+    opts: SpawnOpts,
+    forkThreadId: string,
+  ): Promise<void> {
+    // 1. Initialize JSON-RPC handshake
+    await this.transport.call('initialize', {
+      clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
+      capabilities: { experimentalApi: true },
+    });
+    this.transport.notify('initialized', {});
+
+    // 2. Inject MCP servers if provided
+    if (this.mcpServers && this.mcpServers.length > 0) {
+      const mcpValue: Record<
+        string,
+        { command: string; args: string[]; env: Record<string, string> }
+      > = {};
+      for (const srv of this.mcpServers) {
+        mcpValue[srv.name] = {
+          command: srv.command,
+          args: srv.args,
+          env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
+        };
+      }
+      await this.transport.call('config/batchWrite', {
+        edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
+      });
+      log.info({ count: this.mcpServers.length }, 'MCP config injected (fork)');
+    }
+
+    // 3. Fork the source thread — creates a new thread inheriting full conversation history
+    const result = await this.transport.call('thread/fork', {
+      threadId: forkThreadId,
+      cwd: opts.cwd,
+      approvalPolicy: getApprovalPolicy(opts.permissionMode),
+      sandbox: getSandboxMode(opts.permissionMode),
+      model: opts.model ?? null,
+      persistExtendedHistory: true,
+      ...(this.developerInstructions ? { developerInstructions: this.developerInstructions } : {}),
+    });
+
+    const thread = result.thread as Record<string, unknown>;
+    this.threadId = thread.id as string;
+    this.threadModel = (result.model as string) ?? '';
+    // Notify session-process of the new thread ID so DB is updated
+    this.sessionRefCallback?.(this.threadId);
+    this.emitSynthetic({
+      type: 'as:thread.started',
+      threadId: this.threadId,
+      model: this.threadModel,
+    });
+
+    log.info({ forkThreadId, newThreadId: this.threadId }, 'thread/fork succeeded');
+
+    // 4. Fetch skills (fire-and-forget)
+    this.fetchAndEmitSkills().catch((err: unknown) => {
+      log.warn({ err }, 'skills fetch failed (non-fatal, fork)');
+    });
+
+    // 5. Start first turn with the fork's initial prompt
     await this.startTurn(initialPrompt, opts.initialAttachments);
   }
 
