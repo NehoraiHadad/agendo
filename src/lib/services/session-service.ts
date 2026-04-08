@@ -223,9 +223,10 @@ export async function forkSession(
       ...(initialPrompt ? { initialPrompt } : {}),
       parentSessionId: parentId,
       // Store the parent's Claude session ID so the first start can use --fork-session.
-      // Only set when resumeAt is provided — without it, --fork-session would resume
-      // from the end of the conversation instead of branching at the edit point.
-      forkSourceRef: resumeAt ? (parent.sessionRef ?? null) : null,
+      // Always set when the parent has a sessionRef so both the bare "Fork" toolbar button
+      // (no resumeAt) and the "Edit message" button (with resumeAt) both resume the parent
+      // history and create a proper fork rather than starting a blank session.
+      forkSourceRef: parent.sessionRef ?? null,
       // Store the fork point so the UI can truncate parent history at this message.
       forkPointUuid: resumeAt ?? null,
     })
