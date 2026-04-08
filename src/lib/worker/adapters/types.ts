@@ -304,6 +304,17 @@ export interface SupportsRollback {
 }
 
 /**
+ * Adapters that support native conversation forking.
+ *
+ * Fork creates a new session branching from the same conversation history as the
+ * source session, without modifying the source. Used by the "Fork" toolbar button
+ * (no resumeAt) and the "Edit message" button (with resumeAt/forkSourceRef).
+ */
+export interface SupportsFork {
+  fork(sourceRef: string, prompt: string, opts: SpawnOpts): ManagedProcess;
+}
+
+/**
  * Adapter supports rewinding files to a previous state at a given user message.
  * Requires enableFileCheckpointing in SpawnOpts (Claude SDK only).
  */
@@ -392,6 +403,11 @@ export function supportsFileCheckpointing(
   a: AgentAdapter,
 ): a is AgentAdapter & SupportsFileCheckpointing {
   return 'rewindFiles' in a && typeof (a as SupportsFileCheckpointing).rewindFiles === 'function';
+}
+
+/** Type guard: adapter supports native conversation forking. */
+export function supportsFork(a: AgentAdapter): a is AgentAdapter & SupportsFork {
+  return 'fork' in a && typeof (a as Record<string, unknown>).fork === 'function';
 }
 
 /** Options struct for SessionProcess.start(), replacing 10 positional parameters. */
