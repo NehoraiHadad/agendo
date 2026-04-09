@@ -358,6 +358,48 @@ describe('context-extractor', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 11. maxSummarizeTurns cap: only the most recent turns reach the LLM
+  // -------------------------------------------------------------------------
+  it('caps older turns via maxSummarizeTurns in hybrid mode', async () => {
+    // Build 20 turns
+    const lines: string[] = [];
+    for (let i = 1; i <= 20; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `msg ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'hybrid',
+      recentTurnCount: 3,
+      maxSummarizeTurns: 4, // only last 4+3=7 turns considered; 13 older ones silently dropped
+    });
+
+    // Total transferred = recentTurnCount + maxSummarizeTurns = 7
+    // The header note mentions the session was longer
+    expect(result.meta.totalTurns).toBe(7);
+    expect(result.prompt).toContain('Only the last 7 turns were transferred');
+  });
+
+  it('does not apply maxSummarizeTurns cap in full mode', async () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 10; i++) {
+      lines.push(mkEvent({ type: 'user:message', text: `msg ${i}` }));
+      lines.push(mkEvent({ type: 'agent:text', text: `reply ${i}` }));
+      lines.push(mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }));
+    }
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'full',
+      maxSummarizeTurns: 2, // ignored in full mode
+    });
+
+    expect(result.meta.totalTurns).toBe(10);
+  });
+
+  // -------------------------------------------------------------------------
   // 9. estimatedTokens = Math.ceil(prompt.length / 4)
   // -------------------------------------------------------------------------
   it('estimatedTokens equals Math.ceil(prompt.length / 4)', async () => {

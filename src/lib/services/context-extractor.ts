@@ -25,6 +25,13 @@ export interface ContextExtractorOptions {
   recentTurnCount?: number;
   /** Maximum characters in the output prompt. Default: 120_000 (~30k tokens) */
   maxChars?: number;
+  /**
+   * Maximum number of turns fed to the LLM summarizer (hybrid mode only).
+   * Turns beyond this cap (oldest ones) are silently dropped — prevents sending
+   * unbounded history to the LLM for very long or never-compacted sessions.
+   * Default: 50. Total turns read = recentTurnCount + maxSummarizeTurns.
+   */
+  maxSummarizeTurns?: number;
 }
 
 export interface ExtractedContext {
@@ -413,6 +420,27 @@ export function renderTurnVerbatim(turn: Turn): string {
 }
 
 // ============================================================================
+// capTurns
+// ============================================================================
+
+/**
+ * Caps the turn list to the most recent `recentTurnCount + maxSummarizeTurns`
+ * entries in hybrid mode, preventing unbounded LLM summarization input for
+ * very long or never-compacted sessions.
+ *
+ * Returns { turns: capped list, droppedCount: number of oldest turns dropped }.
+ */
+export function capTurns(
+  turns: Turn[],
+  options: Required<ContextExtractorOptions>,
+): { turns: Turn[]; droppedCount: number } {
+  if (options.mode !== 'hybrid') return { turns, droppedCount: 0 };
+  const maxTurns = options.recentTurnCount + options.maxSummarizeTurns;
+  if (turns.length <= maxTurns) return { turns, droppedCount: 0 };
+  return { turns: turns.slice(turns.length - maxTurns), droppedCount: turns.length - maxTurns };
+}
+
+// ============================================================================
 // buildPrompt
 // ============================================================================
 
@@ -434,6 +462,7 @@ function buildPrompt(
   session: SessionMeta,
   options: Required<ContextExtractorOptions>,
   llmSummary?: string | null,
+  droppedCount = 0,
 ): { prompt: string; truncated: boolean } {
   const { mode, recentTurnCount, maxChars } = options;
 
@@ -450,7 +479,12 @@ function buildPrompt(
   headerLines.push(`**Previous agent:** ${session.agentName ?? 'Unknown'}`);
   if (session.taskTitle) headerLines.push(`**Task:** ${session.taskTitle}`);
   if (session.projectName) headerLines.push(`**Project:** ${session.projectName}`);
-  headerLines.push(`**Total turns:** ${totalTurns}`);
+  headerLines.push(`**Total turns:** ${totalTurns + droppedCount}`);
+  if (droppedCount > 0) {
+    headerLines.push(
+      `**Note:** Only the last ${totalTurns} turns were transferred (session too long).`,
+    );
+  }
   if (totalCostUsd !== null) {
     headerLines.push(`**Total cost:** $${totalCostUsd.toFixed(4)}`);
   }
@@ -633,6 +667,7 @@ export async function extractSessionContext(
     mode: options.mode,
     recentTurnCount: options.recentTurnCount ?? 5,
     maxChars: options.maxChars ?? 120_000,
+    maxSummarizeTurns: options.maxSummarizeTurns ?? 50,
   };
 
   const session = await getSessionWithDetails(sessionId);
@@ -651,10 +686,15 @@ export async function extractSessionContext(
       includeToolResults: true,
       maxToolResultChars: 2000,
       includeBashOutput: true,
-      maxTurns: 0,
+      // Cap to avoid reading the entire history of a very long session.
+      // buildPrompt will further cap at recentTurnCount + maxSummarizeTurns.
+      maxTurns: resolvedOptions.recentTurnCount + resolvedOptions.maxSummarizeTurns,
     });
     if (native && native.turns.length > 0) {
-      const turns = nativeTurnsToContextTurns(native.turns);
+      const { turns, droppedCount } = capTurns(
+        nativeTurnsToContextTurns(native.turns),
+        resolvedOptions,
+      );
 
       const verbatimCount =
         resolvedOptions.mode === 'full'
@@ -668,7 +708,13 @@ export async function extractSessionContext(
         llmSummary = await summarizeConversation(sessionId, turnsToSummarize);
       }
 
-      const { prompt, truncated } = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
+      const { prompt, truncated } = buildPrompt(
+        turns,
+        sessionMeta,
+        resolvedOptions,
+        llmSummary,
+        droppedCount,
+      );
 
       return {
         prompt,
@@ -710,27 +756,36 @@ export async function extractSessionContext(
     return buildEmptyContext(sessionMeta);
   }
 
+  // Cap turns before processing — bounds LLM summarizer input
+  const { turns: cappedTurns, droppedCount } = capTurns(turns, resolvedOptions);
+
   // Determine verbatim / summarized split — in 'full' mode, all turns are verbatim
   const verbatimCount =
     resolvedOptions.mode === 'full'
-      ? turns.length
-      : Math.min(resolvedOptions.recentTurnCount, turns.length);
-  const summarizeCount = turns.length - verbatimCount;
+      ? cappedTurns.length
+      : Math.min(resolvedOptions.recentTurnCount, cappedTurns.length);
+  const summarizeCount = cappedTurns.length - verbatimCount;
 
   // In hybrid mode with turns to summarize, call the LLM for an intelligent summary
   let llmSummary: string | null = null;
   if (resolvedOptions.mode === 'hybrid' && summarizeCount > 0) {
-    const turnsToSummarize = turns.slice(0, summarizeCount);
+    const turnsToSummarize = cappedTurns.slice(0, summarizeCount);
     llmSummary = await summarizeConversation(sessionId, turnsToSummarize);
   }
 
   // Build prompt (with maxChars applied internally)
-  const { prompt, truncated } = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
+  const { prompt, truncated } = buildPrompt(
+    cappedTurns,
+    sessionMeta,
+    resolvedOptions,
+    llmSummary,
+    droppedCount,
+  );
 
   return {
     prompt,
     meta: {
-      totalTurns: turns.length,
+      totalTurns: cappedTurns.length,
       includedVerbatimTurns: verbatimCount,
       summarizedTurns: summarizeCount,
       estimatedTokens: Math.ceil(prompt.length / 4),
