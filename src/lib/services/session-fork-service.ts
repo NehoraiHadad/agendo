@@ -13,9 +13,9 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agents } from '@/lib/db/schema';
-import { getSession, createSession } from '@/lib/services/session-service';
+import { getSession } from '@/lib/services/session-service';
+import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { extractSessionContext } from '@/lib/services/context-extractor';
-import { dispatchSession } from '@/lib/services/session-dispatch';
 import { BadRequestError, ConflictError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
@@ -80,22 +80,24 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
 
   requireFound(newAgent, 'Agent', input.newAgentId);
 
-  // 4. Extract conversation context from the parent session's log
+  // 3. Extract conversation context from the parent session's log
   const extracted = await extractSessionContext(input.parentSessionId, {
     mode: input.contextMode,
   });
 
-  // 5. Build the initial prompt, appending optional additional instructions
+  // 4. Build the initial prompt, appending optional additional instructions
   let initialPrompt = extracted.prompt;
   if (input.additionalInstructions) {
     initialPrompt += `\n\n---\n\nAdditional instructions:\n${input.additionalInstructions}`;
   }
 
-  // 6. Create the new session, inheriting relevant parent fields.
+  // 5. Create and dispatch the new session, inheriting relevant parent fields.
   //    Deliberately excluded:
   //    - model: agent-specific; the target agent uses its own default
   //    - forkSourceRef: cross-agent cannot use --resume to inherit parent history
-  const newSession = await createSession({
+  //    session.initialPrompt is stored in DB for the InitialPromptBanner;
+  //    resumePrompt carries the actual context to the worker.
+  const newSession = await createAndEnqueueSession({
     taskId: parent.taskId ?? undefined,
     projectId: parent.projectId ?? undefined,
     kind: 'conversation',
@@ -110,13 +112,8 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     idleTimeoutSec: parent.idleTimeoutSec,
     initialPrompt,
     parentSessionId: input.parentSessionId,
+    enqueueOpts: { resumePrompt: initialPrompt },
   });
-
-  // 7. Dispatch immediately so the agent processes the context transfer prompt
-  //    right away and enters awaiting_input.  session.initialPrompt stays in DB
-  //    for the InitialPromptBanner in the UI; resumePrompt carries the actual
-  //    context to the worker (same pattern as POST /api/sessions).
-  await dispatchSession({ sessionId: newSession.id, resumePrompt: initialPrompt });
 
   return {
     session: newSession,

@@ -3,22 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // Shared mock state — all hoisted so vi.mock factories can reference them
 // ---------------------------------------------------------------------------
-const {
-  mockState,
-  mockGetSession,
-  mockCreateSession,
-  mockExtractSessionContext,
-  mockDispatchSession,
-} = vi.hoisted(() => ({
-  mockState: {
-    /** db.select() sequence: each call shifts from this queue */
-    selectQueue: [] as Array<unknown[]>,
-  },
-  mockGetSession: vi.fn(),
-  mockCreateSession: vi.fn(),
-  mockExtractSessionContext: vi.fn(),
-  mockDispatchSession: vi.fn(),
-}));
+const { mockState, mockGetSession, mockCreateAndEnqueueSession, mockExtractSessionContext } =
+  vi.hoisted(() => ({
+    mockState: {
+      /** db.select() sequence: each call shifts from this queue */
+      selectQueue: [] as Array<unknown[]>,
+    },
+    mockGetSession: vi.fn(),
+    mockCreateAndEnqueueSession: vi.fn(),
+    mockExtractSessionContext: vi.fn(),
+  }));
 
 // ---------------------------------------------------------------------------
 // Mock @/lib/db
@@ -56,7 +50,13 @@ vi.mock('@/lib/db', () => {
 // ---------------------------------------------------------------------------
 vi.mock('@/lib/services/session-service', () => ({
   getSession: mockGetSession,
-  createSession: mockCreateSession,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock @/lib/services/session-helpers
+// ---------------------------------------------------------------------------
+vi.mock('@/lib/services/session-helpers', () => ({
+  createAndEnqueueSession: mockCreateAndEnqueueSession,
 }));
 
 // ---------------------------------------------------------------------------
@@ -64,13 +64,6 @@ vi.mock('@/lib/services/session-service', () => ({
 // ---------------------------------------------------------------------------
 vi.mock('@/lib/services/context-extractor', () => ({
   extractSessionContext: mockExtractSessionContext,
-}));
-
-// ---------------------------------------------------------------------------
-// Mock @/lib/services/session-dispatch (used by session-service internally)
-// ---------------------------------------------------------------------------
-vi.mock('@/lib/services/session-dispatch', () => ({
-  dispatchSession: mockDispatchSession,
 }));
 
 // ---------------------------------------------------------------------------
@@ -169,13 +162,12 @@ describe('forkSessionToAgent', () => {
 
     // Default happy-path stubs
     mockGetSession.mockResolvedValue(mockParent);
-    mockCreateSession.mockResolvedValue(mockNewSession);
+    mockCreateAndEnqueueSession.mockResolvedValue(mockNewSession);
     mockExtractSessionContext.mockResolvedValue(mockExtracted);
-    mockDispatchSession.mockResolvedValue('job-id');
   });
 
   describe('happy path — hybrid mode', () => {
-    it('creates session with correct fields, and returns contextMeta', async () => {
+    it('creates and dispatches session with correct fields, and returns contextMeta', async () => {
       queueDbSelectResults(mockNewAgent);
 
       const result = await forkSessionToAgent({
@@ -192,8 +184,9 @@ describe('forkSessionToAgent', () => {
         mode: 'hybrid',
       });
 
-      // Verify createSession receives correct inherited fields
-      expect(mockCreateSession).toHaveBeenCalledWith(
+      // Verify createAndEnqueueSession receives correct inherited fields and
+      // enqueueOpts carries the context as resumePrompt to the worker
+      expect(mockCreateAndEnqueueSession).toHaveBeenCalledWith(
         expect.objectContaining({
           taskId: TASK_ID,
           projectId: PROJECT_ID,
@@ -204,15 +197,9 @@ describe('forkSessionToAgent', () => {
           idleTimeoutSec: 600,
           parentSessionId: PARENT_SESSION_ID,
           initialPrompt: mockExtracted.prompt,
+          enqueueOpts: { resumePrompt: mockExtracted.prompt },
         }),
       );
-
-      // Verify dispatchSession called with the extracted context as resumePrompt
-      // (mirrors the pattern in POST /api/sessions so the agent receives the context)
-      expect(mockDispatchSession).toHaveBeenCalledWith({
-        sessionId: mockNewSession.id,
-        resumePrompt: mockExtracted.prompt,
-      });
 
       // Verify return shape
       expect(result.session).toBe(mockNewSession);
@@ -248,10 +235,15 @@ describe('forkSessionToAgent', () => {
         additionalInstructions: 'Focus on the OAuth flow only.',
       });
 
-      const createCall = mockCreateSession.mock.calls[0][0] as { initialPrompt: string };
-      expect(createCall.initialPrompt).toContain(mockExtracted.prompt);
-      expect(createCall.initialPrompt).toContain('Additional instructions:');
-      expect(createCall.initialPrompt).toContain('Focus on the OAuth flow only.');
+      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as {
+        initialPrompt: string;
+        enqueueOpts: { resumePrompt: string };
+      };
+      expect(createArg.initialPrompt).toContain(mockExtracted.prompt);
+      expect(createArg.initialPrompt).toContain('Additional instructions:');
+      expect(createArg.initialPrompt).toContain('Focus on the OAuth flow only.');
+      // enqueueOpts.resumePrompt must also contain the instructions
+      expect(createArg.enqueueOpts.resumePrompt).toContain('Focus on the OAuth flow only.');
     });
   });
 
@@ -265,7 +257,7 @@ describe('forkSessionToAgent', () => {
         contextMode: 'hybrid',
       });
 
-      const createArg = mockCreateSession.mock.calls[0][0] as Record<string, unknown>;
+      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
       expect(createArg['taskId']).toBe(TASK_ID);
       expect(createArg['projectId']).toBe(PROJECT_ID);
       expect(createArg['permissionMode']).toBe('bypassPermissions');
@@ -282,7 +274,7 @@ describe('forkSessionToAgent', () => {
         contextMode: 'hybrid',
       });
 
-      const createArg = mockCreateSession.mock.calls[0][0] as Record<string, unknown>;
+      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
       expect(createArg['model']).toBeUndefined();
     });
 
@@ -295,7 +287,7 @@ describe('forkSessionToAgent', () => {
         contextMode: 'hybrid',
       });
 
-      const createArg = mockCreateSession.mock.calls[0][0] as Record<string, unknown>;
+      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
       expect(createArg['forkSourceRef']).toBeUndefined();
     });
   });
@@ -311,8 +303,7 @@ describe('forkSessionToAgent', () => {
       ).rejects.toThrow(BadRequestError);
 
       // Ensure nothing was created or enqueued
-      expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockDispatchSession).not.toHaveBeenCalled();
+      expect(mockCreateAndEnqueueSession).not.toHaveBeenCalled();
     });
   });
 
@@ -328,8 +319,7 @@ describe('forkSessionToAgent', () => {
         }),
       ).rejects.toThrow(ConflictError);
 
-      expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockDispatchSession).not.toHaveBeenCalled();
+      expect(mockCreateAndEnqueueSession).not.toHaveBeenCalled();
     });
 
     it('does NOT throw for valid fork state "idle" (Agendo idle-timeout suspends to idle)', async () => {
@@ -386,8 +376,7 @@ describe('forkSessionToAgent', () => {
         }),
       ).rejects.toThrow(NotFoundError);
 
-      expect(mockCreateSession).not.toHaveBeenCalled();
-      expect(mockDispatchSession).not.toHaveBeenCalled();
+      expect(mockCreateAndEnqueueSession).not.toHaveBeenCalled();
     });
   });
 
@@ -413,11 +402,11 @@ describe('forkSessionToAgent', () => {
       });
 
       // Should succeed and dispatch even for empty context (agent gets the empty-context prompt)
-      expect(mockCreateSession).toHaveBeenCalled();
-      expect(mockDispatchSession).toHaveBeenCalledWith({
-        sessionId: mockNewSession.id,
-        resumePrompt: emptyExtracted.prompt,
-      });
+      expect(mockCreateAndEnqueueSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enqueueOpts: { resumePrompt: emptyExtracted.prompt },
+        }),
+      );
       expect(result.contextMeta.totalTurns).toBe(0);
     });
   });
