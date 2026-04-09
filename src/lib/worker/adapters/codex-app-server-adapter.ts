@@ -192,37 +192,17 @@ export class CodexAppServerAdapter
   // -------------------------------------------------------------------------
 
   spawn(prompt: string, opts: SpawnOpts): ManagedProcess {
-    this.permissionMode = opts.permissionMode;
-    this.model = opts.model;
-    this.mcpServers = opts.mcpServers;
-    this.developerInstructions = opts.developerInstructions;
-    this.sessionCwd = opts.cwd ?? '';
-    this.dataCallbacks = [];
-    this.exitCallbacks = [];
-    this.tmuxSessionName = `codex-as-${opts.executionId}`;
-    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
-
+    this.prepareLaunch(opts);
     this.launchServer(opts);
     this.initAndStartThread(prompt, opts, null);
-
     return this.buildVirtualProcess();
   }
 
   resume(sessionRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
     this.threadId = sessionRef;
-    this.permissionMode = opts.permissionMode;
-    this.model = opts.model;
-    this.mcpServers = opts.mcpServers;
-    this.developerInstructions = opts.developerInstructions;
-    this.sessionCwd = opts.cwd ?? '';
-    this.dataCallbacks = [];
-    this.exitCallbacks = [];
-    this.tmuxSessionName = `codex-as-${opts.executionId}`;
-    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
-
+    this.prepareLaunch(opts);
     this.launchServer(opts);
     this.initAndStartThread(prompt, opts, sessionRef);
-
     return this.buildVirtualProcess();
   }
 
@@ -234,19 +214,9 @@ export class CodexAppServerAdapter
    * The prompt is sent as the first turn after the fork completes.
    */
   fork(sourceRef: string, prompt: string, opts: SpawnOpts): ManagedProcess {
-    this.permissionMode = opts.permissionMode;
-    this.model = opts.model;
-    this.mcpServers = opts.mcpServers;
-    this.developerInstructions = opts.developerInstructions;
-    this.sessionCwd = opts.cwd ?? '';
-    this.dataCallbacks = [];
-    this.exitCallbacks = [];
-    this.tmuxSessionName = `codex-as-${opts.executionId}`;
-    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
-
+    this.prepareLaunch(opts);
     this.launchServer(opts);
     this.initAndForkThread(prompt, opts, sourceRef);
-
     return this.buildVirtualProcess();
   }
 
@@ -517,43 +487,83 @@ export class CodexAppServerAdapter
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Private: shared launch helpers
+  // -------------------------------------------------------------------------
+
+  /** Captures SpawnOpts fields and resets per-process callback arrays. */
+  private prepareLaunch(opts: SpawnOpts): void {
+    this.permissionMode = opts.permissionMode;
+    this.model = opts.model;
+    this.mcpServers = opts.mcpServers;
+    this.developerInstructions = opts.developerInstructions;
+    this.sessionCwd = opts.cwd ?? '';
+    this.dataCallbacks = [];
+    this.exitCallbacks = [];
+    this.tmuxSessionName = `codex-as-${opts.executionId}`;
+    tmux.createSession(this.tmuxSessionName, { cwd: opts.cwd });
+  }
+
+  /** JSON-RPC handshake: initialize → initialized notification. */
+  private async runRpcHandshake(): Promise<void> {
+    await this.transport.call('initialize', {
+      clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
+      capabilities: { experimentalApi: true },
+    });
+    // Required by JSON-RPC spec: client must send `initialized` after receiving the response.
+    this.transport.notify('initialized', {});
+  }
+
+  /**
+   * Injects MCP servers into the Codex process via config/batchWrite.
+   * Must run after `initialized` and before any thread operation so Codex
+   * loads the MCP servers for the session. env is converted from ACP array
+   * format ({ name, value }[]) to a plain Record<string, string>.
+   */
+  private async injectMcpServers(): Promise<void> {
+    if (!this.mcpServers?.length) return;
+    const mcpValue: Record<
+      string,
+      { command: string; args: string[]; env: Record<string, string> }
+    > = {};
+    for (const srv of this.mcpServers) {
+      mcpValue[srv.name] = {
+        command: srv.command,
+        args: srv.args,
+        env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
+      };
+    }
+    await this.transport.call('config/batchWrite', {
+      edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
+    });
+    log.info({ count: this.mcpServers.length }, 'MCP config injected');
+  }
+
+  /**
+   * Records the active thread and emits session:init so the UI gets the model name.
+   * session-process ignores duplicate session:init events, so calling this for both
+   * resume and start is safe.
+   */
+  private notifyThreadStarted(threadId: string, model: string): void {
+    this.threadId = threadId;
+    this.threadModel = model;
+    this.sessionRefCallback?.(threadId);
+    this.emitSynthetic({ type: 'as:thread.started', threadId, model });
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: init chains (start/resume and fork)
+  // -------------------------------------------------------------------------
+
   private async runInitChain(
     initialPrompt: string,
     opts: SpawnOpts,
     resumeThreadId: string | null,
   ): Promise<void> {
-    // 1. Initialize
-    await this.transport.call('initialize', {
-      clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
-      capabilities: { experimentalApi: true },
-    });
-    // Required by JSON-RPC handshake: client must send `initialized` notification
-    this.transport.notify('initialized', {});
+    await this.runRpcHandshake();
+    await this.injectMcpServers();
 
-    // 2a. Inject MCP servers via config/batchWrite (when provided by session-runner).
-    //     Must happen after initialized and before thread/start so Codex loads MCPs
-    //     for the session. env is converted from ACP array format to a plain dict.
-    if (this.mcpServers && this.mcpServers.length > 0) {
-      const mcpValue: Record<
-        string,
-        { command: string; args: string[]; env: Record<string, string> }
-      > = {};
-      for (const srv of this.mcpServers) {
-        mcpValue[srv.name] = {
-          command: srv.command,
-          args: srv.args,
-          env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
-        };
-      }
-      await this.transport.call('config/batchWrite', {
-        edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
-      });
-      log.info({ count: this.mcpServers.length }, 'MCP config injected');
-    }
-
-    // 2. Start or resume thread
     if (resumeThreadId) {
-      // Resume an existing thread
       const result = await this.transport.call('thread/resume', {
         threadId: resumeThreadId,
         cwd: opts.cwd,
@@ -565,19 +575,9 @@ export class CodexAppServerAdapter
           ? { developerInstructions: this.developerInstructions }
           : {}),
       });
-      const thread = (result.thread as Record<string, unknown>) ?? result;
-      this.threadId = resumeThreadId;
-      this.threadModel = (result.model as string) ?? '';
-      this.sessionRefCallback?.(resumeThreadId);
-      // Emit init event so session:init is recorded with the model
-      this.emitSynthetic({
-        type: 'as:thread.started',
-        threadId: resumeThreadId,
-        model: this.threadModel,
-      });
-      void thread; // suppress unused warning
+      void (result.thread as Record<string, unknown>); // response carries thread metadata; unused here
+      this.notifyThreadStarted(resumeThreadId, (result.model as string) ?? '');
     } else {
-      // Start a new thread
       const result = await this.transport.call('thread/start', {
         model: opts.model ?? null,
         cwd: opts.cwd,
@@ -590,68 +590,30 @@ export class CodexAppServerAdapter
           : {}),
       });
       const thread = result.thread as Record<string, unknown>;
-      this.threadId = thread.id as string;
-      this.threadModel = (result.model as string) ?? '';
-      this.sessionRefCallback?.(this.threadId);
-      // The thread/started notification will be emitted from the transport below,
-      // but the model isn't in the notification params, so we also emit it here.
-      // session-process ignores duplicate session:init so this is safe.
-      this.emitSynthetic({
-        type: 'as:thread.started',
-        threadId: this.threadId,
-        model: this.threadModel,
-      });
+      this.notifyThreadStarted(thread.id as string, (result.model as string) ?? '');
     }
 
-    // 3. Fetch skills (fire-and-forget — don't block the first turn)
     this.fetchAndEmitSkills().catch((err: unknown) => {
       log.warn({ err }, 'skills fetch failed (non-fatal)');
     });
-
-    // 4. Start first turn with initial prompt
     await this.startTurn(initialPrompt, opts.initialAttachments);
   }
 
   /**
-   * Fork init chain: initialize → MCP config → thread/fork → first turn.
+   * Fork init chain: handshake → MCP config → thread/fork → first turn.
    *
-   * `thread/fork` creates a new Codex thread that branches from `forkThreadId`'s
-   * conversation history. The fork gets its own thread ID (reported via
-   * sessionRefCallback). After the fork the initial prompt is sent as the first
-   * turn, which becomes the divergence point between parent and fork.
+   * `thread/fork` creates a new Codex thread branching from `forkThreadId`'s full
+   * conversation history. The fork receives its own thread ID and diverges from
+   * the parent at the initial prompt sent here.
    */
   private async runForkChain(
     initialPrompt: string,
     opts: SpawnOpts,
     forkThreadId: string,
   ): Promise<void> {
-    // 1. Initialize JSON-RPC handshake
-    await this.transport.call('initialize', {
-      clientInfo: { name: 'agendo', title: 'Agendo', version: '1.0.0' },
-      capabilities: { experimentalApi: true },
-    });
-    this.transport.notify('initialized', {});
+    await this.runRpcHandshake();
+    await this.injectMcpServers();
 
-    // 2. Inject MCP servers if provided
-    if (this.mcpServers && this.mcpServers.length > 0) {
-      const mcpValue: Record<
-        string,
-        { command: string; args: string[]; env: Record<string, string> }
-      > = {};
-      for (const srv of this.mcpServers) {
-        mcpValue[srv.name] = {
-          command: srv.command,
-          args: srv.args,
-          env: Object.fromEntries(srv.env.map((e) => [e.name, e.value])),
-        };
-      }
-      await this.transport.call('config/batchWrite', {
-        edits: [{ keyPath: 'mcp_servers', value: mcpValue, mergeStrategy: 'replace' }],
-      });
-      log.info({ count: this.mcpServers.length }, 'MCP config injected (fork)');
-    }
-
-    // 3. Fork the source thread — creates a new thread inheriting full conversation history
     const result = await this.transport.call('thread/fork', {
       threadId: forkThreadId,
       cwd: opts.cwd,
@@ -663,24 +625,12 @@ export class CodexAppServerAdapter
     });
 
     const thread = result.thread as Record<string, unknown>;
-    this.threadId = thread.id as string;
-    this.threadModel = (result.model as string) ?? '';
-    // Notify session-process of the new thread ID so DB is updated
-    this.sessionRefCallback?.(this.threadId);
-    this.emitSynthetic({
-      type: 'as:thread.started',
-      threadId: this.threadId,
-      model: this.threadModel,
-    });
-
+    this.notifyThreadStarted(thread.id as string, (result.model as string) ?? '');
     log.info({ forkThreadId, newThreadId: this.threadId }, 'thread/fork succeeded');
 
-    // 4. Fetch skills (fire-and-forget)
     this.fetchAndEmitSkills().catch((err: unknown) => {
-      log.warn({ err }, 'skills fetch failed (non-fatal, fork)');
+      log.warn({ err }, 'skills fetch failed (non-fatal)');
     });
-
-    // 5. Start first turn with the fork's initial prompt
     await this.startTurn(initialPrompt, opts.initialAttachments);
   }
 

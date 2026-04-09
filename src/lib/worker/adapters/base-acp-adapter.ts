@@ -433,7 +433,9 @@ export abstract class AbstractAcpAdapter<TEvent extends { type: string }>
             { cwd: opts.cwd, mcpServers: opts.mcpServers ?? [] },
             forkSessionId,
           );
-          // sessionRefCallback already set by resume path when resumeSessionId was non-null
+          if (this.sessionId) {
+            this.sessionRefCallback?.(this.sessionId);
+          }
         }
       } else {
         this.sessionId = await this.transport.loadOrCreateSession(
