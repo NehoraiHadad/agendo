@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowRight, Loader2, Sparkles, Scissors } from 'lucide-react';
+import { ArrowRight, Loader2, Sparkles, Scissors, AlertTriangle } from 'lucide-react';
 import { useFetch } from '@/hooks/use-fetch';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,6 +41,7 @@ interface ContextMeta {
   taskTitle?: string;
   projectName?: string;
   llmSummarized?: boolean;
+  truncated?: boolean;
 }
 
 interface ForkResponse {
@@ -67,6 +68,16 @@ export interface AgentSwitchDialogProps {
 const SLOW_THRESHOLD_MS = 8_000;
 
 function ContextMetaBadge({ meta }: { meta: ContextMeta }) {
+  if (meta.truncated) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-red-400/80">
+        <AlertTriangle className="size-3" />
+        Context too large — only a partial transcript was transferred. Consider switching to{' '}
+        <strong>Full</strong> mode or a shorter session.
+      </span>
+    );
+  }
+
   if (meta.totalTurns === 0) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50">

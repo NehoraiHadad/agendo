@@ -23,7 +23,7 @@ export interface ContextExtractorOptions {
   mode: 'hybrid' | 'full';
   /** Number of most-recent turns to include verbatim. Default: 5 */
   recentTurnCount?: number;
-  /** Maximum characters in the output prompt. Default: 40_000 */
+  /** Maximum characters in the output prompt. Default: 120_000 (~30k tokens) */
   maxChars?: number;
 }
 
@@ -39,6 +39,8 @@ export interface ExtractedContext {
     projectName?: string;
     /** Whether older turns were summarized by an LLM (vs per-turn truncation fallback) */
     llmSummarized?: boolean;
+    /** True when the prompt was hard-capped mid-text (extremely rare at 120k default) */
+    truncated?: boolean;
   };
 }
 
@@ -432,7 +434,7 @@ function buildPrompt(
   session: SessionMeta,
   options: Required<ContextExtractorOptions>,
   llmSummary?: string | null,
-): string {
+): { prompt: string; truncated: boolean } {
   const { mode, recentTurnCount, maxChars } = options;
 
   const totalTurns = turns.length;
@@ -506,7 +508,7 @@ function buildPrompt(
   let prompt = `${header}${body}\n${footer}`;
 
   if (prompt.length <= maxChars) {
-    return prompt;
+    return { prompt, truncated: false };
   }
 
   // If we have an LLM summary, only drop verbatim turns (preserve the summary)
@@ -565,12 +567,12 @@ function buildPrompt(
     }
   }
 
-  // Hard cap as last resort
+  // Hard cap as last resort — fires only when even a single turn + summary exceeds maxChars
   if (prompt.length > maxChars) {
-    prompt = prompt.slice(0, maxChars);
+    return { prompt: prompt.slice(0, maxChars), truncated: true };
   }
 
-  return prompt;
+  return { prompt, truncated: false };
 }
 
 // ============================================================================
@@ -630,7 +632,7 @@ export async function extractSessionContext(
   const resolvedOptions: Required<ContextExtractorOptions> = {
     mode: options.mode,
     recentTurnCount: options.recentTurnCount ?? 5,
-    maxChars: options.maxChars ?? 40_000,
+    maxChars: options.maxChars ?? 120_000,
   };
 
   const session = await getSessionWithDetails(sessionId);
@@ -666,7 +668,7 @@ export async function extractSessionContext(
         llmSummary = await summarizeConversation(sessionId, turnsToSummarize);
       }
 
-      const prompt = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
+      const { prompt, truncated } = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
 
       return {
         prompt,
@@ -679,6 +681,7 @@ export async function extractSessionContext(
           taskTitle: session.taskTitle ?? undefined,
           projectName: session.projectName ?? undefined,
           llmSummarized: llmSummary !== null,
+          truncated: truncated || undefined,
         },
       };
     }
@@ -722,7 +725,7 @@ export async function extractSessionContext(
   }
 
   // Build prompt (with maxChars applied internally)
-  const prompt = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
+  const { prompt, truncated } = buildPrompt(turns, sessionMeta, resolvedOptions, llmSummary);
 
   return {
     prompt,
@@ -735,6 +738,7 @@ export async function extractSessionContext(
       taskTitle: session.taskTitle ?? undefined,
       projectName: session.projectName ?? undefined,
       llmSummarized: llmSummary !== null,
+      truncated: truncated || undefined,
     },
   };
 }

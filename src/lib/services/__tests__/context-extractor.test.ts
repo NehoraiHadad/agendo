@@ -325,6 +325,38 @@ describe('context-extractor', () => {
     expect(result.prompt.length).toBeLessThanOrEqual(500);
   });
 
+  it('sets truncated=true when hard cap fires', async () => {
+    // Single very long turn that cannot be dropped (it's the only content)
+    const longText = 'x'.repeat(2000);
+    const lines = [
+      mkEvent({ type: 'user:message', text: longText }),
+      mkEvent({ type: 'agent:text', text: longText }),
+      mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }),
+    ];
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', {
+      mode: 'full',
+      maxChars: 200, // far smaller than the content
+    });
+
+    expect(result.prompt.length).toBeLessThanOrEqual(200);
+    expect(result.meta.truncated).toBe(true);
+  });
+
+  it('does not set truncated when content fits within maxChars', async () => {
+    const lines = [
+      mkEvent({ type: 'user:message', text: 'short' }),
+      mkEvent({ type: 'agent:text', text: 'reply' }),
+      mkEvent({ type: 'agent:result', costUsd: 0.001, turns: 1, durationMs: 100 }),
+    ];
+    mockState.readFileResult = buildLog(lines);
+
+    const result = await extractSessionContext('sess-1', { mode: 'full' });
+
+    expect(result.meta.truncated).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // 9. estimatedTokens = Math.ceil(prompt.length / 4)
   // -------------------------------------------------------------------------
