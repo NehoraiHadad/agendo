@@ -15,6 +15,7 @@ import { db } from '@/lib/db';
 import { agents } from '@/lib/db/schema';
 import { getSession, createSession } from '@/lib/services/session-service';
 import { extractSessionContext } from '@/lib/services/context-extractor';
+import { dispatchSession } from '@/lib/services/session-dispatch';
 import { BadRequestError, ConflictError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
@@ -49,7 +50,9 @@ const VALID_FORK_STATES = new Set(['active', 'awaiting_input', 'idle']);
  *
  * Extracts the conversation context from the parent's log file and creates a
  * new session for the target agent with the context as its initial prompt.
- * The new session is created idle — the user starts it manually.
+ * The new session is dispatched immediately (same pattern as POST /api/sessions)
+ * so the agent processes the context and enters awaiting_input. The user arrives
+ * at an already-running session and can continue the conversation.
  */
 export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkToAgentResult> {
   // 1. Load + validate parent session
@@ -108,6 +111,12 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     initialPrompt,
     parentSessionId: input.parentSessionId,
   });
+
+  // 7. Dispatch immediately so the agent processes the context transfer prompt
+  //    right away and enters awaiting_input.  session.initialPrompt stays in DB
+  //    for the InitialPromptBanner in the UI; resumePrompt carries the actual
+  //    context to the worker (same pattern as POST /api/sessions).
+  await dispatchSession({ sessionId: newSession.id, resumePrompt: initialPrompt });
 
   return {
     session: newSession,

@@ -207,8 +207,12 @@ describe('forkSessionToAgent', () => {
         }),
       );
 
-      // Verify dispatchSession NOT called
-      expect(mockDispatchSession).not.toHaveBeenCalled();
+      // Verify dispatchSession called with the extracted context as resumePrompt
+      // (mirrors the pattern in POST /api/sessions so the agent receives the context)
+      expect(mockDispatchSession).toHaveBeenCalledWith({
+        sessionId: mockNewSession.id,
+        resumePrompt: mockExtracted.prompt,
+      });
 
       // Verify return shape
       expect(result.session).toBe(mockNewSession);
@@ -408,9 +412,12 @@ describe('forkSessionToAgent', () => {
         contextMode: 'hybrid',
       });
 
-      // Should still succeed but NOT enqueue
+      // Should succeed and dispatch even for empty context (agent gets the empty-context prompt)
       expect(mockCreateSession).toHaveBeenCalled();
-      expect(mockDispatchSession).not.toHaveBeenCalled();
+      expect(mockDispatchSession).toHaveBeenCalledWith({
+        sessionId: mockNewSession.id,
+        resumePrompt: emptyExtracted.prompt,
+      });
       expect(result.contextMeta.totalTurns).toBe(0);
     });
   });
