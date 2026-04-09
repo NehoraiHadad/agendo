@@ -400,6 +400,10 @@ export const sessions = pgTable(
     useWorktree: boolean('use_worktree').notNull().default(false),
     // Maximum API spend in USD for this session (Claude SDK only). Agent stops when exceeded.
     maxBudgetUsd: numeric('max_budget_usd', { precision: 10, scale: 6 }),
+    // Fallback cwd inherited from a parent fork session. Used as a last resort before '/tmp'
+    // when the task has no workingDir, the project has no rootPath, and the agent has no workingDir.
+    // Only set by the fork service — not exposed in the public session creation API.
+    spawnCwd: text('spawn_cwd'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

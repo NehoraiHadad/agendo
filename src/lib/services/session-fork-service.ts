@@ -16,6 +16,7 @@ import { agents } from '@/lib/db/schema';
 import { getSession } from '@/lib/services/session-service';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
 import { extractSessionContext } from '@/lib/services/context-extractor';
+import { resolveSessionRuntimeContext } from '@/lib/services/session-runtime-context';
 import { BadRequestError, ConflictError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
@@ -80,18 +81,25 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
 
   requireFound(newAgent, 'Agent', input.newAgentId);
 
-  // 3. Extract conversation context from the parent session's log
+  // 3. Resolve the parent session's working directory so we can propagate it to
+  //    the fork. This is a last-resort fallback — the fork will prefer
+  //    task.inputContext.workingDir > project.rootPath > agent.workingDir > spawnCwd > /tmp.
+  //    We skip propagation if the parent itself resolved to '/tmp' (the default fallback).
+  const parentCtx = await resolveSessionRuntimeContext(input.parentSessionId);
+  const spawnCwd = parentCtx.cwd !== '/tmp' ? parentCtx.cwd : undefined;
+
+  // 4. Extract conversation context from the parent session's log
   const extracted = await extractSessionContext(input.parentSessionId, {
     mode: input.contextMode,
   });
 
-  // 4. Build the initial prompt, appending optional additional instructions
+  // 5. Build the initial prompt, appending optional additional instructions
   let initialPrompt = extracted.prompt;
   if (input.additionalInstructions) {
     initialPrompt += `\n\n---\n\nAdditional instructions:\n${input.additionalInstructions}`;
   }
 
-  // 5. Create and dispatch the new session, inheriting relevant parent fields.
+  // 6. Create and dispatch the new session, inheriting relevant parent fields.
   //    Deliberately excluded:
   //    - model: agent-specific; the target agent uses its own default
   //    - forkSourceRef: cross-agent cannot use --resume to inherit parent history
@@ -112,6 +120,7 @@ export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkT
     idleTimeoutSec: parent.idleTimeoutSec,
     initialPrompt,
     parentSessionId: input.parentSessionId,
+    spawnCwd,
     enqueueOpts: { resumePrompt: initialPrompt },
   });
 

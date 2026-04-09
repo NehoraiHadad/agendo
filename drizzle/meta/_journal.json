@@ -57,6 +57,13 @@
       "when": 1774768898635,
       "tag": "0007_delegation-policy-default-suggest",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1775755782413,
+      "tag": "0008_add-session-spawn-cwd",
+      "breakpoints": true
     }
   ]
 }
