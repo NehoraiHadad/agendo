@@ -62,12 +62,7 @@ export async function resolveSessionRuntimeContext(
         .then((rows) => rows[0] ?? null)
     : null;
 
-  const rawCwd =
-    task?.inputContext?.workingDir ??
-    project?.rootPath ??
-    agent.workingDir ??
-    session.spawnCwd ?? // inherited from parent fork (if set)
-    '/tmp';
+  const rawCwd = task?.inputContext?.workingDir ?? project?.rootPath ?? agent.workingDir ?? '/tmp';
   const cwd = await validateWorkingDir(rawCwd);
 
   const envOverrides: Record<string, string> = {};

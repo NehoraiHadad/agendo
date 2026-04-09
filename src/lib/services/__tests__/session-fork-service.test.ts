@@ -3,22 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // Shared mock state — all hoisted so vi.mock factories can reference them
 // ---------------------------------------------------------------------------
-const {
-  mockState,
-  mockGetSession,
-  mockCreateAndEnqueueSession,
-  mockExtractSessionContext,
-  mockResolveSessionRuntimeContext,
-} = vi.hoisted(() => ({
-  mockState: {
-    /** db.select() sequence: each call shifts from this queue */
-    selectQueue: [] as Array<unknown[]>,
-  },
-  mockGetSession: vi.fn(),
-  mockCreateAndEnqueueSession: vi.fn(),
-  mockExtractSessionContext: vi.fn(),
-  mockResolveSessionRuntimeContext: vi.fn(),
-}));
+const { mockState, mockGetSession, mockCreateAndEnqueueSession, mockExtractSessionContext } =
+  vi.hoisted(() => ({
+    mockState: {
+      /** db.select() sequence: each call shifts from this queue */
+      selectQueue: [] as Array<unknown[]>,
+    },
+    mockGetSession: vi.fn(),
+    mockCreateAndEnqueueSession: vi.fn(),
+    mockExtractSessionContext: vi.fn(),
+  }));
 
 // ---------------------------------------------------------------------------
 // Mock @/lib/db
@@ -70,13 +64,6 @@ vi.mock('@/lib/services/session-helpers', () => ({
 // ---------------------------------------------------------------------------
 vi.mock('@/lib/services/context-extractor', () => ({
   extractSessionContext: mockExtractSessionContext,
-}));
-
-// ---------------------------------------------------------------------------
-// Mock @/lib/services/session-runtime-context
-// ---------------------------------------------------------------------------
-vi.mock('@/lib/services/session-runtime-context', () => ({
-  resolveSessionRuntimeContext: mockResolveSessionRuntimeContext,
 }));
 
 // ---------------------------------------------------------------------------
@@ -177,16 +164,6 @@ describe('forkSessionToAgent', () => {
     mockGetSession.mockResolvedValue(mockParent);
     mockCreateAndEnqueueSession.mockResolvedValue(mockNewSession);
     mockExtractSessionContext.mockResolvedValue(mockExtracted);
-    // Default: parent resolved to a real project dir (not /tmp)
-    mockResolveSessionRuntimeContext.mockResolvedValue({
-      cwd: '/home/ubuntu/projects/agendo',
-      session: mockParent,
-      agent: { id: '33333333-3333-3333-3333-333333333333', workingDir: null },
-      task: null,
-      project: null,
-      resolvedProjectId: null,
-      envOverrides: {},
-    });
   });
 
   describe('happy path — hybrid mode', () => {
@@ -312,50 +289,6 @@ describe('forkSessionToAgent', () => {
 
       const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
       expect(createArg['forkSourceRef']).toBeUndefined();
-    });
-
-    it('passes spawnCwd when parent resolved to a real directory (not /tmp)', async () => {
-      mockResolveSessionRuntimeContext.mockResolvedValue({
-        cwd: '/home/ubuntu/projects/agendo',
-        session: mockParent,
-        agent: {},
-        task: null,
-        project: null,
-        resolvedProjectId: null,
-        envOverrides: {},
-      });
-      queueDbSelectResults(mockNewAgent);
-
-      await forkSessionToAgent({
-        parentSessionId: PARENT_SESSION_ID,
-        newAgentId: NEW_AGENT_ID,
-        contextMode: 'hybrid',
-      });
-
-      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
-      expect(createArg['spawnCwd']).toBe('/home/ubuntu/projects/agendo');
-    });
-
-    it('does NOT pass spawnCwd when parent resolved to /tmp (default fallback)', async () => {
-      mockResolveSessionRuntimeContext.mockResolvedValue({
-        cwd: '/tmp',
-        session: mockParent,
-        agent: {},
-        task: null,
-        project: null,
-        resolvedProjectId: null,
-        envOverrides: {},
-      });
-      queueDbSelectResults(mockNewAgent);
-
-      await forkSessionToAgent({
-        parentSessionId: PARENT_SESSION_ID,
-        newAgentId: NEW_AGENT_ID,
-        contextMode: 'hybrid',
-      });
-
-      const createArg = mockCreateAndEnqueueSession.mock.calls[0][0] as Record<string, unknown>;
-      expect(createArg['spawnCwd']).toBeUndefined();
     });
   });
 

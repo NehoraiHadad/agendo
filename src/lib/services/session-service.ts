@@ -33,12 +33,6 @@ export interface CreateSessionInput {
   delegationPolicy?: 'forbid' | 'suggest' | 'allow' | 'auto';
   /** Team role for this session. 'lead' = orchestrator, 'member' = team worker. */
   teamRole?: 'lead' | 'member';
-  /**
-   * Fallback cwd inherited from a parent fork session. Used as a last resort before '/tmp'
-   * when the task has no workingDir, the project has no rootPath, and the agent has no workingDir.
-   * Only set by the fork service — not exposed in the public session creation API.
-   */
-  spawnCwd?: string;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
@@ -74,7 +68,6 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       ...(input.maxBudgetUsd != null ? { maxBudgetUsd: String(input.maxBudgetUsd) } : {}),
       ...(input.delegationPolicy ? { delegationPolicy: input.delegationPolicy } : {}),
       ...(input.teamRole ? { teamRole: input.teamRole } : {}),
-      ...(input.spawnCwd ? { spawnCwd: input.spawnCwd } : {}),
     })
     .returning();
   return session;
