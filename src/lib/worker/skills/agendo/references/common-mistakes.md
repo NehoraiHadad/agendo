@@ -30,6 +30,15 @@
 | Progress notes for every action | Noisy, unhelpful history       | Report at meaningful checkpoints only                 |
 | No progress notes at all        | Orchestrator has no visibility | Add notes at phase transitions, blockers, completions |
 
+## Artifacts & File Sharing
+
+| Mistake                                        | What happens                                  | Fix                                                    |
+| ---------------------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
+| Base64-encoding images in artifact HTML        | Artifact bloats, may hit PG NOTIFY size limit | Use file server: `<img src="/api/dev/files?path=...">` |
+| Using `render_artifact` for plain text         | Unnecessary complexity                        | Just respond with text — artifacts are for visuals     |
+| Forgetting `<!DOCTYPE html>` in HTML artifacts | Quirks mode rendering, inconsistent styling   | Always start with full `<!DOCTYPE html>` document      |
+| File path outside allowed roots                | HTTP 403                                      | Only `/home/ubuntu/projects` and `/tmp` are served     |
+
 ## Working Directory
 
 | Mistake                | What happens                  | Fix                                             |

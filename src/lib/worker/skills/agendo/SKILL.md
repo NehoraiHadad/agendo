@@ -65,15 +65,33 @@ Mark ALL subtasks done BEFORE marking the parent done.
 | `save_plan`           | Save/update an implementation plan (markdown)      |
 | `render_artifact`     | Render interactive visual inline in chat           |
 
-### File Server (for artifacts)
+### Artifacts & File Sharing
 
-Agendo includes a built-in file server at `/api/dev/files?path=...` that serves local files with correct MIME types. **Use this in `render_artifact` HTML to reference images and files** instead of base64-encoding them:
+When a visual communicates better than text — a chart, diagram, architecture overview, formatted report — use `render_artifact` to render it inline in the session view. The user sees it immediately without switching tabs or opening files.
 
-```html
-<img src="/api/dev/files?path=/home/ubuntu/projects/my-app/output/image.webp" />
+```
+render_artifact({
+  title: "API Architecture",
+  type: "html",
+  content: "<!DOCTYPE html><html>..."
+})
 ```
 
-Allowed roots: `/home/ubuntu/projects`, `/tmp`. Full reference: `references/api-endpoints.md`.
+The `artifact-design` skill is pre-loaded with design guidelines — follow it for typography, color, and layout choices. Full reference with patterns and examples: `references/artifacts.md`.
+
+**Referencing local files in artifacts**: Agendo's file server at `/api/dev/files?path=...` serves local files with correct MIME types. Use it inside artifact HTML instead of base64-encoding images (which bloats the artifact and can hit size limits):
+
+```html
+<img src="/api/dev/files?path=/home/ubuntu/projects/my-app/output/chart.png" />
+```
+
+**Sharing a browsable directory**: Give the user a link to the file viewer to explore generated output:
+
+```
+/api/dev/viewer?dir=/home/ubuntu/projects/my-app/output
+```
+
+This opens a full file browser with breadcrumb navigation, image previews, and download links. Allowed roots: `/home/ubuntu/projects`, `/tmp`.
 
 ---
 

@@ -48,6 +48,24 @@ This is the **recommended approach** for showing images, charts, or generated ou
 
 ---
 
+## File Viewer (Directory Browser)
+
+Renders a full HTML directory browser with breadcrumb navigation, image grid view, and download links.
+
+```
+GET /api/dev/viewer?dir=/home/ubuntu/projects/my-app/output
+```
+
+Without `?dir=`, shows a root directory picker for the allowed roots.
+
+**Features**: breadcrumb navigation, file listing with size/date, image grid with lightbox, list/grid toggle, responsive mobile layout.
+
+**Same allowed roots** as the file server: `/home/ubuntu/projects`, `/tmp`.
+
+Use this when an agent has generated multiple output files and you want to give the user a browsable view.
+
+---
+
 ## Inter-Agent Communication
 
 Endpoints for sending messages to running agent sessions, monitoring their output, and checking status. Use these after spawning agents with `start_agent_session`.
