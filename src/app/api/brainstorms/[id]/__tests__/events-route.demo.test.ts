@@ -101,7 +101,7 @@ describe('GET /api/brainstorms/[id]/events — demo mode', () => {
     if (res.body) res.body.cancel().catch(() => undefined);
   });
 
-  it('streams SSE frames with correct id/event/data framing', async () => {
+  it('streams unnamed SSE frames with id/data framing (matches worker format)', async () => {
     vi.useFakeTimers();
 
     const [req, ctx] = makeRequest(DEMO_ROOM_ID);
@@ -115,7 +115,9 @@ describe('GET /api/brainstorms/[id]/events — demo mode', () => {
     expect(eventFrames.length).toBeGreaterThan(0);
 
     const first = eventFrames[0]!;
-    expect(first).toContain('event:');
+    // No `event:` line — the frontend uses EventSource.onmessage which only
+    // fires for unnamed frames.
+    expect(first).not.toContain('\nevent:');
     expect(first).toContain('data:');
     // Must have id: line
     expect(first).toMatch(/^id:\s*\d+/);
@@ -165,14 +167,14 @@ describe('GET /api/brainstorms/[id]/events — demo mode', () => {
     expect(eventFrames.length).toBeGreaterThan(0);
 
     const firstFrame = eventFrames[0]!;
-    // The SSE event: line should match what's in the fixture
-    const eventLine = firstFrame.split('\n').find((l) => l.startsWith('event:'));
-    expect(eventLine).toBeDefined();
-    const eventType = eventLine!.slice('event:'.length).trim();
+    // The discriminant now travels inside `data` (not an `event:` line)
+    const dataLine = firstFrame.split('\n').find((l) => l.startsWith('data:'));
+    expect(dataLine).toBeDefined();
+    const payload = JSON.parse(dataLine!.slice('data:'.length).trim()) as { type: string };
 
     // First fixture event type (sorted by atMs)
     const sorted = [...DEMO_BRAINSTORM_ROOMS[DEMO_ROOM_ID]!].sort((a, b) => a.atMs - b.atMs);
-    expect(eventType).toBe(sorted[0]!.type);
+    expect(payload.type).toBe(sorted[0]!.type);
 
     vi.useRealTimers();
   });

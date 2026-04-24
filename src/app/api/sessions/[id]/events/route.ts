@@ -35,16 +35,33 @@ export async function GET(
   const { id } = await context.params;
 
   if (isDemoMode()) {
-    const events = DEMO_SESSION_EVENTS[id];
-    if (!events) {
+    const rawEvents = DEMO_SESSION_EVENTS[id];
+    if (!rawEvents) {
       return new Response('Unknown demo session', { status: 404 });
     }
+
+    // Reconstruct the full AgendoEvent envelope the frontend expects:
+    //   { id: seq, sessionId, ts, ...payload }
+    // The worker's SSE producer emits unnamed frames (`id: N\ndata: ...\n\n`);
+    // matching that format lets native EventSource.onmessage fire for each event.
+    const baseTs = Date.now();
+    const events = rawEvents.map((e, i) => ({
+      atMs: e.atMs,
+      type: e.type,
+      payload: {
+        id: i + 1,
+        sessionId: id,
+        ts: baseTs + e.atMs,
+        ...(e.payload as Record<string, unknown>),
+      },
+    }));
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         const cleanup = replayEventsAsSSE(events, controller, {
           signal: req.signal,
           speed: 1.0,
+          emitEventName: false,
         });
         req.signal.addEventListener('abort', cleanup, { once: true });
       },

@@ -24,17 +24,24 @@ export interface ReplayOptions {
   onComplete?: () => void;
   /** AbortSignal to stop the replay early (e.g. when client disconnects). */
   signal?: AbortSignal;
+  /**
+   * When true, the SSE frame includes an `event: <type>` line. Clients then
+   * listen via `addEventListener(type, ...)`. When false, frames are emitted
+   * as unnamed events consumed by `EventSource.onmessage` — this matches the
+   * worker's real SSE format used by session and brainstorm streams.
+   * Default: true (preserves pre-existing board replay behaviour).
+   */
+  emitEventName?: boolean;
 }
 
 /**
  * Drives a pre-recorded event array through an SSE ReadableStream controller.
  *
- * Each event is serialized as:
- * ```
- * id: <seq>\n
- * event: <type>\n
- * data: <JSON.stringify(payload)>\n\n
- * ```
+ * Frame format depends on `emitEventName`:
+ * - When true (default): `id: N\nevent: <type>\ndata: <JSON>\n\n`
+ * - When false: `id: N\ndata: <JSON>\n\n` (matches the worker's format; native
+ *   `EventSource.onmessage` only fires for unnamed frames)
+ *
  * Heartbeats are emitted as SSE comment frames: `: heartbeat\n\n`
  *
  * Returns a cleanup function the route handler can call on close.
@@ -48,6 +55,7 @@ export function replayEventsAsSSE(
   const heartbeatMs = options?.heartbeatMs ?? 15000;
   const onComplete = options?.onComplete;
   const signal = options?.signal;
+  const emitEventName = options?.emitEventName ?? true;
 
   let closed = false;
   let seq = 0;
@@ -114,7 +122,9 @@ export function replayEventsAsSSE(
     const t = setTimeout(() => {
       if (closed) return;
       seq++;
-      const frame = `id: ${seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`;
+      const frame = emitEventName
+        ? `id: ${seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`
+        : `id: ${seq}\ndata: ${JSON.stringify(event.payload)}\n\n`;
       safeEnqueue(encoder.encode(frame));
     }, delay);
     timeouts.push(t);

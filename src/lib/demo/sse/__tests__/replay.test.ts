@@ -299,4 +299,27 @@ describe('replayEventsAsSSE', () => {
     expect(onComplete).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
   });
+
+  // -------------------------------------------------------------------------
+  // 11. emitEventName: false — frame omits the `event:` line so native
+  //     EventSource.onmessage fires (matches worker's SSE format).
+  // -------------------------------------------------------------------------
+  it('11. emitEventName=false emits unnamed frames for EventSource.onmessage', () => {
+    const { enqueue, mock } = makeController();
+
+    replayEventsAsSSE(THREE_EVENTS, mock, { heartbeatMs: 999999, emitEventName: false });
+    vi.advanceTimersByTime(300);
+
+    const eventFrames = allFrames(enqueue).filter((f) => f.startsWith('id:'));
+    expect(eventFrames).toHaveLength(3);
+
+    expect(eventFrames[0]).toBe(`id: 1\ndata: ${JSON.stringify({ text: 'Hello' })}\n\n`);
+    expect(eventFrames[1]).toBe(`id: 2\ndata: ${JSON.stringify({ text: 'World' })}\n\n`);
+    expect(eventFrames[2]).toBe(`id: 3\ndata: ${JSON.stringify({})}\n\n`);
+
+    // No frame should contain an `event:` line
+    for (const f of eventFrames) {
+      expect(f).not.toContain('\nevent:');
+    }
+  });
 });

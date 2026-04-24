@@ -316,7 +316,8 @@ describe('demo-mode end-to-end smoke', () => {
       expect(eventFrames.length).toBeGreaterThan(0);
 
       const first = eventFrames[0]!;
-      expect(first).toContain('event:');
+      // Session events are unnamed (worker format) — discriminant is in `data`.
+      expect(first).not.toContain('\nevent:');
       expect(first).toContain('data:');
 
       vi.useRealTimers();
@@ -376,7 +377,8 @@ describe('demo-mode end-to-end smoke', () => {
       expect(eventFrames.length).toBeGreaterThan(0);
 
       const first = eventFrames[0]!;
-      expect(first).toContain('event:');
+      // Brainstorm events are unnamed (worker format) — discriminant is in `data`.
+      expect(first).not.toContain('\nevent:');
       expect(first).toContain('data:');
 
       vi.useRealTimers();

@@ -117,7 +117,7 @@ describe('GET /api/sessions/[id]/events — demo mode', () => {
     if (res.body) res.body.cancel().catch(() => undefined);
   });
 
-  it('streams SSE frames with correct id/event/data framing', async () => {
+  it('streams unnamed SSE frames with id/data framing (worker format)', async () => {
     vi.useFakeTimers();
 
     const [req, ctx] = makeRequest(`http://localhost/api/sessions/${DEMO_ID}/events`, DEMO_ID);
@@ -134,10 +134,26 @@ describe('GET /api/sessions/[id]/events — demo mode', () => {
     const eventFrames = frames.filter((f) => f.startsWith('id:'));
     expect(eventFrames.length).toBeGreaterThan(0);
 
-    // Frame must have event: and data: lines
+    // Frames must be unnamed (no `event:` line) so native EventSource.onmessage
+    // fires — this matches the worker's real SSE producer format.
     const first = eventFrames[0];
-    expect(first).toContain('event:');
+    expect(first).not.toContain('\nevent:');
     expect(first).toContain('data:');
+
+    // The envelope fields (id, sessionId, ts) must be embedded in the JSON
+    // data, so the frontend reducer can dedup and timeline events.
+    const dataLine = first.split('\n').find((l) => l.startsWith('data:'));
+    expect(dataLine).toBeDefined();
+    const parsed = JSON.parse(dataLine!.slice('data:'.length).trim()) as {
+      id: number;
+      sessionId: string;
+      ts: number;
+      type: string;
+    };
+    expect(parsed.id).toBe(1);
+    expect(parsed.sessionId).toBe(DEMO_ID);
+    expect(typeof parsed.ts).toBe('number');
+    expect(typeof parsed.type).toBe('string');
 
     vi.useRealTimers();
   });

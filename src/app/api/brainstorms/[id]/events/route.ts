@@ -64,6 +64,9 @@ export async function GET(
         const cleanup = replayEventsAsSSE(events, controller, {
           signal: req.signal,
           speed: 1.0,
+          // Brainstorm clients consume SSE via EventSource.onmessage, which
+          // only fires for unnamed frames.
+          emitEventName: false,
         });
         req.signal.addEventListener('abort', cleanup, { once: true });
       },
