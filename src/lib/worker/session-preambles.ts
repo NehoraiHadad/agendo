@@ -181,12 +181,19 @@ export function generateResumeContext(
 /**
  * Shared constant describing how Agendo executes plans.
  * Used by plan conversation preambles across all agent types.
+ *
+ * CHANGELOG
+ * v1 (original): Status lifecycle, self-contained descriptions, scope/done/constraints,
+ *   basic pitfalls.
+ * v2 (2026-03-01): Added orchestration pattern (start_agent_session + polling), working
+ *   directory pitfall, probing questions. Ensures the agent can advise on multi-agent
+ *   sequencing and catches the most common "agents work in /tmp" mistake.
  */
 export const PLAN_CONTEXT_TEMPLATE = `
 ## How Agendo Executes Plans
 
 **Tasks** are the unit of work assigned to agents:
-- Status lifecycle: \`todo → in_progress → done\` (cannot skip)
+- Status lifecycle: \`todo → in_progress → done\` (cannot skip; todo→done requires two updates)
 - A task's \`description\` is the agent's only source of instructions — fully self-contained
 - An agent reads its assignment with \`get_my_task\`, reports progress with \`add_progress_note\`
 
@@ -195,6 +202,10 @@ that share context (e.g., schema migration → service update → API route → 
 
 Use **separate tasks** for independent work streams that touch different files.
 
+**Orchestration pattern** (for multi-step plans): An orchestrator task creates subtasks with \
+\`create_subtask\`, fires \`start_agent_session\` on each in order, then polls \`get_task\` \
+until status = \`done\` before proceeding to the next step.
+
 ## What Makes a Good Task Description
 
 Each step should have:
@@ -202,14 +213,27 @@ Each step should have:
 "src/lib/auth.ts and src/app/api/login/route.ts"
 - **Done criteria**: how to verify — "pnpm test passes", "GET /api/health returns 200"
 - **Constraints**: what NOT to change — "do not modify the public API surface"
+- **Working directory**: the task must be linked to the correct project; agents default to \
+/tmp if no project is set, and will operate on the wrong codebase
 - **No assumed context**: the agent knows only its description and the codebase
 
 ## Common Pitfalls to Flag
 
-- Vague scope ("clean up the codebase") — agents will guess
-- Missing QA gate — always include "run tests and lint" after implementation
+- Vague scope ("clean up the codebase") — agents will guess and may make unwanted changes
+- Missing QA gate — always include "run tests and lint" after implementation steps
 - Steps too large — break into subtasks if > 30 min of work
-- Parallel agents on shared files — forces sequential ordering or file partitioning`;
+- Parallel agents on shared files — forces sequential ordering or file partitioning
+- No project link — without it the agent works in /tmp, not the target codebase
+- Ambiguous done criteria — the agent won't know when to stop
+
+## Probing Questions
+
+When the plan is vague, ask before suggesting edits:
+1. What project and working directory does each step operate in?
+2. Are the steps sequential, or can any run in parallel? (Check for shared files first.)
+3. What is the explicit done criterion for each step? (Tests pass? Endpoint responds?)
+4. Should the steps be one task with subtasks, or separate independent tasks?
+5. Which agent handles each step — Claude, Codex, or Gemini?`;
 
 /**
  * Generates the full plan context block by appending the plan content to PLAN_CONTEXT_TEMPLATE.
@@ -269,10 +293,11 @@ export function generatePlanConversationPreamble(
     return {
       permissionMode: 'plan',
       prompt:
-        `You are reviewing and improving an implementation plan for Agendo.\n` +
+        `You are a collaborative plan editor and execution architect.\n` +
         `\n` +
         `Your session is in **plan mode** — you can read the codebase but cannot write files. ` +
-        `Explore the code to validate the plan's assumptions and identify gaps.\n` +
+        `Explore the code to validate the plan's assumptions, identify gaps, and ask probing ` +
+        `questions when scope or done criteria are unclear.\n` +
         `\n` +
         `When you are satisfied with the plan, use ExitPlanMode to finalize it. ` +
         `The plan content will be saved automatically.\n` +
