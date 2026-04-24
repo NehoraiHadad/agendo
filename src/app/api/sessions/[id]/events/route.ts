@@ -10,10 +10,11 @@ import { DEMO_SESSION_EVENTS } from '@/lib/demo/fixtures/sessions';
 import { SSE_HEADERS } from '@/lib/sse/constants';
 
 /**
- * SSE streams are long-lived — disable the default route handler timeout.
- * Without this, Next.js terminates the response after ~60-90s in dev mode.
+ * SSE streams are long-lived. Set to the Vercel hobby-plan maximum (300s).
+ * In demo mode, the replay finishes in seconds; in production this is a proxy.
+ * Without this export, Next.js terminates the response after ~60-90s in dev mode.
  */
-export const maxDuration = 0;
+export const maxDuration = 300;
 
 /** Proxy handler used in non-demo mode. */
 const proxyGET = createSSEProxyHandler((id) => `/sessions/${id}/events`, 'Session');

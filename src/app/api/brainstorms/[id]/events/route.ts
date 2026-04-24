@@ -6,8 +6,11 @@ import { DEMO_BRAINSTORM_ROOMS } from '@/lib/demo/fixtures/brainstorms';
 import { SSE_HEADERS } from '@/lib/sse/constants';
 import type { ReplayableEvent } from '@/lib/demo/sse/replay';
 
-/** SSE streams are long-lived — disable the default route handler timeout. */
-export const maxDuration = 0;
+/**
+ * SSE streams are long-lived. Set to the Vercel hobby-plan maximum (300s).
+ * In demo mode, the replay finishes in seconds; in production this is a proxy.
+ */
+export const maxDuration = 300;
 
 /** Proxy handler used in non-demo mode. */
 const proxyGET = createSSEProxyHandler((id) => `/brainstorms/${id}/events`, 'Brainstorm');
