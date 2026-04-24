@@ -15,6 +15,7 @@ import { apiFetch } from '@/lib/api-types';
 import { ModelPickerPopover } from '@/components/sessions/model-picker-popover';
 import { MemoryEditorModal } from '@/components/sessions/memory-editor-modal';
 import { buildMessageFormData } from '@/components/sessions/session-message-attachments';
+import { DemoGuard } from '@/components/demo';
 import type { SessionStatus } from '@/lib/realtime/events';
 import { deriveProvider } from '@/lib/utils/session-controls';
 import { generateId } from '@/lib/utils';
@@ -842,15 +843,21 @@ export function SessionMessageInput({
             />
           </div>
 
-          <Button
-            type="submit"
-            size="icon"
-            className="shrink-0 h-[44px] w-[44px] rounded-xl shadow-[0_2px_8px_oklch(0.7_0.18_280/0.2)] hover:shadow-[0_4px_16px_oklch(0.7_0.18_280/0.35)] active:scale-95 transition-all duration-150 disabled:shadow-none"
-            disabled={(!message.trim() && pendingAttachments.length === 0) || isSending}
-            aria-label="Send message"
-          >
-            {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-          </Button>
+          <DemoGuard message="Messages can't be sent in demo — install locally to interact with agents.">
+            <Button
+              type="submit"
+              size="icon"
+              className="shrink-0 h-[44px] w-[44px] rounded-xl shadow-[0_2px_8px_oklch(0.7_0.18_280/0.2)] hover:shadow-[0_4px_16px_oklch(0.7_0.18_280/0.35)] active:scale-95 transition-all duration-150 disabled:shadow-none"
+              disabled={(!message.trim() && pendingAttachments.length === 0) || isSending}
+              aria-label="Send message"
+            >
+              {isSending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+            </Button>
+          </DemoGuard>
         </div>
       </form>
 

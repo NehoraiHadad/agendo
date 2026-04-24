@@ -34,6 +34,7 @@ import { PLAYBOOK_PRESETS, PLAYBOOK_DEFAULTS } from '@/lib/brainstorm/playbook';
 import type { BrainstormConfig } from '@/lib/db/schema';
 import { getErrorMessage } from '@/lib/utils/error-utils';
 import { FALLBACK_TRIGGER_ERRORS } from '@/lib/fallback/policy';
+import { DemoGuard } from '@/components/demo';
 
 // ============================================================================
 // Types
@@ -830,19 +831,21 @@ function FooterContent({
         >
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={!canSubmit} className="gap-1.5 flex-1 sm:flex-none">
-          {isSubmitting ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin" />
-              Creating...
-            </>
-          ) : (
-            <>
-              <Plus className="size-3.5" />
-              Start
-            </>
-          )}
-        </Button>
+        <DemoGuard message="Brainstorms need live agents — install locally to try.">
+          <Button onClick={onSubmit} disabled={!canSubmit} className="gap-1.5 flex-1 sm:flex-none">
+            {isSubmitting ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                Creating...
+              </>
+            ) : (
+              <>
+                <Plus className="size-3.5" />
+                Start
+              </>
+            )}
+          </Button>
+        </DemoGuard>
       </div>
     </>
   );

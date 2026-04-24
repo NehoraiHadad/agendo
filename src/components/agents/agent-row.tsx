@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { AgentStatusBadge } from './agent-status-badge';
 import { deleteAgentAction } from '@/lib/actions/agent-actions';
 import { Pencil, Trash2 } from 'lucide-react';
+import { DemoGuard } from '@/components/demo';
 import type { Agent } from '@/lib/types';
 
 interface AgentRowProps {
@@ -56,16 +57,18 @@ export function AgentRow({ agent }: AgentRowProps) {
               <Pencil className="h-3.5 w-3.5" />
             </Link>
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-            onClick={handleDelete}
-            disabled={isPending}
-            aria-label="Delete agent"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          <DemoGuard message="Agents can't be deleted in demo — install locally to try.">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+              onClick={handleDelete}
+              disabled={isPending}
+              aria-label="Delete agent"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </DemoGuard>
         </div>
       </TableCell>
     </TableRow>

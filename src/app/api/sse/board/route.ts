@@ -5,6 +5,10 @@ import { listTasksBoardItems } from '@/lib/services/task-service';
 import { createLogger } from '@/lib/logger';
 import { SSE_HEADERS } from '@/lib/sse/constants';
 import { encodeNamedSSE } from '@/lib/sse/encoder';
+import { isDemoMode } from '@/lib/demo/flag';
+import { replayEventsAsSSE } from '@/lib/demo/sse/replay';
+import { generateBoardUpdates } from '@/lib/demo/fixtures/board-updates';
+import type { ReplayableEvent } from '@/lib/demo/sse/replay';
 
 const log = createLogger('sse-board');
 const POLL_INTERVAL_MS = 2000;
@@ -13,6 +17,36 @@ const HEARTBEAT_INTERVAL_MS = 15000;
 export const dynamic = 'force-dynamic';
 
 export async function GET(_req: NextRequest) {
+  // -------------------------------------------------------------------------
+  // Demo mode: replay pre-generated board updates instead of polling DB
+  // -------------------------------------------------------------------------
+  if (isDemoMode()) {
+    const boardEvents = generateBoardUpdates({ count: 50, intervalMs: 8000 });
+
+    // Convert BoardUpdateEvent[] to ReplayableEvent[] — the type field comes
+    // from the payload's own `type` discriminant.
+    const replayable: ReplayableEvent[] = boardEvents.map((e) => ({
+      atMs: e.atMs,
+      type: e.payload.type,
+      payload: e.payload,
+    }));
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const cleanup = replayEventsAsSSE(replayable, controller, {
+          signal: _req.signal,
+          speed: 1.0,
+        });
+        _req.signal.addEventListener('abort', cleanup, { once: true });
+      },
+    });
+
+    return new Response(stream, { headers: SSE_HEADERS });
+  }
+
+  // -------------------------------------------------------------------------
+  // Production: poll DB for real task updates
+  // -------------------------------------------------------------------------
   let closed = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;

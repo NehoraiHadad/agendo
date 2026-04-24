@@ -25,6 +25,7 @@ import { Square, Clock, Users, Activity, CheckCircle2, Circle } from 'lucide-rea
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api-types';
 import { toast } from 'sonner';
+import { DemoGuard } from '@/components/demo';
 
 const NODE_TYPES = { liveAgent: LiveAgentCard };
 const EDGE_TYPES = { messageFlow: MessageFlowEdge };
@@ -359,20 +360,22 @@ export function TeamMonitorCanvas({
 
         {/* Stop All — two-step confirm */}
         <div className="px-3 py-2 shrink-0">
-          <Button
-            size="sm"
-            variant="outline"
-            className={[
-              'h-7 text-[10px] font-mono gap-1.5 transition-all duration-200',
-              stopConfirm
-                ? 'border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                : 'border-zinc-700 bg-transparent text-zinc-500 hover:border-red-500/40 hover:text-red-400',
-            ].join(' ')}
-            onClick={() => void handleStopAll()}
-          >
-            <Square className="size-2.5" />
-            {stopConfirm ? 'CONFIRM?' : 'STOP ALL'}
-          </Button>
+          <DemoGuard message="Teams can't be stopped in demo — install locally to try.">
+            <Button
+              size="sm"
+              variant="outline"
+              className={[
+                'h-7 text-[10px] font-mono gap-1.5 transition-all duration-200',
+                stopConfirm
+                  ? 'border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                  : 'border-zinc-700 bg-transparent text-zinc-500 hover:border-red-500/40 hover:text-red-400',
+              ].join(' ')}
+              onClick={() => void handleStopAll()}
+            >
+              <Square className="size-2.5" />
+              {stopConfirm ? 'CONFIRM?' : 'STOP ALL'}
+            </Button>
+          </DemoGuard>
         </div>
       </div>
 

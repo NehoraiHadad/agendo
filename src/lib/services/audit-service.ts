@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { auditLog } from '@/lib/db/schema';
 import { createLogger } from '@/lib/logger';
+import { isDemoMode } from '@/lib/demo/flag';
 
 const log = createLogger('audit-service');
 
@@ -15,6 +16,10 @@ export async function logAudit(
   resourceId?: string,
   metadata?: Record<string, unknown>,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./audit-service.demo');
+    return demo.logAudit(actor, action, resourceType, resourceId, metadata);
+  }
   try {
     await db.insert(auditLog).values({ actor, action, resourceType, resourceId, metadata });
   } catch (err) {
@@ -29,6 +34,10 @@ export async function logSessionAudit(
   sessionId: string,
   metadata?: Record<string, unknown>,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./audit-service.demo');
+    return demo.logSessionAudit(action, sessionId, metadata);
+  }
   return logAudit('system', action, 'session', sessionId, metadata);
 }
 
@@ -38,6 +47,10 @@ export async function logTaskAudit(
   taskId: string,
   metadata?: Record<string, unknown>,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./audit-service.demo');
+    return demo.logTaskAudit(action, taskId, metadata);
+  }
   const actor = metadata && typeof metadata.actor === 'string' ? metadata.actor : 'system';
   return logAudit(actor, action, 'task', taskId, metadata);
 }

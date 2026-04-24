@@ -1,0 +1,64 @@
+name: Demo Mode CI
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [main]
+
+jobs:
+  test-demo:
+    name: Demo mode — lint, typecheck, test, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (demo mode)
+        run: NEXT_PUBLIC_DEMO_MODE=true pnpm typecheck
+
+      - name: Lint (demo mode)
+        run: NEXT_PUBLIC_DEMO_MODE=true pnpm lint
+
+      - name: Vitest — demo-coverage + integration smoke
+        run: |
+          NEXT_PUBLIC_DEMO_MODE=true pnpm vitest run \
+            src/lib/__tests__/demo-coverage.test.ts \
+            src/lib/__tests__/integration/demo-smoke.test.ts
+
+      - name: Build (demo mode)
+        run: NEXT_PUBLIC_DEMO_MODE=true pnpm build
+
+  # ---------------------------------------------------------------------------
+  # smoke-demo-preview — runs after test-demo on push to main only.
+  #
+  # Assumes Vercel's GitHub integration has already deployed the preview by
+  # the time this job runs. The deploy is driven by Vercel's own GitHub
+  # integration (not this workflow). This job merely pings the known demo URL
+  # to confirm the deployed app responds correctly.
+  # ---------------------------------------------------------------------------
+  smoke-demo-preview:
+    name: Post-deploy smoke (agendo-demo.vercel.app)
+    runs-on: ubuntu-latest
+    needs: test-demo
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run post-deploy smoke script
+        env:
+          BASE_URL: https://agendo-demo.vercel.app
+        run: bash scripts/demo-post-deploy-smoke.sh

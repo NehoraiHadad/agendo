@@ -6,8 +6,16 @@ const log = createLogger('config');
 /** Treat empty strings as undefined (common when copying .env.example) */
 const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
 
+// Read demo flag directly (no import from ./demo/flag to avoid potential cycles with logger).
+const isDemo = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
+const demoDefaults = {
+  DATABASE_URL: 'postgres://demo@demo.invalid:5432/demo',
+  JWT_SECRET: 'demo-mode-placeholder-secret-00',
+};
+
 const envSchema = z.object({
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: isDemo ? z.string().url().default(demoDefaults.DATABASE_URL) : z.string().url(),
   WORKER_ID: z.string().default('worker-1'),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().default(2000),
   WORKER_MAX_CONCURRENT_JOBS: z.coerce.number().default(3),
@@ -19,7 +27,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4100),
   TERMINAL_WS_PORT: z.coerce.number().default(4101),
   WORKER_HTTP_PORT: z.coerce.number().default(4102),
-  JWT_SECRET: z.string().min(16),
+  JWT_SECRET: isDemo ? z.string().min(16).default(demoDefaults.JWT_SECRET) : z.string().min(16),
   MCP_SERVER_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
   TERMINAL_JWT_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   // Web Push (VAPID) — optional, push notifications disabled if not set

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import type { ParsedFlag } from '@/lib/db/schema';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { DemoGuard } from '@/components/demo';
 
 interface RefreshFlagsButtonProps {
   agentId: string;
@@ -46,10 +47,12 @@ export function RefreshFlagsButton({ agentId, initialFlags }: RefreshFlagsButton
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
-          <RefreshCw className={`size-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh Flags
-        </Button>
+        <DemoGuard message="Flags can't be refreshed in demo — install locally to try.">
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
+            <RefreshCw className={`size-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh Flags
+          </Button>
+        </DemoGuard>
         <Badge variant="secondary">{flags.length} flags</Badge>
       </div>
 

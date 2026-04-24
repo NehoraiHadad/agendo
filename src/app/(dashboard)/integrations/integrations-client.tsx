@@ -6,6 +6,7 @@ import { Plug, Trash2, Loader2, ExternalLink, Terminal } from 'lucide-react';
 import Link from 'next/link';
 import { ConnectRepoDialog } from '@/components/integrations/connect-repo-dialog';
 import { Button } from '@/components/ui/button';
+import { DemoGuard } from '@/components/demo';
 import type { Task } from '@/lib/types';
 
 // Pipeline steps — maps task status to which step is active (0-indexed; 4 = all done)
@@ -130,13 +131,15 @@ export function IntegrationsClient({ integrations }: { integrations: Task[] }) {
             Extend Agendo with new capabilities, libraries, and tools.
           </p>
         </div>
-        <Button
-          onClick={() => setOpen(true)}
-          className="bg-emerald-600 hover:bg-emerald-500 text-white border-0 gap-2 w-full sm:w-auto"
-        >
-          <Plug className="size-4" />
-          Add Integration
-        </Button>
+        <DemoGuard message="Integrations can't be added in demo — install locally to try.">
+          <Button
+            onClick={() => setOpen(true)}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white border-0 gap-2 w-full sm:w-auto"
+          >
+            <Plug className="size-4" />
+            Add Integration
+          </Button>
+        </DemoGuard>
       </div>
 
       {/* List */}
@@ -218,18 +221,20 @@ export function IntegrationsClient({ integrations }: { integrations: Task[] }) {
                         <span className="hidden sm:inline">Session</span>
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      disabled={isRemoving}
-                      onClick={() => void handleRemove(integrationName)}
-                      className="p-2 rounded-md text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 disabled:opacity-30 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
-                    >
-                      {isRemoving ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                    </button>
+                    <DemoGuard message="Integrations can't be removed in demo — install locally to try.">
+                      <button
+                        type="button"
+                        disabled={isRemoving}
+                        onClick={() => void handleRemove(integrationName)}
+                        className="p-2 rounded-md text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 disabled:opacity-30 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
+                      >
+                        {isRemoving ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                      </button>
+                    </DemoGuard>
                   </div>
                 </div>
 

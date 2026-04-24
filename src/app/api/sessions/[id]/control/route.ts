@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { dispatchSession } from '@/lib/services/session-dispatch';
+import { isDemoMode } from '@/lib/demo/flag';
 import type { AgendoControl } from '@/lib/realtime/events';
 
 /**
@@ -29,6 +30,13 @@ export const POST = withErrorBoundary(
     const { id } = await params;
     assertUUID(id, 'Session');
     const body = (await req.json()) as AgendoControl;
+
+    // Demo mode: accept the control signal and acknowledge without touching the
+    // DB or the Worker. Matches the demo promise — actions are soft-disabled by
+    // DemoGuard in UI, but programmatic/curl calls must not 500.
+    if (isDemoMode()) {
+      return NextResponse.json({ data: { delivered: true } }, { status: 202 });
+    }
 
     // Only allow types that require simple PG NOTIFY relay (not the ones with
     // dedicated routes that do extra DB work, like 'message' and 'cancel').

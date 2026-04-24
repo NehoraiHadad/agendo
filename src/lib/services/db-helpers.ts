@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { requireFound } from '@/lib/api-handler';
+import { isDemoMode } from '@/lib/demo/flag';
 import {
   sessions,
   tasks,
@@ -53,6 +54,10 @@ export async function getById<T extends AnyMappedTable>(
   id: string,
   entityName: string,
 ): Promise<ResultFor<T>> {
+  if (isDemoMode()) {
+    const demo = await import('./db-helpers.demo');
+    return demo.getById(table, id, entityName) as Promise<ResultFor<T>>;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tbl = table as any;
   const [row] = await db.select().from(tbl).where(eq(tbl.id, id)).limit(1);

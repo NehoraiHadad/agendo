@@ -6,30 +6,51 @@ import { db } from '@/lib/db';
 import { mcpServers, projectMcpServers } from '@/lib/db/schema';
 import type { McpServer, NewMcpServer, ProjectMcpServer } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { isDemoMode } from '@/lib/demo/flag';
 
 // --- CRUD ---
 
 export async function listMcpServers(filters?: { enabled?: boolean }): Promise<McpServer[]> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.listMcpServers(filters);
+  }
   const where = buildFilters({ enabled: filters?.enabled }, { enabled: mcpServers.enabled });
   return db.select().from(mcpServers).where(where);
 }
 
 export async function getMcpServer(id: string): Promise<McpServer | null> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.getMcpServer(id);
+  }
   const [server] = await db.select().from(mcpServers).where(eq(mcpServers.id, id)).limit(1);
   return server ?? null;
 }
 
 export async function getMcpServerByName(name: string): Promise<McpServer | null> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.getMcpServerByName(name);
+  }
   const [server] = await db.select().from(mcpServers).where(eq(mcpServers.name, name)).limit(1);
   return server ?? null;
 }
 
 export async function createMcpServer(data: NewMcpServer): Promise<McpServer> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.createMcpServer(data);
+  }
   const [server] = await db.insert(mcpServers).values(data).returning();
   return server;
 }
 
 export async function updateMcpServer(id: string, data: Partial<NewMcpServer>): Promise<McpServer> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.updateMcpServer(id, data);
+  }
   const [updated] = await db
     .update(mcpServers)
     .set({ ...data, updatedAt: new Date() })
@@ -39,6 +60,10 @@ export async function updateMcpServer(id: string, data: Partial<NewMcpServer>): 
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.deleteMcpServer(id);
+  }
   await db.delete(mcpServers).where(eq(mcpServers.id, id));
 }
 
@@ -47,6 +72,10 @@ export async function deleteMcpServer(id: string): Promise<void> {
 export async function getProjectMcpServers(
   projectId: string,
 ): Promise<(ProjectMcpServer & { mcpServer: McpServer })[]> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.getProjectMcpServers(projectId);
+  }
   const rows = await db
     .select()
     .from(projectMcpServers)
@@ -64,6 +93,10 @@ export async function setProjectMcpOverride(
   mcpServerId: string,
   config: { enabled: boolean; envOverrides?: Record<string, string> },
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.setProjectMcpOverride(projectId, mcpServerId, config);
+  }
   await db
     .insert(projectMcpServers)
     .values({
@@ -85,6 +118,10 @@ export async function removeProjectMcpOverride(
   projectId: string,
   mcpServerId: string,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.removeProjectMcpOverride(projectId, mcpServerId);
+  }
   await db
     .delete(projectMcpServers)
     .where(
@@ -119,6 +156,10 @@ export interface ResolvedMcpServer {
 export async function resolveSessionMcpServers(
   projectId: string | null,
 ): Promise<ResolvedMcpServer[]> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.resolveSessionMcpServers(projectId);
+  }
   const allEnabled = await listMcpServers({ enabled: true });
 
   // Build a map for fast lookup
@@ -181,6 +222,10 @@ export async function resolveSessionMcpServers(
  * Only returns servers that exist and are globally enabled.
  */
 export async function resolveByMcpServerIds(ids: string[]): Promise<ResolvedMcpServer[]> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.resolveByMcpServerIds(ids);
+  }
   if (ids.length === 0) return [];
 
   const allEnabled = await listMcpServers({ enabled: true });
@@ -359,6 +404,10 @@ export async function importFromInstalledPlugins(): Promise<{
   skipped: string[];
   errors: string[];
 }> {
+  if (isDemoMode()) {
+    const demo = await import('./mcp-server-service.demo');
+    return demo.importFromInstalledPlugins();
+  }
   const imported: string[] = [];
   const skipped: string[] = [];
   const errors: string[] = [];

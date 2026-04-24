@@ -1,6 +1,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export type ActionResult<T = unknown> =
   | { success: true; data: T }
@@ -18,6 +19,9 @@ export function withAction<TInput, TOutput>(
   options?: { revalidate?: string | string[] },
 ): (input: TInput) => Promise<ActionResult<TOutput>> {
   return async (input: TInput) => {
+    if (isDemoMode()) {
+      return { success: true, data: null as TOutput };
+    }
     let data: TOutput;
     try {
       data = await fn(input);

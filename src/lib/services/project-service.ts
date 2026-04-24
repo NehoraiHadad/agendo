@@ -10,6 +10,7 @@ import { requireFound } from '@/lib/api-handler';
 import { detectGitHubRepo } from '@/lib/services/github-service';
 import { getProjectPathStatus, validateProjectPath } from '@/lib/services/project-path-service';
 import type { Project } from '@/lib/types';
+import { isDemoMode } from '@/lib/demo/flag';
 
 // --- Types ---
 
@@ -37,11 +38,19 @@ export interface UpdateProjectInput {
 // --- Implementation ---
 
 export async function listProjects(isActive?: boolean): Promise<Project[]> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.listProjects(isActive);
+  }
   const where = buildFilters({ isActive }, { isActive: projects.isActive });
   return db.select().from(projects).where(where);
 }
 
 export async function getProject(id: string): Promise<Project> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.getProject(id);
+  }
   const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
   requireFound(project, 'Project', id);
   if (!project.isActive) throw new NotFoundError('Project', id);
@@ -55,6 +64,10 @@ export interface SearchProjectResult {
 }
 
 export async function searchProjects(q: string, limit = 5): Promise<SearchProjectResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.searchProjects(q, limit);
+  }
   const rows = await db
     .select({ id: projects.id, name: projects.name, description: projects.description })
     .from(projects)
@@ -74,6 +87,10 @@ export async function searchProjects(q: string, limit = 5): Promise<SearchProjec
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.createProject(input);
+  }
   const pathStatus = await getProjectPathStatus(input.rootPath);
   const normalized = await validateProjectPath(input.rootPath);
 
@@ -104,6 +121,10 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
 }
 
 export async function updateProject(id: string, input: UpdateProjectInput): Promise<Project> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.updateProject(id, input);
+  }
   await getProject(id);
 
   // If rootPath is changing, validate the new path exists and re-detect GitHub repo.
@@ -134,6 +155,10 @@ export async function updateProject(id: string, input: UpdateProjectInput): Prom
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.deleteProject(id);
+  }
   // Soft-delete: Tasks retain their projectId. They are hidden from the board via a JOIN filter on
   // projects.is_active. SET NULL FK cascade fires only on hard-delete (purge).
   // Do NOT use getProject() here — it rejects inactive projects, causing 404 on double-delete.
@@ -150,6 +175,10 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 export async function restoreProject(id: string): Promise<Project> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.restoreProject(id);
+  }
   const [existing] = await db
     .select({ id: projects.id })
     .from(projects)
@@ -186,6 +215,10 @@ const PROTECTED_PATHS = new Set([
  * Creates it on first call — idempotent via the rootPath unique constraint.
  */
 export async function getOrCreateSystemProject(): Promise<Project> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.getOrCreateSystemProject();
+  }
   const systemRoot = process.cwd();
   await db
     .insert(projects)
@@ -203,6 +236,10 @@ export async function getOrCreateSystemProject(): Promise<Project> {
 }
 
 export async function purgeProject(id: string, options: PurgeProjectOptions = {}): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./project-service.demo');
+    return demo.purgeProject(id, options);
+  }
   const [existing] = await db
     .select({ id: projects.id, rootPath: projects.rootPath })
     .from(projects)

@@ -12,6 +12,7 @@ import { getBinaryName } from '@/lib/worker/agent-utils';
 import { buildPlanContext, generatePlanConversationPreamble } from '@/lib/worker/session-preambles';
 import { getGitHead } from '@/lib/utils/git';
 import type { Plan, PlanVersion, PlanStatus, PlanMetadata, PlanVersionMetadata } from '@/lib/types';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export interface CreatePlanInput {
   projectId: string;
@@ -53,6 +54,10 @@ export interface SearchPlanResult {
 }
 
 export async function searchPlans(q: string, limit = 5): Promise<SearchPlanResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.searchPlans(q, limit);
+  }
   const rows = await db
     .select({ id: plans.id, title: plans.title, status: plans.status, projectId: plans.projectId })
     .from(plans)
@@ -64,6 +69,10 @@ export async function searchPlans(q: string, limit = 5): Promise<SearchPlanResul
 }
 
 export async function createPlan(input: CreatePlanInput): Promise<Plan> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.createPlan(input);
+  }
   const [plan] = await db
     .insert(plans)
     .values({
@@ -78,6 +87,10 @@ export async function createPlan(input: CreatePlanInput): Promise<Plan> {
 }
 
 export async function getPlan(id: string): Promise<Plan> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.getPlan(id);
+  }
   return getById(plans, id, 'Plan');
 }
 
@@ -86,6 +99,10 @@ export async function listPlans(filters?: {
   status?: PlanStatus;
   limit?: number;
 }): Promise<Plan[]> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.listPlans(filters);
+  }
   const where = buildFilters(
     { projectId: filters?.projectId, status: filters?.status },
     { projectId: plans.projectId, status: plans.status },
@@ -96,6 +113,10 @@ export async function listPlans(filters?: {
 }
 
 export async function updatePlan(id: string, patch: UpdatePlanPatch): Promise<Plan> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.updatePlan(id, patch);
+  }
   const updateValues: Partial<typeof plans.$inferInsert> & { updatedAt: Date } = {
     updatedAt: new Date(),
   };
@@ -112,6 +133,10 @@ export async function updatePlan(id: string, patch: UpdatePlanPatch): Promise<Pl
 }
 
 export async function archivePlan(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.archivePlan(id);
+  }
   const [updated] = await db
     .update(plans)
     .set({ status: 'archived', updatedAt: new Date() })
@@ -133,6 +158,10 @@ export async function executePlan(
   planId: string,
   opts: ExecutePlanOpts,
 ): Promise<{ sessionId: string; taskId: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.executePlan(planId, opts);
+  }
   const plan = await getPlan(planId);
 
   // Create a parent task so execution is visible on the kanban board.
@@ -196,6 +225,10 @@ export async function breakPlanIntoTasks(
   planId: string,
   opts: ExecutePlanOpts,
 ): Promise<{ sessionId: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.breakPlanIntoTasks(planId, opts);
+  }
   const plan = await getPlan(planId);
 
   const initialPrompt = `You are a task breakdown specialist. Your ONLY job is to decompose the following plan into \
@@ -248,6 +281,10 @@ export async function startPlanConversation(
   planId: string,
   opts: StartPlanConversationOpts,
 ): Promise<{ sessionId: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.startPlanConversation(planId, opts);
+  }
   const [plan, agent] = await Promise.all([getPlan(planId), getAgentById(opts.agentId)]);
 
   const binaryName = getBinaryName(agent);
@@ -320,6 +357,10 @@ export async function savePlanFromMcp(
   planId?: string,
   visualContent?: string,
 ): Promise<{ planId: string; title: string; action: 'created' | 'updated'; artifactId?: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.savePlanFromMcp(sessionId, content, title, planId);
+  }
   // Extract title from first heading if not provided
   const resolvedTitle =
     title?.trim() ||
@@ -427,6 +468,10 @@ export async function savePlanContent(
   content: string,
   metadata: PlanVersionMetadata = {},
 ): Promise<PlanVersion | null> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.savePlanContent(planId, content, metadata);
+  }
   const [latest] = await db
     .select({ version: planVersions.version, content: planVersions.content })
     .from(planVersions)
@@ -457,6 +502,10 @@ export async function savePlanContent(
 export async function listPlanVersions(
   planId: string,
 ): Promise<Pick<PlanVersion, 'id' | 'version' | 'title' | 'createdAt' | 'metadata'>[]> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.listPlanVersions(planId);
+  }
   return db
     .select({
       id: planVersions.id,
@@ -474,6 +523,10 @@ export async function listPlanVersions(
  * Get a specific version by plan ID and version number.
  */
 export async function getPlanVersion(planId: string, version: number): Promise<PlanVersion> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.getPlanVersion(planId, version);
+  }
   const [row] = await db
     .select()
     .from(planVersions)
@@ -490,6 +543,10 @@ export async function comparePlanVersions(
   v1: number,
   v2: number,
 ): Promise<{ v1: PlanVersion; v2: PlanVersion }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.comparePlanVersions(planId, v1, v2);
+  }
   const [ver1, ver2] = await Promise.all([getPlanVersion(planId, v1), getPlanVersion(planId, v2)]);
   return { v1: ver1, v2: ver2 };
 }
@@ -498,6 +555,10 @@ export async function validatePlan(
   planId: string,
   opts: ValidatePlanOpts,
 ): Promise<{ sessionId: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./plan-service.demo');
+    return demo.validatePlan(planId, opts);
+  }
   const plan = await getPlan(planId);
 
   const initialPrompt = `Review this plan against the current codebase. Report if anything is broken or outdated:\n\n${plan.content}`;

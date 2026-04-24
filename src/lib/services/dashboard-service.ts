@@ -1,6 +1,7 @@
 import { eq, desc, count } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskEvents, agents, workerHeartbeats, projects } from '@/lib/db/schema';
+import { isDemoMode } from '@/lib/demo/flag';
 
 // --- Types ---
 
@@ -33,6 +34,10 @@ export interface DashboardStats {
 // --- Implementation ---
 
 export async function getDashboardStats(): Promise<DashboardStats> {
+  if (isDemoMode()) {
+    const demo = await import('./dashboard-service.demo');
+    return demo.getDashboardStats();
+  }
   const [taskCounts, recentEvents, agentRows, workerRow, projectCountRow] = await Promise.all([
     // Task counts by status
     db.select({ status: tasks.status, count: count() }).from(tasks).groupBy(tasks.status),

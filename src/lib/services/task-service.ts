@@ -7,6 +7,7 @@ import { SORT_ORDER_GAP, computeSortOrder } from '@/lib/sort-order';
 import { sendPushToAll } from '@/lib/services/notification-service';
 import { syncTaskStatusToGitHub } from '@/lib/services/github-sync-service';
 import { logTaskAudit } from '@/lib/services/audit-service';
+import { isDemoMode } from '@/lib/demo/flag';
 import type { Task, TaskStatus } from '@/lib/types';
 
 // --- Types ---
@@ -96,6 +97,10 @@ async function getNextSortOrder(status: TaskStatus): Promise<number> {
  * Runs inside a transaction so a partial failure leaves the column unchanged.
  */
 export async function reindexColumn(status: TaskStatus): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.reindexColumn(status);
+  }
   const columnTasks = await db
     .select({ id: tasks.id })
     .from(tasks)
@@ -128,6 +133,10 @@ export async function listTasksBoardItems(
   conditions: ReturnType<typeof and>[],
   options: { limit?: number } = {},
 ): Promise<TaskBoardItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.listTasksBoardItems(conditions, options);
+  }
   const limit = options.limit;
 
   // Filter out tasks belonging to soft-deleted projects
@@ -187,6 +196,10 @@ export async function listTasksBoardItems(
 }
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.createTask(input);
+  }
   const sortOrder = await getNextSortOrder(input.status ?? 'todo');
 
   const [task] = await db
@@ -223,6 +236,10 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
 }
 
 export async function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.updateTask(id, input);
+  }
   const existing = await getTaskById(id);
 
   if (input.status && input.status !== existing.status) {
@@ -274,6 +291,10 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
 }
 
 export async function deleteTask(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.deleteTask(id);
+  }
   const task = await getTaskById(id);
   if (task.parentTaskId) {
     await db.delete(tasks).where(eq(tasks.id, id));
@@ -286,10 +307,18 @@ export async function deleteTask(id: string): Promise<void> {
 }
 
 export async function getTaskById(id: string): Promise<Task> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.getTaskById(id);
+  }
   return getById(tasks, id, 'Task');
 }
 
 export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.getTaskWithDetails(id);
+  }
   const task = await getTaskById(id);
 
   const [
@@ -346,6 +375,10 @@ export async function getTaskWithDetails(id: string): Promise<TaskWithDetails> {
 export async function listTasksByStatus(
   options: ListTasksOptions,
 ): Promise<{ tasks: TaskBoardItem[]; nextCursor: string | null }> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.listTasksByStatus(options);
+  }
   const limit = options.limit ?? 50;
 
   const conditions = [];
@@ -375,6 +408,10 @@ export async function listTasksByStatus(
 }
 
 export async function listSubtasks(parentTaskId: string): Promise<TaskBoardItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.listSubtasks(parentTaskId);
+  }
   return listTasksBoardItems([eq(tasks.parentTaskId, parentTaskId)]);
 }
 
@@ -392,6 +429,10 @@ export interface SearchTaskResult {
 }
 
 export async function searchTasks(q: string, limit = 5): Promise<SearchTaskResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.searchTasks(q, limit);
+  }
   const rows = await db
     .select({
       id: tasks.id,
@@ -438,6 +479,10 @@ export async function searchProgressNotes(
   q: string,
   limit = 5,
 ): Promise<SearchProgressNoteResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.searchProgressNotes(q, limit);
+  }
   // Fetch more rows than needed so deduplication still yields `limit` unique tasks.
   const rows = await db
     .select({
@@ -501,6 +546,10 @@ export interface SetExecutionOrderInput {
  * Tasks not in the list keep their current executionOrder.
  */
 export async function setExecutionOrder(input: SetExecutionOrderInput): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.setExecutionOrder(input);
+  }
   await db.transaction(async (tx) => {
     for (let i = 0; i < input.taskIds.length; i++) {
       await tx
@@ -516,6 +565,10 @@ export async function setExecutionOrder(input: SetExecutionOrderInput): Promise<
  * Ordered by executionOrder (nulls last), then sortOrder.
  */
 export async function listReadyTasks(projectId?: string): Promise<TaskBoardItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.listReadyTasks(projectId);
+  }
   const conditions = [eq(tasks.status, 'todo')];
   if (projectId) {
     conditions.push(eq(tasks.projectId, projectId));
@@ -542,6 +595,10 @@ export async function listReadyTasks(projectId?: string): Promise<TaskBoardItem[
 }
 
 export async function reorderTask(id: string, input: ReorderTaskInput): Promise<Task> {
+  if (isDemoMode()) {
+    const demo = await import('./task-service.demo');
+    return demo.reorderTask(id, input);
+  }
   const existing = await getTaskById(id);
 
   // Validate status transition if changing columns

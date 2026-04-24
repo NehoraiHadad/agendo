@@ -9,6 +9,7 @@ import { getById } from '@/lib/services/db-helpers';
 import type { Agent, NewAgent } from '@/lib/types';
 import type { DiscoveredTool } from '@/lib/discovery';
 import { getHelpText, quickParseHelp } from '@/lib/discovery/schema-extractor';
+import { isDemoMode } from '@/lib/demo/flag';
 
 interface CreateAgentInput {
   name: string;
@@ -74,6 +75,10 @@ async function ensureUniqueSlug(baseSlug: string): Promise<string> {
 }
 
 export async function createAgent(data: CreateAgentInput): Promise<Agent> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.createAgent(data);
+  }
   validateBinaryPath(data.binaryPath);
 
   const slug = await ensureUniqueSlug(generateSlug(data.name));
@@ -104,6 +109,10 @@ export async function createAgent(data: CreateAgentInput): Promise<Agent> {
 }
 
 export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.createFromDiscovery(tool);
+  }
   // Idempotency: return existing agent if binary path already registered
   const [existing] = await db
     .select()
@@ -156,10 +165,18 @@ export async function createFromDiscovery(tool: DiscoveredTool): Promise<Agent> 
 }
 
 export async function getAgentById(id: string): Promise<Agent> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.getAgentById(id);
+  }
   return getById(agents, id, 'Agent');
 }
 
 export async function listAgents(): Promise<Agent[]> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.listAgents();
+  }
   return db
     .select()
     .from(agents)
@@ -168,6 +185,10 @@ export async function listAgents(): Promise<Agent[]> {
 }
 
 export async function updateAgent(id: string, data: UpdateAgentInput): Promise<Agent> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.updateAgent(id, data as Record<string, unknown>);
+  }
   const [agent] = await db
     .update(agents)
     .set({
@@ -181,25 +202,45 @@ export async function updateAgent(id: string, data: UpdateAgentInput): Promise<A
 }
 
 export async function deleteAgent(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.deleteAgent(id);
+  }
   const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning({ id: agents.id });
   requireFound(deleted, 'Agent', id);
 }
 
 export async function getAgentBySlug(slug: string): Promise<Agent | null> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.getAgentBySlug(slug);
+  }
   const [agent] = await db.select().from(agents).where(eq(agents.slug, slug)).limit(1);
   return agent ?? null;
 }
 
 export async function getExistingSlugs(): Promise<Set<string>> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.getExistingSlugs();
+  }
   const rows = await db.select({ slug: agents.slug }).from(agents);
   return new Set(rows.map((r) => r.slug));
 }
 
 export async function getExistingBinaryPaths(): Promise<Set<string>> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.getExistingBinaryPaths();
+  }
   const rows = await db.select({ binaryPath: agents.binaryPath }).from(agents);
   return new Set(rows.map((r) => r.binaryPath));
 }
 
 export async function updateAgentParsedFlags(id: string, flags: ParsedFlag[]): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./agent-service.demo');
+    return demo.updateAgentParsedFlags(id, flags);
+  }
   await db.update(agents).set({ parsedFlags: flags }).where(eq(agents.id, id));
 }

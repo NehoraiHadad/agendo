@@ -37,6 +37,7 @@ import { deriveProvider } from '@/lib/utils/session-controls';
 import type { ModelOption } from '@/lib/services/model-service';
 import { DelegationPolicySelect } from '@/components/sessions/delegation-policy-select';
 import type { DelegationPolicy } from '@/lib/utils/session-controls';
+import { DemoGuard } from '@/components/demo';
 
 interface StartSessionDialogProps {
   taskId: string;
@@ -457,14 +458,16 @@ export function StartSessionDialog({ taskId, agentId: agentIdProp }: StartSessio
           <ErrorAlert message={error} className="shrink-0" />
 
           <DialogFooter>
-            <Button type="submit" disabled={!canSubmit}>
-              {isSubmitting ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <MessageSquare className="size-4" />
-              )}
-              Start Session
-            </Button>
+            <DemoGuard message="Sessions can't be started in demo — install locally to try.">
+              <Button type="submit" disabled={!canSubmit}>
+                {isSubmitting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <MessageSquare className="size-4" />
+                )}
+                Start Session
+              </Button>
+            </DemoGuard>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import type { Agent } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { DemoGuard } from '@/components/demo';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -186,50 +187,56 @@ export function PlanActions({
             <span className="hidden sm:inline">Chat</span>
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setError(null);
-            setValidateOpen(true);
-            fetchAgents();
-          }}
-          disabled={isArchived || isExecuting_}
-          className="h-7 px-3 text-xs border gap-1.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 border-blue-500/20"
-        >
-          <CheckCircle className="size-3" />
-          <span className="hidden sm:inline">Validate</span>
-        </Button>
+        <DemoGuard message="Plans can't be validated in demo — install locally to try.">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              setValidateOpen(true);
+              fetchAgents();
+            }}
+            disabled={isArchived || isExecuting_}
+            className="h-7 px-3 text-xs border gap-1.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 border-blue-500/20"
+          >
+            <CheckCircle className="size-3" />
+            <span className="hidden sm:inline">Validate</span>
+          </Button>
+        </DemoGuard>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setError(null);
-            setBreakdownOpen(true);
-            fetchAgents();
-          }}
-          disabled={isArchived || isExecuting_}
-          className="h-7 px-3 text-xs border gap-1.5 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20"
-        >
-          <ListTodo className="size-3" />
-          <span className="hidden sm:inline">Break into tasks</span>
-        </Button>
+        <DemoGuard message="Plans can't be broken down in demo — install locally to try.">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              setBreakdownOpen(true);
+              fetchAgents();
+            }}
+            disabled={isArchived || isExecuting_}
+            className="h-7 px-3 text-xs border gap-1.5 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20"
+          >
+            <ListTodo className="size-3" />
+            <span className="hidden sm:inline">Break into tasks</span>
+          </Button>
+        </DemoGuard>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setError(null);
-            setExecuteOpen(true);
-            fetchAgents();
-          }}
-          disabled={isArchived || isExecuting_}
-          className="h-7 px-3 text-xs border gap-1.5 text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20"
-        >
-          <Play className="size-3" />
-          <span className="hidden sm:inline">Execute</span>
-        </Button>
+        <DemoGuard message="Plans can't execute in demo — install locally to try.">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              setExecuteOpen(true);
+              fetchAgents();
+            }}
+            disabled={isArchived || isExecuting_}
+            className="h-7 px-3 text-xs border gap-1.5 text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20"
+          >
+            <Play className="size-3" />
+            <span className="hidden sm:inline">Execute</span>
+          </Button>
+        </DemoGuard>
       </div>
 
       {/* Validate dialog */}

@@ -5,6 +5,7 @@ import { getAgentById } from '@/lib/services/agent-service';
 import { getSession } from '@/lib/services/session-service';
 import type { Agent, Project, Session, TaskInputContext } from '@/lib/types';
 import { validateWorkingDir } from '@/lib/worker/safety';
+import { isDemoMode } from '@/lib/demo/flag';
 
 interface SessionTaskContext {
   title: string;
@@ -26,6 +27,10 @@ export interface SessionRuntimeContext {
 export async function resolveSessionRuntimeContext(
   sessionId: string,
 ): Promise<SessionRuntimeContext> {
+  if (isDemoMode()) {
+    const demo = await import('./session-runtime-context.demo');
+    return demo.resolveSessionRuntimeContext(sessionId);
+  }
   const session = await getSession(sessionId);
   const agent = await getAgentById(session.agentId);
 

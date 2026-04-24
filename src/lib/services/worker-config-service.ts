@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { workerConfig } from '@/lib/db/schema';
+import { isDemoMode } from '@/lib/demo/flag';
 
 const DEFAULTS: Record<string, number> = {
   max_spawn_depth: 3,
@@ -10,6 +11,10 @@ const DEFAULTS: Record<string, number> = {
 };
 
 export async function getWorkerConfigNumber(key: string, fallback?: number): Promise<number> {
+  if (isDemoMode()) {
+    const demo = await import('./worker-config-service.demo');
+    return demo.getWorkerConfigNumber(key, fallback);
+  }
   const [row] = await db
     .select({ value: workerConfig.value })
     .from(workerConfig)

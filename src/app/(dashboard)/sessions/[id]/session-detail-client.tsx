@@ -75,9 +75,17 @@ import {
   isModelMatch,
 } from '@/lib/utils/session-controls';
 import { SESSION_STATUS_CONFIG } from '@/lib/utils/session-status-config';
+import { DemoGuard } from '@/components/demo';
 
+// TODO(Phase 4): replace inline env check with useDemoMode() once hook lands
 const WebTerminal = dynamic(
-  () => import('@/components/terminal/web-terminal').then((m) => m.WebTerminal),
+  async () => {
+    if (process.env.NEXT_PUBLIC_DEMO_MODE === 'true') {
+      const mod = await import('@/components/sessions/demo-web-terminal');
+      return mod.DemoWebTerminal;
+    }
+    return import('@/components/terminal/web-terminal').then((m) => m.WebTerminal);
+  },
   {
     ssr: false,
     loading: () => (
@@ -788,32 +796,36 @@ export function SessionDetailClient({
 
                   {/* Snapshot */}
                   {session.projectId && (
-                    <button
-                      onClick={() => {
-                        setShowSaveSnapshot(true);
-                        setShowMobileMenu(false);
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-teal-400 hover:bg-teal-500/[0.08] active:bg-teal-500/[0.12] transition-colors"
-                    >
-                      <Camera className="size-4 shrink-0" />
-                      <span>Save snapshot</span>
-                    </button>
+                    <DemoGuard message="Snapshots can't be saved in demo — install locally to try.">
+                      <button
+                        onClick={() => {
+                          setShowSaveSnapshot(true);
+                          setShowMobileMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-teal-400 hover:bg-teal-500/[0.08] active:bg-teal-500/[0.12] transition-colors"
+                      >
+                        <Camera className="size-4 shrink-0" />
+                        <span>Save snapshot</span>
+                      </button>
+                    </DemoGuard>
                   )}
 
                   {/* Permission mode */}
-                  <button
-                    onClick={() => void handleModeChange()}
-                    disabled={isModeChanging}
-                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors hover:bg-white/[0.04] active:bg-white/[0.07] ${modeCfg.className.split(' ').find((c) => c.startsWith('text-')) ?? 'text-foreground/70'}`}
-                  >
-                    {isModeChanging ? (
-                      <Loader2 className="size-4 shrink-0 animate-spin" />
-                    ) : (
-                      <ModeIcon className="size-4 shrink-0" />
-                    )}
-                    <span className="flex-1">Permission</span>
-                    <span className="text-xs font-medium opacity-70">{modeCfg.label}</span>
-                  </button>
+                  <DemoGuard message="Permission mode can't be changed in demo — install locally to try.">
+                    <button
+                      onClick={() => void handleModeChange()}
+                      disabled={isModeChanging}
+                      className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors hover:bg-white/[0.04] active:bg-white/[0.07] ${modeCfg.className.split(' ').find((c) => c.startsWith('text-')) ?? 'text-foreground/70'}`}
+                    >
+                      {isModeChanging ? (
+                        <Loader2 className="size-4 shrink-0 animate-spin" />
+                      ) : (
+                        <ModeIcon className="size-4 shrink-0" />
+                      )}
+                      <span className="flex-1">Permission</span>
+                      <span className="text-xs font-medium opacity-70">{modeCfg.label}</span>
+                    </button>
+                  </DemoGuard>
 
                   {/* Topology diagram */}
                   {teamState.isActive && (
@@ -830,24 +842,26 @@ export function SessionDetailClient({
                   )}
 
                   {/* Fork session */}
-                  <button
-                    onClick={() => {
-                      void handleFork();
-                      setShowMobileMenu(false);
-                    }}
-                    disabled={isForkingSession}
-                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-violet-400 hover:bg-violet-500/[0.08] active:bg-violet-500/[0.12] transition-colors"
-                  >
-                    {isForkingSession ? (
-                      <Loader2 className="size-4 shrink-0 animate-spin" />
-                    ) : (
-                      <GitFork className="size-4 shrink-0" />
-                    )}
-                    <span className="flex-1">Fork</span>
-                    <span className="text-xs font-medium opacity-50">
-                      {session.sessionRef ? 'with history' : 'no history yet'}
-                    </span>
-                  </button>
+                  <DemoGuard message="Sessions can't be forked in demo — install locally to try.">
+                    <button
+                      onClick={() => {
+                        void handleFork();
+                        setShowMobileMenu(false);
+                      }}
+                      disabled={isForkingSession}
+                      className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 text-violet-400 hover:bg-violet-500/[0.08] active:bg-violet-500/[0.12] transition-colors"
+                    >
+                      {isForkingSession ? (
+                        <Loader2 className="size-4 shrink-0 animate-spin" />
+                      ) : (
+                        <GitFork className="size-4 shrink-0" />
+                      )}
+                      <span className="flex-1">Fork</span>
+                      <span className="text-xs font-medium opacity-50">
+                        {session.sessionRef ? 'with history' : 'no history yet'}
+                      </span>
+                    </button>
+                  </DemoGuard>
 
                   {/* BTW side-channel */}
                   <button
@@ -878,21 +892,23 @@ export function SessionDetailClient({
                   <div className="h-px bg-white/[0.06] mx-3" />
 
                   {/* End session */}
-                  <button
-                    onClick={() => {
-                      setShowEndConfirm(true);
-                      setShowMobileMenu(false);
-                    }}
-                    disabled={isEnding}
-                    className="w-full text-left px-4 py-2.5 mb-1 text-sm flex items-center gap-3 text-red-400 hover:bg-red-500/[0.08] active:bg-red-500/[0.12] transition-colors"
-                  >
-                    {isEnding ? (
-                      <Loader2 className="size-4 shrink-0 animate-spin" />
-                    ) : (
-                      <PowerOff className="size-4 shrink-0" />
-                    )}
-                    <span>End session</span>
-                  </button>
+                  <DemoGuard message="Sessions can't be ended in demo — install locally to try.">
+                    <button
+                      onClick={() => {
+                        setShowEndConfirm(true);
+                        setShowMobileMenu(false);
+                      }}
+                      disabled={isEnding}
+                      className="w-full text-left px-4 py-2.5 mb-1 text-sm flex items-center gap-3 text-red-400 hover:bg-red-500/[0.08] active:bg-red-500/[0.12] transition-colors"
+                    >
+                      {isEnding ? (
+                        <Loader2 className="size-4 shrink-0 animate-spin" />
+                      ) : (
+                        <PowerOff className="size-4 shrink-0" />
+                      )}
+                      <span>End session</span>
+                    </button>
+                  </DemoGuard>
                 </div>
               )}
             </div>
@@ -960,34 +976,38 @@ export function SessionDetailClient({
 
               {/* Save snapshot */}
               {session.projectId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowSaveSnapshot(true)}
-                  title="Save context snapshot"
-                  className="h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 active:bg-teal-500/15 active:scale-95 border-teal-500/20 transition-all"
-                >
-                  <Camera className="size-3" />
-                  <span>Snapshot</span>
-                </Button>
+                <DemoGuard message="Snapshots can't be saved in demo — install locally to try.">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowSaveSnapshot(true)}
+                    title="Save context snapshot"
+                    className="h-7 px-2.5 text-xs border gap-1.5 text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 active:bg-teal-500/15 active:scale-95 border-teal-500/20 transition-all"
+                  >
+                    <Camera className="size-3" />
+                    <span>Snapshot</span>
+                  </Button>
+                </DemoGuard>
               )}
 
               {/* Permission mode */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void handleModeChange()}
-                disabled={isModeChanging}
-                title={modeCfg.title}
-                className={`h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${modeCfg.className}`}
-              >
-                {isModeChanging ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <ModeIcon className="size-3" />
-                )}
-                <span>{modeCfg.label}</span>
-              </Button>
+              <DemoGuard message="Permission mode can't be changed in demo — install locally to try.">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleModeChange()}
+                  disabled={isModeChanging}
+                  title={modeCfg.title}
+                  className={`h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all ${modeCfg.className}`}
+                >
+                  {isModeChanging ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <ModeIcon className="size-3" />
+                  )}
+                  <span>{modeCfg.label}</span>
+                </Button>
+              </DemoGuard>
 
               {/* Team panel toggle — desktop only, shown when team is active */}
               {teamState.isActive && (
@@ -1022,25 +1042,27 @@ export function SessionDetailClient({
               )}
 
               {/* Fork session */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void handleFork()}
-                disabled={isForkingSession}
-                title={
-                  session.sessionRef
-                    ? "Fork — open a new session that starts with this conversation's full history"
-                    : 'Fork — open a new session with the same settings (no history yet)'
-                }
-                className="h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20"
-              >
-                {isForkingSession ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <GitFork className="size-3" />
-                )}
-                <span>Fork</span>
-              </Button>
+              <DemoGuard message="Sessions can't be forked in demo — install locally to try.">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleFork()}
+                  disabled={isForkingSession}
+                  title={
+                    session.sessionRef
+                      ? "Fork — open a new session that starts with this conversation's full history"
+                      : 'Fork — open a new session with the same settings (no history yet)'
+                  }
+                  className="h-7 px-2.5 text-xs border gap-1.5 active:scale-95 transition-all text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border-violet-500/20"
+                >
+                  {isForkingSession ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <GitFork className="size-3" />
+                  )}
+                  <span>Fork</span>
+                </Button>
+              </DemoGuard>
 
               {/* BTW side-channel */}
               <Button
@@ -1063,20 +1085,22 @@ export function SessionDetailClient({
               />
 
               {/* End session */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowEndConfirm(true)}
-                disabled={isEnding}
-                className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/15 active:scale-95 border border-red-500/20 gap-1.5 transition-all"
-              >
-                {isEnding ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <PowerOff className="size-3" />
-                )}
-                <span>End</span>
-              </Button>
+              <DemoGuard message="Sessions can't be ended in demo — install locally to try.">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowEndConfirm(true)}
+                  disabled={isEnding}
+                  className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/15 active:scale-95 border border-red-500/20 gap-1.5 transition-all"
+                >
+                  {isEnding ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <PowerOff className="size-3" />
+                  )}
+                  <span>End</span>
+                </Button>
+              </DemoGuard>
             </div>
           )}
         </div>

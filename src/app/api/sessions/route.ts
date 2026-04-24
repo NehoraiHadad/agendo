@@ -7,6 +7,7 @@ import {
   type SessionKind,
 } from '@/lib/services/session-service';
 import { dispatchSession } from '@/lib/services/session-dispatch';
+import { isDemoMode } from '@/lib/demo/flag';
 import { z } from 'zod';
 
 const createSessionSchema = z.object({
@@ -70,7 +71,7 @@ export const POST = withErrorBoundary(async (req: NextRequest) => {
     teamRole: body.teamRole,
   });
 
-  if (body.initialPrompt) {
+  if (body.initialPrompt && !isDemoMode()) {
     await dispatchSession({ sessionId: session.id, resumePrompt: body.initialPrompt });
   }
 

@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { deleteTaskAction } from '@/lib/actions/task-actions';
+import { DemoGuard } from '@/components/demo';
 import { TaskDetailHeader } from './task-detail-header';
 import { TaskMetaPanel } from './task-meta-panel';
 import { TaskSubtasksList } from './task-subtasks-list';
@@ -78,13 +79,15 @@ export function TaskDetailSheet({ taskId }: TaskDetailSheetProps) {
                   <Monitor className="h-4 w-4" />
                 </Link>
               )}
-              <button
-                onClick={() => setDeleteOpen(true)}
-                className="rounded-md p-1.5 text-muted-foreground/60 hover:text-destructive hover:bg-white/[0.06] transition-colors"
-                aria-label="Delete task"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              <DemoGuard message="Tasks can't be deleted in demo — install locally to try.">
+                <button
+                  onClick={() => setDeleteOpen(true)}
+                  className="rounded-md p-1.5 text-muted-foreground/60 hover:text-destructive hover:bg-white/[0.06] transition-colors"
+                  aria-label="Delete task"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </DemoGuard>
               <button
                 onClick={close}
                 className="rounded-md p-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-white/[0.06] transition-colors"

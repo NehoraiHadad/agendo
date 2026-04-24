@@ -6,6 +6,7 @@ import { getOctokit } from '@/lib/services/github-service';
 import { createTask, updateTask, getTaskById } from '@/lib/services/task-service';
 import { createLogger } from '@/lib/logger';
 import type { Project, Task, TaskStatus } from '@/lib/types';
+import { isDemoMode } from '@/lib/demo/flag';
 
 const log = createLogger('github-sync');
 
@@ -142,6 +143,10 @@ async function syncIssueToTask(
  * Run inbound sync for a single project: fetch recent GitHub issues and sync to Agendo.
  */
 export async function syncInbound(octokit: Octokit, project: Project): Promise<SyncResult> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.syncInbound(octokit, project);
+  }
   const ghRepo = project.githubRepo ?? '';
   const result: SyncResult = {
     projectId: project.id,
@@ -221,6 +226,10 @@ export async function syncTaskStatusToGitHub(
   fromStatus: string,
   toStatus: string,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.syncTaskStatusToGitHub(task, fromStatus, toStatus);
+  }
   if (!task.projectId || !task.inputContext.githubIssueNumber) return;
 
   const octokit = await getOctokit();
@@ -338,6 +347,10 @@ export async function syncTaskStatusToGitHub(
  * Post a progress note as a comment on the linked GitHub issue.
  */
 export async function syncProgressNoteToGitHub(taskId: string, note: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.syncProgressNoteToGitHub(taskId, note);
+  }
   let task: Task;
   try {
     task = await getTaskById(taskId);
@@ -382,6 +395,10 @@ export async function syncProgressNoteToGitHub(taskId: string, note: string): Pr
 export async function createGitHubIssueForTask(
   taskId: string,
 ): Promise<{ issueNumber: number; issueUrl: string } | null> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.createGitHubIssueForTask(taskId);
+  }
   const task = await getTaskById(taskId);
   if (!task.projectId) return null;
   if (task.inputContext.githubIssueNumber) return null; // Already linked
@@ -435,6 +452,10 @@ export async function createGitHubIssueForTask(
  * Called by the worker's setInterval sync loop.
  */
 export async function runGitHubSync(): Promise<SyncResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.runGitHubSync();
+  }
   const octokit = await getOctokit();
   if (!octokit) {
     log.debug('No GitHub token available, skipping sync');
@@ -491,6 +512,10 @@ export async function getGitHubSyncStatus(projectId: string): Promise<{
   repo: string | null;
   lastSyncAt: Date | null;
 } | null> {
+  if (isDemoMode()) {
+    const demo = await import('./github-sync-service.demo');
+    return demo.getGitHubSyncStatus(projectId);
+  }
   const [project] = await db
     .select({
       githubRepo: projects.githubRepo,

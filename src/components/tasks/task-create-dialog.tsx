@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { createTaskAction } from '@/lib/actions/task-actions';
 import { ErrorAlert } from '@/components/ui/error-alert';
+import { DemoGuard } from '@/components/demo';
 import { useTaskBoardStore } from '@/lib/store/task-board-store';
 import { Plus } from 'lucide-react';
 import type { Task } from '@/lib/types';
@@ -154,9 +155,11 @@ export function TaskCreateDialog() {
 
           <ErrorAlert message={error} />
 
-          <Button type="submit" disabled={isPending || !title.trim()}>
-            {isPending ? 'Creating...' : 'Create Task'}
-          </Button>
+          <DemoGuard message="Tasks can't be created in demo — install locally to try.">
+            <Button type="submit" disabled={isPending || !title.trim()}>
+              {isPending ? 'Creating...' : 'Create Task'}
+            </Button>
+          </DemoGuard>
         </form>
       </DialogContent>
     </Dialog>

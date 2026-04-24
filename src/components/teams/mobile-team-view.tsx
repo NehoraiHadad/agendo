@@ -16,6 +16,7 @@ import type { MemberWithSession } from '@/hooks/use-team-canvas-stream';
 import type { ServerTeamMember } from '@/components/teams/team-monitor-canvas';
 import { apiFetch } from '@/lib/api-types';
 import { toast } from 'sonner';
+import { DemoGuard } from '@/components/demo';
 
 // ── Elapsed timer ─────────────────────────────────────────────────────────────
 
@@ -215,17 +216,19 @@ function BottomActionBar({ teamName, tasks, teamStartedAt, memberSessions }: Act
         {teamName && <div className="text-[11px] text-zinc-600 font-mono truncate">{teamName}</div>}
       </div>
 
-      <Button
-        size="sm"
-        variant="destructive"
-        className="h-11 px-4 text-sm shrink-0 min-w-[88px]"
-        disabled={isStopping}
-        onClick={() => void handleStopAll()}
-        aria-label="Stop all agent sessions"
-      >
-        <Square className="size-4 mr-1.5" aria-hidden="true" />
-        {isStopping ? 'Stopping…' : 'Stop All'}
-      </Button>
+      <DemoGuard message="Teams can't be stopped in demo — install locally to try.">
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-11 px-4 text-sm shrink-0 min-w-[88px]"
+          disabled={isStopping}
+          onClick={() => void handleStopAll()}
+          aria-label="Stop all agent sessions"
+        >
+          <Square className="size-4 mr-1.5" aria-hidden="true" />
+          {isStopping ? 'Stopping…' : 'Stop All'}
+        </Button>
+      </DemoGuard>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tasks, taskDependencies } from '@/lib/db/schema';
 import { ConflictError, NotFoundError } from '@/lib/errors';
+import { isDemoMode } from '@/lib/demo/flag';
 
 interface Dependency {
   taskId: string;
@@ -16,6 +17,11 @@ interface Dependency {
  * concurrent operations from creating cycles.
  */
 export async function addDependency(taskId: string, dependsOnTaskId: string): Promise<Dependency> {
+  if (isDemoMode()) {
+    const demo = await import('./dependency-service.demo');
+    return demo.addDependency(taskId, dependsOnTaskId);
+  }
+
   if (taskId === dependsOnTaskId) {
     throw new ConflictError('A task cannot depend on itself');
   }
@@ -114,6 +120,11 @@ export async function addDependency(taskId: string, dependsOnTaskId: string): Pr
 }
 
 export async function removeDependency(taskId: string, dependsOnTaskId: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./dependency-service.demo');
+    return demo.removeDependency(taskId, dependsOnTaskId);
+  }
+
   const result = await db
     .delete(taskDependencies)
     .where(
@@ -135,6 +146,11 @@ export async function removeDependency(taskId: string, dependsOnTaskId: string):
 export async function listDependencies(
   taskId: string,
 ): Promise<Array<{ id: string; title: string; status: string }>> {
+  if (isDemoMode()) {
+    const demo = await import('./dependency-service.demo');
+    return demo.listDependencies(taskId);
+  }
+
   return db
     .select({
       id: tasks.id,
@@ -152,6 +168,11 @@ export async function listDependencies(
 export async function listDependents(
   taskId: string,
 ): Promise<Array<{ id: string; title: string; status: string }>> {
+  if (isDemoMode()) {
+    const demo = await import('./dependency-service.demo');
+    return demo.listDependents(taskId);
+  }
+
   return db
     .select({
       id: tasks.id,

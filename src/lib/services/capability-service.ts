@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { agentCapabilities } from '@/lib/db/schema';
 import { eq, and, type SQL } from 'drizzle-orm';
 import type { AgentCapability, NewCapability, InteractionMode, SupportStatus } from '@/lib/types';
+import { isDemoMode } from '@/lib/demo/flag';
 
 // ---------------------------------------------------------------------------
 // Filters
@@ -21,6 +22,10 @@ export async function listCapabilities(
   agentId: string,
   filters?: CapabilityFilters,
 ): Promise<AgentCapability[]> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.listCapabilities(agentId, filters);
+  }
   const conditions: SQL[] = [eq(agentCapabilities.agentId, agentId)];
 
   if (filters?.interactionMode) {
@@ -40,6 +45,10 @@ export async function listCapabilities(
 }
 
 export async function getCapability(id: string): Promise<AgentCapability | undefined> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.getCapability(id);
+  }
   const rows = await db.select().from(agentCapabilities).where(eq(agentCapabilities.id, id));
   return rows[0];
 }
@@ -48,6 +57,10 @@ export async function getCapabilityByKey(
   agentId: string,
   key: string,
 ): Promise<AgentCapability | undefined> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.getCapabilityByKey(agentId, key);
+  }
   const rows = await db
     .select()
     .from(agentCapabilities)
@@ -60,6 +73,10 @@ export async function getCapabilityByKey(
 // ---------------------------------------------------------------------------
 
 export async function createCapability(data: NewCapability): Promise<AgentCapability> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.createCapability(data as Partial<AgentCapability>);
+  }
   const [row] = await db.insert(agentCapabilities).values(data).returning();
   return row;
 }
@@ -84,6 +101,10 @@ export async function updateCapability(
     >
   >,
 ): Promise<AgentCapability | undefined> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.updateCapability(id, data as Partial<AgentCapability>);
+  }
   const rows = await db
     .update(agentCapabilities)
     .set(data)
@@ -93,6 +114,10 @@ export async function updateCapability(
 }
 
 export async function deleteCapability(id: string): Promise<boolean> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.deleteCapability(id);
+  }
   const rows = await db
     .delete(agentCapabilities)
     .where(eq(agentCapabilities.id, id))
@@ -110,6 +135,10 @@ export async function bulkSetSupportStatus(
   status: SupportStatus,
   notes?: string,
 ): Promise<AgentCapability | undefined> {
+  if (isDemoMode()) {
+    const demo = await import('./capability-service.demo');
+    return demo.bulkSetSupportStatus(agentId, key, status, notes);
+  }
   const rows = await db
     .update(agentCapabilities)
     .set({

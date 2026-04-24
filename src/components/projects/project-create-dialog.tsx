@@ -35,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
+import { DemoGuard } from '@/components/demo';
 
 const PRESET_COLORS = [
   '#6366f1',
@@ -630,16 +631,18 @@ export function ProjectCreateDialog({ onCreated }: ProjectCreateDialogProps) {
           </DialogBody>
 
           <DialogFooter>
-            <Button type="submit" disabled={isCreateDisabled}>
-              {isSubmitting ? (
-                <Loader2 className="size-4 mr-2 animate-spin" />
-              ) : pathStatus === 'creatable' ? (
-                <FolderPlus className="size-4 mr-2" />
-              ) : (
-                <Plus className="size-4 mr-2" />
-              )}
-              {pathStatus === 'creatable' ? 'Create Project & Directory' : 'Create Project'}
-            </Button>
+            <DemoGuard message="Projects can't be created in demo — install locally to try.">
+              <Button type="submit" disabled={isCreateDisabled}>
+                {isSubmitting ? (
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                ) : pathStatus === 'creatable' ? (
+                  <FolderPlus className="size-4 mr-2" />
+                ) : (
+                  <Plus className="size-4 mr-2" />
+                )}
+                {pathStatus === 'creatable' ? 'Create Project & Directory' : 'Create Project'}
+              </Button>
+            </DemoGuard>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -24,6 +24,7 @@ import {
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { DemoGuard } from '@/components/demo';
 
 interface DiscoveredProject {
   path: string;
@@ -326,13 +327,15 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
           <ErrorAlert message={error ?? deleteError} />
 
           <SheetFooter className="flex-col gap-2 mt-auto p-0">
-            <Button
-              type="submit"
-              disabled={!name.trim() || !rootPath.trim() || isSubmitting || isDeleting}
-            >
-              {isSubmitting && <Loader2 className="size-4 mr-2 animate-spin" />}
-              Update Project
-            </Button>
+            <DemoGuard message="Projects can't be updated in demo — install locally to try.">
+              <Button
+                type="submit"
+                disabled={!name.trim() || !rootPath.trim() || isSubmitting || isDeleting}
+              >
+                {isSubmitting && <Loader2 className="size-4 mr-2 animate-spin" />}
+                Update Project
+              </Button>
+            </DemoGuard>
 
             {confirmDelete ? (
               <div className="w-full space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
@@ -446,16 +449,18 @@ export function ProjectEditSheet({ project, onUpdated, onDeleted }: ProjectEditS
                 </div>
               </div>
             ) : (
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={isSubmitting || isDeleting}
-                onClick={handleDelete}
-                className="w-full"
-              >
-                <Trash2 className="size-4 mr-2" />
-                Delete Project
-              </Button>
+              <DemoGuard message="Projects can't be deleted in demo — install locally to try.">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={isSubmitting || isDeleting}
+                  onClick={handleDelete}
+                  className="w-full"
+                >
+                  <Trash2 className="size-4 mr-2" />
+                  Delete Project
+                </Button>
+              </DemoGuard>
             )}
           </SheetFooter>
         </form>

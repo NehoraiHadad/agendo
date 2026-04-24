@@ -20,6 +20,7 @@ import { BadRequestError, ConflictError } from '@/lib/errors';
 import { requireFound } from '@/lib/api-handler';
 import type { Session } from '@/lib/types';
 import type { ExtractedContext } from '@/lib/services/context-extractor';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export interface ForkToAgentInput {
   parentSessionId: string;
@@ -55,6 +56,10 @@ const VALID_FORK_STATES = new Set(['active', 'awaiting_input', 'idle']);
  * at an already-running session and can continue the conversation.
  */
 export async function forkSessionToAgent(input: ForkToAgentInput): Promise<ForkToAgentResult> {
+  if (isDemoMode()) {
+    const demo = await import('./session-fork-service.demo');
+    return demo.forkSessionToAgent(input);
+  }
   // 1. Load + validate parent session
   const parent = await getSession(input.parentSessionId);
 

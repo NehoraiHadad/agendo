@@ -4,6 +4,10 @@ import { getSession } from '@/lib/services/session-service';
 import { sendSessionEvent } from '@/lib/realtime/worker-client';
 import { createSSEProxyHandler } from '@/lib/api/create-sse-proxy';
 import type { AgendoEventPayload } from '@/lib/realtime/events';
+import { isDemoMode } from '@/lib/demo/flag';
+import { replayEventsAsSSE } from '@/lib/demo/sse/replay';
+import { DEMO_SESSION_EVENTS } from '@/lib/demo/fixtures/sessions';
+import { SSE_HEADERS } from '@/lib/sse/constants';
 
 /**
  * SSE streams are long-lived — disable the default route handler timeout.
@@ -11,17 +15,45 @@ import type { AgendoEventPayload } from '@/lib/realtime/events';
  */
 export const maxDuration = 0;
 
+/** Proxy handler used in non-demo mode. */
+const proxyGET = createSSEProxyHandler((id) => `/sessions/${id}/events`, 'Session');
+
 /**
  * GET /api/sessions/:id/events
  *
- * Streaming proxy to Worker SSE. The Worker serves SSE on port 4102;
- * this route fetches from Worker and pipes the response body directly
- * to the browser as a ReadableStream — zero buffering.
+ * In demo mode: replays pre-recorded events from DEMO_SESSION_EVENTS.
+ * In production: streaming proxy to Worker SSE (port 4102).
  *
  * Why not use next.config.ts rewrites? Because Next.js rewrites buffer
  * the upstream response, which breaks SSE real-time delivery.
  */
-export const GET = createSSEProxyHandler((id) => `/sessions/${id}/events`, 'Session');
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const { id } = await context.params;
+
+  if (isDemoMode()) {
+    const events = DEMO_SESSION_EVENTS[id];
+    if (!events) {
+      return new Response('Unknown demo session', { status: 404 });
+    }
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const cleanup = replayEventsAsSSE(events, controller, {
+          signal: req.signal,
+          speed: 1.0,
+        });
+        req.signal.addEventListener('abort', cleanup, { once: true });
+      },
+    });
+
+    return new Response(stream, { headers: SSE_HEADERS });
+  }
+
+  return proxyGET(req, context);
+}
 
 /**
  * POST /api/sessions/:id/events
@@ -33,6 +65,11 @@ export const POST = withErrorBoundary(
   async (req: NextRequest, { params }: { params: Promise<Record<string, string>> }) => {
     const { id } = await params;
     assertUUID(id, 'Session');
+
+    // Demo mode: acknowledge silently — no Worker exists to forward to.
+    if (isDemoMode()) {
+      return new NextResponse(null, { status: 204 });
+    }
 
     // Verify session exists and is not ended — reject stale POSTs early
     const session = await getSession(id);

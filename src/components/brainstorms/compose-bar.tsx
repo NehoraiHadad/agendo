@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { BrainstormRoomStatus } from '@/lib/realtime/event-types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { DemoGuard } from '@/components/demo';
 
 interface ComposeBarProps {
   roomId: string;
@@ -126,15 +127,17 @@ export function ComposeBar({ roomId, status }: ComposeBarProps) {
           spellCheck={false}
           aria-label="Steering message"
         />
-        <Button
-          size="icon"
-          onClick={() => void handleSend()}
-          disabled={!canSend}
-          className="shrink-0 h-10 w-10 rounded-xl transition-all duration-150 disabled:opacity-30 disabled:shadow-none hover:scale-105 active:scale-95"
-          aria-label="Send message"
-        >
-          {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-        </Button>
+        <DemoGuard message="Brainstorms need live agents — install locally to steer the conversation.">
+          <Button
+            size="icon"
+            onClick={() => void handleSend()}
+            disabled={!canSend}
+            className="shrink-0 h-10 w-10 rounded-xl transition-all duration-150 disabled:opacity-30 disabled:shadow-none hover:scale-105 active:scale-95"
+            aria-label="Send message"
+          >
+            {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          </Button>
+        </DemoGuard>
       </div>
     </div>
   );

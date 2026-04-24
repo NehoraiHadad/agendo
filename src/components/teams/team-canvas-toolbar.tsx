@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTeamCanvasStore } from '@/stores/team-canvas-store';
 import { TEAM_TEMPLATES, type TeamTemplate } from '@/lib/team-templates';
 import { Rocket, Users, ChevronDown, Layout, RotateCcw } from 'lucide-react';
+import { DemoGuard } from '@/components/demo';
 
 // ============================================================================
 // Template Selector
@@ -206,23 +207,25 @@ export function TeamCanvasToolbar() {
         {error && <span className="text-[10px] text-red-400 max-w-[200px] truncate">{error}</span>}
 
         {/* Launch button */}
-        <button
-          onClick={handleLaunch}
-          disabled={launching || agentNodeCount === 0}
-          className={`
-            flex items-center gap-2 px-4 py-2 rounded-lg
-            text-xs font-semibold
-            transition-all duration-200
-            ${
-              launching || agentNodeCount === 0
-                ? 'bg-purple-500/20 text-purple-300/50 cursor-not-allowed'
-                : 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_20px_rgba(139,92,246,0.3)] hover:shadow-[0_0_30px_rgba(139,92,246,0.5)]'
-            }
-          `}
-        >
-          <Rocket className={`w-3.5 h-3.5 ${launching ? 'animate-pulse' : ''}`} />
-          {launching ? 'Launching...' : 'Launch Team'}
-        </button>
+        <DemoGuard message="Teams can't be launched in demo — install locally to try.">
+          <button
+            onClick={handleLaunch}
+            disabled={launching || agentNodeCount === 0}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg
+              text-xs font-semibold
+              transition-all duration-200
+              ${
+                launching || agentNodeCount === 0
+                  ? 'bg-purple-500/20 text-purple-300/50 cursor-not-allowed'
+                  : 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_20px_rgba(139,92,246,0.3)] hover:shadow-[0_0_30px_rgba(139,92,246,0.5)]'
+              }
+            `}
+          >
+            <Rocket className={`w-3.5 h-3.5 ${launching ? 'animate-pulse' : ''}`} />
+            {launching ? 'Launching...' : 'Launch Team'}
+          </button>
+        </DemoGuard>
       </div>
     </div>
   );

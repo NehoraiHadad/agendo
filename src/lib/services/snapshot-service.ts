@@ -5,6 +5,7 @@ import { contextSnapshots } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { getById } from '@/lib/services/db-helpers';
 import { createAndEnqueueSession } from '@/lib/services/session-helpers';
+import { isDemoMode } from '@/lib/demo/flag';
 import type { ContextSnapshot, SnapshotFindings } from '@/lib/types';
 
 export interface CreateSnapshotInput {
@@ -22,6 +23,11 @@ export interface ResumeFromSnapshotOpts {
 }
 
 export async function createSnapshot(input: CreateSnapshotInput): Promise<ContextSnapshot> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.createSnapshot(input);
+  }
+
   const [snapshot] = await db
     .insert(contextSnapshots)
     .values({
@@ -41,6 +47,11 @@ export async function createSnapshot(input: CreateSnapshotInput): Promise<Contex
 }
 
 export async function getSnapshot(id: string): Promise<ContextSnapshot> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.getSnapshot(id);
+  }
+
   return getById(contextSnapshots, id, 'ContextSnapshot');
 }
 
@@ -48,6 +59,11 @@ export async function listSnapshots(filters?: {
   projectId?: string;
   limit?: number;
 }): Promise<ContextSnapshot[]> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.listSnapshots(filters);
+  }
+
   const where = buildFilters(
     { projectId: filters?.projectId },
     { projectId: contextSnapshots.projectId },
@@ -66,6 +82,11 @@ export async function updateSnapshot(
   id: string,
   patch: { name?: string; summary?: string; keyFindings?: SnapshotFindings },
 ): Promise<ContextSnapshot> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.updateSnapshot(id, patch);
+  }
+
   const updates: Record<string, unknown> = {};
   if (patch.name !== undefined) updates.name = patch.name;
   if (patch.summary !== undefined) updates.summary = patch.summary;
@@ -84,6 +105,11 @@ export async function updateSnapshot(
 }
 
 export async function deleteSnapshot(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.deleteSnapshot(id);
+  }
+
   const [deleted] = await db
     .delete(contextSnapshots)
     .where(eq(contextSnapshots.id, id))
@@ -99,6 +125,11 @@ export async function resumeFromSnapshot(
   snapshotId: string,
   opts: ResumeFromSnapshotOpts,
 ): Promise<{ sessionId: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./snapshot-service.demo');
+    return demo.resumeFromSnapshot(snapshotId, opts);
+  }
+
   const snapshot = await getSnapshot(snapshotId);
 
   const promptParts: string[] = [`Context snapshot: ${snapshot.name}`, '', snapshot.summary];

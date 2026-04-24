@@ -2,6 +2,7 @@ import webpush from 'web-push';
 import { db } from '@/lib/db';
 import { pushSubscriptions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export interface PushPayload {
   title: string;
@@ -15,6 +16,10 @@ export interface PushPayload {
  * Auto-removes expired or invalid subscriptions (HTTP 410/404).
  */
 export async function sendPushToAll(payload: PushPayload): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./notification-service.demo');
+    return demo.sendPushToAll(payload);
+  }
   // Lazy import avoids pulling config (which calls process.exit on missing env) at module load time.
   const { config } = await import('@/lib/config');
   const vapidSubject = config.VAPID_SUBJECT;

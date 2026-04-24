@@ -11,6 +11,7 @@ import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { SupportChatPopup } from '@/components/support/support-chat-popup';
 import { UiGuideOverlay } from '@/components/support/ui-guide-overlay';
 import { WelcomeWizard } from '@/components/onboarding/welcome-wizard';
+import { DemoBadge } from '@/components/demo';
 import { cn } from '@/lib/utils';
 
 interface SystemStats {
@@ -91,6 +92,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <TooltipProvider>
       <CommandPalette />
+      {/* Demo badge — fixed top-right, visible on all breakpoints in demo mode */}
+      <DemoBadge className="fixed top-3 right-3 z-50" />
       <div className="fixed inset-0 flex overflow-hidden">
         {/* Mobile backdrop */}
         {mobileOpen && (

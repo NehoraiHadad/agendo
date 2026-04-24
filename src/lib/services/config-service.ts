@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { db } from '@/lib/db';
 import { projects } from '@/lib/db/schema';
 import { ForbiddenError } from '@/lib/errors';
+import { isDemoMode } from '@/lib/demo/flag';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -309,6 +310,10 @@ export async function getConfigTree(scope: ConfigScope): Promise<TreeNode[]> {
  * Throws `ForbiddenError` if the path is not on the whitelist.
  */
 export async function readConfigFile(filePath: string): Promise<{ content: string; path: string }> {
+  if (isDemoMode()) {
+    const demo = await import('./config-service.demo');
+    return demo.readConfigFile(filePath);
+  }
   await assertPathAllowed(filePath);
   const resolved = path.resolve(expandHome(filePath));
   const content = fs.readFileSync(resolved, 'utf-8');
@@ -320,6 +325,10 @@ export async function readConfigFile(filePath: string): Promise<{ content: strin
  * Throws `ForbiddenError` if the path is not on the whitelist.
  */
 export async function writeConfigFile(filePath: string, content: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./config-service.demo');
+    return demo.writeConfigFile(filePath, content);
+  }
   await assertPathAllowed(filePath);
   const resolved = path.resolve(expandHome(filePath));
   const dir = path.dirname(resolved);

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Outfit, JetBrains_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { ServiceWorkerRegister } from '@/components/pwa/service-worker-register';
+import { DemoIntroPopover } from '@/components/demo';
 import './globals.css';
 
 const outfit = Outfit({
@@ -57,6 +58,7 @@ export default function RootLayout({
         {children}
         <Toaster richColors position="bottom-right" />
         <ServiceWorkerRegister />
+        <DemoIntroPopover />
       </body>
     </html>
   );

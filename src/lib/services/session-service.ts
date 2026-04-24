@@ -10,6 +10,7 @@ import { sendSessionControl, sendSessionEvent } from '@/lib/realtime/worker-clie
 import { dispatchSession } from '@/lib/services/session-dispatch';
 import type { Session } from '@/lib/types';
 import type { AgendoControl } from '@/lib/realtime/events';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export type SessionKind = 'conversation' | 'execution' | 'plan' | 'integration' | 'support';
 
@@ -36,6 +37,10 @@ export interface CreateSessionInput {
 }
 
 export async function createSession(input: CreateSessionInput): Promise<Session> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.createSession(input);
+  }
   let projectId = input.projectId;
 
   // For execution sessions, derive projectId from task if not explicit
@@ -74,6 +79,10 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 }
 
 export async function getSession(id: string): Promise<Session> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.getSession(id);
+  }
   return getById(sessions, id, 'Session');
 }
 
@@ -86,6 +95,10 @@ export interface SessionWithDetails extends Session {
 }
 
 export async function getSessionWithDetails(id: string): Promise<SessionWithDetails> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.getSessionWithDetails(id);
+  }
   const [row] = await db
     .select({
       session: sessions,
@@ -118,6 +131,10 @@ export async function updateSessionTitle(
   id: string,
   title: string | null,
 ): Promise<{ id: string; title: string | null }> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.updateSessionTitle(id, title);
+  }
   const [updated] = await db
     .update(sessions)
     .set({ title })
@@ -129,6 +146,10 @@ export async function updateSessionTitle(
 }
 
 export async function cancelSession(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.cancelSession(id);
+  }
   const result = await db
     .update(sessions)
     .set({ status: 'ended', endedAt: new Date() })
@@ -148,6 +169,10 @@ export async function cancelSession(id: string): Promise<void> {
 }
 
 export async function interruptSession(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.interruptSession(id);
+  }
   const [session] = await db
     .select({ id: sessions.id })
     .from(sessions)
@@ -165,6 +190,10 @@ export async function interruptSession(id: string): Promise<void> {
 export async function getSessionLogInfo(
   id: string,
 ): Promise<{ logFilePath: string | null; status: string } | null> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.getSessionLogInfo(id);
+  }
   const [row] = await db
     .select({ logFilePath: sessions.logFilePath, status: sessions.status })
     .from(sessions)
@@ -174,6 +203,10 @@ export async function getSessionLogInfo(
 }
 
 export async function getSessionStatus(id: string): Promise<{ status: string } | null> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.getSessionStatus(id);
+  }
   const [row] = await db
     .select({ status: sessions.status })
     .from(sessions)
@@ -202,6 +235,10 @@ export async function forkSession(
   resumeAt?: string,
   initialPrompt?: string,
 ): Promise<Session> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.forkSession(parentId, resumeAt, initialPrompt);
+  }
   const parent = await getSession(parentId);
   const [fork] = await db
     .insert(sessions)
@@ -261,6 +298,10 @@ export async function restartFreshFromSession(
   planContent: string | null,
   permissionMode: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk',
 ): Promise<Session> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.restartFreshFromSession(parentId, planContent, permissionMode);
+  }
   const parent = await getSession(parentId);
   const initialPrompt = planContent
     ? `Implement the following plan:\n\n${planContent}`
@@ -308,6 +349,10 @@ export async function listSessionsByProject(
   filter: 'free-chats' | 'task-sessions',
   limit = 20,
 ): Promise<SessionListItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.listSessionsByProject(projectId, filter, limit);
+  }
   const taskFilter = filter === 'free-chats' ? isNull(sessions.taskId) : isNotNull(sessions.taskId);
   const rows = await db
     .select({
@@ -333,6 +378,10 @@ export async function listFreeChatsByProject(
   projectId: string,
   limit = 20,
 ): Promise<SessionListItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.listFreeChatsByProject(projectId, limit);
+  }
   return listSessionsByProject(projectId, 'free-chats', limit);
 }
 
@@ -341,6 +390,10 @@ export async function listTaskSessionsByProject(
   projectId: string,
   limit = 20,
 ): Promise<SessionListItem[]> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.listTaskSessionsByProject(projectId, limit);
+  }
   return listSessionsByProject(projectId, 'task-sessions', limit);
 }
 
@@ -352,6 +405,10 @@ export interface SearchSessionResult {
 }
 
 export async function searchSessions(q: string, limit = 5): Promise<SearchSessionResult[]> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.searchSessions(q, limit);
+  }
   const rows = await db
     .select({
       id: sessions.id,
@@ -406,6 +463,10 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
   page: number;
   pageSize: number;
 }> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.listSessions(filters);
+  }
   const page = filters?.page ?? 1;
   const pageSize = filters?.pageSize ?? 20;
   const offset = (page - 1) * pageSize;
@@ -460,6 +521,10 @@ export async function listSessions(filters?: ListSessionsInput): Promise<{
  * Also cleans up the log file on disk if it exists.
  */
 export async function deleteSession(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.deleteSession(id);
+  }
   const session = await getSession(id);
   if (session.status === 'active' || session.status === 'awaiting_input') {
     throw new ConflictError('Cannot delete an active session. Cancel it first.');
@@ -476,6 +541,10 @@ export async function deleteSession(id: string): Promise<void> {
 export async function deleteSessions(
   ids: string[],
 ): Promise<{ deletedCount: number; skippedIds: string[] }> {
+  if (isDemoMode()) {
+    const demo = await import('./session-service.demo');
+    return demo.deleteSessions(ids);
+  }
   if (ids.length === 0) return { deletedCount: 0, skippedIds: [] };
 
   // Fetch sessions to identify which can be deleted and gather file paths

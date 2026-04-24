@@ -5,6 +5,7 @@ import { agentWorkspaces } from '@/lib/db/schema';
 import { requireFound } from '@/lib/api-handler';
 import { getById } from '@/lib/services/db-helpers';
 import type { AgentWorkspace, WorkspaceLayout } from '@/lib/types';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export interface CreateWorkspaceInput {
   name: string;
@@ -19,6 +20,10 @@ export interface UpdateWorkspacePatch {
 }
 
 export async function createWorkspace(input: CreateWorkspaceInput): Promise<AgentWorkspace> {
+  if (isDemoMode()) {
+    const demo = await import('./workspace-service.demo');
+    return demo.createWorkspace(input);
+  }
   const [workspace] = await db
     .insert(agentWorkspaces)
     .values({
@@ -31,10 +36,18 @@ export async function createWorkspace(input: CreateWorkspaceInput): Promise<Agen
 }
 
 export async function getWorkspace(id: string): Promise<AgentWorkspace> {
+  if (isDemoMode()) {
+    const demo = await import('./workspace-service.demo');
+    return demo.getWorkspace(id);
+  }
   return getById(agentWorkspaces, id, 'AgentWorkspace');
 }
 
 export async function listWorkspaces(filters?: { projectId?: string }): Promise<AgentWorkspace[]> {
+  if (isDemoMode()) {
+    const demo = await import('./workspace-service.demo');
+    return demo.listWorkspaces(filters);
+  }
   const where = buildFilters(
     { projectId: filters?.projectId },
     { projectId: agentWorkspaces.projectId },
@@ -47,6 +60,10 @@ export async function updateWorkspace(
   id: string,
   patch: UpdateWorkspacePatch,
 ): Promise<AgentWorkspace> {
+  if (isDemoMode()) {
+    const demo = await import('./workspace-service.demo');
+    return demo.updateWorkspace(id, patch);
+  }
   const updateValues: Partial<typeof agentWorkspaces.$inferInsert> & { updatedAt: Date } = {
     updatedAt: new Date(),
   };
@@ -64,6 +81,10 @@ export async function updateWorkspace(
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./workspace-service.demo');
+    return demo.deleteWorkspace(id);
+  }
   const [deleted] = await db
     .delete(agentWorkspaces)
     .where(eq(agentWorkspaces.id, id))

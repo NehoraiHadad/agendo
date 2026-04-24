@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { artifacts } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { isDemoMode } from '@/lib/demo/flag';
 
 export async function createArtifact(params: {
   sessionId?: string | null;
@@ -9,6 +10,11 @@ export async function createArtifact(params: {
   type: 'html' | 'svg';
   content: string;
 }) {
+  if (isDemoMode()) {
+    const demo = await import('./artifact-service.demo');
+    return demo.createArtifact(params);
+  }
+
   const [artifact] = await db
     .insert(artifacts)
     .values({
@@ -24,11 +30,21 @@ export async function createArtifact(params: {
 }
 
 export async function getArtifact(id: string) {
+  if (isDemoMode()) {
+    const demo = await import('./artifact-service.demo');
+    return demo.getArtifact(id);
+  }
+
   const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, id));
   return artifact ?? null;
 }
 
 export async function listArtifactsBySession(sessionId: string) {
+  if (isDemoMode()) {
+    const demo = await import('./artifact-service.demo');
+    return demo.listArtifactsBySession(sessionId);
+  }
+
   return db
     .select()
     .from(artifacts)
@@ -37,6 +53,11 @@ export async function listArtifactsBySession(sessionId: string) {
 }
 
 export async function listArtifactsByPlan(planId: string) {
+  if (isDemoMode()) {
+    const demo = await import('./artifact-service.demo');
+    return demo.listArtifactsByPlan(planId);
+  }
+
   return db
     .select()
     .from(artifacts)

@@ -8,6 +8,7 @@ import { getById } from '@/lib/services/db-helpers';
 import { ConflictError, ValidationError } from '@/lib/errors';
 import { selectLeader } from '@/lib/brainstorm/leader';
 import { inferProviderFromAgentSlug } from '@/lib/worker/brainstorm-personas';
+import { isDemoMode } from '@/lib/demo/flag';
 
 /**
  * Room statuses that allow participant mutations (add/remove).
@@ -54,6 +55,10 @@ export interface BrainstormWithDetails extends BrainstormRoom {
  * Validates minimum participant count at the service layer.
  */
 export async function createBrainstorm(input: CreateBrainstormInput): Promise<BrainstormRoom> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.createBrainstorm(input);
+  }
   if (input.participants.length < 2) {
     throw new ValidationError('At least 2 participants are required to create a brainstorm.');
   }
@@ -126,6 +131,10 @@ export async function createBrainstorm(input: CreateBrainstormInput): Promise<Br
  * Get a brainstorm room with participants (+ agent details), messages, project, and task.
  */
 export async function getBrainstorm(id: string): Promise<BrainstormWithDetails> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.getBrainstorm(id);
+  }
   // Fetch the base room record
   const room = await getById(brainstormRooms, id, 'BrainstormRoom');
 
@@ -204,6 +213,10 @@ export async function listBrainstorms(filters?: {
   projectId?: string;
   status?: BrainstormStatus;
 }): Promise<BrainstormRoomSummary[]> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.listBrainstorms(filters);
+  }
   const where = buildFilters(
     { projectId: filters?.projectId, status: filters?.status },
     { projectId: brainstormRooms.projectId, status: brainstormRooms.status },
@@ -239,6 +252,10 @@ export async function updateBrainstormStatus(
   id: string,
   status: BrainstormStatus,
 ): Promise<BrainstormRoom> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateBrainstormStatus(id, status);
+  }
   const [updated] = await db
     .update(brainstormRooms)
     .set({ status, updatedAt: new Date() })
@@ -253,6 +270,10 @@ export async function updateBrainstormStatus(
  * Update the currentWave counter on a room.
  */
 export async function updateBrainstormWave(id: string, wave: number): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateBrainstormWave(id, wave);
+  }
   await db
     .update(brainstormRooms)
     .set({ currentWave: wave, updatedAt: new Date() })
@@ -267,6 +288,10 @@ export async function updateBrainstormMaxWaves(
   id: string,
   maxWaves: number,
 ): Promise<BrainstormRoom> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateBrainstormMaxWaves(id, maxWaves);
+  }
   const [updated] = await db
     .update(brainstormRooms)
     .set({ maxWaves, updatedAt: new Date() })
@@ -283,6 +308,10 @@ export async function setBrainstormOutcome(
   id: string,
   outcome: import('@/lib/db/schema').BrainstormOutcome,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.setBrainstormOutcome(id, outcome);
+  }
   await db
     .update(brainstormRooms)
     .set({ outcome, updatedAt: new Date() })
@@ -293,6 +322,10 @@ export async function setBrainstormOutcome(
  * Store the final synthesis text on a completed room.
  */
 export async function setBrainstormSynthesis(id: string, synthesis: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.setBrainstormSynthesis(id, synthesis);
+  }
   await db
     .update(brainstormRooms)
     .set({ synthesis, updatedAt: new Date() })
@@ -313,6 +346,10 @@ export async function addParticipant(
   agentId: string,
   model?: string,
 ): Promise<BrainstormParticipant> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.addParticipant(roomId, agentId, model);
+  }
   return db.transaction(async (tx) => {
     // Lock the room row and validate status atomically
     const result = await tx.execute(
@@ -353,6 +390,10 @@ export async function addParticipant(
  * Validates room status before allowing removal.
  */
 export async function removeParticipant(roomId: string, participantId: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.removeParticipant(roomId, participantId);
+  }
   // Validate room status
   const [room] = await db
     .select({ id: brainstormRooms.id, status: brainstormRooms.status })
@@ -389,6 +430,10 @@ export async function updateParticipantSession(
   participantId: string,
   sessionId: string,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateParticipantSession(participantId, sessionId);
+  }
   await db
     .update(brainstormParticipants)
     .set({ sessionId })
@@ -402,6 +447,10 @@ export async function updateParticipantModel(
   participantId: string,
   model: string | null,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateParticipantModel(participantId, model);
+  }
   await db
     .update(brainstormParticipants)
     .set({ model })
@@ -415,6 +464,10 @@ export async function updateParticipantAgent(
   participantId: string,
   agentId: string,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateParticipantAgent(participantId, agentId);
+  }
   await db
     .update(brainstormParticipants)
     .set({ agentId })
@@ -428,6 +481,10 @@ export async function updateParticipantStatus(
   participantId: string,
   status: BrainstormParticipantStatus,
 ): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateParticipantStatus(participantId, status);
+  }
   await db
     .update(brainstormParticipants)
     .set({ status })
@@ -449,6 +506,10 @@ export async function getParticipantBySessionId(sessionId: string): Promise<{
   agentName: string;
   agentSlug: string;
 } | null> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.getParticipantBySessionId(sessionId);
+  }
   const [row] = await db
     .select({
       id: brainstormParticipants.id,
@@ -466,6 +527,10 @@ export async function getParticipantBySessionId(sessionId: string): Promise<{
 }
 
 export async function updateParticipantRole(participantId: string, role: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateParticipantRole(participantId, role);
+  }
   await db
     .update(brainstormParticipants)
     .set({ role })
@@ -477,6 +542,10 @@ export async function updateParticipantRole(participantId: string, role: string)
  * Called by the orchestrator after it resolves and opens the log file.
  */
 export async function updateBrainstormLogPath(id: string, logFilePath: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.updateBrainstormLogPath(id, logFilePath);
+  }
   await db
     .update(brainstormRooms)
     .set({ logFilePath, updatedAt: new Date() })
@@ -488,6 +557,10 @@ export async function updateBrainstormLogPath(id: string, logFilePath: string): 
  * Active and synthesizing rooms cannot be deleted — end them first.
  */
 export async function deleteBrainstorm(id: string): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.deleteBrainstorm(id);
+  }
   const [room] = await db
     .select({ id: brainstormRooms.id, status: brainstormRooms.status })
     .from(brainstormRooms)
@@ -511,6 +584,10 @@ export async function extendBrainstorm(
   id: string,
   additionalWaves: number,
 ): Promise<BrainstormRoom> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.extendBrainstorm(id, additionalWaves);
+  }
   const room = await getById(brainstormRooms, id, 'BrainstormRoom');
 
   if (room.status !== 'ended') {
@@ -535,6 +612,10 @@ export async function extendBrainstorm(
  * it just bumps maxWaves so the orchestrator has room to continue.
  */
 export async function addWaveBudget(id: string, additionalWaves: number): Promise<void> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.addWaveBudget(id, additionalWaves);
+  }
   await db
     .update(brainstormRooms)
     .set({
@@ -566,6 +647,10 @@ export interface CompletedRoomSummary {
 export async function getCompletedRoomsForProject(
   projectId: string,
 ): Promise<CompletedRoomSummary[]> {
+  if (isDemoMode()) {
+    const demo = await import('./brainstorm-service.demo');
+    return demo.getCompletedRoomsForProject(projectId);
+  }
   return db
     .select({
       id: brainstormRooms.id,

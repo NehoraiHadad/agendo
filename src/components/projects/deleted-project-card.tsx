@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { apiFetch, type ApiResponse } from '@/lib/api-types';
 import type { Project } from '@/lib/types';
 import { getErrorMessage } from '@/lib/utils/error-utils';
+import { DemoGuard } from '@/components/demo';
 
 interface DeletedProjectCardProps {
   project: Project;
@@ -67,30 +68,34 @@ export function DeletedProjectCard({ project, onRestored, onPurged }: DeletedPro
 
       {!showConfirm ? (
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1"
-            disabled={isRestoring || isPurging}
-            onClick={handleRestore}
-          >
-            {isRestoring ? (
-              <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-            ) : (
-              <ArchiveRestore className="size-3.5 mr-1.5" />
-            )}
-            Restore
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-            disabled={isRestoring || isPurging}
-            onClick={() => setShowConfirm(true)}
-          >
-            <Trash2 className="size-3.5 mr-1.5" />
-            Delete forever
-          </Button>
+          <DemoGuard message="Projects can't be restored in demo — install locally to try.">
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1"
+              disabled={isRestoring || isPurging}
+              onClick={handleRestore}
+            >
+              {isRestoring ? (
+                <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <ArchiveRestore className="size-3.5 mr-1.5" />
+              )}
+              Restore
+            </Button>
+          </DemoGuard>
+          <DemoGuard message="Projects can't be deleted in demo — install locally to try.">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+              disabled={isRestoring || isPurging}
+              onClick={() => setShowConfirm(true)}
+            >
+              <Trash2 className="size-3.5 mr-1.5" />
+              Delete forever
+            </Button>
+          </DemoGuard>
         </div>
       ) : (
         <div className="space-y-3">
@@ -122,16 +127,18 @@ export function DeletedProjectCard({ project, onRestored, onPurged }: DeletedPro
             >
               Cancel
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="flex-1"
-              disabled={isPurging}
-              onClick={handlePurge}
-            >
-              {isPurging && <Loader2 className="size-3.5 mr-1.5 animate-spin" />}
-              Confirm
-            </Button>
+            <DemoGuard message="Projects can't be deleted in demo — install locally to try.">
+              <Button
+                size="sm"
+                variant="destructive"
+                className="flex-1"
+                disabled={isPurging}
+                onClick={handlePurge}
+              >
+                {isPurging && <Loader2 className="size-3.5 mr-1.5 animate-spin" />}
+                Confirm
+              </Button>
+            </DemoGuard>
           </div>
         </div>
       )}
