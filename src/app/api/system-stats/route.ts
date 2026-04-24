@@ -1,9 +1,31 @@
 import { NextResponse } from 'next/server';
 import { withErrorBoundary } from '@/lib/api-handler';
+import { isDemoMode } from '@/lib/demo/flag';
 
 const MONITOR_URL = process.env.MONITOR_URL ?? 'http://localhost:9876';
 
 export const GET = withErrorBoundary(async () => {
+  if (isDemoMode()) {
+    return NextResponse.json({
+      data: {
+        hostname: 'demo-host',
+        cpu: 12,
+        mem: 34,
+        swap: 0,
+        disk: 27,
+        diskRoot: 27,
+        diskHome: 41,
+        load: '0.42 0.38 0.30',
+        uptime: '3 days',
+        processes: [
+          { pid: '1001', name: 'agendo', mem_mb: 184 },
+          { pid: '1002', name: 'agendo-worker', mem_mb: 92 },
+          { pid: '1003', name: 'agendo-terminal', mem_mb: 38 },
+        ],
+      },
+    });
+  }
+
   let statsRes: Response;
   let procsRes: Response;
 

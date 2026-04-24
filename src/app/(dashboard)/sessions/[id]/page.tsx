@@ -4,10 +4,15 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { sessions, agents, tasks, projects } from '@/lib/db/schema';
 import { eq, count } from 'drizzle-orm';
+import { isDemoMode } from '@/lib/demo/flag';
 import { SessionDetailWrapper } from './session-detail-wrapper';
 
 export default async function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+
+  if (isDemoMode()) {
+    return renderDemoSessionDetail(id);
+  }
 
   const rows = await db
     .select({
@@ -79,6 +84,40 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
       parentAgentName={parentAgentName}
       parentTurns={parentTurns}
       teamCanvasTaskId={teamCanvasTaskId}
+    />
+  );
+}
+
+async function renderDemoSessionDetail(id: string) {
+  const demo = await import('@/lib/services/session-service.demo');
+  let details;
+  try {
+    details = demo.getSessionWithDetails(id);
+  } catch {
+    notFound();
+  }
+
+  const binaryPathBySlug: Record<string, string> = {
+    'claude-code': '/usr/local/bin/claude',
+    'codex-cli': '/usr/local/bin/codex',
+    'gemini-cli': '/usr/local/bin/gemini',
+  };
+  const agentBinaryPath =
+    (details.agentSlug && binaryPathBySlug[details.agentSlug]) ?? '/usr/local/bin/claude';
+
+  return (
+    <SessionDetailWrapper
+      session={{
+        ...details,
+      }}
+      agentName={details.agentName ?? ''}
+      agentSlug={details.agentSlug ?? ''}
+      agentBinaryPath={agentBinaryPath}
+      taskTitle={details.taskTitle ?? ''}
+      projectName={details.projectName ?? ''}
+      parentAgentName=""
+      parentTurns={null}
+      teamCanvasTaskId={null}
     />
   );
 }
