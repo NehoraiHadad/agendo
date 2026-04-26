@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Circle,
   FileText,
+  FolderOpen,
   MessageCircle,
   Play,
   Plus,
@@ -90,7 +91,7 @@ export function ProjectHubClient({
         >
           {project.icon ?? <span style={{ color: accentColor }}>●</span>}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-xl font-semibold truncate">{project.name}</h1>
           <p className="font-mono text-xs text-muted-foreground truncate mt-0.5">
             {project.rootPath}
@@ -99,6 +100,21 @@ export function ProjectHubClient({
             <p className="text-sm text-muted-foreground/80 mt-1">{project.description}</p>
           )}
         </div>
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+          className="ml-auto shrink-0"
+          title={`Browse ${project.name} files`}
+        >
+          <Link
+            href={`/files?dir=${encodeURIComponent(project.rootPath)}`}
+            aria-label={`Browse ${project.name} files`}
+          >
+            <FolderOpen className="size-4" />
+            <span className="hidden sm:inline">Browse files</span>
+          </Link>
+        </Button>
       </div>
 
       {/* Agent launchers */}

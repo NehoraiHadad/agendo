@@ -50,19 +50,29 @@ This is the **recommended approach** for showing images, charts, or generated ou
 
 ## File Viewer (Directory Browser)
 
-Renders a full HTML directory browser with breadcrumb navigation, image grid view, and download links.
+Two routes share the same allowed-roots gate (`/home/ubuntu/projects`, `/tmp`):
+
+### `/files?dir=...` — In-app SPA page (recommended for end users)
+
+```
+http://localhost:4100/files?dir=/home/ubuntu/projects/my-app/output
+```
+
+Renders inside the agendo SPA shell — sidebar, breadcrumbs, image hero strip with a lightbox, download links per file. Use this when sharing a link in your response so the user lands on a polished page.
+
+### `/api/dev/viewer?dir=...` — Standalone HTML (use inside iframes)
 
 ```
 GET /api/dev/viewer?dir=/home/ubuntu/projects/my-app/output
 ```
 
-Without `?dir=`, shows a root directory picker for the allowed roots.
+Returns a self-contained HTML document. Use this only when **embedding** the viewer inside an artifact iframe (the iframe sandbox can't host the SPA).
 
-**Features**: breadcrumb navigation, file listing with size/date, image grid with lightbox, list/grid toggle, responsive mobile layout.
+### `/api/files/list?dir=...` — JSON for programmatic access
 
-**Same allowed roots** as the file server: `/home/ubuntu/projects`, `/tmp`.
+Returns the same listing as a typed JSON payload (`{ data: { dir, parent, breadcrumbs, entries, imageCount, allowedRoots } }`). Used internally by the `/files` page.
 
-Use this when an agent has generated multiple output files and you want to give the user a browsable view.
+Without `?dir=`, all three return a root picker.
 
 ---
 

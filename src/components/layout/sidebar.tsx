@@ -12,6 +12,7 @@ import {
   X,
   FolderOpen,
   FileText,
+  Files,
   PanelTop,
   Settings,
   Search,
@@ -62,15 +63,24 @@ interface SidebarProps {
   onSupportOpen?: () => void;
 }
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  badgeKey: keyof SidebarStats | null;
+  external?: boolean;
+}
+
+const navItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, badgeKey: null },
   { href: '/projects', label: 'Projects', icon: FolderOpen, badgeKey: null },
-  { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' as const },
+  { href: '/files', label: 'Files', icon: Files, badgeKey: null },
+  { href: '/tasks', label: 'Tasks', icon: ListTodo, badgeKey: 'todoTasks' },
   {
     href: '/sessions',
     label: 'Sessions',
     icon: MessageSquare,
-    badgeKey: 'activeSessions' as const,
+    badgeKey: 'activeSessions',
   },
   { href: '/teams/new', label: 'Teams', icon: Monitor, badgeKey: null },
   { href: '/brainstorms', label: 'Brainstorms', icon: Lightbulb, badgeKey: null },
@@ -270,20 +280,16 @@ export function Sidebar({ onMobileClose, onSupportOpen }: SidebarProps) {
           const badgeCount = item.badgeKey && stats ? stats[item.badgeKey] : 0;
 
           const guideSlug = item.label.toLowerCase().replace(/\s+/g, '-');
-          const linkContent = (
-            <Link
-              href={item.href}
-              onClick={onMobileClose}
-              data-guide={`nav-${guideSlug}`}
-              className={cn(
-                'relative flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium rounded-lg transition-all duration-150 group',
-                'min-h-[40px]',
-                isActive
-                  ? 'bg-primary/[0.12] text-primary'
-                  : 'text-muted-foreground/55 hover:text-foreground/80 hover:bg-white/[0.04]',
-                isCollapsed && 'justify-center px-0',
-              )}
-            >
+          const itemClassName = cn(
+            'relative flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium rounded-lg transition-all duration-150 group',
+            'min-h-[40px]',
+            isActive
+              ? 'bg-primary/[0.12] text-primary'
+              : 'text-muted-foreground/55 hover:text-foreground/80 hover:bg-white/[0.04]',
+            isCollapsed && 'justify-center px-0',
+          );
+          const itemInner = (
+            <>
               {/* Active left indicator bar */}
               {isActive && (
                 <span
@@ -324,6 +330,27 @@ export function Sidebar({ onMobileClose, onSupportOpen }: SidebarProps) {
               {isCollapsed && badgeCount > 0 && (
                 <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
               )}
+            </>
+          );
+          const linkContent = item.external ? (
+            <a
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onMobileClose}
+              data-guide={`nav-${guideSlug}`}
+              className={itemClassName}
+            >
+              {itemInner}
+            </a>
+          ) : (
+            <Link
+              href={item.href}
+              onClick={onMobileClose}
+              data-guide={`nav-${guideSlug}`}
+              className={itemClassName}
+            >
+              {itemInner}
             </Link>
           );
 

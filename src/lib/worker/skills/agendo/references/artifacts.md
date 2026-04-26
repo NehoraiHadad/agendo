@@ -2,13 +2,14 @@
 
 ## When to Use What
 
-| You want to...                                 | Use                                          | Why                                         |
-| ---------------------------------------------- | -------------------------------------------- | ------------------------------------------- |
-| Show a chart, diagram, or interactive visual   | `render_artifact` (type: `html`)             | Renders inline in session view, interactive |
-| Show a clean vector graphic or icon            | `render_artifact` (type: `svg`)              | Lightweight, scales perfectly               |
-| Let the user download or view a generated file | File server link: `/api/dev/files?path=...`  | Direct file access with correct MIME type   |
-| Let the user browse a directory of outputs     | Viewer link: `/api/dev/viewer?dir=...`       | Full directory browser with previews        |
-| Include a local image/file inside an artifact  | File server `<img>` / `<a>` in artifact HTML | Avoids base64 bloat, keeps artifacts small  |
+| You want to...                                 | Use                                          | Why                                          |
+| ---------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
+| Show a chart, diagram, or interactive visual   | `render_artifact` (type: `html`)             | Renders inline in session view, interactive  |
+| Show a clean vector graphic or icon            | `render_artifact` (type: `svg`)              | Lightweight, scales perfectly                |
+| Let the user download or view a generated file | File server link: `/api/dev/files?path=...`  | Direct file access with correct MIME type    |
+| Let the user browse a directory of outputs     | In-app Files page: `/files?dir=...`          | SPA browser with breadcrumbs, image lightbox |
+| Embed a directory listing inside an artifact   | Legacy iframe: `/api/dev/viewer?dir=...`     | Standalone HTML, safe inside iframe sandbox  |
+| Include a local image/file inside an artifact  | File server `<img>` / `<a>` in artifact HTML | Avoids base64 bloat, keeps artifacts small   |
 
 ---
 
@@ -159,28 +160,30 @@ You can view it here: http://localhost:4100/api/dev/files?path=/home/ubuntu/proj
 
 ## File Viewer (Directory Browser)
 
-A full-featured HTML file browser for exploring directories.
+Two surfaces share the same allowed-roots gate:
 
-### Endpoint
+1. **`/files?dir=<absolute-path>`** — the in-app Files page (Next.js route inside the SPA shell). Use this for **end-user navigation**: the user clicks the link and lands on a polished page with breadcrumbs, image hero strip + lightbox, and download links for each file. This is the recommended surface in 99% of cases.
+2. **`/api/dev/viewer?dir=<absolute-path>`** — the legacy server-rendered HTML viewer. Use this only when you need to **embed** the viewer inside an artifact iframe (the iframe sandbox can't host an SPA route).
 
-```
-GET /api/dev/viewer?dir=<absolute-path>
-```
+Without `?dir=`, both routes show a root directory picker.
 
-Without `?dir=`, shows a root directory picker.
-
-### Features
+### Features (both surfaces)
 
 - Breadcrumb navigation
 - File listing with size, modification date, and type icons
-- Image grid view with lightbox (click to enlarge)
-- List/grid view toggle for image directories
+- Image previews with click-to-enlarge lightbox
 - Responsive design (works on mobile)
 - Direct download links for each file
 
 ### When to Use
 
-After generating multiple output files, give the user a viewer link so they can browse everything in one place:
+**Default — share the SPA link in your response:**
+
+```
+All generated files are at: http://localhost:4100/files?dir=/home/ubuntu/projects/my-app/output
+```
+
+**Embedded inside an artifact (use the legacy `/api/dev/viewer` route):**
 
 ```
 render_artifact({
@@ -192,12 +195,6 @@ render_artifact({
               style="width:100%;height:500px;border:none"></iframe>
     </body></html>`
 })
-```
-
-Or just share the URL in your response:
-
-```
-All generated files are at: http://localhost:4100/api/dev/viewer?dir=/home/ubuntu/projects/my-app/output
 ```
 
 ---
@@ -221,7 +218,7 @@ render_artifact({
       <h1>Q4 Sales Report</h1>
       <img src="/api/dev/files?path=/tmp/charts/revenue.png" width="100%" />
       <img src="/api/dev/files?path=/tmp/charts/growth.png" width="100%" />
-      <p><a href="/api/dev/viewer?dir=/tmp/charts" style="color:#60a5fa">Browse all charts →</a></p>
+      <p><a href="/files?dir=/tmp/charts" target="_top" style="color:#60a5fa">Browse all charts →</a></p>
     </body>
     </html>`
 })
