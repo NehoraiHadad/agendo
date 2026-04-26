@@ -9,6 +9,7 @@ import { sessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { dispatchSession } from '@/lib/services/session-dispatch';
 import type { AgendoControl } from '@/lib/realtime/events';
+import type { Session } from '@/lib/types';
 
 /**
  * POST /api/sessions/[id]/control
@@ -76,10 +77,16 @@ export const POST = withErrorBoundary(
       } else {
         // Active session: relay to worker with the new session ID so it can
         // enqueue it from onExit after the process terminates cleanly.
-        await sendSessionControl(id, {
+        const result = await sendSessionControl(id, {
           ...body,
           newSessionIdForWorker: newSession.id,
         });
+        // Worker process disappeared while DB status still says active/awaiting_input.
+        // Fall back to starting the fresh child session directly instead of dropping
+        // the approval on the floor and forcing the user to send a wake-up message.
+        if (!result.dispatched) {
+          await dispatchSession({ sessionId: newSession.id });
+        }
       }
 
       return NextResponse.json(
@@ -95,37 +102,8 @@ export const POST = withErrorBoundary(
     if (body.type === 'tool-approval') {
       const session = await getSession(id);
       if (session.status === 'idle' || session.status === 'ended') {
-        // Read plan file content.
-        let planContent: string | null = null;
-        if (session.planFilePath) {
-          try {
-            planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
-          } catch {
-            planContent = null; // file may have been deleted
-          }
-        }
-        const initialPrompt = planContent
-          ? `Implement the following plan:\n\n${planContent}`
-          : 'Continue implementing the plan from the previous conversation.';
-
         if (body.decision === 'allow') {
-          // ── Option: allow in-place (keep context, resume with --resume) ─
-          // Keep sessionRef intact so the worker resumes the existing Claude
-          // conversation. ExitPlanMode is stripped from the transcript by the
-          // CLI on resume (NO$() removes unresolved tool_uses), so it will NOT
-          // re-fire. Claude simply continues from where it left off with the
-          // initialPrompt as the first user message.
-          const newMode = body.postApprovalMode ?? session.permissionMode;
-          await db
-            .update(sessions)
-            .set({ permissionMode: newMode, initialPrompt })
-            .where(eq(sessions.id, id));
-
-          await dispatchSession({
-            sessionId: id,
-            resumeRef: session.sessionRef ?? undefined,
-            resumePrompt: initialPrompt,
-          });
+          await resumeApprovedPlanSession(id, session, body);
 
           return NextResponse.json({ data: { resuming: true } }, { status: 202 });
         }
@@ -133,11 +111,57 @@ export const POST = withErrorBoundary(
         // deny on idle: user clicked "Revise" — they will send a message via
         // the /messages route which handles cold-resume independently.
       }
-      // Session is active — fall through to PG NOTIFY relay for the worker.
+      // Session is active — fall through to worker relay. If the worker no
+      // longer has a live process for this session, use the same cold-resume
+      // fallback as the /message route.
+      const result = await sendSessionControl(id, body);
+      if (!result.dispatched && body.decision === 'allow') {
+        await resumeApprovedPlanSession(id, session, body);
+        return NextResponse.json({ data: { resuming: true } }, { status: 202 });
+      }
+
+      return NextResponse.json(
+        { data: { delivered: result.dispatched === true } },
+        { status: 202 },
+      );
     }
 
-    await sendSessionControl(id, body);
+    const result = await sendSessionControl(id, body);
 
-    return NextResponse.json({ data: { delivered: true } }, { status: 202 });
+    return NextResponse.json({ data: { delivered: result.dispatched === true } }, { status: 202 });
   },
 );
+
+async function resumeApprovedPlanSession(
+  sessionId: string,
+  session: Session,
+  body: Extract<AgendoControl, { type: 'tool-approval' }>,
+): Promise<void> {
+  // Read plan file content.
+  let planContent: string | null = null;
+  if (session.planFilePath) {
+    try {
+      planContent = readFileSync(session.planFilePath, 'utf-8').trim() || null;
+    } catch {
+      planContent = null; // file may have been deleted
+    }
+  }
+  const initialPrompt = planContent
+    ? `Implement the following plan:\n\n${planContent}`
+    : 'Continue implementing the plan from the previous conversation.';
+
+  // Keep sessionRef intact so the worker resumes the existing Claude
+  // conversation. ExitPlanMode is stripped from the transcript by the
+  // CLI on resume, so it will not re-fire.
+  const newMode = body.postApprovalMode ?? session.permissionMode;
+  await db
+    .update(sessions)
+    .set({ permissionMode: newMode, initialPrompt })
+    .where(eq(sessions.id, sessionId));
+
+  await dispatchSession({
+    sessionId,
+    resumeRef: session.sessionRef ?? undefined,
+    resumePrompt: initialPrompt,
+  });
+}
