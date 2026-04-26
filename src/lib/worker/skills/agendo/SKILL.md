@@ -85,13 +85,15 @@ The `artifact-design` skill is pre-loaded with design guidelines — follow it f
 <img src="/api/dev/files?path=/home/ubuntu/projects/my-app/output/chart.png" />
 ```
 
-**Sharing a browsable directory**: Give the user a link to the file viewer to explore generated output:
+**Sharing a browsable directory**: Give the user a link to the in-app file browser to explore generated output:
 
 ```
-/api/dev/viewer?dir=/home/ubuntu/projects/my-app/output
+/files?dir=/home/ubuntu/projects/my-app/output
 ```
 
-This opens a full file browser with breadcrumb navigation, image previews, and download links. Allowed roots: `/home/ubuntu/projects`, `/tmp`.
+This opens the Files page inside the agendo SPA — breadcrumb navigation, image hero strip with a lightbox, and download links for individual files. Allowed roots: `/home/ubuntu/projects`, `/tmp`.
+
+For **embedded** artifact iframes (where the user stays inside an artifact card), the legacy server-rendered viewer at `/api/dev/viewer?dir=...` is still available — it returns standalone HTML that works inside an iframe sandbox.
 
 ---
 
